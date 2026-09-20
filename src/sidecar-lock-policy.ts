@@ -64,6 +64,30 @@ export function computeSidecarLockDelayMs(retry: SidecarLockRetryOptions, attemp
   return Math.min(maxTimeout, Math.round(base * jitter));
 }
 
+export function sidecarLockTimeout(lockPath: string, normalizedTargetPath: string): Error {
+  return Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
+    code: "file_lock_timeout",
+    lockPath,
+    normalizedTargetPath,
+  });
+}
+
+/** Undefined means the deadline or retry count is exhausted. */
+export function sidecarLockRetryDelay(
+  retry: SidecarLockRetryOptions,
+  timeoutMs: number | undefined,
+  elapsed: number,
+  attempt: number,
+): number | undefined {
+  if (
+    (timeoutMs !== undefined && elapsed >= timeoutMs) ||
+    (retry.retries !== undefined && attempt >= retry.retries)
+  ) return undefined;
+  const remaining = timeoutMs === undefined || timeoutMs === Number.POSITIVE_INFINITY
+    ? Number.POSITIVE_INFINITY : Math.max(0, timeoutMs - elapsed);
+  return Math.min(computeSidecarLockDelayMs(retry, attempt), remaining);
+}
+
 // Windows denies access to a lock file while a just-unlinked directory entry
 // is still being torn down, so a contended acquire sees EPERM on a name that is
 // already gone -- both when creating it exclusively and when reading the

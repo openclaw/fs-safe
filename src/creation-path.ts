@@ -8,6 +8,9 @@ import {
   type AnyAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import type { CreationPermissions } from "./creation-permissions.js";
+import { assertDarwinCreationDirectoryAcl, assertDarwinPrivateDirectoryMode } from "./creation-darwin.js";
+import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { assertNoNulPathInput } from "./path.js";
 import { realpathSync } from "./realpath.js";
 import { assertNoWindowsPathAlias, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
@@ -23,6 +26,19 @@ export type CreationPath = {
   parent: AsyncDirectoryGuard<BigIntStats>;
   assertParent(): void;
 };
+
+export function assertBeforeCreation(
+  selected: CreationPath,
+  permissions: CreationPermissions,
+  assertion: (() => void) | undefined,
+  kind: "file" | "directory",
+): void {
+  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, kind);
+  assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
+  selected.assertParent();
+  if (permissions.private && kind === "directory") assertDarwinPrivateDirectoryMode(permissions.mode!);
+  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, kind);
+}
 
 export function creationAdmissionFromParent(parent: AnyAsyncDirectoryGuard): { expectedParentIdentity: CreationParentIdentity } {
   const { dev, ino } = parent.stat;

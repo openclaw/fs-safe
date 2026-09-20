@@ -5,7 +5,7 @@ import { ownExtractionDestinationMutation, type ExtractionDeadline } from "./arc
 import {
   assertDirectoryIdentityGuard, assertResolvedInsideDestination,
   createDirectoryIdentityGuard, createArchiveSymlinkTraversalError,
-  preparePrivateArchiveOutputPath,
+  preparePrivateArchiveOutputPath, withStagedArchiveDestination,
   type ArchiveDirectoryGuard,
 } from "./archive-staging.js";
 import { type DirectoryModeOwner } from "./directory-mode-owner.js";
@@ -35,11 +35,22 @@ type GuardedMergeParams = Pick<MergeParams, "sourceDir" | "deadline"> & {
   destinationGuard: ArchiveDirectoryGuard;
 };
 
-export async function mergePlannedArchiveIntoDestination(
-  params: GuardedMergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean; entryUmask?: number },
+export async function withStagedArchivePublication(
+  params: Omit<GuardedMergeParams, "sourceDir"> & { durable?: boolean; entryUmask?: number },
+  extract: (stagingDir: string) => Promise<readonly ArchivePublicationEntry[]>,
 ): Promise<void> {
-  assertMergePathInputs(params);
-  await mergeTree(params, params.entries, params.durable === true, params.entryUmask);
+  await withStagedArchiveDestination({
+    destinationRealDir: params.destinationGuard.realPath,
+    run: async (stagingPath) => {
+      const sourceDir = realpathSync.native(stagingPath);
+      const entries = await extract(sourceDir);
+      params.deadline?.check();
+      const mergeParams = { ...params, sourceDir };
+      assertMergePathInputs(mergeParams);
+      await mergeTree(mergeParams, entries, params.durable === true, params.entryUmask);
+      params.deadline?.check();
+    },
+  });
 }
 
 export async function mergeExtractedTreeIntoDestination(params: MergeParams): Promise<void> {

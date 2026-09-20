@@ -6,10 +6,11 @@ import type {
   FileLockSyncHandle,
 } from "./file-lock-sync.js";
 import { captureRootSyncAcquireOptions } from "./file-lock-sync-root-options.js";
-import { defaultSyncShouldReclaim, foreignSyncHeldLock, getSyncLockAdmissions, syncLockTimeout } from "./file-lock-sync-admission.js";
+import { defaultSyncShouldReclaim, foreignSyncHeldLock, getSyncLockAdmissions } from "./file-lock-sync-admission.js";
 import type { Root } from "./root-impl.js";
 import {
-  computeSidecarLockDelayMs,
+  sidecarLockRetryDelay,
+  sidecarLockTimeout,
   isTransientLockFileDenial,
   maxTransientLockDenials,
 } from "./sidecar-lock-policy.js";
@@ -87,7 +88,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   let ownsAdmission = false;
   const assertAdmission = () => {
     if (admissions.get(normalizedTargetPath) !== admissionToken) {
-      throw syncLockTimeout(lockPath, normalizedTargetPath);
+      throw sidecarLockTimeout(lockPath, normalizedTargetPath);
     }
   };
   const releaseAdmission = () => {
@@ -118,16 +119,9 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
     ownedReclaimGuard ? undefined : tryReuseCurrentRootSyncHeldLock(arbitration);
   const waitForRetry = (): void => {
     releaseAdmission();
-    const elapsed = Date.now() - startedAt;
-    const timedOut = options.timeoutMs !== undefined && elapsed >= options.timeoutMs;
-    if (timedOut || (options.retry.retries !== undefined && attempt >= options.retry.retries)) {
-      throw syncLockTimeout(lockPath, normalizedTargetPath);
-    }
-    const remaining =
-      options.timeoutMs === undefined || options.timeoutMs === Number.POSITIVE_INFINITY
-        ? Number.POSITIVE_INFINITY
-        : Math.max(0, options.timeoutMs - elapsed);
-    sleepSync(Math.min(computeSidecarLockDelayMs(options.retry, attempt), remaining));
+    const delay = sidecarLockRetryDelay(options.retry, options.timeoutMs, Date.now() - startedAt, attempt);
+    if (delay === undefined) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+    sleepSync(delay);
     attempt += 1;
   };
   const retryLockFileDenial = (error: unknown): boolean => {
@@ -160,7 +154,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   try {
     while (true) {
       if (!ownsAdmission) {
-        if (admissions.has(normalizedTargetPath)) throw syncLockTimeout(lockPath, normalizedTargetPath);
+        if (admissions.has(normalizedTargetPath)) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         admissions.set(normalizedTargetPath, admissionToken);
         ownsAdmission = true;
       }

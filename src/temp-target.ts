@@ -138,15 +138,7 @@ async function cleanupTempDir(
   onCleanupError?: (error: unknown) => void,
 ) {
   try {
-    let current: fsSync.BigIntStats | undefined;
-    try {
-      current = fsSync.lstatSync(dir, { bigint: true });
-    } catch (error) {
-      if (isNodeErrorWithCode(error, "ENOENT")) {
-        return;
-      }
-      throw error;
-    }
+    const current = fsSync.lstatSync(dir, { bigint: true });
     if (!current || !sameFileIdentityForCleanup(current, identity)) {
       return;
     }
@@ -187,10 +179,10 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
   if (cleanupSafety === "require-bounded") {
     const initialFileName = sanitizeTempFileName(params.fileName ?? "download.bin");
     const [
-      { TempWorkspaceCleanupCapability, TempWorkspaceCleanupOwner },
+      { TempWorkspaceCleanupCapability, TempWorkspaceCleanupOwner, throwTempWorkspaceCreationFailure },
       { admitExistingTempWorkspaceRoot },
       { TempWorkspaceRetainedChild },
-      { validateInitialTempWorkspaceChild, admitRetainedTempWorkspaceChild },
+      { validateInitialTempWorkspaceChild },
       { inspectDirectoryIdentitySync },
     ] = await Promise.all([
       import("./temp-workspace-owner.js"),
@@ -224,10 +216,9 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
         initial, admission.ownerUid, 0o700,
       );
       retainedChild = TempWorkspaceRetainedChild.retain(dir, identity);
-      const modeInitialization = admitRetainedTempWorkspaceChild(
-        retainedChild, needsModeInitialization, admission, 0o700,
-      );
-      if (modeInitialization) await modeInitialization;
+      if (needsModeInitialization) {
+        await retainedChild.initializeMode(0o700, admission.ownerUid, admission.assertCurrent);
+      }
       const retainDescriptor = capability.admitChildDescriptor(retainedChild.ensureReadable());
       capability.assertAncestryCurrent();
       retainedChild.finalizeAdmission(admission.ownerUid, 0o700);
@@ -237,21 +228,7 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
         cleanupSync: () => cleanupOwner!.cleanupSync(),
       });
     } catch (error) {
-      try {
-        if (cleanupOwner) cleanupOwner.cleanupSync();
-        else {
-          const closeErrors: unknown[] = [];
-          try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
-          try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
-          if (closeErrors.length === 1) throw closeErrors[0];
-          if (closeErrors.length > 1) {
-            throw new AggregateError(closeErrors, "temp file admission descriptor close failed");
-          }
-        }
-      } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], "temp file creation and cleanup both failed");
-      }
-      throw error;
+      return throwTempWorkspaceCreationFailure(error, retainedChild, capability, cleanupOwner, "temp file");
     }
     const owner = cleanupOwner!;
     const file = (fileName?: string) => {

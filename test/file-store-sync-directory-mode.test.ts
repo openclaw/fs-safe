@@ -2,10 +2,8 @@ import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  assertSyncDirectoryGuard,
-  ensureParentSync,
-} from "../src/file-store-boundary.js";
+import { ensureParentSync } from "../src/file-store-boundary.js";
+import { assertSyncStoreDirectoryReceipt } from "../src/file-store-sync-directory.js";
 import { fileStoreSync } from "../src/file-store.js";
 import * as canonicalPath from "../src/realpath.js";
 import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
@@ -318,7 +316,7 @@ describe("sync file-store directory mode authority", () => {
     expect(typeof original).toBe("bigint");
     projected.set(nested, original + 2n);
     expect(Number(original + 2n)).toBe(Number(original));
-    expect(() => assertSyncDirectoryGuard(guard)).toThrow(
+    expect(() => assertSyncStoreDirectoryReceipt(guard)).toThrow(
       expect.objectContaining({ code: "path-mismatch" }),
     );
   });

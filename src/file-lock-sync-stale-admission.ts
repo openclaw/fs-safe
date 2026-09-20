@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
-import { defaultSyncShouldReclaim, syncLockTimeout } from "./file-lock-sync-admission.js";
+import { defaultSyncShouldReclaim } from "./file-lock-sync-admission.js";
+import { sidecarLockTimeout } from "./sidecar-lock-policy.js";
 import {
   parseSidecarLockSnapshot,
   readSidecarLockRawSnapshotSync,
@@ -35,7 +36,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
   const holderChanged = {};
   const assertUnheld = () => {
     if (!params.hasToken()) {
-      throw syncLockTimeout(params.lockPath, params.normalizedTargetPath);
+      throw sidecarLockTimeout(params.lockPath, params.normalizedTargetPath);
     }
     if (params.currentHeld()) throw holderChanged;
   };

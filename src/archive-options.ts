@@ -1,5 +1,6 @@
 import type { ArchiveKind } from "./archive-kind.js";
-import type { ArchiveExtractLimits } from "./archive-limits.js";
+import type { ExtractionDeadline } from "./archive-deadline.js";
+import type { ArchiveExtractLimits, ResolvedArchiveExtractLimits } from "./archive-limits.js";
 import type {
   ArchiveEntryFilter,
   ArchiveEntryModePolicy,
@@ -27,4 +28,12 @@ export type ExtractArchiveOptions = {
   entryUmask?: number;
   entryFilter?: ArchiveEntryFilter;
   onFiltered?: ArchiveFilteredEntryPolicy;
+};
+
+/** Private executors receive owned options and an already-staged archive path. */
+export type StagedArchiveExtractOptions = Pick<ExtractArchiveOptions,
+  "archivePath" | "destDir" | "durable" | "stripComponents" | "entryModes" |
+  "entryUmask" | "entryFilter" | "onFiltered"> & {
+  limits: ResolvedArchiveExtractLimits;
+  deadline: ExtractionDeadline;
 };

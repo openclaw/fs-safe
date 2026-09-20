@@ -31,7 +31,7 @@ import {
   checkedMutationDirectory,
   type MutationDirectoryObservation,
 } from "./pinned-mutation-observation.js";
-import { createPathSegmentRoute, joinPathSegmentRoute, type PathSegmentRoute } from "./path-segment-route.js";
+import { createPathSegmentRoute, joinPathSegmentRoute } from "./path-segment-route.js";
 
 type PosixParentAdmission = {
   parentFd: number;
@@ -41,19 +41,6 @@ type PosixParentAdmission = {
   observation: MutationDirectoryObservation;
   policyDirectory?: PolicyStagedDirectory;
 };
-
-function relativeParentSegments(relativeParentPath: string): string[] {
-  return relativeParentPath.split("/").filter(Boolean);
-}
-
-function prospectiveTargetPath(
-  parentPath: string,
-  parentRoute: PathSegmentRoute,
-  offset: number,
-  basename: string,
-): string {
-  return joinPathSegmentRoute(parentPath, parentRoute, offset, basename);
-}
 
 function sameAbsolutePath(left: string, right: string): boolean {
   return path.relative(path.resolve(left), path.resolve(right)) === "";
@@ -183,12 +170,12 @@ async function capturePolicyAwarePosixParent(
     if (dispose) observationDisposers.set(fd, dispose);
     return captured;
   };
-  const segments = relativeParentSegments(params.relativeParentPath);
+  const segments = params.relativeParentPath.split("/").filter(Boolean);
   const parentSpelling = segments.length
     ? path.join(params.rootPath, ...segments)
     : params.rootPath;
   const segmentRoute = createPathSegmentRoute(segments);
-  const initialTarget = prospectiveTargetPath(
+  const initialTarget = joinPathSegmentRoute(
     params.rootPath,
     segmentRoute,
     0,
@@ -274,7 +261,7 @@ async function capturePolicyAwarePosixParent(
         if (!isNotFoundPathError(openError)) {
           throw normalizePolicyParentOpenError(openError, params);
         }
-        const targetPath = retainedTargetPath ?? prospectiveTargetPath(
+        const targetPath = retainedTargetPath ?? joinPathSegmentRoute(
           currentPath, segmentRoute, index, params.basename,
         );
         const request = Object.freeze({
@@ -336,7 +323,7 @@ async function capturePolicyAwarePosixParent(
             childAuthorization = params.mutationAdmission.advanceCreatedDirectory(evidence);
           }
         }
-        const targetPath = retainedTargetPath ?? prospectiveTargetPath(
+        const targetPath = retainedTargetPath ?? joinPathSegmentRoute(
           child.parentPath, segmentRoute, index + 1, params.basename,
         );
         const request = Object.freeze({

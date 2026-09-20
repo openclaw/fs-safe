@@ -29,11 +29,3 @@ export type SidecarLockAcquisitionContext = {
   assertRetainOnExitSupported(retainOnExit: boolean | undefined): void;
   handleForHeldLock(normalizedTargetPath: string, held: HeldSidecarLock): SidecarLockHandle;
 };
-
-export function sidecarLockTimeout(lockPath: string, normalizedTargetPath: string): Error {
-  return Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-    code: "file_lock_timeout",
-    lockPath,
-    normalizedTargetPath,
-  });
-}

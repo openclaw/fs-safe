@@ -12,6 +12,7 @@ use napi_derive::napi;
 use zip::HasZipMetadata;
 
 use crate::tar_meter::{TarMetadataMeter, TarMeterLimits, MAX_SAFE_INTEGER, MAX_MANIFEST_BYTES};
+use crate::task::{cancellation, checked_max_bytes};
 use crate::{
     NativeResult, native_error, platform, validate_portable_relative_path,
     validate_windows_filesystem_path,
@@ -420,13 +421,6 @@ fn check_cancelled(cancelled: &AtomicBool) -> Result<()> {
     }
 }
 
-fn cancellation(signal: &AbortSignal) -> Arc<AtomicBool> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let callback = Arc::clone(&cancelled);
-    signal.on_abort(move || callback.store(true, Ordering::Relaxed));
-    cancelled
-}
-
 pub struct InspectTask {
     path: String,
     format: ArchiveFormat,
@@ -475,7 +469,7 @@ pub fn inspect_archive_native(
     };
     validate_windows_filesystem_path(&path)
         .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
-    let cancelled = cancellation(&signal);
+    let cancelled = cancellation(Some(&signal));
     Ok(AsyncTask::with_signal(
         InspectTask {
             path,
@@ -671,7 +665,7 @@ pub fn extract_archive_native(
 ) -> Result<AsyncTask<ExtractTask>> {
     let format =
         parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
-    let cancelled = cancellation(&signal);
+    let cancelled = cancellation(Some(&signal));
     let limits = limits.checked()?;
     validate_windows_filesystem_path(&path)
         .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
@@ -790,13 +784,10 @@ impl NativeZipBufferReader {
 
     #[napi]
     pub fn read_entry(&self, index: u32, max_bytes: f64, signal: Option<AbortSignal>) -> Result<AsyncTask<ReadZipBufferTask>> {
-        if !max_bytes.is_finite() || !(0.0..=MAX_SAFE_INTEGER as f64).contains(&max_bytes)
-            || max_bytes.fract() != 0.0 {
-            return Err(Error::new(Status::InvalidArg, "maxBytes must be a non-negative safe integer"));
-        }
-        let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let max_bytes = checked_max_bytes(Some(max_bytes))?;
+        let cancelled = cancellation(signal.as_ref());
         Ok(AsyncTask::with_optional_signal(ReadZipBufferTask {
-            archive: Arc::clone(&self.archive), index: index as usize, max_bytes: max_bytes as u64,
+            archive: Arc::clone(&self.archive), index: index as usize, max_bytes,
             cancelled,
         }, signal))
     }
@@ -839,7 +830,7 @@ impl Task for OpenZipBufferTask {
 #[napi(js_name = "openZipBufferNative")]
 pub fn open_zip_buffer_native(buffer: Buffer, limits: NativeTarLimits, signal: Option<AbortSignal>) -> Result<AsyncTask<OpenZipBufferTask>> {
     let limits = limits.checked()?;
-    let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let cancelled = cancellation(signal.as_ref());
     Ok(AsyncTask::with_optional_signal(OpenZipBufferTask { buffer: Some(buffer), max_entries: limits.max_entries, cancelled }, signal))
 }
 
@@ -901,13 +892,10 @@ impl NativeTarBufferReader {
 
     #[napi]
     pub fn read_entry(&self, index: u32, max_bytes: f64, signal: Option<AbortSignal>) -> Result<AsyncTask<ReadTarBufferTask>> {
-        if !max_bytes.is_finite() || !(0.0..=MAX_SAFE_INTEGER as f64).contains(&max_bytes)
-            || max_bytes.fract() != 0.0 {
-            return Err(Error::new(Status::InvalidArg, "maxBytes must be a non-negative safe integer"));
-        }
-        let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        let max_bytes = checked_max_bytes(Some(max_bytes))?;
+        let cancelled = cancellation(signal.as_ref());
         Ok(AsyncTask::with_optional_signal(ReadTarBufferTask {
-            data: Arc::clone(&self.data), index: index as usize, max_bytes: max_bytes as u64, cancelled,
+            data: Arc::clone(&self.data), index: index as usize, max_bytes, cancelled,
         }, signal))
     }
 }
@@ -945,7 +933,7 @@ pub fn open_tar_buffer_native(buffer: Buffer, kind: String, limits: NativeTarLim
         return Err(Error::new(Status::InvalidArg, "zip is not a tar stream"));
     }
     let limits = limits.checked()?;
-    let cancelled = signal.as_ref().map(cancellation).unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let cancelled = cancellation(signal.as_ref());
     Ok(AsyncTask::with_optional_signal(OpenTarBufferTask { buffer: Some(buffer), format, limits, cancelled }, signal))
 }
 
@@ -1053,7 +1041,7 @@ pub fn read_archive_entry_native(
     }
     let format =
         parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
-    let cancelled = cancellation(&signal);
+    let cancelled = cancellation(Some(&signal));
     let limits = limits.checked()?;
     validate_windows_filesystem_path(&path)
         .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;

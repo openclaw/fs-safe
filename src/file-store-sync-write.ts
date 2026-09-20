@@ -5,26 +5,17 @@ import { syncDirectorySync } from "./directory-durability.js";
 import { createDirectoryReceiptFromIdentity } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
 import {
-  assertSyncDirectoryGuard,
   ensureParentSync,
   ensureStoreDirectorySync,
   type SyncParentGuard,
 } from "./file-store-boundary.js";
+import { assertSyncStoreDirectoryReceipt } from "./file-store-sync-directory.js";
 import { isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { writeTempFileSync } from "./replace-file-descriptor.js";
 import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-
-function ensurePrivateDirectorySync(rootDir: string, targetDir: string, mode: number): SyncParentGuard {
-  return ensureStoreDirectorySync({
-    rootDir,
-    targetDir,
-    mode,
-    messagePrefix: "private store",
-  });
-}
 
 function verifyStoreFile(fd: number, expected: BigIntStats, filePath: string): void {
   const assertFile = (stat: BigIntStats, allowUnknown = false): boolean => {
@@ -68,9 +59,14 @@ export function writeFileSyncAtomic(params: {
   if (!isPathInside(params.rootDir, filePath)) {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
   }
-  let parentGuard: SyncParentGuard | undefined;
+  let parentGuard: SyncParentGuard;
   if (params.privateMode) {
-    parentGuard = ensurePrivateDirectorySync(params.rootDir, path.dirname(filePath), params.dirMode);
+    parentGuard = ensureStoreDirectorySync({
+      rootDir: params.rootDir,
+      targetDir: path.dirname(filePath),
+      mode: params.dirMode,
+      messagePrefix: "private store",
+    });
     try {
       const stat = fs.lstatSync(filePath);
       if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -89,16 +85,14 @@ export function writeFileSyncAtomic(params: {
     });
   }
   const tempPath = path.join(
-    parentGuard?.dir ?? path.dirname(filePath),
+    parentGuard.dir,
     `.fs-safe-${process.pid}-${randomUUID()}.tmp`,
   );
   const owner = new SyncAtomicTempOwner(tempPath);
   let originalFailure: AtomicTempFailure | undefined;
   try {
     getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-    }
+    assertSyncStoreDirectoryReceipt(parentGuard);
     owner.start();
     const temp = writeTempFileSync({
       fsModule: fs, tempPath, content: params.content, mode: params.mode, sync: false,
@@ -115,14 +109,10 @@ export function writeFileSyncAtomic(params: {
     // Preserve the store's strict fsync errors; the generic temp helper tolerates EPERM.
     if (params.durable) fs.fsyncSync(temp.fd);
     verifyStoreFile(temp.fd, owner.identity, tempPath);
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-    }
+    assertSyncStoreDirectoryReceipt(parentGuard);
     fs.renameSync(tempPath, filePath);
     owner.markRenamed();
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-    }
+    assertSyncStoreDirectoryReceipt(parentGuard);
     try {
       verifyStoreFile(temp.fd, owner.identity, filePath);
     } catch (error) {
@@ -133,17 +123,15 @@ export function writeFileSyncAtomic(params: {
         cause: error instanceof Error ? error : undefined,
       });
     }
-    if (parentGuard) {
-      assertSyncDirectoryGuard(parentGuard);
-      if (params.durable) {
-        syncDirectorySync(createDirectoryReceiptFromIdentity(
-          parentGuard.dir,
-          parentGuard.realPath,
-          parentGuard.exactStat,
-        ), { label: "store parent" });
-      }
-      assertSyncDirectoryGuard(parentGuard);
+    assertSyncStoreDirectoryReceipt(parentGuard);
+    if (params.durable) {
+      syncDirectorySync(createDirectoryReceiptFromIdentity(
+        parentGuard.dir,
+        parentGuard.realPath,
+        parentGuard.exactStat,
+      ), { label: "store parent" });
     }
+    assertSyncStoreDirectoryReceipt(parentGuard);
     return filePath;
   } catch (error) {
     originalFailure = { error };

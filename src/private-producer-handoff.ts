@@ -16,13 +16,6 @@ export type PrivateProducerHandoff = {
   unregister: TempPathRegistration;
 };
 
-type HandoffState = {
-  siblingOwned: boolean;
-  publication: "not-published" | "published" | "indeterminate";
-  cleanup: "preserved" | "removed" | "failed";
-  closeFailed: boolean;
-};
-
 type HandoffParents = {
   assertSourceParent: () => void;
   assertTargetParent: () => void;
@@ -98,7 +91,7 @@ export function normalizeLinkError(error: unknown): unknown {
 function removeSiblingIfOwned(params: {
   assertTargetParent: () => void;
   identity: BigIntStats;
-  state: HandoffState;
+  state: FileHandoff;
   targetPath: string;
 }): void {
   if (!params.state.siblingOwned) return;
@@ -241,24 +234,70 @@ async function openProducerSource(
   return fallback;
 }
 
-function inspectHandoff(
-  params: HandoffPaths,
-  handle: FileHandle,
-  identity: BigIntStats,
-  state: HandoffState,
-  links: bigint,
-): { opened: BigIntStats; named?: BigIntStats } {
-  assertParents(params);
-  const opened = inspectSourceDescriptor(handle, identity, links);
-  if (state.cleanup !== "removed") {
-    inspectLinkedFile(
-      () => fsSync.lstatSync(params.sourcePath, { bigint: true }), identity, links, "isolated producer path",
+export class FileHandoff {
+  siblingOwned = false;
+  publication: "not-published" | "published" | "indeterminate" = "not-published";
+  cleanup: "preserved" | "removed" | "failed" = "preserved";
+  closeFailed = false;
+
+  constructor(
+    private readonly paths: HandoffPaths,
+    private readonly identity: BigIntStats,
+    private readonly createdLabels = false,
+  ) {}
+
+  inspect(owner: { readonly fd: number }, links: bigint): { opened: BigIntStats; named?: BigIntStats } {
+    assertParents(this.paths);
+    const opened = inspectLinkedFile(() => fsSync.fstatSync(owner.fd, { bigint: true }), this.identity, links,
+      this.createdLabels ? "created file descriptor" : "isolated producer descriptor");
+    if (this.cleanup !== "removed") {
+      inspectLinkedFile(() => fsSync.lstatSync(this.paths.sourcePath, { bigint: true }), this.identity, links,
+        this.createdLabels ? "created file stage" : "isolated producer path");
+    }
+    const named = this.publication === "published"
+      ? inspectLinkedFile(() => fsSync.lstatSync(this.paths.targetPath, { bigint: true }), this.identity, links,
+        this.createdLabels ? "created file destination" : "isolated producer sibling")
+      : undefined;
+    return { opened, named };
+  }
+
+  publish(): void {
+    this.publication = "indeterminate";
+    try {
+      fsSync.linkSync(this.paths.sourcePath, this.paths.targetPath);
+    } catch (error) {
+      const normalized = normalizeLinkError(error);
+      if (normalized instanceof FsSafeError &&
+        (normalized.code === "already-exists" || normalized.code === "helper-unavailable")) {
+        this.publication = "not-published";
+      }
+      throw normalized;
+    }
+    this.publication = "published";
+  }
+
+  retireSource(): void {
+    this.cleanup = "failed";
+    fsSync.unlinkSync(this.paths.sourcePath);
+    this.cleanup = "removed";
+  }
+
+  failure(failures: readonly unknown[], aggregateMessage: string): FsSafeError {
+    const primary = failures[0];
+    // Collision-as-no-op callers must still observe a failed settlement.
+    return new FsSafeError(
+      this.closeFailed || failures.length > 1 ? "helper-failed" : primary instanceof FsSafeError ? primary.code : "helper-failed",
+      "created file publication failed",
+      {
+        cause: failures.length === 1 ? primary : new AggregateError(failures, aggregateMessage),
+        details: {
+          publication: { status: this.publication }, cleanup: this.cleanup,
+          resources: this.closeFailed ? "close-failed" : "closed",
+          path: this.paths.targetPath, dev: this.identity.dev, ino: this.identity.ino,
+        },
+      },
     );
   }
-  const named = state.publication === "published" ? inspectLinkedFile(
-    () => fsSync.lstatSync(params.targetPath, { bigint: true }), identity, links, "isolated producer sibling",
-  ) : undefined;
-  return { opened, named };
 }
 
 function handoffFile(params: CreatedHandoffParams): Promise<FileHandle>;
@@ -275,9 +314,7 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
   const owners = new Set<FileHandle>(handle ? [handle] : []);
   const failures: unknown[] = [];
   let unregister: TempPathRegistration | undefined;
-  const state: HandoffState = {
-    siblingOwned: false, publication: "not-published", cleanup: "preserved", closeFailed: false,
-  };
+  const state = new FileHandoff(params, identity);
 
   async function close(owned: FileHandle): Promise<void> {
     // Final creation consumes its pin before close can release and recycle it.
@@ -298,7 +335,7 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
       handle = await openProducerSource({ ...params, readWrite: "readWrite" in params && params.readWrite }, identity);
       owners.add(handle);
     }
-    inspectHandoff(params, handle, identity, state, 1n);
+    state.inspect(handle, 1n);
     if (created?.verifyDescriptor) await created.verifyDescriptor(handle.fd, params.sourcePath, 1);
     if (!created) {
       unregister = registerTempPathForExit(params.targetPath, {
@@ -309,19 +346,8 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
     }
 
     assertSynchronousCallbackResult(created?.assertBeforeMutation?.(), "assertBeforeMutation");
-    inspectHandoff(params, handle, identity, state, 1n);
-    state.publication = "indeterminate";
-    try {
-      fsSync.linkSync(params.sourcePath, params.targetPath);
-    } catch (error) {
-      const normalized = normalizeLinkError(error);
-      if (normalized instanceof FsSafeError &&
-        (normalized.code === "already-exists" || normalized.code === "helper-unavailable")) {
-        state.publication = "not-published";
-      }
-      throw normalized;
-    }
-    state.publication = "published";
+    state.inspect(handle, 1n);
+    state.publish();
     state.siblingOwned = !created;
     try {
       assertSynchronousCallbackResult(created?.onPublished?.(), "onPublished");
@@ -329,7 +355,7 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
       failures.push(error);
     }
 
-    inspectHandoff(params, handle, identity, state, 2n);
+    state.inspect(handle, 2n);
     if (process.platform === "win32") {
       // Legacy Windows unlink retains a delete-pending name until handles
       // opened through that name close. Transfer the pin before retiring it.
@@ -338,26 +364,24 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
         : await openProducerSource({ ...params, sourcePath: params.targetPath,
           readWrite: "readWrite" in params && params.readWrite }, identity, 2n);
       owners.add(sibling);
-      inspectHandoff(params, sibling, identity, state, 2n);
+      state.inspect(sibling, 2n);
       if (created?.verifyDescriptor) await created.verifyDescriptor(sibling.fd, params.targetPath, 2);
-      inspectHandoff(params, sibling, identity, state, 2n);
+      state.inspect(sibling, 2n);
       inspectSourceDescriptor(handle, identity, 2n);
       await close(handle);
       handle = sibling;
       // The old handle's close yielded; both names must still be ours.
-      inspectHandoff(params, handle, identity, state, 2n);
+      state.inspect(handle, 2n);
     }
 
     if (created?.verifyDescriptor) await created.verifyDescriptor(
       handle.fd, process.platform === "win32" ? params.targetPath : params.sourcePath, 2,
     );
     assertSynchronousCallbackResult(created?.assertBeforeMutation?.(), "assertBeforeMutation");
-    inspectHandoff(params, handle, identity, state, 2n);
-    state.cleanup = "failed";
-    fsSync.unlinkSync(params.sourcePath);
-    state.cleanup = "removed";
+    state.inspect(handle, 2n);
+    state.retireSource();
     if (created?.verifyDescriptor) await created.verifyDescriptor(handle.fd, params.targetPath, 1);
-    const { opened, named } = inspectHandoff(params, handle, identity, state, 1n);
+    const { opened, named } = state.inspect(handle, 1n);
     const originalMode = identity.mode & 0o777n;
     if (!created && process.platform === "win32" && (originalMode & 0o200n) === 0n &&
       ((opened.mode & 0o777n) !== originalMode || (named!.mode & 0o777n) !== originalMode)) {
@@ -365,7 +389,7 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
       // admitted sibling inode, without reopening or chmodding its pathname.
       assertParents(params);
       fsSync.fchmodSync(handle.fd, Number(originalMode));
-      const restored = inspectHandoff(params, handle, identity, state, 1n);
+      const restored = state.inspect(handle, 1n);
       if ((restored.opened.mode & 0o777n) !== originalMode || (restored.named!.mode & 0o777n) !== originalMode) {
         throw pathMismatch("isolated producer read-only mode could not be restored");
       }
@@ -397,21 +421,8 @@ async function handoffFile(params: CreatedHandoffParams | ProducerHandoffParams)
     try { await close(owned); }
     catch (error) { failures.push(error); }
   }
-  const primary = failures[0];
-  const cause = combinedFailure(primary, failures.slice(1));
-  if (!created) throw cause;
-  throw new FsSafeError(
-    state.closeFailed || failures.length > 1 ? "helper-failed" : primary instanceof FsSafeError ? primary.code : "helper-failed",
-    "created file publication failed",
-    {
-      cause,
-      details: {
-        publication: { status: state.publication }, cleanup: state.cleanup,
-        resources: state.closeFailed ? "close-failed" : "closed",
-        path: params.targetPath, dev: identity.dev, ino: identity.ino,
-      },
-    },
-  );
+  if (!created) throw combinedFailure(failures[0], failures.slice(1));
+  throw state.failure(failures, "isolated producer handoff and settlement failed");
 }
 
 export function handoffPrivateProducerFile(params: ProducerHandoffParams): Promise<PrivateProducerHandoff> {

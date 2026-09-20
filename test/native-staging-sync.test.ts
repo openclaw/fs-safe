@@ -36,7 +36,8 @@ describe.runIf(nativeAvailable)("native staged publication durability", () => {
     });
     const chmod = vi.spyOn(fsSync, "fchmodSync");
     await using staged = await createNativeStage(
-      binding, parent.fd, fsSync.closeSync, parent.receipt, { kind: "buffer", data: "payload" }, mode,
+      { binding, parentFd: parent.fd, closeParentFd: fsSync.closeSync, directory: parent.receipt, mode },
+      { kind: "buffer", data: "payload" },
     );
     expect(events).toEqual(["file"]);
     chmod.mockClear();
@@ -57,7 +58,8 @@ describe.runIf(nativeAvailable)("native staged publication durability", () => {
       assertNativeStaging(binding);
       const parent = openStagedDirectory(directory);
       await using staged = await createNativeStage(
-        binding, parent.fd, fsSync.closeSync, parent.receipt, { kind: "buffer", data: "payload" }, mode,
+        { binding, parentFd: parent.fd, closeParentFd: fsSync.closeSync, directory: parent.receipt, mode },
+        { kind: "buffer", data: "payload" },
       );
       await fs.chmod(path.join(directory, staged.receipt.temporaryBasename), changedMode);
       const sync = vi.spyOn(fsSync, "fsyncSync");

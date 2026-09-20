@@ -102,7 +102,7 @@ import {
   type HardlinkPolicy, type RootAppendOptions, type RootCopyOptions, type RootCopySource,
   type RootCreateJsonOptions, type RootCreateOptions, type RootCreateStreamOptions, type RootDefaults,
   type RootMkdirOptions, type RootMoveOptions, type RootOpenOptions,
-  type RootOpenWritableOptions, type RootReadOptions, type RootRemoveOptions,
+  type RootOpenWritableOptions, type RootReadOptions, type RootReadParams, type RootRemoveOptions,
   type RootWriteJsonOptions, type RootWriteOptions,
 } from "./root-options.js";
 import { composeMutationAssertions, MutationAuthorityError, rethrowMutationAuthorityError } from "./mutation-authority.js";
@@ -370,9 +370,11 @@ export class RootHandle implements Root {
     filePath: string,
     options: RootReadOptions = {},
   ): Promise<ReadResult> {
-    return await readPathInRoot(this.context, {
-      filePath,
-      ...mergeReadOptions(this.defaults, options),
+    const context = this.context;
+    const readOptions = mergeReadOptions(this.defaults, options);
+    return await readFileInRoot(context, {
+      relativePath: rootRelativeReadPath(context, filePath),
+      ...readOptions,
     });
   }
 
@@ -649,12 +651,7 @@ async function openFileInRoot(
 
 async function readFileInRoot(
   root: RootContext,
-  params: {
-    relativePath: string;
-    hardlinks?: HardlinkPolicy;
-    symlinks?: SymlinkPolicy;
-    maxBytes?: number;
-  },
+  params: RootReadParams & { relativePath: string },
 ): Promise<ReadResult> {
   const opened = await openFileInRoot(root, params);
   try {
@@ -662,24 +659,6 @@ async function readFileInRoot(
   } finally {
     await opened.handle.close().catch(() => {});
   }
-}
-
-async function readPathInRoot(
-  root: RootContext,
-  params: {
-    filePath: string;
-    hardlinks?: HardlinkPolicy;
-    maxBytes?: number;
-    symlinks?: SymlinkPolicy;
-  },
-): Promise<ReadResult> {
-  const relativePath = rootRelativeReadPath(root, params.filePath);
-  return await readFileInRoot(root, {
-    relativePath,
-    hardlinks: params.hardlinks,
-    maxBytes: params.maxBytes,
-    symlinks: params.symlinks,
-  });
 }
 
 export async function readLocalFileSafely(params: {
@@ -702,13 +681,8 @@ export async function openLocalFileSafely(params: { filePath: string }): Promise
   return (await openVerifiedLocalFile(filePath)).opened;
 }
 
-export type WritableOpenResult = {
-  handle: FileHandle;
-  containment: ContainmentGuarantee;
+export type WritableOpenResult = OpenResult & {
   createdForWrite: boolean;
-  realPath: string;
-  stat: Stats;
-  [Symbol.asyncDispose](): Promise<void>;
 };
 
 function emitWriteBoundaryWarning(reason: string) {
@@ -1275,32 +1249,9 @@ async function resolvePinnedPathInRoot(
     removalReceipts?: RemovalPathReceipts;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
-  return await resolvePinnedOperationPathInRoot(root, {
-    allowRoot: params.allowRoot,
-    denyMutations: params.denyMutations,
-    mutationSymlinks: params.mutationSymlinks,
-    protectDenyMutationAncestors: params.remove === true,
-    relativePath: params.relativePath,
-    policy: params.remove ? PATH_ALIAS_POLICIES.unlinkTarget : PATH_ALIAS_POLICIES.strict,
-    removalReceipts: params.removalReceipts,
-  });
-}
-
-async function resolvePinnedOperationPathInRoot(
-  root: RootContext,
-  params: {
-    relativePath: string;
-    policy: (typeof PATH_ALIAS_POLICIES)[keyof typeof PATH_ALIAS_POLICIES];
-    allowRoot?: boolean;
-    denyMutations?: DenyMutationPolicy;
-    mutationSymlinks?: MutationSymlinkPolicy;
-    protectDenyMutationAncestors: boolean;
-    removalReceipts?: RemovalPathReceipts;
-  },
-): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   const resolved = await resolvePinnedRootPathInRoot(root, {
     relativePath: params.relativePath,
-    policy: params.policy,
+    policy: params.remove ? PATH_ALIAS_POLICIES.unlinkTarget : PATH_ALIAS_POLICIES.strict,
     mutationSymlinks: params.mutationSymlinks,
     removalReceipts: params.removalReceipts,
   });
@@ -1329,7 +1280,7 @@ async function resolvePinnedOperationPathInRoot(
   }
   resolved.canonicalPath = admittedCanonicalPath.path;
   await assertMutationNotDenied(resolved.canonicalPath, params.denyMutations, {
-    protectAncestors: params.protectDenyMutationAncestors,
+    protectAncestors: params.remove === true,
   });
 
   return { rootReal: resolved.rootReal, resolved: resolved.canonicalPath, relativePosix };

@@ -1,7 +1,7 @@
 import type { BigIntStats } from "node:fs";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { getNativeBinding } from "./native.js";
+import { getNativeBinding, type NativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import { warnNativeFallback } from "./native-fallback-warning.js";
 import {
@@ -64,25 +64,27 @@ function commandFallback(): void {
   warnNativeFallback("windows-private-creation", "Private Windows creation uses a slower built-in system command.");
 }
 
+function creationOperation<K extends "inspectWindowsDirectory" | "protectPrivateWindowsFile" | "verifyPrivateWindowsFile">(
+  name: K,
+): NonNullable<NativeBinding[K]> | undefined {
+  const native = getNativeBinding();
+  const operation = native?.[name];
+  if (typeof operation === "function") return operation.bind(native) as NonNullable<NativeBinding[K]>;
+  commandFallback();
+  return undefined;
+}
+
 /** Full Windows identity, with security validation when requested; no repairs. */
 export function inspectCreationDirectorySync(targetPath: string, privatePath: boolean): string {
   assertNoWindowsPathAlias(targetPath, "filesystem");
-  const native = getNativeBinding();
-  if (typeof native?.inspectWindowsDirectory === "function") {
-    return native.inspectWindowsDirectory(targetPath, privatePath).identity;
-  }
-  commandFallback();
-  return inspectWindowsDirectoryCommandSync(targetPath, privatePath).identity;
+  const inspect = creationOperation("inspectWindowsDirectory");
+  return (inspect ? inspect(targetPath, privatePath) : inspectWindowsDirectoryCommandSync(targetPath, privatePath)).identity;
 }
 
 export async function inspectCreationDirectory(targetPath: string, privatePath: boolean): Promise<string> {
   assertNoWindowsPathAlias(targetPath, "filesystem");
-  const native = getNativeBinding();
-  if (typeof native?.inspectWindowsDirectory === "function") {
-    return native.inspectWindowsDirectory(targetPath, privatePath).identity;
-  }
-  commandFallback();
-  return (await inspectWindowsDirectoryCommand(targetPath, privatePath)).identity;
+  const inspect = creationOperation("inspectWindowsDirectory");
+  return (inspect ? inspect(targetPath, privatePath) : await inspectWindowsDirectoryCommand(targetPath, privatePath)).identity;
 }
 
 export function assertPrivateDirectorySync(targetPath: string): void {
@@ -106,43 +108,29 @@ export async function assertPrivateDirectory(targetPath: string): Promise<void> 
 }
 
 export function protectCreatedFileSync(fd: number, targetPath: string, parentIdentity: string): string {
-  const native = getNativeBinding();
-  if (typeof native?.protectPrivateWindowsFile === "function") {
-    return native.protectPrivateWindowsFile(fd, targetPath, parentIdentity).identity;
-  }
-  commandFallback();
-  return protectPrivateWindowsFileCommandSync(fd, targetPath, parentIdentity).identity;
+  const protect = creationOperation("protectPrivateWindowsFile");
+  return (protect ? protect(fd, targetPath, parentIdentity)
+    : protectPrivateWindowsFileCommandSync(fd, targetPath, parentIdentity)).identity;
 }
 
 export async function protectCreatedFile(fd: number, targetPath: string, parentIdentity: string): Promise<string> {
-  const native = getNativeBinding();
-  if (typeof native?.protectPrivateWindowsFile === "function") {
-    return native.protectPrivateWindowsFile(fd, targetPath, parentIdentity).identity;
-  }
-  commandFallback();
-  return (await protectPrivateWindowsFileCommand(fd, targetPath, parentIdentity)).identity;
+  const protect = creationOperation("protectPrivateWindowsFile");
+  return (protect ? protect(fd, targetPath, parentIdentity)
+    : await protectPrivateWindowsFileCommand(fd, targetPath, parentIdentity)).identity;
 }
 
 export function verifyCreatedFileSync(
   fd: number, targetPath: string, identity: string, parentIdentity: string, links = 1,
 ): void {
-  const native = getNativeBinding();
-  if (typeof native?.verifyPrivateWindowsFile === "function") {
-    native.verifyPrivateWindowsFile(fd, targetPath, identity, parentIdentity, links);
-    return;
-  }
-  commandFallback();
-  verifyPrivateWindowsFileCommandSync(fd, targetPath, identity, parentIdentity, links);
+  const verify = creationOperation("verifyPrivateWindowsFile");
+  if (verify) verify(fd, targetPath, identity, parentIdentity, links);
+  else verifyPrivateWindowsFileCommandSync(fd, targetPath, identity, parentIdentity, links);
 }
 
 export async function verifyCreatedFile(
   fd: number, targetPath: string, identity: string, parentIdentity: string, links = 1,
 ): Promise<void> {
-  const native = getNativeBinding();
-  if (typeof native?.verifyPrivateWindowsFile === "function") {
-    native.verifyPrivateWindowsFile(fd, targetPath, identity, parentIdentity, links);
-    return;
-  }
-  commandFallback();
-  await verifyPrivateWindowsFileCommand(fd, targetPath, identity, parentIdentity, links);
+  const verify = creationOperation("verifyPrivateWindowsFile");
+  if (verify) verify(fd, targetPath, identity, parentIdentity, links);
+  else await verifyPrivateWindowsFileCommand(fd, targetPath, identity, parentIdentity, links);
 }

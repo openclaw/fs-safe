@@ -41,7 +41,8 @@ it.each([false, true])("retains Node parent ownership when stage construction fa
     if (failClose) throw closeFailure;
   });
   const error = await createNativeStage(
-    stale, parent.fd, closeParent, parent.receipt, { kind: "buffer", data: "uncreated" }, 0o600,
+    { binding: stale, parentFd: parent.fd, closeParentFd: closeParent, directory: parent.receipt, mode: 0o600 },
+    { kind: "buffer", data: "uncreated" },
   ).catch((error: unknown) => error);
   if (failClose) {
     expect(error).toBeInstanceOf(AggregateError);

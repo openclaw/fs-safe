@@ -1,5 +1,6 @@
 import type { Stats } from "node:fs";
 import fsSync from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertDirectoryIdentitySync,
@@ -322,5 +323,70 @@ describe("directory guard Windows pathname admission", () => {
     await expect(assertAsyncDirectoryGuard({ ...guard, stat: expectedStat }))
       .rejects.toMatchObject({ code: "path-mismatch" });
     expect(canonicalize).not.toHaveBeenCalled();
+  });
+
+  it("preserves synchronous canonicalization errors before numeric identity mismatch", async () => {
+    const directory = await tempRoot("fs-safe-directory-guard-sync-mismatch-");
+    const guard = createSyncDirectoryGuard(directory);
+    const expectedStat = Object.assign(Object.create(guard.stat), { dev: 1, ino: 1 }) as Stats;
+    const observedStat = Object.assign(Object.create(guard.stat), { dev: 2, ino: 1 }) as Stats;
+    vi.spyOn(fsSync, "lstatSync").mockReturnValue(observedStat);
+    const failure = Object.assign(new Error("canonicalization denied"), { code: "EACCES" });
+    const canonicalize = vi.spyOn(realpath, "realpathSync").mockImplementation(() => { throw failure; });
+
+    expect(() => assertSyncDirectoryGuard({ ...guard, stat: expectedStat })).toThrow(failure);
+    expect(canonicalize).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["complete", "transient", "changed", "persistent"] as const)(
+    "retains the supplied bigint observation during capture: %s",
+    async scenario => {
+      const directory = await tempRoot("fs-safe-directory-guard-initial-");
+      const stable = fsSync.lstatSync(directory, { bigint: true });
+      simulateWindows();
+      const initial = scenario === "complete" ? stable : Object.assign(Object.create(stable), {
+        dev: 0n,
+        ino: scenario === "changed" ? stable.ino + 1n : stable.ino,
+      });
+      const lstat = vi.spyOn(fsSync, "lstatSync").mockReturnValue(
+        scenario === "persistent" ? initial : stable,
+      );
+      const pending = createAsyncDirectoryGuard(directory, { bigint: true, initial });
+
+      if (scenario === "complete" || scenario === "transient") {
+        expect((await pending).stat).toBe(stable);
+      } else {
+        await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
+      }
+      expect(lstat).toHaveBeenCalledTimes(scenario === "complete" ? 0 : 1);
+    },
+  );
+
+  it("captures the nearest existing directory through both wrapper contracts", async () => {
+    const directory = await tempRoot("fs-safe-directory-guard-ancestor-");
+    const parent = path.join(directory, "existing");
+    fsSync.mkdirSync(parent);
+    const missing = path.join(parent, "missing", "leaf");
+    const numeric = await createNearestExistingDirectoryGuard(directory, missing);
+    const exact = await createNearestExistingDirectoryGuard(directory, missing, { bigint: true });
+    const sync = createNearestExistingSyncDirectoryGuard(directory, missing);
+
+    expect([numeric.dir, exact.dir, sync.dir]).toEqual([parent, parent, parent]);
+    expect(typeof numeric.stat.ino).toBe("number");
+    expect(typeof exact.stat.ino).toBe("bigint");
+    expect(sync.realPath).toBe(realpath.realpathSync(parent));
+    expect(numeric.realPath).toBe(realpath.realpathSync.native(parent));
+    expect(exact.realPath).toBe(numeric.realPath);
+  });
+
+  it("does not walk past a nearest-directory operational failure", async () => {
+    const directory = await tempRoot("fs-safe-directory-guard-ancestor-error-");
+    const missing = path.join(directory, "missing");
+    const failure = Object.assign(new Error("inspection denied"), { code: "EACCES" });
+    const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(() => { throw failure; });
+
+    await expect(createNearestExistingDirectoryGuard(directory, missing)).rejects.toBe(failure);
+    expect(() => createNearestExistingSyncDirectoryGuard(directory, missing)).toThrow(failure);
+    expect(lstat).toHaveBeenCalledTimes(2);
   });
 });

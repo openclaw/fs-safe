@@ -11,7 +11,8 @@ import type {
 } from "../src/native-binding.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
-import { inspectSecureWindowsDescriptor } from "../src/secure-file-windows.js";
+import { inspectSecureWindowsFile } from "../src/secure-file-windows.js";
+import * as descriptorCommand from "../src/windows-security-command.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
@@ -78,10 +79,10 @@ describe("secure Windows descriptor ACL facts", () => {
     __resetNativeLoaderForTest();
   });
 
-  it("compares identities above 2^53 without converting through number", () => {
+  it("compares identities above 2^53 without converting through number", async () => {
     const expected = { dev: 0xffff_fffen, ino: 0x0020_0000_0000_0001n };
     const method = install(() => ({ identity: identity(expected.dev, expected.ino), security: security() }));
-    expect(inspectSecureWindowsDescriptor({ fd: 73, identity: expected, stat })).toMatchObject({
+    await expect(inspectSecureWindowsFile({ fd: 73, identity: expected, stat })).resolves.toMatchObject({
       source: "windows-acl",
       ownerTrusted: true,
     });
@@ -94,22 +95,22 @@ describe("secure Windows descriptor ACL facts", () => {
     "0x4e561b19:0020000000000001",
     " 4e561b19:0020000000000001",
     "4e561b19:+020000000000001",
-  ])("rejects noncanonical native identity %j", (nativeIdentity) => {
+  ])("rejects noncanonical native identity %j", async (nativeIdentity) => {
     install(() => ({ identity: nativeIdentity, security: security() }));
-    expect(() => inspectSecureWindowsDescriptor({
+    await expect(inspectSecureWindowsFile({
       fd: 1,
       identity: { dev: 0x4e56_1b19n, ino: 0x0020_0000_0000_0001n },
       stat,
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    })).rejects.toThrow(expect.objectContaining({ code: "path-mismatch" }));
   });
 
-  it("rejects a definite descriptor identity mismatch", () => {
+  it("rejects a definite descriptor identity mismatch", async () => {
     install(() => ({ identity: "4e561b19:0020000000000002", security: security() }));
-    expect(() => inspectSecureWindowsDescriptor({
+    await expect(inspectSecureWindowsFile({
       fd: 1,
       identity: { dev: 0x4e56_1b19n, ino: 0x0020_0000_0000_0001n },
       stat,
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    })).rejects.toThrow(expect.objectContaining({ code: "path-mismatch" }));
   });
 
   it.each([
@@ -119,14 +120,14 @@ describe("secure Windows descriptor ACL facts", () => {
     ["unsupported", { unsupportedAceTypes: [9] }],
     ["unknown owner class", { ownerClass: "trusted-ish" }],
     ["inconsistent owner class", { ownerClass: "system" }],
-  ] as const)("fails closed on %s security facts", (_name, overrides) => {
+  ] as const)("fails closed on %s security facts", async (_name, overrides) => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({ identity: identity(expected.dev, expected.ino), security: security(overrides) }));
-    expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }))
-      .toThrow(expect.objectContaining({ code: "permission-unverified" }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .rejects.toThrow(expect.objectContaining({ code: "permission-unverified" }));
   });
 
-  it("recomputes the conservative ACL summary instead of trusting booleans", () => {
+  it("recomputes the conservative ACL summary instead of trusting booleans", async () => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({
       identity: identity(expected.dev, expected.ino),
@@ -134,8 +135,8 @@ describe("secure Windows descriptor ACL facts", () => {
         aces: [{ sid: "s-1-1-0", mask: 1, aceType: "allow", flags: FLAGS }],
       }),
     }));
-    expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }))
-      .toThrow(expect.objectContaining({ code: "permission-unverified" }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .rejects.toThrow(expect.objectContaining({ code: "permission-unverified" }));
   });
 
   it.each([
@@ -145,7 +146,7 @@ describe("secure Windows descriptor ACL facts", () => {
     ["current user", "s-1-5-21-42", { worldReadable: false, groupReadable: false }],
     ["LocalSystem", "s-1-5-18", { worldReadable: false, groupReadable: false }],
     ["Administrators", "s-1-5-32-544", { worldReadable: false, groupReadable: false }],
-  ] as const)("matches the native summary for a readable %s ACE", (_name, sid, summary) => {
+  ] as const)("matches the native summary for a readable %s ACE", async (_name, sid, summary) => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({
       identity: identity(expected.dev, expected.ino),
@@ -154,21 +155,21 @@ describe("secure Windows descriptor ACL facts", () => {
         aces: [{ sid, mask: 1, aceType: "allow", flags: FLAGS }],
       }),
     }));
-    expect(inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }))
-      .toMatchObject(summary);
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .resolves.toMatchObject(summary);
   });
 
   it.each([
     ["deny", { aceType: "deny", flags: FLAGS }],
     ["inherit-only", { aceType: "allow", flags: { ...FLAGS, raw: 8, inheritOnly: true } }],
-  ] as const)("does not count a readable %s ACE", (_name, ace) => {
+  ] as const)("does not count a readable %s ACE", async (_name, ace) => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({
       identity: identity(expected.dev, expected.ino),
       security: security({ aces: [{ sid: "s-1-1-0", mask: 1, ...ace }] }),
     }));
-    expect(inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }))
-      .toMatchObject({ worldReadable: false, groupReadable: false });
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .resolves.toMatchObject({ worldReadable: false, groupReadable: false });
   });
 
   it.each([
@@ -178,54 +179,55 @@ describe("secure Windows descriptor ACL facts", () => {
     ["empty", true, {
       worldReadable: false, worldWritable: false, groupReadable: false, groupWritable: false,
     }],
-  ] as const)("matches the native summary for a %s DACL", (_name, daclPresent, summary) => {
+  ] as const)("matches the native summary for a %s DACL", async (_name, daclPresent, summary) => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({
       identity: identity(expected.dev, expected.ino),
       security: security({ daclPresent, ...summary }),
     }));
-    expect(inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }))
-      .toMatchObject(summary);
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .resolves.toMatchObject(summary);
   });
 
   it.each([
     ["system", "s-1-5-18"],
     ["administrators", "s-1-5-32-544"],
-  ] as const)("accepts the explicit trusted %s owner class", (ownerClass, ownerSid) => {
+  ] as const)("accepts the explicit trusted %s owner class", async (ownerClass, ownerSid) => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({
       identity: identity(expected.dev, expected.ino),
       security: security({ ownerClass, ownerSid }),
     }));
-    expect(inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }).ownerTrusted).toBe(true);
+    expect((await inspectSecureWindowsFile({ fd: 1, identity: expected, stat })).ownerTrusted).toBe(true);
   });
 
-  it("does not trust a well-formed foreign owner", () => {
+  it("does not trust a well-formed foreign owner", async () => {
     const expected = { dev: 1n, ino: 2n };
     install(() => ({
       identity: identity(expected.dev, expected.ino),
       security: security({ ownerClass: "foreign", ownerSid: "s-1-5-21-99" }),
     }));
-    expect(inspectSecureWindowsDescriptor({ fd: 1, identity: expected, stat }).ownerTrusted).toBe(false);
+    expect((await inspectSecureWindowsFile({ fd: 1, identity: expected, stat })).ownerTrusted).toBe(false);
   });
 
-  it.each(["off", "auto", "require"] as const)("fails closed on a stale helper in %s mode", (mode) => {
+  it.each(["off", "auto", "require"] as const)("fails closed on a stale helper in %s mode", async (mode) => {
     configureFsSafeNative({ mode });
+    vi.spyOn(descriptorCommand, "inspectWindowsDescriptorCommand").mockRejectedValue(new Error("command unavailable"));
     __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl: vi.fn() }) as unknown as NativeBinding);
-    expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
-      .toThrow(expect.objectContaining({ code: "permission-unverified" }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
+      .rejects.toThrow(expect.objectContaining({ code: "permission-unverified" }));
   });
 
-  it("fails closed when the helper cannot load or its query throws", () => {
+  it("fails closed when the helper cannot load or its query throws", async () => {
     __setNativeLoaderForTest(() => { throw new Error("native package missing"); });
-    expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
-      .toThrow(expect.objectContaining({ code: "permission-unverified", cause: expect.any(Error) }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
+      .rejects.toThrow(expect.objectContaining({ code: "permission-unverified", cause: expect.any(Error) }));
     __setNativeLoaderForTest(() => ({
       closeOwnedFd: vi.fn(),
       readOwnerAndDacl: vi.fn(),
       inspectWindowsSecureFileHandle: vi.fn(() => { throw new Error("query denied"); }),
     }) as unknown as NativeBinding);
-    expect(() => inspectSecureWindowsDescriptor({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
-      .toThrow(expect.objectContaining({ code: "permission-unverified", cause: expect.any(Error) }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: { dev: 1n, ino: 2n }, stat }))
+      .rejects.toThrow(expect.objectContaining({ code: "permission-unverified", cause: expect.any(Error) }));
   });
 });

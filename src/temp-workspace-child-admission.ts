@@ -3,7 +3,6 @@ import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
-import type { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
 import {
   TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
   type TempWorkspaceIdentityStat,
@@ -104,29 +103,6 @@ export function admitTempWorkspaceChildSync(
   } finally {
     owner.close();
   }
-}
-
-export function admitRetainedTempWorkspaceChild(
-  retained: TempWorkspaceRetainedChild,
-  needsModeInitialization: boolean,
-  parent: TempWorkspaceRootAdmission,
-  mode: number,
-): Promise<void> | undefined {
-  if (!needsModeInitialization) return undefined;
-  return retained.initializeMode(mode, parent.ownerUid, parent.assertCurrent);
-}
-
-export function admitRetainedTempWorkspaceChildSync(
-  retained: TempWorkspaceRetainedChild,
-  needsModeInitialization: boolean,
-  parent: TempWorkspaceRootAdmission,
-  mode: number,
-): void {
-  if (!needsModeInitialization) {
-    retained.discardInitialReceipt();
-    return;
-  }
-  retained.initializeModeSync(mode, parent.ownerUid, parent.assertCurrent);
 }
 
 export function validateAdmittedTempWorkspaceChild(

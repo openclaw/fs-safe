@@ -9,6 +9,7 @@ import {
 import { acquireSidecarLock, type HeldSidecarLock } from "./sidecar-lock-acquire.js";
 import { createHeldSidecarLockHandle, stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { ensureSidecarLockCleanupRegistered } from "./sidecar-lock-registration.js";
 import type {
   SidecarLockAcquireOptions,
   SidecarLockHandle,
@@ -149,51 +150,21 @@ function releaseAllLocksSync(state: SidecarLockManagerState, options?: { preserv
 }
 
 function ensureGlobalExitCleanupRegistered(): void {
-  const globalWithCleanup = globalThis as typeof globalThis & {
-    [GLOBAL_CLEANUP_KEY]?: boolean;
-    [GLOBAL_CLEANUP_HANDLER_KEY]?: () => void;
-    [GLOBAL_CLEANUP_REGISTRATION_KEY]?: object;
-    [GLOBAL_RETAIN_AWARE_KEY]?: boolean;
-  };
-  if (globalWithCleanup[GLOBAL_CLEANUP_KEY]) return;
-  if (globalWithCleanup[GLOBAL_CLEANUP_REGISTRATION_KEY]) {
-    throw new FsSafeError("helper-unavailable", "sidecar lock exit cleanup registration is already in progress");
-  }
-  const registration = {};
   const cleanup = () => {
     for (const state of getGlobalManagers().values()) {
       releaseAllLocksSync(state, { preserveRetained: true });
     }
   };
-  globalWithCleanup[GLOBAL_CLEANUP_REGISTRATION_KEY] = registration;
-  try {
-    process.on("exit", cleanup);
-    globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY] = cleanup;
-    globalWithCleanup[GLOBAL_RETAIN_AWARE_KEY] = true;
-    globalWithCleanup[GLOBAL_CLEANUP_KEY] = true;
-  } catch (error) {
-    if (process.listeners("exit").includes(cleanup)) {
-      try {
-        process.off("exit", cleanup);
-      } catch {
-        // Reconcile the marker with the actual listener below.
-      }
-    }
-    if (process.listeners("exit").includes(cleanup)) {
-      globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY] = cleanup;
-      globalWithCleanup[GLOBAL_RETAIN_AWARE_KEY] = true;
-      globalWithCleanup[GLOBAL_CLEANUP_KEY] = true;
-    } else {
-      if (globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY] === cleanup) {
-        delete globalWithCleanup[GLOBAL_CLEANUP_HANDLER_KEY];
-      }
-    }
-    throw error;
-  } finally {
-    if (globalWithCleanup[GLOBAL_CLEANUP_REGISTRATION_KEY] === registration) {
-      delete globalWithCleanup[GLOBAL_CLEANUP_REGISTRATION_KEY];
-    }
-  }
+  ensureSidecarLockCleanupRegistered({
+    event: "exit",
+    registered: GLOBAL_CLEANUP_KEY,
+    registering: GLOBAL_CLEANUP_REGISTRATION_KEY,
+    handler: GLOBAL_CLEANUP_HANDLER_KEY,
+    retainAware: GLOBAL_RETAIN_AWARE_KEY,
+    reentryError: () => new FsSafeError(
+      "helper-unavailable", "sidecar lock exit cleanup registration is already in progress",
+    ),
+  }, cleanup, true);
 }
 
 /** True when a retain-unaware package copy registered the process-exit handlers first. */
@@ -206,23 +177,8 @@ export function exitCleanupCannotRetain(): boolean {
 }
 
 function ensureGlobalBeforeExitCleanupRegistered(): { armed: boolean } {
-  const globalWithCleanup = globalThis as typeof globalThis & {
-    [GLOBAL_BEFORE_EXIT_KEY]?: { armed: boolean };
-    [GLOBAL_BEFORE_EXIT_HANDLER_KEY]?: () => void;
-    [GLOBAL_BEFORE_EXIT_REGISTRATION_KEY]?: object;
-  };
-  if (globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY]) {
-    return globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY];
-  }
-  if (globalWithCleanup[GLOBAL_BEFORE_EXIT_REGISTRATION_KEY]) {
-    throw new FsSafeError(
-      "helper-unavailable",
-      "sidecar lock before-exit cleanup registration is already in progress",
-    );
-  }
   // Independent of the exit registration, which an older package copy may own.
   const lifecycle = { armed: false };
-  const registration = {};
   const cleanup = () => {
     if (!lifecycle.armed) return;
     // Cleanup itself schedules I/O; retry only after another acquisition.
@@ -237,37 +193,15 @@ function ensureGlobalBeforeExitCleanupRegistered(): { armed: boolean } {
       }
     }
   };
-  globalWithCleanup[GLOBAL_BEFORE_EXIT_REGISTRATION_KEY] = registration;
-  try {
-    process.on("beforeExit", cleanup);
-    globalWithCleanup[GLOBAL_BEFORE_EXIT_HANDLER_KEY] = cleanup;
-    globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY] = lifecycle;
-    return lifecycle;
-  } catch (error) {
-    if (process.listeners("beforeExit").includes(cleanup)) {
-      try {
-        process.off("beforeExit", cleanup);
-      } catch {
-        // Reconcile the marker with the actual listener below.
-      }
-    }
-    if (process.listeners("beforeExit").includes(cleanup)) {
-      globalWithCleanup[GLOBAL_BEFORE_EXIT_HANDLER_KEY] = cleanup;
-      globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY] = lifecycle;
-    } else {
-      if (globalWithCleanup[GLOBAL_BEFORE_EXIT_HANDLER_KEY] === cleanup) {
-        delete globalWithCleanup[GLOBAL_BEFORE_EXIT_HANDLER_KEY];
-      }
-      if (globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY] === lifecycle) {
-        delete globalWithCleanup[GLOBAL_BEFORE_EXIT_KEY];
-      }
-    }
-    throw error;
-  } finally {
-    if (globalWithCleanup[GLOBAL_BEFORE_EXIT_REGISTRATION_KEY] === registration) {
-      delete globalWithCleanup[GLOBAL_BEFORE_EXIT_REGISTRATION_KEY];
-    }
-  }
+  return ensureSidecarLockCleanupRegistered({
+    event: "beforeExit",
+    registered: GLOBAL_BEFORE_EXIT_KEY,
+    registering: GLOBAL_BEFORE_EXIT_REGISTRATION_KEY,
+    handler: GLOBAL_BEFORE_EXIT_HANDLER_KEY,
+    reentryError: () => new FsSafeError(
+      "helper-unavailable", "sidecar lock before-exit cleanup registration is already in progress",
+    ),
+  }, cleanup, lifecycle);
 }
 
 async function releaseHeldLock(

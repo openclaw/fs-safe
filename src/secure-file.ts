@@ -23,7 +23,7 @@ import {
   type PermissionCheck,
   type PermissionCheckOptions,
 } from "./permissions.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { inspectSecureWindowsFile } from "./secure-file-windows.js";
 import { scheduleTimeout } from "./timing.js";
 import {
@@ -205,9 +205,9 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
     if (!openedStat.isFile()) {
       throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
     }
-    const openedIdentity = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }));
+    const openedIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }));
     assertNotHardlinked(options, openedIdentity);
-    await inspectFileIdentity(async () => {
+    inspectFileIdentitySync(() => {
       const pathStat = options.trust?.allowSymlink
         ? fsSync.statSync(options.filePath, { bigint: true })
         : fsSync.lstatSync(options.filePath, { bigint: true });
@@ -219,7 +219,7 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
     }, openedIdentity);
     const realPath = realpathSync.native(options.filePath);
     assertNoWindowsPathAlias(realPath, "filesystem", `${label(options)} resolved path uses a Windows filesystem namespace alias`);
-    await inspectFileIdentity(() => {
+    inspectFileIdentitySync(() => {
       const realPathStat = fsSync.statSync(realPath, { bigint: true });
       assertNotHardlinked(options, realPathStat);
       return realPathStat;
@@ -234,22 +234,20 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
   }
 }
 
-async function assertTrustedDirs(options: SecureFileReadOptions, realPath: string): Promise<void> {
+function assertTrustedDirs(options: SecureFileReadOptions, realPath: string): void {
   if (!options.trust?.trustedDirs || options.trust.trustedDirs.length === 0) {
     return;
   }
-  const trusted = await Promise.all(
-    options.trust.trustedDirs.map(async (dir) => {
-      let realPath: string;
-      try {
-        realPath = realpathSync.native(dir);
-      } catch {
-        return dir;
-      }
-      assertNoWindowsPathAlias(realPath, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
-      return realPath;
-    }),
-  );
+  const trusted = options.trust.trustedDirs.map((dir) => {
+    let realPath: string;
+    try {
+      realPath = realpathSync.native(dir);
+    } catch {
+      return dir;
+    }
+    assertNoWindowsPathAlias(realPath, "filesystem", "trusted directory uses a Windows filesystem namespace alias");
+    return realPath;
+  });
   if (!trusted.some((dir) => isPathInside(dir, realPath))) {
     throw new FsSafeError("outside-workspace", `${label(options)} is outside trustedDirs: ${realPath}`);
   }
@@ -377,7 +375,7 @@ export async function readSecureFile(
   assertNoWindowsPathAlias(options.filePath, "filesystem", `${label(options)} path uses a Windows filesystem namespace alias`);
   const opened = await openSecureHandle(options, maxBytes);
   try {
-    await assertTrustedDirs(options, opened.realPath);
+    assertTrustedDirs(options, opened.realPath);
     const permissions = await assertSecurePermissions(
       options,
       opened.pathStat,
@@ -390,7 +388,7 @@ export async function readSecureFile(
       options.io?.timeoutMs,
       maxBytes,
     );
-    const finalIdentity = await inspectFileIdentity(
+    const finalIdentity = inspectFileIdentitySync(
       () => fsSync.fstatSync(opened.handle.fd, { bigint: true }),
       opened.identity,
     );

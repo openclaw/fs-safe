@@ -20,7 +20,6 @@ const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
 export type AtomicTempFailure = Readonly<{ error: unknown }>;
 
-
 function describeFailure(error: unknown): string {
   try {
     return String(error);
@@ -80,6 +79,19 @@ function cleanupFailure(
   return isErrorValue(cleanupError) ? cleanupError : new Error(describeFailure(cleanupError));
 }
 
+function closeFailure(
+  closeError: unknown,
+  params: { originalFailure?: AtomicTempFailure },
+  cleanupFailure?: AtomicTempFailure,
+): AtomicTempFailure {
+  return {
+    error: cleanupFailure
+      ? new AggregateError([cleanupFailure.error, closeError], "Atomic temp cleanup and close failed")
+      : params.originalFailure
+        ? new AggregateError([params.originalFailure.error, closeError], "Atomic file replace and close failed")
+        : closeError,
+  };
+}
 
 async function cleanupOwnedPath(params: {
   fsModule: AsyncOwnerFileSystem;
@@ -98,7 +110,6 @@ async function cleanupOwnedPath(params: {
     return false;
   }
 }
-
 
 function cleanupOwnedPathSync(params: {
   fsModule: SyncOwnerFileSystem;
@@ -129,41 +140,55 @@ function cleanupOwnedPathSync(params: {
   }
 }
 
-export class AsyncAtomicTempOwner {
+class AtomicTempOwner<Resource> {
   readonly pathname: string;
-  #handle: FileHandle | undefined;
-  #identity: BigIntStats | undefined;
-  #exists = false;
-  #unregister: TempPathRegistration;
+  protected resource: Resource | undefined;
+  protected recordedIdentity: BigIntStats | undefined;
+  protected exists = false;
+  protected unregister: TempPathRegistration;
 
   constructor(pathname: string) {
     this.pathname = pathname;
-    this.#unregister = registerTempPathForExit(pathname, { singleLinkFile: true });
+    this.unregister = registerTempPathForExit(pathname, { singleLinkFile: true });
   }
 
   start(): void {
-    this.#exists = true;
+    this.exists = true;
   }
 
   readonly onIdentity = (identity: BigIntStats): void => {
-    this.#identity = identity;
-    this.#unregister.setIdentity(identity);
+    this.recordedIdentity = identity;
+    this.unregister.setIdentity(identity);
   };
 
-  adopt(temp: { handle: FileHandle; identity: BigIntStats }): void {
-    this.#handle = temp.handle;
-    this.onIdentity(temp.identity);
+  get identity(): BigIntStats {
+    if (!this.recordedIdentity) throw new Error("Atomic temp owner has no identity");
+    return this.recordedIdentity;
   }
 
-  get identity(): BigIntStats {
-    if (!this.#identity) throw new Error("Atomic temp owner has no identity");
-    return this.#identity;
+  markRenamed(): void {
+    this.exists = false;
+    this.unregister();
+  }
+
+  protected takeResource(): Resource | undefined {
+    // A throwing close may already have released the descriptor for reuse.
+    const resource = this.resource;
+    this.resource = undefined;
+    return resource;
+  }
+}
+
+export class AsyncAtomicTempOwner extends AtomicTempOwner<FileHandle> {
+  adopt(temp: { handle: FileHandle; identity: BigIntStats }): void {
+    this.resource = temp.handle;
+    this.onIdentity(temp.identity);
   }
 
   async assertCurrent(fsModule: AsyncOwnerFileSystem, pathname = this.pathname): Promise<void> {
     const opened = await inspectFileIdentity(async () => {
-      const stat = fsModule === fs ? syncFs.fstatSync(this.#handle!.fd, { bigint: true })
-        : await this.#handle!.stat({ bigint: true });
+      const stat = fsModule === fs ? syncFs.fstatSync(this.resource!.fd, { bigint: true })
+        : await this.resource!.stat({ bigint: true });
       assertOwnedFile(stat, pathname, false);
       return stat;
     }, this.identity);
@@ -223,20 +248,14 @@ export class AsyncAtomicTempOwner {
       if (sha256Hex(await published.readFile()) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
-      const previousHandle = this.#handle;
-      this.#handle = undefined;
+      const previousHandle = this.takeResource();
       await previousHandle?.close();
-      this.#handle = published;
-      this.#identity = identity;
+      this.resource = published;
+      this.recordedIdentity = identity;
       published = undefined;
     } finally {
       await published?.close().catch(() => undefined);
     }
-  }
-
-  markRenamed(): void {
-    this.#exists = false;
-    this.#unregister();
   }
 
   async finish(params: {
@@ -245,13 +264,13 @@ export class AsyncAtomicTempOwner {
     throwOnCleanupError: boolean;
   }): Promise<void> {
     let deferredFailure: AtomicTempFailure | undefined;
-    let cleanupComplete = !this.#exists;
-    if (this.#exists) {
+    let cleanupComplete = !this.exists;
+    if (this.exists) {
       try {
         cleanupComplete = await cleanupOwnedPath({
           fsModule: params.fsModule,
           pathname: this.pathname,
-          identity: this.#identity,
+          identity: this.recordedIdentity,
           originalFailure: params.originalFailure,
           throwOnCleanupError: params.throwOnCleanupError,
         });
@@ -259,64 +278,26 @@ export class AsyncAtomicTempOwner {
         deferredFailure = { error };
       }
     }
-    if (cleanupComplete) this.#unregister();
-    const handle = this.#handle;
-    this.#handle = undefined;
+    if (cleanupComplete) this.unregister();
+    const handle = this.takeResource();
     try {
       await handle?.close();
     } catch (closeError) {
-      deferredFailure = {
-        error: deferredFailure
-          ? new AggregateError(
-              [deferredFailure.error, closeError],
-              "Atomic temp cleanup and close failed",
-            )
-          : params.originalFailure
-            ? new AggregateError(
-                [params.originalFailure.error, closeError],
-                "Atomic file replace and close failed",
-              )
-            : closeError,
-      };
+      deferredFailure = closeFailure(closeError, params, deferredFailure);
     }
     if (deferredFailure) throw deferredFailure.error;
   }
 }
 
-export class SyncAtomicTempOwner {
-  readonly pathname: string;
-  #fd: number | undefined;
-  #identity: BigIntStats | undefined;
-  #exists = false;
-  #unregister: TempPathRegistration;
-
-  constructor(pathname: string) {
-    this.pathname = pathname;
-    this.#unregister = registerTempPathForExit(pathname, { singleLinkFile: true });
-  }
-
-  start(): void {
-    this.#exists = true;
-  }
-
-  readonly onIdentity = (identity: BigIntStats): void => {
-    this.#identity = identity;
-    this.#unregister.setIdentity(identity);
-  };
-
+export class SyncAtomicTempOwner extends AtomicTempOwner<number> {
   adopt(temp: { fd: number; identity: BigIntStats }): void {
-    this.#fd = temp.fd;
+    this.resource = temp.fd;
     this.onIdentity(temp.identity);
-  }
-
-  get identity(): BigIntStats {
-    if (!this.#identity) throw new Error("Atomic temp owner has no identity");
-    return this.#identity;
   }
 
   assertCurrent(fsModule: SyncOwnerFileSystem, pathname = this.pathname): void {
     const opened = inspectFileIdentitySync(() => {
-      const stat = fsModule.fstatSync(this.#fd!, { bigint: true });
+      const stat = fsModule.fstatSync(this.resource!, { bigint: true });
       assertOwnedFile(stat, pathname, false);
       return stat;
     }, this.identity);
@@ -373,11 +354,10 @@ export class SyncAtomicTempOwner {
       if (sha256Hex(fsModule.readFileSync(publishedFd)) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
-      const previousFd = this.#fd!;
-      this.#fd = undefined;
+      const previousFd = this.takeResource()!;
       fsModule.closeSync(previousFd);
-      this.#fd = publishedFd;
-      this.#identity = identity;
+      this.resource = publishedFd;
+      this.recordedIdentity = identity;
       publishedFd = undefined;
     } finally {
       if (publishedFd !== undefined) {
@@ -390,24 +370,19 @@ export class SyncAtomicTempOwner {
     }
   }
 
-  markRenamed(): void {
-    this.#exists = false;
-    this.#unregister();
-  }
-
   finish(params: {
     fsModule: SyncOwnerFileSystem;
     originalFailure?: AtomicTempFailure;
     throwOnCleanupError: boolean;
   }): void {
     let deferredFailure: AtomicTempFailure | undefined;
-    let cleanupComplete = !this.#exists;
-    if (this.#exists) {
+    let cleanupComplete = !this.exists;
+    if (this.exists) {
       try {
         cleanupComplete = cleanupOwnedPathSync({
           fsModule: params.fsModule,
           pathname: this.pathname,
-          identity: this.#identity,
+          identity: this.recordedIdentity,
           originalFailure: params.originalFailure,
           throwOnCleanupError: params.throwOnCleanupError,
         });
@@ -415,26 +390,13 @@ export class SyncAtomicTempOwner {
         deferredFailure = { error };
       }
     }
-    if (cleanupComplete) this.#unregister();
-    if (this.#fd !== undefined) {
-      const fd = this.#fd;
-      this.#fd = undefined;
+    if (cleanupComplete) this.unregister();
+    const fd = this.takeResource();
+    if (fd !== undefined) {
       try {
         params.fsModule.closeSync(fd);
       } catch (closeError) {
-        deferredFailure = {
-          error: deferredFailure
-            ? new AggregateError(
-                [deferredFailure.error, closeError],
-                "Atomic temp cleanup and close failed",
-              )
-            : params.originalFailure
-              ? new AggregateError(
-                  [params.originalFailure.error, closeError],
-                  "Atomic file replace and close failed",
-                )
-              : closeError,
-        };
+        deferredFailure = closeFailure(closeError, params, deferredFailure);
       }
     }
     if (deferredFailure) throw deferredFailure.error;

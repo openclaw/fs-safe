@@ -6,7 +6,8 @@ import { readFileHandleBounded } from "./bounded-read.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile } from "./native-operations.js";
 import {
-  computeSidecarLockDelayMs,
+  sidecarLockRetryDelay,
+  sidecarLockTimeout,
   isTransientLockFileDenial,
   maxTransientLockDenials,
   validateSidecarLockStaleMs,
@@ -40,7 +41,7 @@ import {
   captureSidecarAdmissionAncestry,
   createSidecarAdmissionController,
 } from "./sidecar-lock-admission-context.js";
-import { sidecarLockTimeout, type HeldSidecarLock, type SidecarLockAcquisitionContext } from "./sidecar-lock-admission.js";
+import type { HeldSidecarLock, SidecarLockAcquisitionContext } from "./sidecar-lock-admission.js";
 import { resolveSidecarLockPaths } from "./sidecar-lock-target.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
@@ -72,13 +73,24 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
     targetPath, explicitLockPath, lockRoot,
   );
   const activeDescendant = ancestryHasSidecarAdmission(admissionAncestry, context.admissions, normalizedTargetPath);
-  let held = context.held.get(normalizedTargetPath);
-  if (
-    held &&
+  const isReentrant = (candidate: HeldSidecarLock | undefined): candidate is HeldSidecarLock =>
+    !!candidate &&
     requestedReentrantOwner !== undefined &&
-    held.reentrantOwner !== undefined &&
-    requestedReentrantOwner === held.reentrantOwner
-  ) {
+    candidate.reentrantOwner !== undefined &&
+    requestedReentrantOwner === candidate.reentrantOwner;
+  const reuseHeldLock = (candidate: HeldSidecarLock): SidecarLockHandle | undefined => {
+    const lifecycle = context.ensureExitCleanupRegistered();
+    context.assertRetainOnExitSupported(retainOnExit);
+    if (context.held.get(normalizedTargetPath) !== candidate || candidate.releasePromise) return undefined;
+    candidate.refCount = (candidate.refCount ?? 1) + 1;
+    // Any same-owner request upgrades exit retention; later requests never revoke it.
+    if (retainOnExit === true) candidate.retainOnExit = true;
+    const returnedHandle = context.handleForHeldLock(normalizedTargetPath, candidate);
+    context.armExitCleanup(lifecycle);
+    return returnedHandle;
+  };
+  let held = context.held.get(normalizedTargetPath);
+  if (isReentrant(held)) {
     // Join a final release before deciding whether this completed owner remains.
     // Successful cleanup requires a fresh acquisition; failed cleanup can retry.
     if (held.releasePromise) {
@@ -86,25 +98,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       await held.releasePromise.catch(() => undefined);
       held = context.held.get(normalizedTargetPath);
     }
-    if (
-      held &&
-      requestedReentrantOwner !== undefined &&
-      held.reentrantOwner !== undefined &&
-      requestedReentrantOwner === held.reentrantOwner
-    ) {
-      const lifecycle = context.ensureExitCleanupRegistered();
-      context.assertRetainOnExitSupported(retainOnExit);
-      if (context.held.get(normalizedTargetPath) === held && !held.releasePromise) {
-        held.refCount = (held.refCount ?? 1) + 1;
-        // Retention is monotonic: any same-owner request to keep the sidecar on
-        // exit upgrades the held lock; a later default acquisition never revokes it.
-        if (retainOnExit === true) {
-          held.retainOnExit = true;
-        }
-        const returnedHandle = context.handleForHeldLock(normalizedTargetPath, held);
-        context.armExitCleanup(lifecycle);
-        return returnedHandle;
-      }
+    if (isReentrant(held)) {
+      const reused = reuseHeldLock(held);
+      if (reused) return reused;
     }
   }
   if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
@@ -130,20 +126,11 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   const withinDenialBudget = (): boolean => ++transientDenials <= maxTransientLockDenials;
   const waitForRetry = async (): Promise<void> => {
     admission.release();
-    const elapsed = Date.now() - startedAt;
-    if (
-      (timeoutMs !== undefined &&
-        timeoutMs !== Number.POSITIVE_INFINITY &&
-        elapsed >= timeoutMs) ||
-      (retry.retries !== undefined && attempt >= retry.retries)
-    ) {
-      throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-    }
-    const remaining =
-      timeoutMs === undefined || timeoutMs === Number.POSITIVE_INFINITY
-        ? Number.POSITIVE_INFINITY
-        : Math.max(0, timeoutMs - elapsed);
-    const delay = Math.min(computeSidecarLockDelayMs(retry, attempt), remaining);
+    const delay = sidecarLockRetryDelay(
+      retry, timeoutMs === Number.POSITIVE_INFINITY ? undefined : timeoutMs,
+      Date.now() - startedAt, attempt,
+    );
+    if (delay === undefined) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
     attempt += 1;
     await sleep(delay);
   };
@@ -164,32 +151,15 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
     while (true) {
       if (!admission.owns) {
         held = context.held.get(normalizedTargetPath);
-        if (
-          held &&
-          requestedReentrantOwner !== undefined &&
-          held.reentrantOwner !== undefined &&
-          requestedReentrantOwner === held.reentrantOwner
-        ) {
+        if (isReentrant(held)) {
           if (held.releasePromise) {
             await held.releasePromise.catch(() => undefined);
             held = context.held.get(normalizedTargetPath);
           }
-          if (
-            held &&
-            requestedReentrantOwner !== undefined &&
-            held.reentrantOwner !== undefined &&
-            requestedReentrantOwner === held.reentrantOwner
-          ) {
-            const lifecycle = context.ensureExitCleanupRegistered();
-            context.assertRetainOnExitSupported(retainOnExit);
-            if (context.held.get(normalizedTargetPath) !== held || held.releasePromise) {
-              continue;
-            }
-            held.refCount = (held.refCount ?? 1) + 1;
-            if (retainOnExit === true) held.retainOnExit = true;
-            const returnedHandle = context.handleForHeldLock(normalizedTargetPath, held);
-            context.armExitCleanup(lifecycle);
-            return returnedHandle;
+          if (isReentrant(held)) {
+            const reused = reuseHeldLock(held);
+            if (reused) return reused;
+            continue;
           }
         }
         if (context.admissions.has(normalizedTargetPath)) {

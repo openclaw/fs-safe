@@ -20,7 +20,6 @@ export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-misma
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
 
 type Quarantine = { name: string; path: string; nativeRemoval: boolean };
-type RemovalFailure = { readonly error: unknown };
 type CleanupCapabilityPhase = "new" | "ready" | "sealed" | "failed" | "closed";
 
 function isNativeCleanupBinding(
@@ -189,6 +188,30 @@ export class TempWorkspaceCleanupCapability {
   }
 }
 
+export function throwTempWorkspaceCreationFailure(
+  error: unknown,
+  retainedChild: TempWorkspaceRetainedChild | undefined,
+  capability: TempWorkspaceCleanupCapability,
+  owner?: TempWorkspaceCleanupOwner,
+  label = "temp workspace",
+): never {
+  try {
+    if (owner) owner.cleanupSync();
+    else {
+      const closeErrors: unknown[] = [];
+      try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
+      try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
+      if (closeErrors.length === 1) throw closeErrors[0];
+      if (closeErrors.length > 1) {
+        throw new AggregateError(closeErrors, `${label} admission descriptor close failed`);
+      }
+    }
+  } catch (cleanupError) {
+    throw new AggregateError([error, cleanupError], `${label} creation and cleanup both failed`);
+  }
+  throw error;
+}
+
 export class TempWorkspaceCleanupOwner {
   readonly #dir: string;
   readonly #identity: FileIdentityStat;
@@ -334,19 +357,17 @@ export class TempWorkspaceCleanupOwner {
         this.#directory!.fd,
       ));
     }
-    let removalFailure: RemovalFailure | undefined;
     try {
       this.#assertQuarantine(quarantine);
-      try {
-        await fs.rm(quarantine.path, { recursive: true, force: true });
-      } catch (error) {
-        removalFailure = { error };
-        throw error;
-      }
+    } catch {
+      return "indeterminate";
+    }
+    // Removal failures propagate unchanged; only authority uncertainty becomes a receipt.
+    await fs.rm(quarantine.path, { recursive: true, force: true });
+    try {
       this.#capability.assertCurrent();
       return "removed";
-    } catch (error) {
-      if (removalFailure !== undefined) throw removalFailure.error;
+    } catch {
       return "indeterminate";
     }
   }
@@ -360,19 +381,16 @@ export class TempWorkspaceCleanupOwner {
         this.#directory!.fd,
       ));
     }
-    let removalFailure: RemovalFailure | undefined;
     try {
       this.#assertQuarantine(quarantine);
-      try {
-        fsSync.rmSync(quarantine.path, { recursive: true, force: true });
-      } catch (error) {
-        removalFailure = { error };
-        throw error;
-      }
+    } catch {
+      return "indeterminate";
+    }
+    fsSync.rmSync(quarantine.path, { recursive: true, force: true });
+    try {
       this.#capability.assertCurrent();
       return "removed";
-    } catch (error) {
-      if (removalFailure !== undefined) throw removalFailure.error;
+    } catch {
       return "indeterminate";
     }
   }

@@ -1,12 +1,10 @@
 import fs, { type BigIntStats } from "node:fs";
 import { ownFileDescriptorSync, type OwnedFileDescriptorSync } from "./create-owned-file.js";
-import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import {
   assertInitialSource,
-  assertParents,
+  FileHandoff,
   inspectLinkedFile,
-  normalizeLinkError,
 } from "./private-producer-handoff.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 
@@ -24,9 +22,7 @@ export function handoffCreatedFileSync(params: {
   let retained = params.source;
   const owners = new Set([retained]);
   const failures: unknown[] = [];
-  let publication: "not-published" | "published" | "indeterminate" = "not-published";
-  let cleanup: "preserved" | "removed" | "failed" = "preserved";
-  let closeFailed = false;
+  const state = new FileHandoff(params, params.identity, true);
 
   function close(owner: OwnedFileDescriptorSync): void {
     // A throwing close may already have released the descriptor for reuse.
@@ -34,30 +30,13 @@ export function handoffCreatedFileSync(params: {
     try {
       owner.close();
     } catch (error) {
-      closeFailed = true;
+      state.closeFailed = true;
       throw error;
     }
   }
 
-  function assertIdentityCurrent(owner: OwnedFileDescriptorSync, links: bigint): void {
-    assertParents(params);
-    inspectLinkedFile(
-      () => fs.fstatSync(owner.fd, { bigint: true }), params.identity, links, "created file descriptor",
-    );
-    if (cleanup !== "removed") {
-      inspectLinkedFile(
-        () => fs.lstatSync(params.sourcePath, { bigint: true }), params.identity, links, "created file stage",
-      );
-    }
-    if (publication === "published") {
-      inspectLinkedFile(
-        () => fs.lstatSync(params.targetPath, { bigint: true }), params.identity, links, "created file destination",
-      );
-    }
-  }
-
   function verifyCurrent(owner: OwnedFileDescriptorSync, descriptorPath: string, links: bigint): void {
-    assertIdentityCurrent(owner, links);
+    state.inspect(owner, links);
     params.verifyDescriptor?.(owner.fd, descriptorPath, Number(links));
   }
 
@@ -65,19 +44,8 @@ export function handoffCreatedFileSync(params: {
     assertInitialSource(params.identity);
     verifyCurrent(retained, params.sourcePath, 1n);
     assertSynchronousCallbackResult(params.assertBeforeMutation?.(), "assertBeforeMutation");
-    assertIdentityCurrent(retained, 1n);
-    publication = "indeterminate";
-    try {
-      fs.linkSync(params.sourcePath, params.targetPath);
-    } catch (error) {
-      const normalized = normalizeLinkError(error);
-      if (normalized instanceof FsSafeError &&
-        (normalized.code === "already-exists" || normalized.code === "helper-unavailable")) {
-        publication = "not-published";
-      }
-      throw normalized;
-    }
-    publication = "published";
+    state.inspect(retained, 1n);
+    state.publish();
     try {
       params.onPublished?.();
     } catch (error) {
@@ -103,12 +71,10 @@ export function handoffCreatedFileSync(params: {
     const descriptorPath = process.platform === "win32" ? params.targetPath : params.sourcePath;
     verifyCurrent(retained, descriptorPath, 2n);
     assertSynchronousCallbackResult(params.assertBeforeMutation?.(), "assertBeforeMutation");
-    assertIdentityCurrent(retained, 2n);
-    cleanup = "failed";
+    state.inspect(retained, 2n);
     // Link and unlink stay in one JS turn. Only the verified stage is removed;
     // publication has committed and the destination is never rollback cleanup.
-    fs.unlinkSync(params.sourcePath);
-    cleanup = "removed";
+    state.retireSource();
     verifyCurrent(retained, params.targetPath, 1n);
   } catch (error) {
     failures.push(error);
@@ -122,24 +88,5 @@ export function handoffCreatedFileSync(params: {
       failures.push(error);
     }
   }
-  const primary = failures[0];
-  // Collision-as-no-op callers must still observe a failed settlement.
-  const code = closeFailed || failures.length > 1
-    ? "helper-failed"
-    : primary instanceof FsSafeError ? primary.code : "helper-failed";
-  throw new FsSafeError(
-    code,
-    "created file publication failed",
-    {
-      cause: failures.length === 1 ? primary : new AggregateError(failures, "created file publication and settlement failed"),
-      details: {
-        publication: { status: publication },
-        cleanup,
-        resources: closeFailed ? "close-failed" : "closed",
-        path: params.targetPath,
-        dev: params.identity.dev,
-        ino: params.identity.ino,
-      },
-    },
-  );
+  throw state.failure(failures, "created file publication and settlement failed");
 }

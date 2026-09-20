@@ -7,20 +7,14 @@ import {
 } from "./archive-errors.js";
 import { validateArchiveEntryPath } from "./archive-entry.js";
 import { createArchiveEntryPlanner, type ArchivePlanEntry } from "./archive-plan.js";
-import type { ExtractionDeadline } from "./archive-deadline.js";
-import { stageArchiveFileForExtraction } from "./archive-input.js";
 import type { ArchiveKind } from "./archive-kind.js";
 import {
   assertArchiveEntryCountWithinLimit,
-  type ResolvedArchiveExtractLimits,
   type TarMeterLimits,
 } from "./archive-limits.js";
-import type { ExtractArchiveOptions } from "./archive-options.js";
-import {
-  prepareArchiveDestinationGuard,
-  withStagedArchiveDestination,
-} from "./archive-staging.js";
-import { mergePlannedArchiveIntoDestination } from "./archive-merge.js";
+import type { StagedArchiveExtractOptions } from "./archive-options.js";
+import { prepareArchiveDestinationGuard } from "./archive-staging.js";
+import { withStagedArchivePublication } from "./archive-merge.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 import type { NativeBinding } from "./native.js";
 import { admitZipFile } from "./archive-zip-admission.js";
@@ -40,101 +34,68 @@ export function throwMappedNativeArchiveError(error: unknown): never {
   throw error;
 }
 
-export async function extractNativeArchive(params: {
-  durable?: boolean;
+export async function extractNativeArchive(params: StagedArchiveExtractOptions & {
   binding: NativeBinding;
-  archivePath: string;
-  destDir: string;
   kind: ArchiveKind;
-  stripComponents?: number;
-  limits: ResolvedArchiveExtractLimits;
   tarLimits: TarMeterLimits;
-  deadline: ExtractionDeadline;
-  entryModes?: ExtractArchiveOptions["entryModes"];
-  entryUmask?: number;
-  entryFilter?: ExtractArchiveOptions["entryFilter"];
-  onFiltered?: ExtractArchiveOptions["onFiltered"];
 }): Promise<void> {
-  const { limits, tarLimits } = params;
-  const stagedArchive = await stageArchiveFileForExtraction({
-    archivePath: params.archivePath,
-    limits,
-    deadline: params.deadline,
-  });
-  try {
-    const zipEntries: ZipDirectoryEntry[] = [];
-    if (params.kind === "zip") {
-      await admitZipFile(stagedArchive.path, limits, params.deadline, (entry) => { zipEntries.push(entry); });
-    }
-    const destinationGuard = await prepareArchiveDestinationGuard(params.destDir);
-    const destinationRealDir = destinationGuard.realPath;
-    await withStagedArchiveDestination({
-      destinationRealDir,
-      run: async (stagingDir) => {
-        params.deadline.check();
-        // N-API retains completed task state on its signal; each pass needs its own.
-        const manifest = await params.binding
-          .inspectArchiveNative(
-            stagedArchive.path,
-            params.kind,
-            tarLimits,
-            AbortSignal.any([params.deadline.signal]),
-          )
-          .catch(throwMappedNativeArchiveError);
-        params.deadline.check();
-        assertArchiveEntryCountWithinLimit(manifest.length, limits);
-        if (params.kind === "zip") {
-          validateNativeZipManifest(manifest, zipEntries);
-        }
-        // Recheck the native manifest at the shared policy boundary before
-        // any caller callback observes an entry.
-        if (params.kind !== "zip") {
-          for (const entry of manifest) validateArchiveEntryPath(entry.path);
-        }
-        const planEntry = createArchiveEntryPlanner({ ...params, rootDir: stagingDir }, params.kind);
-        const plan: Array<ArchivePlanEntry & { index: number }> = [];
-        for (const entry of manifest) {
-          params.deadline.check();
-          const mode = params.kind === "zip"
-            ? zipEntries[entry.index]!.creatorSystem === 3
-              ? zipEntries[entry.index]!.externalAttributes >>> 16
-              : undefined
-            : entry.mode;
-          const accepted = planEntry({ ...entry, mode });
-          if (accepted) plan.push({ ...accepted, index: entry.index });
-        }
-
-        const directory = await fs.open(
-          stagingDir,
-          fsConstants.O_RDONLY |
-            (typeof fsConstants.O_DIRECTORY === "number" ? fsConstants.O_DIRECTORY : 0),
-        );
-        try {
-          params.deadline.check();
-          await params.binding.extractArchiveNative(
-            stagedArchive.path,
-            params.kind,
-            directory.fd,
-            plan.map((entry) => ({ ...entry, mode: entry.kind === "directory" ? 0o700 : 0o600 })),
-            tarLimits,
-            AbortSignal.any([params.deadline.signal]),
-          ).catch(throwMappedNativeArchiveError);
-        } finally {
-          await directory.close().catch(() => undefined);
-        }
-        params.deadline.check();
-        await mergePlannedArchiveIntoDestination({
-          entries: plan,
-          durable: params.durable,
-          entryUmask: params.entryUmask,
-          sourceDir: stagingDir,
-          destinationGuard,
-          deadline: params.deadline,
-        });
-        params.deadline.check();
-      },
-    });
-  } finally {
-    await stagedArchive.cleanup();
+  const { archivePath, limits, tarLimits, deadline } = params;
+  const zipEntries: ZipDirectoryEntry[] = [];
+  if (params.kind === "zip") {
+    await admitZipFile(archivePath, limits, deadline, (entry) => { zipEntries.push(entry); });
   }
+  const destinationGuard = await prepareArchiveDestinationGuard(params.destDir);
+  await withStagedArchivePublication({ ...params, destinationGuard }, async (stagingDir) => {
+    deadline.check();
+    // N-API retains completed task state on its signal; each pass needs its own.
+    const manifest = await params.binding
+      .inspectArchiveNative(
+        archivePath,
+        params.kind,
+        tarLimits,
+        AbortSignal.any([deadline.signal]),
+      )
+      .catch(throwMappedNativeArchiveError);
+    deadline.check();
+    assertArchiveEntryCountWithinLimit(manifest.length, limits);
+    if (params.kind === "zip") {
+      validateNativeZipManifest(manifest, zipEntries);
+    }
+    // Recheck the native manifest before any caller callback observes an entry.
+    if (params.kind !== "zip") {
+      for (const entry of manifest) validateArchiveEntryPath(entry.path);
+    }
+    const planEntry = createArchiveEntryPlanner({ ...params, rootDir: stagingDir }, params.kind);
+    const plan: Array<ArchivePlanEntry & { index: number }> = [];
+    for (const entry of manifest) {
+      deadline.check();
+      const mode = params.kind === "zip"
+        ? zipEntries[entry.index]!.creatorSystem === 3
+          ? zipEntries[entry.index]!.externalAttributes >>> 16
+          : undefined
+        : entry.mode;
+      const accepted = planEntry({ ...entry, mode });
+      if (accepted) plan.push({ ...accepted, index: entry.index });
+    }
+
+    const directory = await fs.open(
+      stagingDir,
+      fsConstants.O_RDONLY |
+        (typeof fsConstants.O_DIRECTORY === "number" ? fsConstants.O_DIRECTORY : 0),
+    );
+    try {
+      deadline.check();
+      await params.binding.extractArchiveNative(
+        archivePath,
+        params.kind,
+        directory.fd,
+        plan.map((entry) => ({ ...entry, mode: entry.kind === "directory" ? 0o700 : 0o600 })),
+        tarLimits,
+        AbortSignal.any([deadline.signal]),
+      ).catch(throwMappedNativeArchiveError);
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+    return plan;
+  });
 }

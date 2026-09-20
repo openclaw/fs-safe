@@ -1,5 +1,5 @@
-use napi::bindgen_prelude::{AbortSignal, AsyncTask, Task};
-use napi::{Env, Error, JsError, Result, Status};
+use napi::bindgen_prelude::{AbortSignal, AsyncTask};
+use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -9,6 +9,7 @@ use std::sync::{
 };
 
 use crate::{into_napi, platform};
+use crate::task::{NativeTask, cancellation, checked_max_bytes};
 
 #[napi(object)]
 pub struct FileHash {
@@ -39,26 +40,21 @@ pub fn clone_file_exclusive(
     )
 }
 
-pub struct CopyFileRangeTask {
+#[napi(js_name = "copyFileRangeExclusive")]
+pub fn copy_file_range_exclusive(
     source_fd: i32,
     target_root_fd: i32,
     target_rel_path: String,
-}
-
-impl Task for CopyFileRangeTask {
-    type Output = crate::NativeResult<(i32, u64)>;
-    type JsValue = NativeCopyResult;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        Ok(platform::copy_file_range_exclusive(
-            self.source_fd,
-            self.target_root_fd,
-            &self.target_rel_path,
-        ))
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(match output {
+) -> Result<AsyncTask<NativeTask<NativeCopyResult>>> {
+    crate::validate_relative_path(&target_rel_path, false)
+        .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
+    Ok(AsyncTask::new(NativeTask::new(move || {
+        let copied = platform::copy_file_range_exclusive(
+            source_fd,
+            target_root_fd,
+            &target_rel_path,
+        );
+        Ok(match copied {
             Ok((fd, bytes)) => NativeCopyResult {
                 fd,
                 bytes: bytes as f64,
@@ -72,49 +68,16 @@ impl Task for CopyFileRangeTask {
                 error_message: Some(error.reason),
             },
         })
-    }
+    })))
 }
 
-#[napi(js_name = "copyFileRangeExclusive")]
-pub fn copy_file_range_exclusive(
-    source_fd: i32,
-    target_root_fd: i32,
-    target_rel_path: String,
-) -> Result<AsyncTask<CopyFileRangeTask>> {
-    crate::validate_relative_path(&target_rel_path, false)
-        .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
-    Ok(AsyncTask::new(CopyFileRangeTask {
-        source_fd,
-        target_root_fd,
-        target_rel_path,
-    }))
-}
-
-pub struct HashTask {
+struct HashFile {
     fd: i32,
     max_bytes: u64,
     cancelled: Arc<AtomicBool>,
 }
 
-impl Task for HashTask {
-    type Output = crate::NativeResult<(u64, String)>;
-    type JsValue = FileHash;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        Ok(self.hash())
-    }
-
-    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        let (bytes, digest) =
-            output.map_err(|error| Error::from(JsError::from(error).into_unknown(env)))?;
-        Ok(FileHash {
-            bytes: bytes as f64,
-            digest,
-        })
-    }
-}
-
-impl HashTask {
+impl HashFile {
     fn check_cancelled(&self) -> crate::NativeResult<()> {
         if self.cancelled.load(Ordering::Relaxed) {
             return Err(crate::native_error(
@@ -163,34 +126,21 @@ pub fn sha256_file(
     fd: i32,
     max_bytes: Option<f64>,
     signal: Option<AbortSignal>,
-) -> Result<AsyncTask<HashTask>> {
-    let max_bytes = match max_bytes {
-        Some(value)
-            if value.is_finite()
-                && (0.0..=9_007_199_254_740_991.0).contains(&value)
-                && value.fract() == 0.0 =>
-        {
-            value as u64
-        }
-        Some(_) => {
-            return Err(Error::new(
-                Status::InvalidArg,
-                "maxBytes must be a non-negative safe integer",
-            ));
-        }
-        None => u64::MAX,
-    };
-    let cancelled = Arc::new(AtomicBool::new(false));
-    if let Some(signal) = &signal {
-        let callback = Arc::clone(&cancelled);
-        signal.on_abort(move || callback.store(true, Ordering::Relaxed));
-    }
+) -> Result<AsyncTask<NativeTask<FileHash>>> {
+    let max_bytes = checked_max_bytes(max_bytes)?;
+    let cancelled = cancellation(signal.as_ref());
     Ok(AsyncTask::with_optional_signal(
-        HashTask {
-            fd,
-            max_bytes,
-            cancelled,
-        },
+        NativeTask::new(move || {
+            let (bytes, digest) = HashFile {
+                fd,
+                max_bytes,
+                cancelled,
+            }.hash()?;
+            Ok(FileHash {
+                bytes: bytes as f64,
+                digest,
+            })
+        }),
         signal,
     ))
 }

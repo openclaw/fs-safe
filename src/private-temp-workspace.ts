@@ -21,6 +21,7 @@ import {
 import {
   TempWorkspaceCleanupCapability,
   TempWorkspaceCleanupOwner,
+  throwTempWorkspaceCreationFailure,
   type TempWorkspaceCleanupSafety,
 } from "./temp-workspace-owner.js";
 import {
@@ -28,11 +29,7 @@ import {
   hasWindowsPathAlias,
 } from "./windows-path-alias.js";
 import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
-import {
-  admitRetainedTempWorkspaceChild,
-  admitRetainedTempWorkspaceChildSync,
-  validateInitialTempWorkspaceChild,
-} from "./temp-workspace-child-admission.js";
+import { validateInitialTempWorkspaceChild } from "./temp-workspace-child-admission.js";
 import {
   admitTempWorkspaceRoot,
   admitTempWorkspaceRootSync,
@@ -174,29 +171,6 @@ function tempWorkspaceChildPrefix(root: string, options: TempWorkspaceOptions, s
   return childPrefix;
 }
 
-function throwTempWorkspaceCreationFailure(
-  error: unknown,
-  retainedChild: TempWorkspaceRetainedChild | undefined,
-  capability: TempWorkspaceCleanupCapability,
-  owner?: TempWorkspaceCleanupOwner,
-): never {
-  try {
-    if (owner) owner.cleanupSync();
-    else {
-      const closeErrors: unknown[] = [];
-      try { retainedChild?.close(); } catch (closeError) { closeErrors.push(closeError); }
-      try { capability.close(); } catch (closeError) { closeErrors.push(closeError); }
-      if (closeErrors.length === 1) throw closeErrors[0];
-      if (closeErrors.length > 1) {
-        throw new AggregateError(closeErrors, "temp workspace admission descriptor close failed");
-      }
-    }
-  } catch (cleanupError) {
-    throw new AggregateError([error, cleanupError], "temp workspace creation and cleanup both failed");
-  }
-  throw error;
-}
-
 function registerTempWorkspace(
   dir: string,
   retainedChild: TempWorkspaceRetainedChild,
@@ -252,13 +226,9 @@ async function createTempWorkspace(
     // Retain while the child still has its private creation mode so an
     // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
     retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
-    const modeInitialization = admitRetainedTempWorkspaceChild(
-      retainedChild,
-      needsModeInitialization,
-      admission,
-      dirMode,
-    );
-    if (modeInitialization) await modeInitialization;
+    if (needsModeInitialization) {
+      await retainedChild.initializeMode(dirMode, admission.ownerUid, admission.assertCurrent);
+    }
   } catch (error) {
     throwTempWorkspaceCreationFailure(error, retainedChild, capability);
   }
@@ -362,12 +332,11 @@ function createTempWorkspaceSync(
     }
     const needsModeInitialization = validateInitialTempWorkspaceChild(stat, admission.ownerUid, dirMode);
     retainedChild ??= TempWorkspaceRetainedChild.retain(dir, stat);
-    admitRetainedTempWorkspaceChildSync(
-      retainedChild,
-      needsModeInitialization,
-      admission,
-      dirMode,
-    );
+    if (needsModeInitialization) {
+      retainedChild.initializeModeSync(dirMode, admission.ownerUid, admission.assertCurrent);
+    } else {
+      retainedChild.discardInitialReceipt();
+    }
   } catch (error) {
     throwTempWorkspaceCreationFailure(error, retainedChild, capability);
   }

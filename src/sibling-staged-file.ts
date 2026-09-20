@@ -4,7 +4,6 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   type AsyncDirectoryGuard,
-  assertAsyncDirectoryGuard,
   assertDirectoryIdentitySync,
   createAsyncDirectoryGuard,
 } from "./directory-guard.js";
@@ -18,7 +17,7 @@ import {
 } from "./private-producer-handoff.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { rootFromDirectoryGuard } from "./root-impl.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { createOwnedTempFile } from "./temp-target.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -70,8 +69,8 @@ function assertRegularFile(stat: BigIntStats): void {
   }
 }
 
-async function inspectStage(inspect: () => BigIntStats, expected?: BigIntStats) {
-  return await inspectFileIdentity(async () => {
+function inspectStage(inspect: () => BigIntStats, expected?: BigIntStats) {
+  return inspectFileIdentitySync(() => {
     const stat = inspect();
     assertRegularFile(stat);
     return stat;
@@ -99,12 +98,7 @@ async function writeIsolatedProducer<T>(params: {
   assertParent: () => void;
   syncTempFile: boolean;
 }): Promise<IsolatedProducerResult<T>> {
-  const tempPath = params.tempPath;
-  const write = params.write;
-  const writeReceiver = params.writeReceiver;
-  const parentGuard = params.parentGuard;
-  const assertParent = params.assertParent;
-  const syncTempFile = params.syncTempFile;
+  const { tempPath, write, writeReceiver, parentGuard, assertParent, syncTempFile } = params;
   assertParent();
   const targetRoot = rootFromDirectoryGuard(parentGuard);
   // Select the handoff before invoking the producer. Missing required native
@@ -198,7 +192,9 @@ export async function writeCallbackSibling<T>(params: {
   const syncTempFile = params.syncTempFile;
   const syncParentDir = params.syncParentDir;
   const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
-  const assertParent = () => assertAsyncDirectoryGuard(guard);
+  const assertParent = () => assertDirectoryIdentitySync(parent, {
+    dev: guard.stat.dev, ino: guard.stat.ino, realPath: guard.realPath,
+  });
   let handle: FileHandle | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
@@ -207,10 +203,10 @@ export async function writeCallbackSibling<T>(params: {
   let failure: { error: unknown } | undefined;
   const inspectPath = (pathname: string, expected?: BigIntStats) =>
     inspectStage(() => fsSync.lstatSync(pathname, { bigint: true }), expected);
-  const assertCurrent = async (pathname: string) => {
-    await assertParent();
-    const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
-    const current = await inspectPath(pathname, opened);
+  const assertCurrent = (pathname: string) => {
+    assertParent();
+    const opened = inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
+    const current = inspectPath(pathname, opened);
     if (
       maxBytes !== undefined &&
       (opened.size > maxBytes || current.size > maxBytes)
@@ -228,11 +224,7 @@ export async function writeCallbackSibling<T>(params: {
           writeReceiver: params,
           parentGuard: guard,
           syncTempFile: syncTempFile,
-          assertParent: () => assertDirectoryIdentitySync(parent, {
-            dev: guard.stat.dev,
-            ino: guard.stat.ino,
-            realPath: guard.realPath,
-          }),
+          assertParent,
         });
       result = isolated.result;
       cleanupWorkspace = isolated.cleanupWorkspace;
@@ -244,15 +236,10 @@ export async function writeCallbackSibling<T>(params: {
     } else {
       result = await Reflect.apply(write, params, [tempPath]);
     }
-    await assertParent();
-    if (handle) {
-      const opened = await inspectStage(
-        () => fsSync.fstatSync(handle!.fd, { bigint: true }),
-        identity,
-      );
-      await inspectPath(tempPath, opened);
-    } else {
-      const before = await inspectPath(tempPath);
+    assertParent();
+    let expected = identity;
+    if (!handle) {
+      expected = inspectPath(tempPath);
       try {
         // No create/truncate flags; O_NONBLOCK also bounds a FIFO swap during open.
         const access = syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
@@ -263,12 +250,14 @@ export async function writeCallbackSibling<T>(params: {
         }
         throw error;
       }
-      const opened = await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), before);
-      await inspectPath(tempPath, opened);
+    }
+    const opened = inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), expected);
+    inspectPath(tempPath, opened);
+    if (!identity) {
       identity = opened;
       unregister = registerTempPathForExit(tempPath, { identity, singleLinkFile: true });
     }
-    await assertParent();
+    assertParent();
     if (cleanupWorkspace) {
       const cleanup = cleanupWorkspace;
       cleanupWorkspace = undefined;
@@ -286,26 +275,28 @@ export async function writeCallbackSibling<T>(params: {
       throw new FsSafeError("invalid-path", "final path must differ from the sibling temp path");
     }
     await serializePathWrite(filePath, async () => {
-      await assertCurrent(tempPath);
+      assertCurrent(tempPath);
       if (mode !== undefined) {
         try {
           await handle!.chmod(mode);
         } catch (error) {
           if (!ignoreModeError) throw error;
         }
+        assertCurrent(tempPath);
       }
       if (syncTempFile) {
-        await assertCurrent(tempPath);
         await syncFileBestEffort(handle!);
+        assertCurrent(tempPath);
       }
-      await assertCurrent(tempPath);
       await fs.rename(tempPath, filePath);
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
       unregister!();
-      await assertCurrent(filePath);
-      if (syncParentDir) await syncDirectoryBestEffort(parent);
-      await assertCurrent(filePath);
+      assertCurrent(filePath);
+      if (syncParentDir) {
+        await syncDirectoryBestEffort(parent);
+        assertCurrent(filePath);
+      }
     });
     return { filePath, result };
   } catch (error) {
@@ -323,9 +314,9 @@ export async function writeCallbackSibling<T>(params: {
     try {
       if (!renamed && identity) {
         try {
-          await assertParent();
-          await inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
-          await inspectPath(tempPath, identity);
+          assertParent();
+          inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
+          inspectPath(tempPath, identity);
           await fs.unlink(tempPath);
           unregister?.();
         } catch (error) {

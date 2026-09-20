@@ -5,7 +5,7 @@ import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import {
   prepareSecretRead,
   secretPathErrorCode,
@@ -20,7 +20,7 @@ export async function readSecretFile(
   label: string,
   options: SecretFileReadOptions = {},
 ): Promise<string> {
-  const { resolvedPath, maxBytes, rejectSymlink, rejectHardlinks, previewStat, inspectInput } =
+  const { resolvedPath, maxBytes, rejectHardlinks, previewStat, inspectInput } =
     prepareSecretRead(filePath, label, options);
 
   let handle: fs.FileHandle | undefined;
@@ -31,19 +31,19 @@ export async function readSecretFile(
     assertNoUnsafeDeviceReadPath(realPath);
     handle = await fs.open(realPath, resolveReadOpenFlags());
     const openedHandle = handle;
-    const openedStat = await inspectFileIdentity(async () => {
+    const openedStat = inspectFileIdentitySync(() => {
       const stat = fsSync.fstatSync(openedHandle.fd, { bigint: true });
       if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
         throw new FsSafeError("path-mismatch", "security validation failed");
       }
       return stat;
     }, previewStat);
-    await inspectFileIdentity(async () => {
+    inspectFileIdentitySync(() => {
       const stat = fsSync.lstatSync(realPath, { bigint: true });
       if (!stat.isFile()) throw new FsSafeError("path-mismatch", "security validation failed");
       return stat;
     }, openedStat);
-    await inspectFileIdentity(() => inspectInput("secret path became a symlink"), openedStat);
+    inspectFileIdentitySync(() => inspectInput("secret path became a symlink"), openedStat);
     raw = (await readFileHandleBounded(handle, maxBytes)).toString("utf8");
   } catch (error) {
     throw secretReadError(

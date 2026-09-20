@@ -22,18 +22,13 @@ import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type SyncParentGuard = SyncStoreDirectoryReceipt;
 
-function parentRelativePath(relativePath: string): string {
-  const parent = path.posix.dirname(relativePath);
-  return parent === "." ? "" : parent;
-}
-
 export async function ensureParentInRoot(
   scopedRoot: Root,
   relativePath: string,
   mode: number,
 ): Promise<void> {
-  const parent = parentRelativePath(relativePath);
-  if (!parent) {
+  const parent = path.posix.dirname(relativePath);
+  if (parent === ".") {
     return;
   }
   await scopedRoot.mkdir(parent);
@@ -148,14 +143,6 @@ export async function writeStreamToTempSource(params: {
   }
 }
 
-export function assertSyncDirectoryGuard(guard: SyncParentGuard): void {
-  assertSyncStoreDirectoryReceipt({
-    dir: guard.dir,
-    realPath: guard.realPath,
-    exactStat: guard.exactStat,
-  });
-}
-
 export function ensureParentSync(params: {
   rootDir: string;
   filePath: string;
@@ -178,6 +165,6 @@ export function ensureStoreDirectorySync(params: {
   messagePrefix: "private store" | "store";
 }): SyncParentGuard {
   const guard = ensureSyncStoreDirectory(params);
-  assertSyncDirectoryGuard(guard);
+  assertSyncStoreDirectoryReceipt(guard);
   return guard;
 }

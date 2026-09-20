@@ -38,30 +38,6 @@ function parseIdentity(value: unknown): ExactIdentity {
   };
 }
 
-export function inspectSecureWindowsDescriptor(params: {
-  fd: number;
-  identity: ExactIdentity;
-  stat: Stats;
-}): PermissionCheck {
-  let native;
-  try {
-    native = getNativeBinding();
-  } catch (cause) {
-    permissionUnverified("Windows descriptor ACL verification requires the matching native helper", cause);
-  }
-  const inspect = native?.inspectWindowsSecureFileHandle;
-  if (typeof inspect !== "function") {
-    permissionUnverified("Windows descriptor ACL verification requires an up-to-date native helper");
-  }
-  let result: unknown;
-  try {
-    result = inspect.call(native, params.fd);
-  } catch (cause) {
-    permissionUnverified("Windows descriptor ACL verification failed", cause);
-  }
-  return inspectDescriptorResult(params, result, "native");
-}
-
 function inspectDescriptorResult(params: {
   identity: ExactIdentity;
   stat: Stats;
@@ -102,16 +78,23 @@ export async function inspectSecureWindowsFile(params: {
   try { native = getNativeBinding(); } catch (cause) {
     permissionUnverified("Windows descriptor ACL verification requires the matching native helper", cause);
   }
-  if (typeof native?.inspectWindowsSecureFileHandle === "function") {
-    return inspectSecureWindowsDescriptor(params);
-  }
-  if (getFsSafeNativeConfig().mode === "require") {
+  const inspect = native?.inspectWindowsSecureFileHandle;
+  const nativeAvailable = typeof inspect === "function";
+  if (!nativeAvailable && getFsSafeNativeConfig().mode === "require") {
     permissionUnverified("Windows descriptor ACL verification requires an up-to-date native helper");
   }
-  warnNativeFallback("windows-secure-file", "Windows descriptor ACL inspection uses a slower built-in system command.");
+  if (!nativeAvailable) {
+    warnNativeFallback("windows-secure-file", "Windows descriptor ACL inspection uses a slower built-in system command.");
+  }
   let result: unknown;
-  try { result = await inspectWindowsDescriptorCommand(params.fd); } catch (cause) {
+  try {
+    if (nativeAvailable) {
+      result = inspect.call(native, params.fd);
+    } else {
+      result = await inspectWindowsDescriptorCommand(params.fd);
+    }
+  } catch (cause) {
     permissionUnverified("Windows descriptor ACL verification failed", cause);
   }
-  return inspectDescriptorResult(params, result, "system-command");
+  return inspectDescriptorResult(params, result, nativeAvailable ? "native" : "system-command");
 }

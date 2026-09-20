@@ -13,7 +13,8 @@ import {
   type SidecarLockStaleSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import {
-  computeSidecarLockDelayMs,
+  sidecarLockRetryDelay,
+  sidecarLockTimeout,
   isTransientLockFileDenial,
   maxTransientLockDenials,
   validateSidecarLockStaleMs,
@@ -38,7 +39,6 @@ import {
   foreignSyncHeldLock,
   getSyncLockAdmissions,
   syncReclaimGuardExists,
-  syncLockTimeout,
   type SyncHeldLock,
 } from "./file-lock-sync-admission.js";
 import {
@@ -225,16 +225,9 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   const reclaimGuardPath = `${lockPath}.reclaim`;
   const waitForRetry = (): void => {
     releaseAdmission();
-    const elapsed = Date.now() - startedAt;
-    const timedOut = timeoutMs !== undefined && elapsed >= timeoutMs;
-    if (timedOut || (retry.retries !== undefined && attempt >= retry.retries)) {
-      throw syncLockTimeout(lockPath, normalizedTargetPath);
-    }
-    const remaining =
-      timeoutMs === undefined || timeoutMs === Number.POSITIVE_INFINITY
-        ? Number.POSITIVE_INFINITY
-        : Math.max(0, timeoutMs - elapsed);
-    sleepSync(Math.min(computeSidecarLockDelayMs(retry, attempt), remaining));
+    const delay = sidecarLockRetryDelay(retry, timeoutMs, Date.now() - startedAt, attempt);
+    if (delay === undefined) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+    sleepSync(delay);
     attempt += 1;
   };
   const retryLockFileDenial = (error: unknown): boolean => {
@@ -250,7 +243,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
     return true;
   };
   const assertAdmissionToken = (): void => {
-    if (!hasAdmissionToken()) throw syncLockTimeout(lockPath, normalizedTargetPath);
+    if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
   };
   const runAdmissionBoundary = <T>(callback: () => T): T => {
     assertAdmissionToken();
@@ -273,7 +266,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         }
         if (admissions.has(normalizedTargetPath)) {
           // The owner can only finish after this synchronous callback unwinds.
-          throw syncLockTimeout(lockPath, normalizedTargetPath);
+          throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         }
         admissions.set(normalizedTargetPath, admissionToken);
         ownsAdmission = true;
@@ -290,7 +283,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         if (holderWasReplaced()) { waitForRetry(); continue; }
       }
       const reclaimGuardExists = syncReclaimGuardExists(reclaimGuardPath);
-      if (!hasAdmissionToken()) throw syncLockTimeout(lockPath, normalizedTargetPath);
+      if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
       if (holderWasReplaced()) { waitForRetry(); continue; }
       if (reclaimGuardExists) {
         waitForRetry();
@@ -359,7 +352,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           normalizedTargetPath,
         );
         if (!hasAdmissionToken() || currentTargetHolder() !== undefined) {
-          throw syncLockTimeout(lockPath, normalizedTargetPath);
+          throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         }
         const returnedHandle = createSyncHeldLockHandle(candidateHeld);
         if (onCompromised && (compromiseCheckIntervalMs ?? 0) > 0) {
@@ -383,7 +376,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           !hasAdmissionToken() ||
           currentTargetHolder() !== undefined
         ) {
-          throw syncLockTimeout(lockPath, normalizedTargetPath);
+          throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         }
         heldLocks.set(normalizedTargetPath, candidateHeld);
         releaseAdmission();
@@ -421,13 +414,13 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           }
         }
         if (lockFileCreateDenied) {
-          if (!hasAdmissionToken()) throw syncLockTimeout(lockPath, normalizedTargetPath);
+          if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
           if (currentTargetHolder() !== undefined) { waitForRetry(); continue; }
           if (retryLockFileDenial(error)) continue;
           throw error;
         }
         if (!exclusiveCreateConflict) throw error;
-        if (!hasAdmissionToken()) throw syncLockTimeout(lockPath, normalizedTargetPath);
+        if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         if (currentTargetHolder() !== undefined) {
           waitForRetry();
           continue;

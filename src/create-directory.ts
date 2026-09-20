@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
-import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import {
   assertPrivateDirectory,
   assertPrivateDirectorySync,
@@ -12,14 +11,13 @@ import {
   resolveCreationPermissions,
   type CreationPermissions,
 } from "./creation-permissions.js";
-import { creationCollision, prepareCreationPath, type CreationParentIdentity } from "./creation-path.js";
+import { assertBeforeCreation, creationCollision, prepareCreationPath, type CreationParentIdentity } from "./creation-path.js";
 import {
   createPrivateWindowsDirectoryCommand,
   createPrivateWindowsDirectoryCommandSync,
 } from "./windows-security-command.js";
 import { warnNativeFallback } from "./native-fallback-warning.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
-import { assertDarwinCreationDirectoryAcl, assertDarwinPrivateDirectoryMode } from "./creation-darwin.js";
 
 export type CreateDirectoryOptions = CreationPermissions & { assertBeforeMutation?: () => void };
 export type CreationAdmission = { expectedParentIdentity?: CreationParentIdentity };
@@ -73,11 +71,7 @@ export async function createDirectoryWithReceipt(
   const backend = permissions.private && process.platform === "win32" ? privateDirectoryBackend() : undefined;
   const parentIdentity = permissions.private && process.platform === "win32"
     ? await inspectCreationDirectory(selected.parent.dir, false) : undefined;
-  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "directory");
-  assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
-  selected.assertParent();
-  if (permissions.private) assertDarwinPrivateDirectoryMode(permissions.mode!);
-  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "directory");
+  assertBeforeCreation(selected, permissions, assertion, "directory");
   let created = false;
   let windowsIdentity: string | undefined;
   try {
@@ -110,14 +104,6 @@ export function createDirectorySync(
   createDirectoryWithReceiptSync(targetPath, options, {});
 }
 
-export function createDirectorySyncWithAdmission(
-  targetPath: string,
-  options: CreateDirectoryOptions = {},
-  admission: CreationAdmission = {},
-): void {
-  createDirectoryWithReceiptSync(targetPath, options, admission);
-}
-
 export function createDirectoryWithReceiptSync(
   targetPath: string,
   options: CreateDirectoryOptions = {},
@@ -129,11 +115,7 @@ export function createDirectoryWithReceiptSync(
   const backend = permissions.private && process.platform === "win32" ? privateDirectoryBackend() : undefined;
   const parentIdentity = permissions.private && process.platform === "win32"
     ? inspectCreationDirectorySync(selected.parent.dir, false) : undefined;
-  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "directory");
-  assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
-  selected.assertParent();
-  if (permissions.private) assertDarwinPrivateDirectoryMode(permissions.mode!);
-  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "directory");
+  assertBeforeCreation(selected, permissions, assertion, "directory");
   let created = false;
   let windowsIdentity: string | undefined;
   try {

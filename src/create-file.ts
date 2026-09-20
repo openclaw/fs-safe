@@ -14,7 +14,7 @@ import {
   resolveCreationPermissions,
   verifyCreatedFileSync,
 } from "./creation-permissions.js";
-import { creationCollision, prepareCreationPath, removeCreationDirectory, type CreationPath } from "./creation-path.js";
+import { assertBeforeCreation, creationCollision, prepareCreationPath, removeCreationDirectory, type CreationPath } from "./creation-path.js";
 import { handoffCreatedFileSync } from "./private-producer-handoff-sync.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 
@@ -28,7 +28,6 @@ import {
   type CreationPublicationStatus,
 } from "./creation-file-state.js";
 import { createPrivateWindowsFileHandle } from "./create-file-async.js";
-import { assertDarwinCreationDirectoryAcl } from "./creation-darwin.js";
 
 export type CreateFileOptions = CreateDirectoryOptions;
 function createPrivateWindowsFile(selected: CreationPath, options: CreateFileOptions, mode: number): OwnedFileDescriptorSync {
@@ -116,10 +115,7 @@ function createFileCore(targetPath: string, options: CreateFileOptions, admissio
     assertPrivateFileCreationAvailable();
     return createPrivateWindowsFile(selected, { ...permissions, assertBeforeMutation: assertion }, permissions.mode!);
   }
-  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
-  assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
-  selected.assertParent();
-  if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
+  assertBeforeCreation(selected, permissions, assertion, "file");
   let file: OwnedFileDescriptorSync;
   try {
     file = ownFileDescriptorSync(fs.openSync(selected.target, fs.constants.O_RDWR | fs.constants.O_CREAT |
@@ -154,10 +150,7 @@ export async function createFileHandle(
   const assertion = options.assertBeforeMutation;
   if (process.platform !== "win32" || !permissions.private) {
     const selected = prepareCreationPath(targetPath, admission.expectedParentIdentity);
-    if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
-    assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
-    selected.assertParent();
-    if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, "file");
+    assertBeforeCreation(selected, permissions, assertion, "file");
     const handle = await fsAsync.open(selected.target, fs.constants.O_RDWR | fs.constants.O_CREAT |
       fs.constants.O_EXCL | resolveReadOpenFlags(), permissions.mode ?? 0o666)
       .catch(error => { throw creationCollision(error); });

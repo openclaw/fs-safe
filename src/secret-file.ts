@@ -51,20 +51,8 @@ export function readSecretFileSync(
   }
   let raw: string;
   try {
-    const openedIdentity = inspectFileIdentitySync(() => {
-      const stat = fs.fstatSync(opened.fd, { bigint: true });
-      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
-        throw new FsSafeError("path-mismatch", "security validation failed");
-      }
-      return stat;
-    }, previewStat);
-    inspectFileIdentitySync(() => {
-      const stat = fs.lstatSync(opened.path, { bigint: true });
-      if (!stat.isFile() || (rejectHardlinks && stat.nlink > 1n)) {
-        throw new FsSafeError("path-mismatch", "security validation failed");
-      }
-      return stat;
-    }, openedIdentity);
+    // The pin already compared the descriptor and resolved name without yielding.
+    const openedIdentity = inspectFileIdentitySync(() => opened.identity, previewStat);
     inspectFileIdentitySync(() => inspectInput("secret path became a symlink"), openedIdentity);
     raw = readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
   } catch (error) {

@@ -9,7 +9,7 @@ import { realpathSync } from "./realpath.js";
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
 export type PinnedOpenSyncResult =
-  | { ok: true; path: string; fd: number; stat: fs.Stats }
+  | { ok: true; path: string; fd: number; stat: fs.Stats; identity: fs.BigIntStats }
   | { ok: false; reason: PinnedOpenSyncFailureReason; error?: unknown };
 
 export type PinnedOpenSyncAllowedType = "file" | "directory";
@@ -97,7 +97,7 @@ export function openPinnedFileSync(params: {
       descriptorIdentity: identity,
     }) ?? realPath;
 
-    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat };
+    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat, identity };
     fd = null;
     return opened;
   } catch (error) {

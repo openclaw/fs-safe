@@ -60,77 +60,53 @@ type State =
   | { status: "closed"; receipt: StagedFileCleanupReceipt; error?: FsSafeError };
 type StagedPermissionPolicy = "private-creation" | "mode-only";
 
+type NativeStageOwner = Readonly<{
+  binding: NativeStagingBinding;
+  parentFd: number;
+  closeParentFd: (fd: number) => void;
+  directory: StagedFileReceipt["directory"];
+  portableNames?: boolean;
+  mode: number;
+  sync?: boolean;
+  strictFileSync?: boolean;
+  assertBeforeMutation?: () => void;
+  permissionPolicy?: StagedPermissionPolicy;
+  name?: string;
+}>;
+
 class NativeStagedFile implements StagedFile {
-  readonly #binding: NativeStagingBinding;
+  readonly #owner: NativeStageOwner & { name: string };
   readonly #closeFd: (fd: number) => void;
-  readonly #parentFd: number;
-  readonly #closeParentFd: (fd: number) => void;
-  readonly #directory: StagedFileReceipt["directory"];
-  readonly #portableNames: boolean;
-  readonly #publishedMode: number;
-  readonly #sync: boolean;
-  readonly #strictFileSync: boolean;
+  readonly #assertBeforeMutation?: () => void;
   readonly #private: boolean;
   readonly #verifyMode: boolean;
-  readonly #assertBeforeMutation?: () => void;
-  readonly #name: string;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
   #rejectFinalSymlink = false;
 
-  constructor(
-    binding: NativeStagingBinding,
-    parentFd: number,
-    closeParentFd: (fd: number) => void,
-    directory: StagedFileReceipt["directory"],
-    portableNames: boolean,
-    publishedMode: number,
-    sync: boolean,
-    assertBeforeMutation?: () => void,
-    name = `.fs-safe-${randomUUID()}.tmp`,
-    strictFileSync = false,
-    permissionPolicy?: StagedPermissionPolicy,
-  ) {
-    assertBasename(name, portableNames);
-    this.#name = name;
-    this.#closeFd = captureNativeFdClose(binding);
-    this.#binding = binding;
-    this.#parentFd = parentFd;
-    this.#closeParentFd = closeParentFd;
-    this.#directory = directory;
-    this.#portableNames = portableNames;
-    this.#publishedMode = publishedMode;
-    this.#sync = sync;
-    this.#strictFileSync = strictFileSync;
-    this.#private = permissionPolicy === "private-creation";
-    this.#verifyMode = permissionPolicy !== undefined;
-    this.#assertBeforeMutation = assertBeforeMutation;
+  constructor(owner: NativeStageOwner) {
+    const name = owner.name ?? `.fs-safe-${randomUUID()}.tmp`;
+    assertBasename(name, owner.portableNames !== false);
+    this.#closeFd = captureNativeFdClose(owner.binding);
+    this.#owner = { ...owner, name };
+    this.#assertBeforeMutation = owner.assertBeforeMutation;
+    this.#private = owner.permissionPolicy === "private-creation";
+    this.#verifyMode = owner.permissionPolicy !== undefined;
   }
 
   // Public staging supplies a Node parent; pinned writes supply a native parent.
   // The supplied closer owns parentFd even on construction or preparation failure.
   static async create(
-    binding: NativeStagingBinding,
-    parentFd: number,
-    closeParentFd: (fd: number) => void,
-    directory: StagedFileReceipt["directory"],
+    owner: NativeStageOwner,
     input: PinnedWriteInput,
-    mode: number,
     maxBytes?: number,
-    // Public staging uses portable names; existing POSIX writes accept literal names.
-    portableNames = true,
-    sync = true,
-    assertBeforeMutation?: () => void,
-    exclusiveBasename?: string,
-    strictFileSync = false,
-    permissionPolicy?: StagedPermissionPolicy,
   ): Promise<NativeStagedFile> {
     let staged: NativeStagedFile;
     try {
-      staged = new NativeStagedFile(binding, parentFd, closeParentFd, directory, portableNames, mode, sync, assertBeforeMutation, exclusiveBasename, strictFileSync, permissionPolicy);
+      staged = new NativeStagedFile(owner);
     } catch (error) {
       try {
-        closeParentFd(parentFd);
+        owner.closeParentFd(owner.parentFd);
       } catch (closeError) {
         throw new AggregateError([error, closeError], "staged owner construction and close failed");
       }
@@ -151,12 +127,13 @@ class NativeStagedFile implements StagedFile {
     const exclusive = params.overwrite === false && params.input.kind === "buffer" && params.input.stageBeforePublish === false;
     // This owner never escapes. Only the internal verifier borrows its fd;
     // public descriptor methods remain await-free and cannot race disposal.
-    await using staged = await NativeStagedFile.create(
-      binding, parentFd, closeParentFd, directory, params.input, params.mode, params.maxBytes, false, params.sync, params.assertBeforeMutation,
-      exclusive ? params.basename : undefined,
-      params.strictFileSync,
-      params.private ? "private-creation" : params.verifyPosixMode === true ? "mode-only" : undefined,
-    );
+    await using staged = await NativeStagedFile.create({
+      binding, parentFd, closeParentFd, directory, mode: params.mode, sync: params.sync,
+      // Public staging uses portable names; existing POSIX writes accept literal names.
+      portableNames: false, assertBeforeMutation: params.assertBeforeMutation,
+      name: exclusive ? params.basename : undefined, strictFileSync: params.strictFileSync,
+      permissionPolicy: params.private ? "private-creation" : params.verifyPosixMode === true ? "mode-only" : undefined,
+    }, params.input, params.maxBytes);
     staged.#rejectFinalSymlink = params.rejectFinalSymlink === true;
     if (params.input.kind === "file") await params.input.verifySource();
     if (exclusive) {
@@ -203,7 +180,7 @@ class NativeStagedFile implements StagedFile {
 
   #assertNamed(name: string, expectedMode: number): number {
     const fd = this.#file();
-    const stat = this.#binding.stagedFileMatches(this.#parentFd, name, fd)
+    const stat = this.#owner.binding.stagedFileMatches(this.#owner.parentFd, name, fd)
       ? fs.fstatSync(fd, { bigint: true }) : undefined;
     if (!stat || stat.nlink !== 1n) {
       throw new FsSafeError("path-mismatch", "staged entry no longer names the exclusive created file");
@@ -216,8 +193,8 @@ class NativeStagedFile implements StagedFile {
     if (this.#open().publication.status !== "not-published") {
       throw new FsSafeError("helper-failed", "staged file publication has already been attempted");
     }
-    assertStagedDirectoryCurrent(this.#directory);
-    this.#assertNamed(this.#name, 0o600);
+    assertStagedDirectoryCurrent(this.#owner.directory);
+    this.#assertNamed(this.#owner.name, 0o600);
   }
 
   #assertPermissions(fd: number, stat: fs.BigIntStats, expectedMode: number): void {
@@ -233,7 +210,7 @@ class NativeStagedFile implements StagedFile {
 
   async #prepare(input: PinnedWriteInput, maxBytes?: number): Promise<void> {
     try {
-      const mode = this.#publishedMode;
+      const mode = this.#owner.mode;
       if (!Number.isInteger(mode) || mode < 0 || mode > 0o7777) {
         throw new FsSafeError("invalid-path", "invalid staged file mode");
       }
@@ -244,22 +221,22 @@ class NativeStagedFile implements StagedFile {
           throw new FsSafeError("helper-unavailable", "required cloning cannot verify staged permissions before copying");
         }
       }
-      assertStagedDirectoryCurrent(this.#directory);
+      assertStagedDirectoryCurrent(this.#owner.directory);
       // The exclusive open performs no fallible post-open checks. Store its fd
       // before every subsequent operation, including the first metadata read.
       const state = this.#open();
-      if (this.#private) assertDarwinCreationAcl(this.#parentFd, "file");
+      if (this.#private) assertDarwinCreationAcl(this.#owner.parentFd, "file");
       this.#assertBeforeMutation?.();
-      if (this.#private) assertDarwinCreationAcl(this.#parentFd, "file");
+      if (this.#private) assertDarwinCreationAcl(this.#owner.parentFd, "file");
       // Native copying populates its new file before returning its descriptor.
       const copied = input.kind === "file" && !this.#verifyMode
-        ? await createNativeCopyFile(this.#binding, input, this.#parentFd, this.#name, maxBytes, false)
+        ? await createNativeCopyFile(this.#owner.binding, input, this.#owner.parentFd, this.#owner.name, maxBytes, false)
         : undefined;
       state.fileFd = copied?.fd;
       if (state.fileFd === undefined) {
         this.#assertBeforeMutation?.();
-        if (this.#private) assertDarwinCreationAcl(this.#parentFd, "file");
-        state.fileFd = this.#binding.createStagedFile(this.#parentFd, this.#name);
+        if (this.#private) assertDarwinCreationAcl(this.#owner.parentFd, "file");
+        state.fileFd = this.#owner.binding.createStagedFile(this.#owner.parentFd, this.#owner.name);
       }
       const fd = state.fileFd;
       if (input.kind === "file") assertNativeCopyCompleted(input, copied);
@@ -279,12 +256,12 @@ class NativeStagedFile implements StagedFile {
       } : this.#assertBeforeMutation;
       if (!copied) await writePinnedInput(fd, input, maxBytes, assertBeforeMutation);
       if (this.#verifyMode) this.#assertStagePermissions(fd);
-      if (this.#sync) {
-        if (this.#strictFileSync) fs.fsyncSync(fd);
+      if (this.#owner.sync !== false) {
+        if (this.#owner.strictFileSync) fs.fsyncSync(fd);
         else syncFileBestEffortSync(fd);
       }
       const stat = fs.fstatSync(fd, { bigint: true });
-      this.#receipt = createStagedFileReceipt(this.#directory, this.#name, stat);
+      this.#receipt = createStagedFileReceipt(this.#owner.directory, this.#owner.name, stat);
       this.#assertCurrent();
     } catch (error) {
       const { receipt: cleanup, error: cleanupError } = this.#finalize();
@@ -315,22 +292,22 @@ class NativeStagedFile implements StagedFile {
     const overwrite = options?.overwrite;
     try {
       const state = this.#open();
-      assertBasename(basename, this.#portableNames);
-      if (basename === this.#name || typeof overwrite !== "boolean") {
+      assertBasename(basename, this.#owner.portableNames !== false);
+      if (basename === this.#owner.name || typeof overwrite !== "boolean") {
         throw new FsSafeError("invalid-path", "publication needs a distinct basename and explicit overwrite policy");
       }
       this.#assertCurrent();
-      assertFinalSymlinkRejected(path.join(this.#directory.realPath, basename), this.#rejectFinalSymlink);
+      assertFinalSymlinkRejected(path.join(this.#owner.directory.realPath, basename), this.#rejectFinalSymlink);
       this.#assertBeforeMutation?.();
       if (this.#assertBeforeMutation) {
         this.#assertCurrent();
-        assertFinalSymlinkRejected(path.join(this.#directory.realPath, basename), this.#rejectFinalSymlink);
+        assertFinalSymlinkRejected(path.join(this.#owner.directory.realPath, basename), this.#rejectFinalSymlink);
       }
       try {
         if (overwrite) {
-          this.#binding.renameReplace(this.#parentFd, this.#name, this.#parentFd, basename);
+          this.#owner.binding.renameReplace(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
         } else {
-          this.#binding.renameNoReplace(this.#parentFd, this.#name, this.#parentFd, basename);
+          this.#owner.binding.renameNoReplace(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
         }
       } catch (error) {
         // Only explicit pre-dispatch provenance can rule out a committed rename.
@@ -356,20 +333,20 @@ class NativeStagedFile implements StagedFile {
     this.#open().publication = receipt;
     onPublished?.(receipt.staged.identity);
     const stagedMode = this.#assertNamed(basename, 0o600);
-    assertStagedDirectoryCurrent(this.#directory);
+    assertStagedDirectoryCurrent(this.#owner.directory);
     // Keep contents private until the name passes its identity fence. Mode
     // changes use the owned fd, including for final mode 000.
     const fd = this.#file();
-    if (this.#publishedMode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#publishedMode);
+    if (this.#owner.mode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#owner.mode);
     // Content was synced during preparation. A lost chmod leaves 0600, no wider
     // than modes retaining owner rw; restrictive modes still need a durable correction.
-    if (this.#sync && ((this.#publishedMode & 0o600) !== 0o600 || (stagedMode & ~this.#publishedMode) !== 0)) {
-      if (this.#strictFileSync) fs.fsyncSync(fd);
+    if (this.#owner.sync !== false && ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0)) {
+      if (this.#owner.strictFileSync) fs.fsyncSync(fd);
       else syncFileBestEffortSync(fd);
     }
-    if (this.#sync) syncFileBestEffortSync(this.#parentFd);
-    this.#assertNamed(basename, this.#publishedMode);
-    assertStagedDirectoryCurrent(this.#directory);
+    if (this.#owner.sync !== false) syncFileBestEffortSync(this.#owner.parentFd);
+    this.#assertNamed(basename, this.#owner.mode);
+    assertStagedDirectoryCurrent(this.#owner.directory);
     return receipt;
   }
 
@@ -384,7 +361,7 @@ class NativeStagedFile implements StagedFile {
       outcome = "preserved";
     } else if (state.publication.status === "not-published" && state.fileFd !== undefined) {
       try {
-        outcome = this.#binding.removeStagedFile(this.#parentFd, this.#name, state.fileFd);
+        outcome = this.#owner.binding.removeStagedFile(this.#owner.parentFd, this.#owner.name, state.fileFd);
       } catch (error) {
         outcome = "failed";
         errors.push(error);
@@ -393,7 +370,7 @@ class NativeStagedFile implements StagedFile {
     let resources: StagedFileCleanupReceipt["resources"] = "closed";
     for (const [fd, closeFd] of [
       [state.fileFd, this.#closeFd],
-      [this.#parentFd, this.#closeParentFd],
+      [this.#owner.parentFd, this.#owner.closeParentFd],
     ] as const) {
       if (fd === undefined) {
         continue;
@@ -406,7 +383,7 @@ class NativeStagedFile implements StagedFile {
       }
     }
     const receipt = Object.freeze({
-      temporaryBasename: this.#name,
+      temporaryBasename: this.#owner.name,
       publication: state.publication,
       status: outcome,
       resources,
@@ -460,8 +437,8 @@ export async function stageFileInDirectory(options: {
   const input = { kind: "buffer" as const, data: Buffer.from(options.content) };
   const mode = options.mode ?? 0o600;
   const parent = openStagedDirectory(options.directory);
-  return await createNativeStage(
-    binding, parent.fd, fs.closeSync, parent.receipt, input, mode,
-    undefined, true, true, undefined, undefined, false, "mode-only",
-  );
+  return await createNativeStage({
+    binding, parentFd: parent.fd, closeParentFd: fs.closeSync,
+    directory: parent.receipt, mode, permissionPolicy: "mode-only",
+  }, input);
 }

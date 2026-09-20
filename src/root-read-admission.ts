@@ -39,52 +39,6 @@ export function inspectOpenedPathIdentitySync(
   return stat;
 }
 
-function assertRootReadAdmissionCurrent(params: {
-  root: RootContext;
-  filePath: string;
-  handle: FileHandle;
-  identity: BigIntStats;
-  hardlinks?: HardlinkPolicy;
-  symlinks?: SymlinkPolicy;
-  afterPathIdentityCheck?: (filePath: string, handle: FileHandle) => void;
-}): string {
-  assertRootIdentityCurrentSync(params.root);
-  const admittedPath = (() => {
-    try {
-      const current = inspectFileIdentitySync(
-        () => inspectOpenedPathIdentitySync(params.filePath, params.symlinks),
-        params.identity,
-      );
-      if (params.hardlinks !== "allow" && current.nlink > 1n) throw hardlinkedPathNotAllowedError();
-      const canonicalPath = resolveFinalOpenedRealPath(params.filePath);
-      assertNoWindowsPathAlias(canonicalPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
-      const admittedRealPath = admitPathInsideRoot({
-        rootPath: params.root.rootReal,
-        candidatePath: canonicalPath,
-        rootIdentity: params.root.rootIdentity,
-      });
-      if (!admittedRealPath) {
-        throw openedPathResolutionError(outsideWorkspaceError());
-      }
-      // This is a fresh no-follow observation even when canonicalPath and
-      // filePath have the same spelling; realpath may have raced a replacement.
-      const canonical = inspectFileIdentitySync(
-        () => inspectOpenedPathIdentitySync(canonicalPath, undefined),
-        params.identity,
-      );
-      if (params.hardlinks !== "allow" && canonical.nlink > 1n) throw hardlinkedPathNotAllowedError();
-      return admittedRealPath.path;
-    } catch (error) {
-      throw isNotFoundPathError(error)
-        ? openedPathResolutionError(fileNotFoundError())
-        : error;
-    }
-  })();
-  params.afterPathIdentityCheck?.(params.filePath, params.handle);
-  assertRootIdentityCurrentSync(params.root);
-  return admittedPath;
-}
-
 type OwnedRootReadHandle = {
   handle: FileHandle;
   stat: { nlink: number };
@@ -108,16 +62,40 @@ export async function admitRootReadHandle<T extends OwnedRootReadHandle>(params:
       await params.beforeFinalFence(params.filePath, params.opened.handle);
     }
     try {
-      const finalRealPath = assertRootReadAdmissionCurrent({
-        root: params.root,
-        filePath: params.filePath,
-        handle: params.opened.handle,
-        identity: params.identity,
-        hardlinks: params.hardlinks,
-        symlinks: params.symlinks,
-        afterPathIdentityCheck: params.afterPathIdentityCheck,
-      });
-      return { ...params.opened, realPath: finalRealPath };
+      assertRootIdentityCurrentSync(params.root);
+      let realPath: string;
+      try {
+        const current = inspectFileIdentitySync(
+          () => inspectOpenedPathIdentitySync(params.filePath, params.symlinks),
+          params.identity,
+        );
+        if (params.hardlinks !== "allow" && current.nlink > 1n) throw hardlinkedPathNotAllowedError();
+        const canonicalPath = resolveFinalOpenedRealPath(params.filePath);
+        assertNoWindowsPathAlias(canonicalPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
+        const admittedRealPath = admitPathInsideRoot({
+          rootPath: params.root.rootReal,
+          candidatePath: canonicalPath,
+          rootIdentity: params.root.rootIdentity,
+        });
+        if (!admittedRealPath) {
+          throw openedPathResolutionError(outsideWorkspaceError());
+        }
+        // This is a fresh no-follow observation even when canonicalPath and
+        // filePath have the same spelling; realpath may have raced a replacement.
+        const canonical = inspectFileIdentitySync(
+          () => inspectOpenedPathIdentitySync(canonicalPath, undefined),
+          params.identity,
+        );
+        if (params.hardlinks !== "allow" && canonical.nlink > 1n) throw hardlinkedPathNotAllowedError();
+        realPath = admittedRealPath.path;
+      } catch (error) {
+        throw isNotFoundPathError(error)
+          ? openedPathResolutionError(fileNotFoundError())
+          : error;
+      }
+      params.afterPathIdentityCheck?.(params.filePath, params.opened.handle);
+      assertRootIdentityCurrentSync(params.root);
+      return { ...params.opened, realPath };
     } catch (error) {
       if (params.identity.nlink <= 1n) {
         await recordOpenedFileFailure(

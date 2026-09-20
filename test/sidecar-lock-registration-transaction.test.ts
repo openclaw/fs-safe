@@ -75,6 +75,41 @@ afterEach(() => {
 });
 
 describe("sidecar-lock cleanup registration transactions", () => {
+  it.each(["exit", "beforeExit", "sync"] as const)(
+    "preserves falsey failures while rolling back %s registration",
+    async (route) => {
+      configureFsSafeNative({ mode: "off" });
+      const directory = await tempRoot(`fs-safe-falsey-${route}-registration-`);
+      const target = path.join(directory, "state.json");
+      const eventName = route === "sync" ? "exit" : route;
+      for (const failure of [undefined, null, false, 0, ""]) {
+        resetCleanupRegistration();
+        const listenersBefore = process.listenerCount(eventName);
+        const realOn = process.on;
+        const on = vi.spyOn(process, "on");
+        on.mockImplementation((function (this: NodeJS.Process, candidateEvent, listener) {
+          const result = Reflect.apply(realOn, this, [candidateEvent, listener]);
+          if (candidateEvent === eventName) throw failure;
+          return result;
+        }) as typeof process.on);
+        try {
+          const outcome = await Promise.resolve().then(() => route === "sync"
+            ? acquireFileLockSync(target, { payload: () => ({ owner: "candidate" }) })
+            : createSidecarLockManager(`falsey:${route}:${directory}`).acquire({
+                targetPath: target,
+                staleMs: 30_000,
+                payload: () => ({ owner: "candidate" }),
+              })).then(() => ({ succeeded: true }), error => ({ error }));
+          expect(outcome).toEqual({ error: failure });
+          expect(process.listenerCount(eventName)).toBe(listenersBefore);
+          await expect(fs.access(`${target}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+          on.mockRestore();
+        }
+      }
+    },
+  );
+
   it.each([
     ["exit", false],
     ["exit", true],

@@ -63,6 +63,38 @@ describe("temp file cleanup capability", () => {
     },
   );
 
+  it("treats an already removed compatible directory as successful cleanup", async () => {
+    const rootDir = await tempRoot("fs-safe-temp-file-already-removed-");
+    const onCleanupError = vi.fn(() => { throw new Error("cleanup observer must not run"); });
+    const target = await tempFile({ rootDir, prefix: "download", onCleanupError });
+    await fs.rm(target.dir, { recursive: true });
+
+    await expect(target.cleanup()).resolves.toBeUndefined();
+    expect(onCleanupError).not.toHaveBeenCalled();
+  });
+
+  it.each(["EACCES", "ENOTDIR"])(
+    "reports compatible observation failure %s and preserves callback rejection",
+    async (code) => {
+      const rootDir = await tempRoot("fs-safe-temp-file-observation-error-");
+      const callbackFailure = new Error("cleanup observer failed");
+      const onCleanupError = vi.fn(() => { throw callbackFailure; });
+      const target = await tempFile({ rootDir, prefix: "download", onCleanupError });
+      const failure = Object.assign(new Error("injected observation failure"), { code });
+      const actualLstat = fsSync.lstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "lstatSync").mockImplementation(((name, ...args) => {
+        if (name === target.dir) throw failure;
+        return actualLstat(name, ...args);
+      }) as typeof fsSync.lstatSync);
+      const remove = vi.spyOn(fs, "rm");
+
+      await expect(target.cleanup()).rejects.toBe(callbackFailure);
+      expect(onCleanupError).toHaveBeenCalledExactlyOnceWith(failure);
+      expect(remove).not.toHaveBeenCalled();
+      expect((await fs.lstat(target.dir)).isDirectory()).toBe(true);
+    },
+  );
+
   it.each(["tempFile", "withTempFile"] as const)(
     "rejects invalid cleanupSafety before filesystem mutation through %s",
     async (variant) => {

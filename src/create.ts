@@ -1,6 +1,6 @@
 export {
   createDirectory, createDirectorySync,
-  createDirectoryWithAdmission, createDirectorySyncWithAdmission,
+  createDirectoryWithAdmission,
   type CreateDirectoryOptions, type CreationAdmission,
 } from "./create-directory.js";
 export { createFileSync, createFileHandle, type CreateFileOptions } from "./create-file.js";

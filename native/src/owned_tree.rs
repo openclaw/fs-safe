@@ -1,8 +1,9 @@
-use napi::bindgen_prelude::{AsyncTask, Task};
-use napi::{Env, Result};
+use napi::bindgen_prelude::AsyncTask;
+use napi::Result;
 use napi_derive::napi;
 
 use crate::{NativeResult, platform, validate_relative_path};
+use crate::task::NativeTask;
 
 #[napi(js_name = "ownedTreeRemovalAvailable")]
 pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
@@ -31,42 +32,17 @@ fn removal_result(result: NativeResult<String>) -> NativeOwnedTreeRemovalResult 
     }
 }
 
-pub struct RemoveOwnedTreeTask {
-    parent_fd: i32,
-    basename: String,
-    directory_fd: i32,
-}
-
-impl Task for RemoveOwnedTreeTask {
-    type Output = NativeResult<String>;
-    type JsValue = NativeOwnedTreeRemovalResult;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        Ok(platform::remove_owned_tree(
-            self.parent_fd,
-            &self.basename,
-            self.directory_fd,
-        ))
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(removal_result(output))
-    }
-}
-
 #[napi(js_name = "removeOwnedTree")]
 pub fn remove_owned_tree(
     parent_fd: i32,
     basename: String,
     directory_fd: i32,
-) -> Result<AsyncTask<RemoveOwnedTreeTask>> {
+) -> Result<AsyncTask<NativeTask<NativeOwnedTreeRemovalResult>>> {
     validate_relative_path(&basename, false)
         .map_err(|error| napi::Error::new(napi::Status::InvalidArg, error.reason))?;
-    Ok(AsyncTask::new(RemoveOwnedTreeTask {
-        parent_fd,
-        basename,
-        directory_fd,
-    }))
+    Ok(AsyncTask::new(NativeTask::new(move || {
+        Ok(removal_result(platform::remove_owned_tree(parent_fd, &basename, directory_fd)))
+    })))
 }
 
 #[napi(js_name = "removeOwnedTreeSync")]

@@ -13,6 +13,7 @@ use crate::unix::{
     validate_child_basename,
 };
 use crate::{NativeResult, native_error};
+use crate::task::{cancellation, checked_max_bytes};
 
 #[napi(object)]
 pub struct NativeFileCopyResult {
@@ -335,27 +336,8 @@ pub fn copy_file_exclusive(
         "always" => CloneMode::Always,
         _ => return Err(Error::new(Status::InvalidArg, "invalid copy clone mode")),
     };
-    let max_bytes = match max_bytes {
-        Some(value)
-            if value.is_finite()
-                && (0.0..=9_007_199_254_740_991.0).contains(&value)
-                && value.fract() == 0.0 =>
-        {
-            value as u64
-        }
-        Some(_) => {
-            return Err(Error::new(
-                Status::InvalidArg,
-                "maxBytes must be a non-negative safe integer",
-            ));
-        }
-        None => u64::MAX,
-    };
-    let cancelled = Arc::new(AtomicBool::new(false));
-    if let Some(signal) = &signal {
-        let callback = Arc::clone(&cancelled);
-        signal.on_abort(move || callback.store(true, Ordering::Relaxed));
-    }
+    let max_bytes = checked_max_bytes(max_bytes)?;
+    let cancelled = cancellation(signal.as_ref());
     // Keep settlement under this task: every created descriptor, including a
     // canceled transfer, must pass through resolve to reach its cleanup owner.
     Ok(AsyncTask::new(FileCopyTask {

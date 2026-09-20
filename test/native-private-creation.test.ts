@@ -320,9 +320,8 @@ describe.runIf(native)("native private creation permission verification", () => 
       const read = vi.spyOn(source, "read");
       const write = vi.spyOn(fs, "write");
       await expect(createNativeStage(
-        binding, parent.fd, closeParent, parent.receipt,
-        { kind: "file", handle: source, size: 22, clone, verifySource: async () => undefined }, 0o600,
-        undefined, true, true, undefined, undefined, false, permissionPolicy,
+        { binding, parentFd: parent.fd, closeParentFd: closeParent, directory: parent.receipt, mode: 0o600, permissionPolicy },
+        { kind: "file", handle: source, size: 22, clone, verifySource: async () => undefined },
       )).rejects.toMatchObject({ code: "insecure-permissions" });
       expect(copy).not.toHaveBeenCalled();
       expect(read).not.toHaveBeenCalled();
@@ -347,9 +346,8 @@ describe.runIf(native)("native private creation permission verification", () => 
       assertNativeStaging(binding);
       const read = vi.spyOn(source, "read");
       await expect(createNativeStage(
-        binding, parent.fd, fs.closeSync, parent.receipt,
-        { kind: "file", handle: source, size: 14, clone: "always", verifySource: async () => undefined }, 0o600,
-        undefined, true, true, undefined, undefined, false, permissionPolicy,
+        { binding, parentFd: parent.fd, closeParentFd: fs.closeSync, directory: parent.receipt, mode: 0o600, permissionPolicy },
+        { kind: "file", handle: source, size: 14, clone: "always", verifySource: async () => undefined },
       ).then(async staged => { await staged.cleanup(); })).rejects.toMatchObject({ code: "helper-unavailable" });
       expect(create).not.toHaveBeenCalled();
       expect(copy).not.toHaveBeenCalled();
@@ -369,9 +367,8 @@ describe.runIf(native)("native private creation permission verification", () => 
       const binding = { ...native!, copyFileExclusive: copy };
       assertNativeStaging(binding);
       await using staged = await createNativeStage(
-        binding, parent.fd, fs.closeSync, parent.receipt,
-        { kind: "file", handle: source, size: payload.length, clone, verifySource: async () => undefined }, 0o400,
-        payload.length, true, true, undefined, undefined, false, permissionPolicy,
+        { binding, parentFd: parent.fd, closeParentFd: fs.closeSync, directory: parent.receipt, mode: 0o400, permissionPolicy },
+        { kind: "file", handle: source, size: payload.length, clone, verifySource: async () => undefined }, payload.length,
       );
       expect(copy).not.toHaveBeenCalled();
       expect(fs.statSync(path.join(directory, staged.receipt.temporaryBasename)).mode & 0o7777).toBe(0o600);
@@ -419,9 +416,9 @@ describe.runIf(native)("native private creation permission verification", () => 
       };
       const write = vi.spyOn(fs, "write");
       const result = createNativeStage(
-        binding, parent.fd, fs.closeSync, parent.receipt,
-        { kind: "file", handle: source, size: 14, clone: "auto", signal: controller.signal, verifySource: async () => undefined }, 0o600,
-        fault === "budget" ? 13 : undefined, true, true, assertBeforeMutation, undefined, false, permissionPolicy,
+        { binding, parentFd: parent.fd, closeParentFd: fs.closeSync, directory: parent.receipt, mode: 0o600, permissionPolicy, assertBeforeMutation },
+        { kind: "file", handle: source, size: 14, clone: "auto", signal: controller.signal, verifySource: async () => undefined },
+        fault === "budget" ? 13 : undefined,
       );
       if (fault.includes("abort")) await expect(result).rejects.toBe(aborted);
       else await expect(result).rejects.toMatchObject({ code: fault === "budget" ? "too-large" : "insecure-permissions" });

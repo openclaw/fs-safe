@@ -13,9 +13,10 @@ import {
   assertArchiveEntryPathComponentsWithinLimit,
   createByteBudgetTracker,
   resolveExtractLimits,
+  type ResolvedArchiveExtractLimits,
 } from "./archive-limits.js";
 import type { ExtractArchiveOptions } from "./archive-options.js";
-import { resolveArchiveEntryMode, shouldExtractArchiveEntry } from "./archive-policy.js";
+import { resolveArchiveEntryMode, shouldExtractArchiveEntry, type ArchiveEntryKind } from "./archive-policy.js";
 import { formatErrorDetail } from "./error-detail.js";
 
 export type ArchiveMemberKind = "file" | "directory" | "symlink" | "hardlink" | "blocked" | "sparse" | "other";
@@ -26,17 +27,17 @@ export type ArchivePlanOptions = Pick<ExtractArchiveOptions,
   escapeLabel?: string;
 };
 
-// Inspection and both executors decide over the same admitted identities.
-// A destination is optional only for inspection; writers still prove containment.
-export function createArchiveEntryPlanner(params: ArchivePlanOptions, archiveKind: ArchiveKind): (entry: {
-  path: string; kind: ArchiveMemberKind; size: number; mode?: number;
-}) => ArchivePlanEntry | null {
+// Portable ZIP selects each entry immediately before streaming its payload;
+// manifest-backed routes add declared-byte admission through the planner below.
+export function createArchiveEntrySelector(params: ArchivePlanOptions): {
+  limits: ResolvedArchiveExtractLimits;
+  select(entry: { path: string; kind: ArchiveEntryKind; size: number }): string | null;
+} {
   const strip = Math.max(0, Math.floor(params.stripComponents ?? 0));
   const limits = resolveExtractLimits(params.limits);
-  const budget = createByteBudgetTracker(limits);
   const trackOutputPath = createArchiveOutputPathTracker();
   let entryCount = 0;
-  return (entry) => {
+  return { limits, select(entry) {
     assertArchiveEntryCountWithinLimit(++entryCount, limits);
     validateArchiveEntryPath(entry.path, { escapeLabel: params.escapeLabel });
     const canonicalPath = stripArchivePath(entry.path, 0);
@@ -50,10 +51,23 @@ export function createArchiveEntryPlanner(params: ArchivePlanOptions, archiveKin
       resolveArchiveOutputPath({ rootDir: params.rootDir, relPath, originalPath: entry.path,
         escapeLabel: params.escapeLabel });
     }
+    if (!shouldExtractArchiveEntry({ filter: params.entryFilter, onFiltered: params.onFiltered,
+      entry: { path: canonicalPath, kind: entry.kind, size: entry.size } })) return null;
+    return relPath;
+  } };
+}
+
+// A destination is optional only for inspection; writers still prove containment.
+export function createArchiveEntryPlanner(params: ArchivePlanOptions, archiveKind: ArchiveKind): (entry: {
+  path: string; kind: ArchiveMemberKind; size: number; mode?: number;
+}) => ArchivePlanEntry | null {
+  const { select, limits } = createArchiveEntrySelector(params);
+  const budget = createByteBudgetTracker(limits);
+  return (entry) => {
     const kind = entry.kind === "file" || entry.kind === "directory" ? entry.kind
       : entry.kind === "symlink" || entry.kind === "hardlink" ? "symlink" : "other";
-    if (!shouldExtractArchiveEntry({ filter: params.entryFilter, onFiltered: params.onFiltered,
-      entry: { path: canonicalPath, kind, size: entry.size } })) return null;
+    const relPath = select({ path: entry.path, kind, size: entry.size });
+    if (relPath === null) return null;
     if (entry.kind === "sparse") {
       throw new ArchiveFormatError(`GNU sparse archive entry is not supported: ${formatErrorDetail(entry.path)}`);
     }

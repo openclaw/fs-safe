@@ -1,6 +1,7 @@
 import fs from "node:fs";
-import { sidecarLockPayloadCreatedAtMs } from "./sidecar-lock-policy.js";
+import { sidecarLockPayloadCreatedAtMs, sidecarLockTimeout } from "./sidecar-lock-policy.js";
 import type { SidecarLockSnapshot } from "./sidecar-lock-reclaim.js";
+import { ensureSidecarLockCleanupRegistered } from "./sidecar-lock-registration.js";
 
 export type SyncHeldLock = {
   fd: number | undefined;
@@ -50,14 +51,6 @@ export function getSyncLockAdmissions(): Map<string, object> {
   return globalWithState[SYNC_ADMISSIONS_KEY];
 }
 
-export function syncLockTimeout(lockPath: string, normalizedTargetPath: string): Error {
-  return Object.assign(new Error(`file lock timeout for ${normalizedTargetPath}`), {
-    code: "file_lock_timeout",
-    lockPath,
-    normalizedTargetPath,
-  });
-}
-
 export function defaultSyncShouldReclaim(
   snapshot: SidecarLockSnapshot,
   staleMs: number,
@@ -83,43 +76,11 @@ export function ensureSyncLockExitCleanupRegistered(
   lockPath: string,
   normalizedTargetPath: string,
 ): void {
-  const globalWithCleanup = globalThis as typeof globalThis & {
-    [SYNC_CLEANUP_REGISTERED_KEY]?: boolean;
-    [SYNC_CLEANUP_HANDLER_KEY]?: () => void;
-    [SYNC_CLEANUP_REGISTRATION_KEY]?: object;
-  };
-  if (globalWithCleanup[SYNC_CLEANUP_REGISTERED_KEY]) return;
-  if (globalWithCleanup[SYNC_CLEANUP_REGISTRATION_KEY]) {
-    // process.on() emits newListener synchronously. A nested synchronous
-    // acquisition cannot wait for this stack to finish registering.
-    throw syncLockTimeout(lockPath, normalizedTargetPath);
-  }
-  const registration = {};
-  globalWithCleanup[SYNC_CLEANUP_REGISTRATION_KEY] = registration;
-  try {
-    process.on("exit", cleanup);
-    globalWithCleanup[SYNC_CLEANUP_HANDLER_KEY] = cleanup;
-    globalWithCleanup[SYNC_CLEANUP_REGISTERED_KEY] = true;
-  } catch (error) {
-    if (process.listeners("exit").includes(cleanup)) {
-      try {
-        process.off("exit", cleanup);
-      } catch {
-        // Reconcile the marker with the actual listener below.
-      }
-    }
-    if (process.listeners("exit").includes(cleanup)) {
-      globalWithCleanup[SYNC_CLEANUP_HANDLER_KEY] = cleanup;
-      globalWithCleanup[SYNC_CLEANUP_REGISTERED_KEY] = true;
-    } else {
-      if (globalWithCleanup[SYNC_CLEANUP_HANDLER_KEY] === cleanup) {
-        delete globalWithCleanup[SYNC_CLEANUP_HANDLER_KEY];
-      }
-    }
-    throw error;
-  } finally {
-    if (globalWithCleanup[SYNC_CLEANUP_REGISTRATION_KEY] === registration) {
-      delete globalWithCleanup[SYNC_CLEANUP_REGISTRATION_KEY];
-    }
-  }
+  ensureSidecarLockCleanupRegistered({
+    event: "exit",
+    registered: SYNC_CLEANUP_REGISTERED_KEY,
+    registering: SYNC_CLEANUP_REGISTRATION_KEY,
+    handler: SYNC_CLEANUP_HANDLER_KEY,
+    reentryError: () => sidecarLockTimeout(lockPath, normalizedTargetPath),
+  }, cleanup, true);
 }

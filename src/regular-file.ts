@@ -7,10 +7,10 @@ import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
-import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { assertNoSymlinkParents, assertNoSymlinkParentsSync } from "./symlink-parents.js";
+import { assertNoSymlinkParentsSync } from "./symlink-parents.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import {
   isNonRegularWriteOpenError,
@@ -88,19 +88,7 @@ export async function readRegularFile(params: {
   filePath: string;
   maxBytes?: number;
 }): Promise<{ buffer: Buffer; stat: Stats }> {
-  const maxBytes = normalizeMaxBytes(params.maxBytes);
-  const filePath = params.filePath;
-  assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
-  assertNoUnsafeDeviceReadPath(filePath);
-  const before = await inspectFileIdentity(async () => {
-    const stat = fsSync.lstatSync(filePath, { bigint: true });
-    assertRegularReadStat(stat, filePath, true);
-    return stat;
-  }).catch((error) => throwReadPreviewError(error, filePath));
-  if (maxBytes !== undefined && before.size > maxBytes) {
-    throw regularFileTooLargeError(filePath, maxBytes);
-  }
-
+  const { filePath, maxBytes, before } = prepareRegularRead(params);
   let handle: FileHandle;
   try {
     handle = await fs.open(filePath, resolveReadOpenFlags());
@@ -111,27 +99,7 @@ export async function readRegularFile(params: {
     throw err;
   }
   try {
-    const stat = fsSync.fstatSync(handle.fd);
-    const identity = await inspectFileIdentity(async () => {
-      const exact = fsSync.fstatSync(handle.fd, { bigint: true });
-      assertRegularReadStat(exact, filePath);
-      return exact;
-    }, before);
-    try {
-      await inspectFileIdentity(async () => {
-        const current = fsSync.lstatSync(filePath, { bigint: true });
-        assertRegularReadStat(current, filePath);
-        return current;
-      }, identity);
-    } catch (err) {
-      if (isNotFoundPathError(err)) {
-        throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
-      }
-      throw err;
-    }
-    if (maxBytes !== undefined && stat.size > maxBytes) {
-      throw regularFileTooLargeError(filePath, maxBytes);
-    }
+    const stat = inspectOpenedRegularRead(handle.fd, filePath, before, maxBytes);
     // With a byte cap, avoid readFile(): a raced file growth would allocate
     // the oversized content before the post-read check could reject it.
     let buffer: Buffer;
@@ -165,54 +133,10 @@ function assertRegularReadStat(stat: BigIntStats, filePath: string, preview = fa
   }
 }
 
-function readOpenedRegularFileSync(params: {
-  fd: number;
+function prepareRegularRead(params: {
   filePath: string;
-  preOpenStat: BigIntStats;
   maxBytes?: number;
-}): { buffer: Buffer; stat: Stats } {
-  const stat = fsSync.fstatSync(params.fd);
-  const identity = inspectFileIdentitySync(() => {
-    const exact = fsSync.fstatSync(params.fd, { bigint: true });
-    assertRegularReadStat(exact, params.filePath);
-    return exact;
-  }, params.preOpenStat);
-  try {
-    inspectFileIdentitySync(() => {
-      const current = fsSync.lstatSync(params.filePath, { bigint: true });
-      assertRegularReadStat(current, params.filePath);
-      return current;
-    }, identity);
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${params.filePath}`);
-    }
-    throw error;
-  }
-  if (params.maxBytes !== undefined && stat.size > params.maxBytes) {
-    throw regularFileTooLargeError(params.filePath, params.maxBytes);
-  }
-  // Keep capped sync reads incremental for the same reason as async reads:
-  // readFileSync(fd) would buffer a raced oversized file before throwing.
-  let buffer: Buffer;
-  try {
-    buffer =
-      params.maxBytes === undefined
-        ? fsSync.readFileSync(params.fd)
-        : readFileDescriptorBoundedSync(params.fd, params.maxBytes);
-  } catch (error) {
-    if (params.maxBytes !== undefined) {
-      translateBoundedReadOverflow(error, params.filePath, params.maxBytes);
-    }
-    throw error;
-  }
-  return { buffer, stat };
-}
-
-export function readRegularFileSync(params: { filePath: string; maxBytes?: number }): {
-  buffer: Buffer;
-  stat: Stats;
-} {
+}): { filePath: string; maxBytes: number | undefined; before: BigIntStats } {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
   const filePath = params.filePath;
   assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
@@ -230,6 +154,44 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
   if (maxBytes !== undefined && before.size > maxBytes) {
     throw regularFileTooLargeError(filePath, maxBytes);
   }
+  return { filePath, maxBytes, before };
+}
+
+function inspectOpenedRegularRead(
+  fd: number,
+  filePath: string,
+  preOpenStat: BigIntStats,
+  maxBytes: number | undefined,
+): Stats {
+  const stat = fsSync.fstatSync(fd);
+  const identity = inspectFileIdentitySync(() => {
+    const exact = fsSync.fstatSync(fd, { bigint: true });
+    assertRegularReadStat(exact, filePath);
+    return exact;
+  }, preOpenStat);
+  try {
+    inspectFileIdentitySync(() => {
+      const current = fsSync.lstatSync(filePath, { bigint: true });
+      assertRegularReadStat(current, filePath);
+      return current;
+    }, identity);
+  } catch (error) {
+    if (isNotFoundPathError(error)) {
+      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
+    }
+    throw error;
+  }
+  if (maxBytes !== undefined && stat.size > maxBytes) {
+    throw regularFileTooLargeError(filePath, maxBytes);
+  }
+  return stat;
+}
+
+export function readRegularFileSync(params: { filePath: string; maxBytes?: number }): {
+  buffer: Buffer;
+  stat: Stats;
+} {
+  const { filePath, maxBytes, before } = prepareRegularRead(params);
 
   let fd: number;
   try {
@@ -241,12 +203,20 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     throw error;
   }
   try {
-    return readOpenedRegularFileSync({
-      fd,
-      filePath,
-      preOpenStat: before,
-      maxBytes,
-    });
+    const stat = inspectOpenedRegularRead(fd, filePath, before, maxBytes);
+    // Keep capped reads incremental so raced growth cannot allocate unbounded content.
+    let buffer: Buffer;
+    try {
+      buffer = maxBytes === undefined
+        ? fsSync.readFileSync(fd)
+        : readFileDescriptorBoundedSync(fd, maxBytes);
+    } catch (error) {
+      if (maxBytes !== undefined) {
+        translateBoundedReadOverflow(error, filePath, maxBytes);
+      }
+      throw error;
+    }
+    return { buffer, stat };
   } finally {
     fsSync.closeSync(fd);
   }
@@ -286,11 +256,10 @@ function inspectAppendPath(filePath: string): BigIntStats {
   return stat;
 }
 
-export async function appendRegularFile(options: AppendRegularFileOptions): Promise<void> {
-  const { filePath, content, encoding, mode, maxFileBytes, rejectSymlinkParents } = captureAppendOptions(options);
+function prepareRegularAppend(filePath: string, rejectSymlinkParents: boolean | undefined): BigIntStats | undefined {
   if (rejectSymlinkParents === true) {
     const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
-    await assertNoSymlinkParents({
+    assertNoSymlinkParentsSync({
       rootDir: path.parse(resolvedDir).root,
       targetPath: resolvedDir,
       allowMissing: false,
@@ -300,12 +269,34 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     });
   }
 
-  let preOpenStat: BigIntStats | undefined;
   try {
-    preOpenStat = await inspectFileIdentity(async () => inspectAppendPath(filePath));
+    return inspectFileIdentitySync(() => inspectAppendPath(filePath));
   } catch (error) {
     if (!isNotFoundPathError(error)) throw error;
   }
+}
+
+function inspectOpenedRegularAppend(fd: number, filePath: string, preOpenStat: BigIntStats | undefined): BigIntStats {
+  try {
+    const identity = inspectFileIdentitySync(() => {
+      const stat = fsSync.fstatSync(fd, { bigint: true });
+      assertRegularAppendStat(stat, filePath);
+      return stat;
+    }, preOpenStat);
+    inspectFileIdentitySync(() => {
+      const current = fsSync.lstatSync(filePath, { bigint: true });
+      assertRegularAppendStat(current, filePath);
+      return current;
+    }, identity);
+    return identity;
+  } catch (error) {
+    throwAppendIdentityError(error, filePath);
+  }
+}
+
+export async function appendRegularFile(options: AppendRegularFileOptions): Promise<void> {
+  const { filePath, content, encoding, mode, maxFileBytes, rejectSymlinkParents } = captureAppendOptions(options);
+  const preOpenStat = prepareRegularAppend(filePath, rejectSymlinkParents);
 
   const contentBytes = Buffer.isBuffer(content) ? content.byteLength : Buffer.byteLength(content, encoding);
   if (
@@ -327,21 +318,7 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
     throw error;
   }
   try {
-    let identity: BigIntStats;
-    try {
-      identity = await inspectFileIdentity(async () => {
-        const stat = fsSync.fstatSync(handle.fd, { bigint: true });
-        assertRegularAppendStat(stat, filePath);
-        return stat;
-      }, preOpenStat);
-      await inspectFileIdentity(async () => {
-        const current = fsSync.lstatSync(filePath, { bigint: true });
-        assertRegularAppendStat(current, filePath);
-        return current;
-      }, identity);
-    } catch (error) {
-      throwAppendIdentityError(error, filePath);
-    }
+    const identity = inspectOpenedRegularAppend(handle.fd, filePath, preOpenStat);
     if (
       maxFileBytes !== undefined &&
       Number(identity.size) + contentBytes > maxFileBytes
@@ -359,24 +336,7 @@ export async function appendRegularFile(options: AppendRegularFileOptions): Prom
 
 export function appendRegularFileSync(options: AppendRegularFileOptions): void {
   const { filePath, content, encoding, mode, maxFileBytes, rejectSymlinkParents } = captureAppendOptions(options);
-  if (rejectSymlinkParents === true) {
-    const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
-    assertNoSymlinkParentsSync({
-      rootDir: path.parse(resolvedDir).root,
-      targetPath: resolvedDir,
-      allowMissing: false,
-      allowRootChildSymlink: true,
-      requireDirectories: true,
-      messagePrefix: "Refusing to append under",
-    });
-  }
-
-  let preOpenStat: BigIntStats | undefined;
-  try {
-    preOpenStat = inspectFileIdentitySync(() => inspectAppendPath(filePath));
-  } catch (error) {
-    if (!isNotFoundPathError(error)) throw error;
-  }
+  const preOpenStat = prepareRegularAppend(filePath, rejectSymlinkParents);
 
   const contentBuffer =
     typeof content === "string" ? Buffer.from(content, encoding) : Buffer.from(content);
@@ -399,21 +359,7 @@ export function appendRegularFileSync(options: AppendRegularFileOptions): void {
     throw error;
   }
   try {
-    let identity: BigIntStats;
-    try {
-      identity = inspectFileIdentitySync(() => {
-        const stat = fsSync.fstatSync(fd, { bigint: true });
-        assertRegularAppendStat(stat, filePath);
-        return stat;
-      }, preOpenStat);
-      inspectFileIdentitySync(() => {
-        const current = fsSync.lstatSync(filePath, { bigint: true });
-        assertRegularAppendStat(current, filePath);
-        return current;
-      }, identity);
-    } catch (error) {
-      throwAppendIdentityError(error, filePath);
-    }
+    const identity = inspectOpenedRegularAppend(fd, filePath, preOpenStat);
     if (
       maxFileBytes !== undefined &&
       Number(identity.size) + contentBuffer.byteLength > maxFileBytes

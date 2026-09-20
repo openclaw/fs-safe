@@ -1,10 +1,7 @@
-use napi::bindgen_prelude::{AsyncTask, Buffer, Task};
-use napi::{Env, Result};
+use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi_derive::napi;
 
-pub struct CloneMetadataTask {
-    paths: Vec<String>,
-}
+use crate::task::NativeTask;
 
 #[cfg(target_os = "macos")]
 fn metadata(path: &str) -> Option<Buffer> {
@@ -34,18 +31,9 @@ fn metadata(_path: &str) -> Option<Buffer> {
     None
 }
 
-impl Task for CloneMetadataTask {
-    type Output = Vec<Option<Buffer>>;
-    type JsValue = Vec<Option<Buffer>>;
-    fn compute(&mut self) -> Result<Self::Output> {
-        Ok(self.paths.iter().map(|path| metadata(path)).collect())
-    }
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output)
-    }
-}
-
 #[napi(js_name = "readCloneFileMetadata")]
-pub fn read_clone_file_metadata(paths: Vec<String>) -> AsyncTask<CloneMetadataTask> {
-    AsyncTask::new(CloneMetadataTask { paths })
+pub fn read_clone_file_metadata(paths: Vec<String>) -> AsyncTask<NativeTask<Vec<Option<Buffer>>>> {
+    AsyncTask::new(NativeTask::new(move || {
+        Ok(paths.iter().map(|path| metadata(path)).collect())
+    }))
 }

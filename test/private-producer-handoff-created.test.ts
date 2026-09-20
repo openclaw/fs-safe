@@ -107,6 +107,27 @@ it.each(["parent", "identity", "descriptor"] as const)("consumes the supplied ha
   expect(fsSync.existsSync(f.targetPath)).toBe(false);
 });
 
+it("renews the source descriptor after parent authority callbacks", async () => {
+  const f = await fixture();
+  const unrelated = await fs.open(path.join(f.directory, "unrelated"), "wx+");
+  handles.add(unrelated);
+  let changed = false;
+  const close = vi.fn(() => f.source.close());
+  const source = {
+    get fd() { return changed ? unrelated.fd : f.source.fd; },
+    close,
+  } as FileHandle;
+
+  await expect(f.run({ source, assertTargetParent: () => { changed = true; } })).rejects.toMatchObject({
+    code: "path-mismatch",
+    details: { publication: { status: "not-published" }, cleanup: "preserved", resources: "closed" },
+  });
+  expect(close).toHaveBeenCalledOnce();
+  expect(fsSync.existsSync(f.targetPath)).toBe(false);
+  expect(await fs.readFile(f.sourcePath, "utf8")).toBe("producer");
+  expect((await unrelated.stat()).isFile()).toBe(true);
+});
+
 it.each(["replacement", "authority"] as const)("rechecks %s after deferred initial verification", async change => {
   const f = await fixture();
   const entered = gate();
