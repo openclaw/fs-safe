@@ -39,7 +39,7 @@ describe("root denyMutations policies", () => {
           ? path.win32.normalize(input)
           : path.resolve(input);
         const rootCanonical = await resolvePathViaExistingAncestor(input);
-        const denyCanonical = await resolveMutationComparablePaths(input);
+        const denyCanonical = resolveMutationComparablePaths(input);
 
         expect(rootCanonical, input).toBe(normalized);
         expect(denyCanonical, input).toEqual(new Set([normalized]));
@@ -65,10 +65,10 @@ describe("root denyMutations policies", () => {
             details: { reason: "windows-path-alias" },
           }),
         );
-        await expect(resolveMutationComparablePaths(input)).rejects.toMatchObject({
+        expect(() => resolveMutationComparablePaths(input)).toThrow(expect.objectContaining({
           code: "invalid-path",
           details: { reason: "windows-path-alias" },
-        });
+        }));
       }
 
       expect(lstat).not.toHaveBeenCalled();

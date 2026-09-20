@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type DenyMutationPolicy } from "./deny-mutations.js";
+import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
-import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
+import { assertNoNulPathInput, isNotFoundPathError } from "./path.js";
 import { resolveRootPathSync } from "./root-path.js";
 import { isRootPathEscapeError } from "./root-path-errors.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
@@ -155,71 +155,12 @@ function absoluteRootPath(
   return absolute;
 }
 
-function assertValidPolicyEntries(entries: readonly string[] | undefined): string[] {
-  const captured: string[] = [];
-  for (const entry of entries ?? []) {
-    if (!entry || !path.isAbsolute(entry)) {
-      throw new FsSafeError("invalid-path", "deny mutation paths must be non-empty absolute paths");
-    }
-    assertNoNulPathInput(entry, "deny mutation path contains a NUL byte");
-    assertNoWindowsPathAlias(entry, "filesystem", "deny mutation path uses a Windows filesystem namespace alias");
-    captured.push(resolvePathPreservingWindowsRoot(entry));
-  }
-  return captured;
-}
-
-function mutationComparablePaths(pathname: string): readonly string[] {
-  const resolved = resolvePathPreservingWindowsRoot(pathname);
-  assertNoWindowsPathAlias(resolved, "filesystem", "mutation path uses a Windows filesystem namespace alias");
-  let cursor = resolved;
-  const missing: string[] = [];
-  while (path.parse(cursor).root !== cursor) {
-    try {
-      fs.lstatSync(pathForWindowsFilesystem(cursor));
-      break;
-    } catch (error) {
-      if (!isNotFoundPathError(error)) throw error;
-      missing.unshift(path.basename(cursor));
-      cursor = path.dirname(cursor);
-    }
-  }
-  // Deny policy is an authority boundary: unlike advisory key normalization,
-  // an ambiguous existing ancestor must not silently fall back to lexical form.
-  const canonicalAncestor = realpathSync.native(pathForWindowsFilesystem(cursor));
-  assertNoWindowsPathAlias(canonicalAncestor, "filesystem", "mutation path uses a Windows filesystem namespace alias");
-  const canonical = missing.length === 0
-    ? canonicalAncestor
-    : path.resolve(canonicalAncestor, ...missing);
-  assertNoWindowsPathAlias(canonical, "filesystem", "mutation path uses a Windows filesystem namespace alias");
-  return samePath(resolved, canonical) ? [resolved] : [resolved, canonical];
-}
-
 export function assertFileLockSyncRootMutationAllowed(
   pathname: string,
   policy: FileLockSyncRootAuthority["denyMutations"],
   protectAncestors = false,
 ): void {
-  if (!policy?.paths?.length && !policy?.prefixes?.length) return;
-  const targets = mutationComparablePaths(pathname);
-  for (const entry of assertValidPolicyEntries(policy.paths)) {
-    for (const denied of mutationComparablePaths(entry)) {
-      for (const target of targets) {
-        if ((isPathInside(denied, target) && isPathInside(target, denied)) ||
-          (protectAncestors && isPathInside(target, denied))) {
-          throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
-        }
-      }
-    }
-  }
-  for (const entry of assertValidPolicyEntries(policy.prefixes)) {
-    for (const denied of mutationComparablePaths(entry)) {
-      for (const target of targets) {
-        if (isPathInside(denied, target) || (protectAncestors && isPathInside(target, denied))) {
-          throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
-        }
-      }
-    }
-  }
+  assertMutationNotDenied(pathname, policy, { protectAncestors }, "sync-root-lock");
 }
 
 type RootPathResolutionPolicy = Readonly<{

@@ -6,6 +6,11 @@ on:
       - src/pinned-mutation-admission.ts
       - src/pinned-mutation-observation.ts
       - src/pinned-mutation-shared-route.ts
+      - src/deny-mutations.ts
+      - src/file-lock-sync-root.ts
+      - src/root-boundary.ts
+      - src/root-context.ts
+      - src/root-path*.ts
       - src/guarded-mkdir.ts
       - src/root-directory-creation.ts
       - src/root-write-admission.ts

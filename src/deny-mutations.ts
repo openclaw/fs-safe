@@ -1,24 +1,50 @@
+import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { assertNoNulPathInput, isPathInside } from "./path.js";
-import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
+import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
+import { realpathSync } from "./realpath.js";
+import { resolveExistingAncestor } from "./root-path-existing.js";
 import {
   assertNoWindowsPathAlias,
+  pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
-export async function resolveMutationComparablePaths(rawPath: string): Promise<Set<string>> {
+export function resolveMutationComparablePaths(rawPath: string): Set<string> {
   assertNoNulPathInput(rawPath, "path contains a NUL byte");
   assertNoWindowsPathAlias(rawPath, "filesystem", "mutation path uses a Windows filesystem namespace alias");
   const resolved = resolvePathPreservingWindowsRoot(rawPath);
   assertNoWindowsPathAlias(resolved, "filesystem", "mutation path uses a Windows filesystem namespace alias");
-  const canonical = await resolvePathViaExistingAncestor(resolved);
+  const canonical = resolveExistingAncestor(resolved, "native");
   assertNoWindowsPathAlias(canonical, "filesystem", "mutation path uses a Windows filesystem namespace alias");
   return new Set([resolved, canonical]);
 }
 
-function isSamePath(left: string, right: string): boolean {
-  return isPathInside(left, right) && isPathInside(right, left);
+function strictMutationComparablePaths(pathname: string): readonly string[] {
+  const resolved = resolvePathPreservingWindowsRoot(pathname);
+  assertNoWindowsPathAlias(resolved, "filesystem", "mutation path uses a Windows filesystem namespace alias");
+  let cursor = resolved;
+  const missing: string[] = [];
+  while (path.parse(cursor).root !== cursor) {
+    try {
+      fs.lstatSync(pathForWindowsFilesystem(cursor));
+      break;
+    } catch (error) {
+      if (!isNotFoundPathError(error)) throw error;
+      missing.unshift(path.basename(cursor));
+      cursor = path.dirname(cursor);
+    }
+  }
+  // Synchronous Root locks require authority-grade canonicalization. Keep
+  // ambiguous existing ancestors distinct from Root's lexical fallback.
+  const canonicalAncestor = realpathSync.native(pathForWindowsFilesystem(cursor));
+  assertNoWindowsPathAlias(canonicalAncestor, "filesystem", "mutation path uses a Windows filesystem namespace alias");
+  const canonical = missing.length === 0
+    ? canonicalAncestor
+    : path.resolve(canonicalAncestor, ...missing);
+  assertNoWindowsPathAlias(canonical, "filesystem", "mutation path uses a Windows filesystem namespace alias");
+  return path.relative(path.resolve(resolved), path.resolve(canonical)) === ""
+    ? [resolved] : [resolved, canonical];
 }
 
 export type DenyMutationPolicy = {
@@ -30,59 +56,46 @@ type DenyMutationCheckOptions = {
   protectAncestors?: boolean;
 };
 
-function hasPolicyEntries(policy: DenyMutationPolicy | undefined): policy is DenyMutationPolicy {
-  return Boolean(policy?.paths?.length || policy?.prefixes?.length);
-}
-
-function policyPathEntries(entries: readonly string[] | undefined): string[] {
+function policyPathEntries(entries: readonly string[] | undefined, strict: boolean): string[] {
   const paths: string[] = [];
   for (const entry of entries ?? []) {
+    if (strict && (!entry || !path.isAbsolute(entry))) {
+      throw new FsSafeError("invalid-path", "deny mutation paths must be non-empty absolute paths");
+    }
     if (entry.length === 0) {
       throw new FsSafeError("invalid-path", "deny mutation paths must be non-empty");
     }
     assertNoNulPathInput(entry, "deny mutation path contains a NUL byte");
     assertNoWindowsPathAlias(entry, "filesystem", "deny mutation path uses a Windows filesystem namespace alias");
-    if (!path.isAbsolute(entry)) {
+    if (!strict && !path.isAbsolute(entry)) {
       throw new FsSafeError("invalid-path", "deny mutation paths must be absolute");
     }
-    paths.push(entry);
+    paths.push(strict ? resolvePathPreservingWindowsRoot(entry) : entry);
   }
   return paths;
 }
 
-export async function assertMutationNotDenied(
+export function assertMutationNotDenied(
   filePath: string,
   policy: DenyMutationPolicy | undefined,
   options: DenyMutationCheckOptions = {},
-): Promise<void> {
-  if (!hasPolicyEntries(policy)) {
-    return;
-  }
-
-  const targetPaths = await resolveMutationComparablePaths(filePath);
-  for (const deniedPath of policyPathEntries(policy.paths)) {
-    const deniedPaths = await resolveMutationComparablePaths(deniedPath);
-    for (const target of targetPaths) {
-      for (const denied of deniedPaths) {
-        if (
-          isSamePath(denied, target) ||
-          (options.protectAncestors === true && isPathInside(target, denied))
-        ) {
-          throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
-        }
-      }
-    }
-  }
-
-  for (const deniedPrefix of policyPathEntries(policy.prefixes)) {
-    const deniedPaths = await resolveMutationComparablePaths(deniedPrefix);
-    for (const target of targetPaths) {
-      for (const denied of deniedPaths) {
-        if (
-          isPathInside(denied, target) ||
-          (options.protectAncestors === true && isPathInside(target, denied))
-        ) {
-          throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
+  mode: "root" | "sync-root-lock" = "root",
+): void {
+  if (!policy?.paths?.length && !policy?.prefixes?.length) return;
+  const strict = mode === "sync-root-lock";
+  const comparablePaths = strict ? strictMutationComparablePaths : resolveMutationComparablePaths;
+  const targets = comparablePaths(filePath);
+  // Validate one complete phase at a time. A paths denial must not read or
+  // canonicalize prefixes, and invalid later paths retain validation precedence.
+  for (const kind of ["paths", "prefixes"] as const) {
+    for (const entry of policyPathEntries(policy[kind], strict)) {
+      const deniedPaths = comparablePaths(entry);
+      for (const target of targets) {
+        for (const denied of deniedPaths) {
+          if ((isPathInside(denied, target) && (kind === "prefixes" || isPathInside(target, denied))) ||
+            (options.protectAncestors === true && isPathInside(target, denied))) {
+            throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
+          }
         }
       }
     }
