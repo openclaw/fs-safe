@@ -619,6 +619,8 @@ fn remove_directory_contents_with_hook(
         let Some(current) = inspect_child(directory_fd, name.as_c_str(), "inspect owned tree entry")? else {
             continue;
         };
+        // Darwin and Linux expose different widths for these identity fields.
+        #[allow(clippy::unnecessary_cast)]
         if current.st_dev as u64 != root_device || current.st_ino as u64 != enumerated_inode {
             return Err(native_error(
                 "path-mismatch",
