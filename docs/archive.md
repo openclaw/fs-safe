@@ -11,6 +11,11 @@ These TAR routes work with all optional dependencies omitted and need no
 runtime interpreter, download, install script, or consumer compiler toolchain.
 ZIP fallback still requires optional `jszip`.
 
+The shared TAR parser reuses the already-validated owned path for ordinary
+members. Original header names and USTAR prefixes still undergo validation
+even when PAX or GNU metadata supplies an override; effective override paths
+retain their separate checks.
+
 `auto` prefers an available native binding; a native operation failure is
 terminal and never retries through WASM. `require` rejects a missing binding
 with `FsSafeError("helper-unavailable")`, including for zstd/bzip2 suffix

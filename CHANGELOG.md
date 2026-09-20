@@ -5,6 +5,7 @@
 - Preserve physical ZIP entry order for extraction filters in the JavaScript fallback, so numeric filenames and Unicode names select the same entries as native extraction without changing the public loader's files object.
 - Preserve paired temporary-workspace parent-admission and descriptor-close failures on alias and newly created roots instead of silently selecting compatible cleanup or losing the original diagnostic.
 - Accelerate ZIP entry-count hints for commented archives with bounded reverse signature searches, preserving conservative count fallbacks and latest-valid-record selection.
+- Reuse admitted ordinary TAR paths in the shared native/WASM parser, avoiding duplicate path validation and allocation while retaining raw and PAX/GNU override checks.
 - Verify exact identities in the public opened-handle path resolver and retain local-root link policies before asynchronous admission, while reusing existing observations and shared path preparation.
 - Recheck exclusive-publication source and target identities after directory synchronization, preserving substituted entries and verification-phase cleanup while sharing finalization and complete-write logic.
 

@@ -617,3 +617,74 @@ fn unicode_and_newline_pax_values_preserve_admitted_ranges_at_every_chunk_size()
         }
     }
 }
+
+#[test]
+fn member_paths_preserve_spelling_ranges_and_metadata_reset() {
+    for name in ["caf\u{e9}".to_owned(), "cafe\u{301}".to_owned(), "각".repeat(28)] {
+        let prefix = "nested/cafe\u{301}";
+        let raw_path = format!("{prefix}/{name}");
+        let renamed = format!("renamed/{name}");
+        let mut raw = member(&name, b'0', 1, b"x");
+        raw[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
+        checksum(&mut raw);
+        for (extension, expected) in [
+            (Vec::new(), raw_path.clone()),
+            (pax(&record("size", b"1")), raw_path.clone()),
+            (member("LongLink", b'K', 6, b"target"), raw_path.clone()),
+            (pax(&record("path", renamed.as_bytes())), renamed.clone()),
+            (member("LongName", b'L', renamed.len() as u64, renamed.as_bytes()), renamed),
+        ] {
+            let bytes = [extension, raw.clone(), member("sentinel", b'0', 3, b"end"), vec![0; 1024]].concat();
+            for chunk in [7, 512, 65536] {
+                let mut parser = reader(bytes.clone(), chunk, 1024);
+                let mut scratch = [0; 65536];
+                let mut entries = Vec::new();
+                while parser.read(&mut scratch).unwrap() != 0 {
+                    if let Some(entry) = parser.take_member() { entries.push(entry); }
+                }
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[0].path, expected);
+                assert_eq!(entries[0].size, 1);
+                assert_eq!(&bytes[entries[0].offset as usize..entries[0].offset as usize + 1], b"x");
+                assert_eq!(entries[1].path, "sentinel");
+                assert_eq!(entries[1].size, 3);
+                assert_eq!(&bytes[entries[1].offset as usize..entries[1].offset as usize + 3], b"end");
+                assert_eq!(parser.manifest_bytes, 128 + 2 * (expected.len() + "sentinel".len()) as u64);
+            }
+        }
+    }
+}
+
+#[test]
+fn raw_member_paths_still_reject_before_safe_pax_or_gnu_overrides() {
+    for value in [b"../bad".to_vec(), b"safe\0hidden".to_vec(), vec![0xff], "각".repeat(29).into_bytes()] {
+        for field in [0, 345] {
+            let mut raw = member("safe", b'0', 0, b"");
+            raw[field..field + 100].fill(0);
+            raw[field..field + value.len()].copy_from_slice(&value);
+            checksum(&mut raw);
+            for extension in [Vec::new(), pax(&record("path", b"safe")), member("LongName", b'L', 4, b"safe")] {
+                let bytes = [extension, raw.clone(), vec![0; 1024]].concat();
+                for chunk in [7, 65536] {
+                    let error = reader(bytes.clone(), chunk, 1024).read_to_end(&mut Vec::new()).unwrap_err();
+                    assert_eq!(error.to_string(), crate::tar_path::INVALID_PATH, "field={field}, value={value:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn effective_overrides_retain_path_limits_and_error_classes() {
+    for name in ["../bad".to_owned(), "a".repeat(256), "각".repeat(29), "name:stream".to_owned()] {
+        for (extension, expected) in [
+            (pax(&record("path", name.as_bytes())), crate::tar_path::INVALID_PATH),
+            (member("LongName", b'L', name.len() as u64, name.as_bytes()), INVALID_GNU_PATH),
+        ] {
+            let bytes = [extension, member("safe", b'0', 0, b""), vec![0; 1024]].concat();
+            let limits = TarMeterLimits { windows_paths: true, ..test_limits(1024) };
+            let error = TarMetadataMeter::new(Cursor::new(bytes), limits).read_to_end(&mut Vec::new()).unwrap_err();
+            assert_eq!(error.to_string(), expected, "name={name:?}");
+        }
+    }
+}

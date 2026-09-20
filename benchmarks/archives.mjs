@@ -6,6 +6,7 @@ import * as tar from "tar";
 import { registerDirectoryModeOwnerBenchmark } from "./directory-mode-owner.mjs";
 import { registerNativeArchives } from "./native-archives.mjs";
 import { registerZipCountSearch } from "./zip-count-search.mjs";
+import { registerTarMemberPaths } from "./tar-member-paths.mjs";
 import {
   PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME,
   PUBLIC_ZIP_EXTRACTION_DIVISOR,
@@ -16,6 +17,7 @@ import {
 export async function registerArchives(context) {
   const { api: a, workspace: w, register: add } = context;
   registerNativeArchives(context);
+  registerTarMemberPaths(context);
   registerDirectoryModeOwnerBenchmark(context);
   const source = path.join(w, "archive-source");
   fs.mkdirSync(source);

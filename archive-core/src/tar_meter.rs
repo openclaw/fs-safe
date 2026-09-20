@@ -302,12 +302,15 @@ impl<R> TarMetadataMeter<R> {
                 return Err(Self::invalid("GNU effective non-directory path ends with a separator"));
             }
             let raw_path = crate::tar_path::validate_member(&self.block, self.limits.windows_paths)?;
-            let path = self.pending_pax.as_ref().and_then(|pax| pax.path.as_deref())
-                .or(self.pending_gnu_path.as_deref()).unwrap_or(&raw_path);
-            crate::tar_path::validate_path(path, self.limits.windows_paths)?;
-            charge_manifest_path(&mut self.manifest_bytes, path, self.limits.max_manifest_bytes)?;
+            let override_path = self.pending_pax.as_ref().and_then(|pax| pax.path.as_deref())
+                .or(self.pending_gnu_path.as_deref());
+            if let Some(path) = override_path {
+                crate::tar_path::validate_path(path, self.limits.windows_paths)?;
+            }
+            charge_manifest_path(&mut self.manifest_bytes, override_path.unwrap_or(&raw_path), self.limits.max_manifest_bytes)?;
             self.member = Some(TarMember {
-                path: path.to_owned(), entry_type, size,
+                // validate_member already admitted the complete owned raw path.
+                path: override_path.map_or(raw_path, str::to_owned), entry_type, size,
                 mode: crate::tar_mode::manifest_mode(&self.block, matches!(entry_type, b'5' | b'D')),
                 offset: self.offset,
             });
