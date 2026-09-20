@@ -157,6 +157,9 @@ ZIP extraction and bounded reads admit every physical central-directory record a
 ZIP end-record admission searches the bounded comment window for signatures
 while retaining complete comment-length and ambiguity checks. Dense signature
 sequences fall back to the bounded byte scan.
+The separate `readZipCentralDirectoryEntryCount(buffer)` hint uses bounded
+reverse searches for comments and retains its latest-valid-record selection;
+it does not replace strict archive admission.
 
 ZIP admission establishes each entry's kind before callbacks: a high-word UNIX
 symlink type takes precedence regardless of creator, followed by the DOS directory

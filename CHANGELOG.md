@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Accelerate ZIP entry-count hints for commented archives with bounded reverse signature searches, preserving conservative count fallbacks and latest-valid-record selection.
 - Verify exact identities in the public opened-handle path resolver and retain local-root link policies before asynchronous admission, while reusing existing observations and shared path preparation.
 - Recheck exclusive-publication source and target identities after directory synchronization, preserving substituted entries and verification-phase cleanup while sharing finalization and complete-write logic.
 

@@ -1,5 +1,6 @@
 // Conservative public count hint; strict admission must not rely on its fallback.
 const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP_EOCD_SIGNATURE_BYTES = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
 const ZIP64_EOCD_SIGNATURE = 0x06064b50;
 const ZIP64_EOCD_LOCATOR_SIGNATURE = 0x07064b50;
 const ZIP_EOCD_MIN_BYTES = 22;
@@ -44,7 +45,24 @@ function findZipEndOfCentralDirectory(buffer: Buffer): number {
     0,
     buffer.byteLength - ZIP_EOCD_MIN_BYTES - ZIP_EOCD_MAX_COMMENT_BYTES,
   );
-  for (let offset = buffer.byteLength - ZIP_EOCD_MIN_BYTES; offset >= minOffset; offset -= 1) {
+  const lastOffset = buffer.byteLength - ZIP_EOCD_MIN_BYTES;
+  if (buffer.readUInt32LE(lastOffset) === ZIP_EOCD_SIGNATURE &&
+      buffer.readUInt16LE(lastOffset + ZIP_EOCD_COMMENT_LENGTH_OFFSET) === 0) {
+    return lastOffset;
+  }
+  const tail = buffer.subarray(minOffset);
+  let from = lastOffset - minOffset - 1;
+  // Keep the latest valid record semantics of this count hint. Bound native
+  // searches so dense false signatures retain the byte scan's cost.
+  for (let candidates = 0; candidates < 16 && from >= 0; candidates += 1) {
+    const found = tail.lastIndexOf(ZIP_EOCD_SIGNATURE_BYTES, from);
+    if (found < 0) return -1;
+    const offset = minOffset + found;
+    const commentLength = buffer.readUInt16LE(offset + ZIP_EOCD_COMMENT_LENGTH_OFFSET);
+    if (offset + ZIP_EOCD_MIN_BYTES + commentLength === buffer.byteLength) return offset;
+    from = found - 1;
+  }
+  for (let offset = minOffset + from; offset >= minOffset; offset -= 1) {
     if (buffer.readUInt32LE(offset) !== ZIP_EOCD_SIGNATURE) {
       continue;
     }

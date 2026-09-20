@@ -18,6 +18,10 @@ The `loadZipArchiveWithPreflight/zip-end-scan-*` rows cover complete public ZIP
 loading with a 64 KiB stored payload, a maximum-length ordinary comment, and a
 64 KiB stored payload full of false end-record signatures. The dense fixture
 checks that sparse-search improvements do not penalize hostile marker patterns.
+The `readZipCentralDirectoryEntryCount/end-search-*` rows separately cover the
+conservative count hint with no comment, a short or maximum-length comment,
+dense false signatures, and a missing record. Its latest-valid-record behavior
+is intentionally different from strict admission's ambiguity rejection.
 
 Native-only methods are recorded as skipped when unavailable. Windows ACL and
 private-directory operations require a real Windows run; POSIX does not time

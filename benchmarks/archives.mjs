@@ -5,6 +5,7 @@ import JSZip from "jszip";
 import * as tar from "tar";
 import { registerDirectoryModeOwnerBenchmark } from "./directory-mode-owner.mjs";
 import { registerNativeArchives } from "./native-archives.mjs";
+import { registerZipCountSearch } from "./zip-count-search.mjs";
 import {
   PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME,
   PUBLIC_ZIP_EXTRACTION_DIVISOR,
@@ -22,6 +23,7 @@ export async function registerArchives(context) {
   const zip = new JSZip();
   zip.file("entry.json", '{"ok":true}');
   const zipBytes = await zip.generateAsync({ type: "nodebuffer" });
+  registerZipCountSearch(context, zipBytes);
   const zipPath = path.join(w, "fixture.zip");
   fs.writeFileSync(zipPath, zipBytes);
   const tarPath = path.join(w, "fixture.tar");
