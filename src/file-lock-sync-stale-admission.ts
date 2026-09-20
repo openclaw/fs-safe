@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
 import { defaultSyncShouldReclaim } from "./file-lock-sync-admission.js";
-import { sidecarLockTimeout } from "./sidecar-lock-policy.js";
+import type { SyncLockAcquisition } from "./file-lock-sync-acquisition.js";
 import {
   parseSidecarLockSnapshot,
   readSidecarLockRawSnapshotSync,
@@ -19,36 +19,29 @@ export type SyncStaleOptionsState<TPayload extends Record<string, unknown>> = {
 };
 
 /** Handle one exclusive-create conflict without surrendering canonical admission. */
-export function handleSyncStaleAdmission<TPayload extends Record<string, unknown>>(params: {
-  hasToken(): boolean;
+export function handleSyncStaleAdmission<TPayload extends Record<string, unknown>>(acquisition: SyncLockAcquisition, params: {
   currentHeld(): unknown;
-  lockPath: string;
-  normalizedTargetPath: string;
   options: FileLockSyncAcquireOptions<TPayload>;
   parsePayload?: (raw: string) => unknown;
   reclaimGuardPath: string;
-  retryLockFileDenial(error: unknown): boolean;
   staleMs: number;
   staleOptions: SyncStaleOptionsState<TPayload>;
   staleRecovery?: SidecarLockStaleRecovery;
-  waitForRetry(): void;
 }): void {
   const holderChanged = {};
   const assertUnheld = () => {
-    if (!params.hasToken()) {
-      throw sidecarLockTimeout(params.lockPath, params.normalizedTargetPath);
-    }
+    acquisition.assert();
     if (params.currentHeld()) throw holderChanged;
   };
   const retryHolderChange = (error: unknown): boolean => {
     if (error !== holderChanged) return false;
-    params.waitForRetry();
+    acquisition.waitForRetry();
     return true;
   };
   let rawSnapshot: ReturnType<typeof readSidecarLockRawSnapshotSync>;
   let lockFileOpenDenied = false;
   try {
-    rawSnapshot = readSidecarLockRawSnapshotSync(params.lockPath, {
+    rawSnapshot = readSidecarLockRawSnapshotSync(acquisition.lockPath, {
       rejectNonFile: true,
       onOpenFailure: (error) => {
         lockFileOpenDenied = true;
@@ -64,7 +57,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
       if (retryHolderChange(boundaryError)) return;
       throw boundaryError;
     }
-    if (lockFileOpenDenied && params.retryLockFileDenial(error)) return;
+    if (lockFileOpenDenied && acquisition.retryDenial(error)) return;
     throw error;
   }
   const stale = params.staleOptions;
@@ -108,7 +101,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     throw error;
   }
   if (!snapshot) {
-    params.waitForRetry();
+    acquisition.waitForRetry();
     return;
   }
   const nowMs = Date.now();
@@ -118,8 +111,8 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     try {
       reclaim = stale.shouldReclaim
         ? Reflect.apply(stale.shouldReclaim, params.options, [{
-            lockPath: params.lockPath,
-            normalizedTargetPath: params.normalizedTargetPath,
+            lockPath: acquisition.lockPath,
+            normalizedTargetPath: acquisition.normalizedTargetPath,
             payload: snapshot.payload,
             staleMs: params.staleMs,
             nowMs,
@@ -135,7 +128,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     throw error;
   }
   if (!reclaim) {
-    params.waitForRetry();
+    acquisition.waitForRetry();
     return;
   }
   if (
@@ -148,8 +141,8 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
       assertUnheld();
       try {
         approved = Reflect.apply(stale.shouldRemove, params.options, [{
-          lockPath: params.lockPath,
-          normalizedTargetPath: params.normalizedTargetPath,
+          lockPath: acquisition.lockPath,
+          normalizedTargetPath: acquisition.normalizedTargetPath,
           raw: snapshot.raw,
           payload: snapshot.payload,
         }]);
@@ -162,10 +155,10 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
       throw error;
     }
     if (!approved) {
-      throw Object.assign(new Error(`file lock stale for ${params.normalizedTargetPath}`), {
+      throw Object.assign(new Error(`file lock stale for ${acquisition.normalizedTargetPath}`), {
         code: "file_lock_stale",
-        lockPath: params.lockPath,
-        normalizedTargetPath: params.normalizedTargetPath,
+        lockPath: acquisition.lockPath,
+        normalizedTargetPath: acquisition.normalizedTargetPath,
       });
     }
     try {
@@ -178,7 +171,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
         throw boundaryError;
       }
       if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        params.waitForRetry();
+        acquisition.waitForRetry();
         return;
       }
       throw error;
@@ -187,7 +180,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     try {
       assertUnheld();
       if (removeSidecarLockIfUnchangedSync(
-        params.lockPath,
+        acquisition.lockPath,
         snapshot,
         assertUnheld,
       )) return;
@@ -202,13 +195,13 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
       }
     }
     if (holderInterrupted) {
-      params.waitForRetry();
+      acquisition.waitForRetry();
       return;
     }
   }
-  throw Object.assign(new Error(`file lock stale for ${params.normalizedTargetPath}`), {
+  throw Object.assign(new Error(`file lock stale for ${acquisition.normalizedTargetPath}`), {
     code: "file_lock_stale",
-    lockPath: params.lockPath,
-    normalizedTargetPath: params.normalizedTargetPath,
+    lockPath: acquisition.lockPath,
+    normalizedTargetPath: acquisition.normalizedTargetPath,
   });
 }

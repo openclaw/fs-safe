@@ -6,20 +6,15 @@ import type {
   FileLockSyncHandle,
 } from "./file-lock-sync.js";
 import { captureRootSyncAcquireOptions } from "./file-lock-sync-root-options.js";
-import { defaultSyncShouldReclaim, foreignSyncHeldLock, getSyncLockAdmissions } from "./file-lock-sync-admission.js";
+import { defaultSyncShouldReclaim, foreignSyncHeldLock } from "./file-lock-sync-admission.js";
 import type { Root } from "./root-impl.js";
-import {
-  sidecarLockRetryDelay,
-  sidecarLockTimeout,
-  isTransientLockFileDenial,
-  maxTransientLockDenials,
-} from "./sidecar-lock-policy.js";
+import { isTransientLockFileDenial } from "./sidecar-lock-policy.js";
 import {
   serializeSidecarLockPayload,
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import { createSuppressedError } from "./suppressed-error.js";
-import { sleepSync } from "./timing.js";
+import { SyncLockAcquisition } from "./file-lock-sync-acquisition.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import {
@@ -83,20 +78,6 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   const heldLocks = getRootSyncHeldLocks();
   const currentTargetHolder = () => heldLocks.get(normalizedTargetPath) ??
     foreignSyncHeldLock("root", normalizedTargetPath);
-  const admissions = getSyncLockAdmissions();
-  const admissionToken = {};
-  let ownsAdmission = false;
-  const assertAdmission = () => {
-    if (admissions.get(normalizedTargetPath) !== admissionToken) {
-      throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-    }
-  };
-  const releaseAdmission = () => {
-    if (ownsAdmission && admissions.get(normalizedTargetPath) === admissionToken) {
-      admissions.delete(normalizedTargetPath);
-    }
-    ownsAdmission = false;
-  };
   const arbitration: FileLockSyncRootArbitration = Object.freeze({
     authority,
     heldLocks,
@@ -110,31 +91,13 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
     if (initiallyReusable) return initiallyReusable;
   }
 
-  const startedAt = Date.now();
-  let attempt = 0;
-  let transientDenials = 0;
+  const acquisition = new SyncLockAcquisition(
+    lockPath, normalizedTargetPath, options.retry, options.timeoutMs,
+  );
   let ownedReclaimGuard: FileLockSyncRootDirectoryReceipt | undefined;
   let reclaimCleanupAttempted = false;
   const reuseCurrentHeld = (): FileLockSyncHandle | undefined =>
     ownedReclaimGuard ? undefined : tryReuseCurrentRootSyncHeldLock(arbitration);
-  const waitForRetry = (): void => {
-    releaseAdmission();
-    const delay = sidecarLockRetryDelay(options.retry, options.timeoutMs, Date.now() - startedAt, attempt);
-    if (delay === undefined) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-    sleepSync(delay);
-    attempt += 1;
-  };
-  const retryLockFileDenial = (error: unknown): boolean => {
-    if (!isTransientLockFileDenial(error, lockPath) ||
-      ++transientDenials > maxTransientLockDenials) return false;
-    try {
-      waitForRetry();
-    } catch (waitError) {
-      if ((waitError as NodeJS.ErrnoException).code === "file_lock_timeout") throw error;
-      throw waitError;
-    }
-    return true;
-  };
   const releaseReclaimGuard = (): void => {
     const receipt = ownedReclaimGuard;
     if (!receipt) return;
@@ -153,17 +116,13 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   };
   try {
     while (true) {
-      if (!ownsAdmission) {
-        if (admissions.has(normalizedTargetPath)) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-        admissions.set(normalizedTargetPath, admissionToken);
-        ownsAdmission = true;
-      }
-      assertAdmission();
+      acquisition.reserve();
+      acquisition.assert();
       assertFileLockSyncRootPathsCurrent(guardedPaths, true, true);
-      assertAdmission();
+      acquisition.assert();
       if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
       if (!ownedReclaimGuard && fileLockSyncRootGuardExists(reclaimRootPath, true)) {
-        waitForRetry();
+        acquisition.waitForRetry();
         continue;
       }
       if (currentTargetHolder() !== undefined) {
@@ -171,14 +130,14 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         if (reused) return reused;
       }
       const payload = Reflect.apply(options.payload, options.optionsReceiver, []);
-      assertAdmission();
+      acquisition.assert();
       const { raw, ownershipToken } = serializeSidecarLockPayload(payload);
-      assertAdmission();
+      acquisition.assert();
       if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
       if (currentTargetHolder() !== undefined) {
         const reused = reuseCurrentHeld();
         if (reused) return reused;
-        waitForRetry();
+        acquisition.waitForRetry();
         continue;
       }
       let fd: number | undefined;
@@ -188,7 +147,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       try {
         const created = createFileLockSyncRootFile(lockRootPath, 0o600, {
           assertBeforeOpen: () => {
-            assertAdmission();
+            acquisition.assert();
             if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
             if (currentTargetHolder() !== undefined) throw new FileLockSyncRootArbitrationCollision();
           },
@@ -222,29 +181,13 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
           snapshot,
         };
         const returnedHandle = createRootSyncHeldLockHandle(createdHeld);
-        if (options.onCompromised && (options.compromiseCheckIntervalMs ?? 0) > 0) {
-          const timer = setInterval(() => {
-            let stillHeld: boolean;
-            try {
-              stillHeld = returnedHandle.verifyStillHeld();
-            } catch {
-              stillHeld = false;
-            }
-            if (!stillHeld && createdHeld.timer) {
-              clearInterval(createdHeld.timer);
-              createdHeld.timer = undefined;
-              Reflect.apply(options.onCompromised!, options.optionsReceiver,
-                [{ lockPath, normalizedTargetPath }]);
-            }
-          }, options.compromiseCheckIntervalMs);
-          unpublishedTimer = timer;
-          createdHeld.timer = timer;
-          timer.unref();
-        }
+        acquisition.monitor(createdHeld, returnedHandle, options.onCompromised,
+          options.compromiseCheckIntervalMs, options.optionsReceiver,
+          (timer) => { unpublishedTimer = timer; });
         if (currentTargetHolder() !== undefined) {
           throw new FileLockSyncRootArbitrationCollision();
         }
-        assertAdmission();
+        acquisition.assert();
         heldLocks.set(normalizedTargetPath, createdHeld);
         fd = undefined;
         unpublishedTimer = undefined;
@@ -270,24 +213,24 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         if (error instanceof FileLockSyncRootArbitrationCollision) {
           const reused = reuseCurrentHeld();
           if (reused) return reused;
-          waitForRetry();
+          acquisition.waitForRetry();
           continue;
         }
         const fromLockFileOpen = lockFileCreateOpenFailure !== undefined &&
           lockFileCreateOpenFailure.error === error;
-        if (fromLockFileOpen && retryLockFileDenial(error)) continue;
+        if (fromLockFileOpen && acquisition.retryDenial(error)) continue;
         if (!fromLockFileOpen || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         if (ownedReclaimGuard) {
           releaseReclaimGuard();
           const reused = reuseCurrentHeld();
           if (reused) return reused;
-          waitForRetry();
+          acquisition.waitForRetry();
           continue;
         }
         if (currentTargetHolder() !== undefined) {
           const reused = reuseCurrentHeld();
           if (reused) return reused;
-          waitForRetry();
+          acquisition.waitForRetry();
           continue;
         }
         let lockFileOpenDenied = false;
@@ -301,18 +244,18 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             },
           );
         } catch (readError) {
-          if (lockFileOpenDenied && retryLockFileDenial(readError)) continue;
+          if (lockFileOpenDenied && acquisition.retryDenial(readError)) continue;
           throw readError;
         }
         if (currentTargetHolder() !== undefined) {
           const reused = reuseCurrentHeld();
           if (reused) return reused;
-          waitForRetry();
+          acquisition.waitForRetry();
           continue;
         }
-        assertAdmission();
+        acquisition.assert();
         if (!current) {
-          waitForRetry();
+          acquisition.waitForRetry();
           continue;
         }
         const snapshot = current.snapshot;
@@ -328,7 +271,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             heldByThisProcess: false,
           }]);
           assertSynchronousCallbackResult(reclaim, "shouldReclaim");
-          assertAdmission();
+          acquisition.assert();
           if (!fileLockSyncRootSnapshotStillCurrent(lockRootPath, current)) {
             throw new FsSafeError("path-mismatch", "sidecar changed during reclaim policy callback");
           }
@@ -343,7 +286,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
           ) {
             const guard = createFileLockSyncRootDirectory(reclaimRootPath);
             if (!guard) {
-              waitForRetry();
+              acquisition.waitForRetry();
               continue;
             }
             ownedReclaimGuard = guard;
@@ -355,7 +298,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
               payload: snapshot.payload,
             }]);
             assertSynchronousCallbackResult(approved, "shouldRemoveStaleLock");
-            assertAdmission();
+            acquisition.assert();
             assertOwnedReclaimGuardCurrent();
             if (approved) {
               const removed = removeFileLockSyncRootFile(
@@ -363,7 +306,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
                 current.receipt,
                 snapshot,
                 () => {
-                  assertAdmission();
+                  acquisition.assert();
                   assertOwnedReclaimGuardCurrent();
                   if (currentTargetHolder() !== undefined) throw new FileLockSyncRootArbitrationCollision();
                 },
@@ -387,7 +330,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             normalizedTargetPath,
           });
         }
-        waitForRetry();
+        acquisition.waitForRetry();
       }
     }
   } catch (error) {
@@ -404,6 +347,6 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
     }
     throw error;
   } finally {
-    releaseAdmission();
+    acquisition.release();
   }
 }

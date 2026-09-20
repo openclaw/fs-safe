@@ -13,10 +13,8 @@ import {
   type SidecarLockStaleSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import {
-  sidecarLockRetryDelay,
   sidecarLockTimeout,
   isTransientLockFileDenial,
-  maxTransientLockDenials,
   validateSidecarLockStaleMs,
   validateSidecarLockCompromiseCheckIntervalMs,
   validateSidecarLockRetryOptions,
@@ -28,7 +26,7 @@ import type {
   SidecarLockStaleRecovery,
 } from "./sidecar-lock-types.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
-import { sleepSync } from "./timing.js";
+import { SyncLockAcquisition } from "./file-lock-sync-acquisition.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
@@ -203,14 +201,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
     initiallyHeld.refCount += 1;
     return createSyncHeldLockHandle(initiallyHeld);
   }
-  const admissions = getSyncLockAdmissions();
-  const admissionToken = {};
-  let ownsAdmission = false;
-  const hasAdmissionToken = (): boolean => admissions.get(normalizedTargetPath) === admissionToken;
-  const releaseAdmission = (): void => {
-    if (ownsAdmission && hasAdmissionToken()) admissions.delete(normalizedTargetPath);
-    ownsAdmission = false;
-  };
+  const acquisition = new SyncLockAcquisition(lockPath, normalizedTargetPath, retry, timeoutMs);
   let payloadCallback: typeof options.payload | undefined;
   let onCompromised: typeof options.onCompromised = undefined;
   let onCompromisedObserved = false;
@@ -219,41 +210,11 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
   let staleRecovery: SidecarLockStaleRecovery | undefined = undefined;
   let staleRecoveryObserved = false;
   const staleOptions: SyncStaleOptionsState<TPayload> = {};
-  const startedAt = Date.now();
-  let attempt = 0;
-  let transientDenials = 0;
   const reclaimGuardPath = `${lockPath}.reclaim`;
-  const waitForRetry = (): void => {
-    releaseAdmission();
-    const delay = sidecarLockRetryDelay(retry, timeoutMs, Date.now() - startedAt, attempt);
-    if (delay === undefined) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-    sleepSync(delay);
-    attempt += 1;
-  };
-  const retryLockFileDenial = (error: unknown): boolean => {
-    if (!isTransientLockFileDenial(error, lockPath) ||
-      ++transientDenials > maxTransientLockDenials) return false;
-    try {
-      waitForRetry();
-    } catch (waitError) {
-      // Preserve the filesystem diagnosis when the caller's budget runs out.
-      if ((waitError as NodeJS.ErrnoException).code === "file_lock_timeout") throw error;
-      throw waitError;
-    }
-    return true;
-  };
-  const assertAdmissionToken = (): void => {
-    if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-  };
-  const runAdmissionBoundary = <T>(callback: () => T): T => {
-    assertAdmissionToken();
-    try { return callback(); }
-    finally { assertAdmissionToken(); }
-  };
 
   try {
     while (true) {
-      if (!ownsAdmission) {
+      if (!acquisition.owns) {
         const held = heldLocks.get(normalizedTargetPath);
         if (
           held && !foreignSyncHeldLock("raw", normalizedTargetPath) &&
@@ -264,12 +225,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           held.refCount += 1;
           return createSyncHeldLockHandle(held);
         }
-        if (admissions.has(normalizedTargetPath)) {
-          // The owner can only finish after this synchronous callback unwinds.
-          throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-        }
-        admissions.set(normalizedTargetPath, admissionToken);
-        ownsAdmission = true;
+        acquisition.reserve();
       }
       const attemptHeld = currentTargetHolder();
       const holderWasReplaced = (): boolean => {
@@ -277,38 +233,38 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         return current !== undefined && current !== attemptHeld;
       };
       if (!staleRecoveryObserved) {
-        staleRecovery = runAdmissionBoundary(() =>
+        staleRecovery = acquisition.run(() =>
           options.staleRecovery ?? defaults.staleRecovery);
         staleRecoveryObserved = true;
-        if (holderWasReplaced()) { waitForRetry(); continue; }
+        if (holderWasReplaced()) { acquisition.waitForRetry(); continue; }
       }
       const reclaimGuardExists = syncReclaimGuardExists(reclaimGuardPath);
-      if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-      if (holderWasReplaced()) { waitForRetry(); continue; }
+      if (!acquisition.hasToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+      if (holderWasReplaced()) { acquisition.waitForRetry(); continue; }
       if (reclaimGuardExists) {
-        waitForRetry();
+        acquisition.waitForRetry();
         continue;
       }
       let fd: number | undefined;
       let createdHeld: SyncHeldLock | undefined;
       let createdSnapshot: SidecarLockSnapshot | undefined;
-      if (!payloadCallback) payloadCallback = runAdmissionBoundary(() => options.payload);
-      if (holderWasReplaced()) { waitForRetry(); continue; }
-      const payload = runAdmissionBoundary(() => Reflect.apply(payloadCallback!, options, []));
-      if (holderWasReplaced()) { waitForRetry(); continue; }
-      const { raw, ownershipToken } = runAdmissionBoundary(() =>
+      if (!payloadCallback) payloadCallback = acquisition.run(() => options.payload);
+      if (holderWasReplaced()) { acquisition.waitForRetry(); continue; }
+      const payload = acquisition.run(() => Reflect.apply(payloadCallback!, options, []));
+      if (holderWasReplaced()) { acquisition.waitForRetry(); continue; }
+      const { raw, ownershipToken } = acquisition.run(() =>
         serializeSidecarLockPayload(payload));
-      if (holderWasReplaced()) { waitForRetry(); continue; }
-      if (currentTargetHolder() !== undefined) { waitForRetry(); continue; }
+      if (holderWasReplaced()) { acquisition.waitForRetry(); continue; }
+      if (currentTargetHolder() !== undefined) { acquisition.waitForRetry(); continue; }
       if (!onCompromisedObserved) {
-        onCompromised = runAdmissionBoundary(() => options.onCompromised);
+        onCompromised = acquisition.run(() => options.onCompromised);
         onCompromisedObserved = true;
-        if (currentTargetHolder() !== undefined) { waitForRetry(); continue; }
+        if (currentTargetHolder() !== undefined) { acquisition.waitForRetry(); continue; }
       }
       if (!parsePayloadObserved) {
-        parsePayload = runAdmissionBoundary(() => options.parsePayload);
+        parsePayload = acquisition.run(() => options.parsePayload);
         parsePayloadObserved = true;
-        if (currentTargetHolder() !== undefined) { waitForRetry(); continue; }
+        if (currentTargetHolder() !== undefined) { acquisition.waitForRetry(); continue; }
       }
       let lockFileCreateDenied = false;
       let exclusiveCreateConflict = false;
@@ -351,35 +307,20 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           lockPath,
           normalizedTargetPath,
         );
-        if (!hasAdmissionToken() || currentTargetHolder() !== undefined) {
+        if (!acquisition.hasToken() || currentTargetHolder() !== undefined) {
           throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         }
         const returnedHandle = createSyncHeldLockHandle(candidateHeld);
-        if (onCompromised && (compromiseCheckIntervalMs ?? 0) > 0) {
-          const compromisedCallback = onCompromised;
-          candidateHeld.timer = setInterval(() => {
-            let stillHeld: boolean;
-            try {
-              stillHeld = returnedHandle.verifyStillHeld();
-            } catch {
-              stillHeld = false;
-            }
-            if (!stillHeld && candidateHeld.timer) {
-              clearInterval(candidateHeld.timer);
-              candidateHeld.timer = undefined;
-              Reflect.apply(compromisedCallback, options, [{ lockPath, normalizedTargetPath }]);
-            }
-          }, compromiseCheckIntervalMs);
-          candidateHeld.timer.unref();
-        }
+        acquisition.monitor(candidateHeld, returnedHandle, onCompromised,
+          compromiseCheckIntervalMs, options);
         if (
-          !hasAdmissionToken() ||
+          !acquisition.hasToken() ||
           currentTargetHolder() !== undefined
         ) {
           throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         }
         heldLocks.set(normalizedTargetPath, candidateHeld);
-        releaseAdmission();
+        acquisition.release();
         fd = undefined;
         return returnedHandle;
       } catch (error) {
@@ -414,36 +355,31 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           }
         }
         if (lockFileCreateDenied) {
-          if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
-          if (currentTargetHolder() !== undefined) { waitForRetry(); continue; }
-          if (retryLockFileDenial(error)) continue;
+          if (!acquisition.hasToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+          if (currentTargetHolder() !== undefined) { acquisition.waitForRetry(); continue; }
+          if (acquisition.retryDenial(error)) continue;
           throw error;
         }
         if (!exclusiveCreateConflict) throw error;
-        if (!hasAdmissionToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
+        if (!acquisition.hasToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
         if (currentTargetHolder() !== undefined) {
-          waitForRetry();
+          acquisition.waitForRetry();
           continue;
         }
-        handleSyncStaleAdmission({
-          hasToken: hasAdmissionToken,
+        handleSyncStaleAdmission(acquisition, {
           currentHeld: currentTargetHolder,
-          lockPath,
-          normalizedTargetPath,
           options,
           parsePayload,
           reclaimGuardPath,
-          retryLockFileDenial,
           staleMs,
           staleOptions,
           staleRecovery,
-          waitForRetry,
         });
         continue;
       }
     }
   } finally {
-    releaseAdmission();
+    acquisition.release();
   }
 }
 
