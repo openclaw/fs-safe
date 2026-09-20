@@ -19,7 +19,7 @@ import {
 
 ## What lives here
 
-The exports group into a handful of themes. Each documented helper has its own page; everything else is reference-only and tracked here.
+The exports group into a handful of themes. Documented helpers link to their contract below or a dedicated page; everything else is reference-only and tracked here.
 
 ### Path scopes and root paths
 
@@ -71,7 +71,9 @@ Operational filesystem failures such as permissions or I/O errors are rethrown.
 | `readFileDescriptorBounded`, `readFileDescriptorBoundedSync`, `readFileHandleBounded` | – | Incremental whole-file reads for already-open descriptors/handles. They consume at most `maxBytes + 1`, do not close the input, and throw `FsSafeError("too-large")` on overflow. |
 | `createDirectory`, `createDirectorySync`, `createFileSync` | [Exclusive leaf creation](creation.md) | Create one exclusive entry under an existing trusted parent, optionally with private permissions; file creation returns an owned disposable descriptor. |
 | `readFileWindowFully`, `readFileWindowFullySync`, `ReadFileWindowOptions` | [positional-read.md](positional-read.md) | Fill a caller-owned buffer at an explicit file position, completing short reads and returning the EOF count without moving or closing the descriptor. |
+| `writeFileWindowFully`, `WriteFileWindowOptions` | [Borrowed-handle writes](#borrowed-handle-writes) | Write all supplied bytes at an explicit position or the current cursor, completing short writes with cancellation and per-write authority checks. |
 | `copyFileHandle`, `copyFileDescriptorSync`, `CopyFileHandleOptions` | [copy.md](copy.md#borrowed-filehandle-transfers) | Copy caller-owned regular files through async handles or sync descriptors from position zero with byte limits and synchronous callbacks; preserves cursors and leaves publication and cleanup to the caller. |
+| `sameFileContentsSync`, `SameFileContentsOptions` | [Exact file comparison](file-contents.md) | Compare borrowed regular-file descriptors byte for byte through EOF with bounded memory and an optional per-file byte limit, preserving both cursors and lifetimes. |
 | `overwriteFileHandle`, `OverwriteFileHandleOptions` | [in-place-write.md](in-place-write.md) | Overwrite a borrowed read/write handle with prefix-only preparation and best-effort rollback; preserves its inode, cursor, and caller-owned lifetime. |
 | `openRootFile`, `openRootFileSync`, `canUseRootFileOpen`, `matchRootFileOpenFailure`, related types | – | Low-level root-bounded open; rejects every symlink component by default, with `symlinks: "follow-parents-within-root"` for contained parent aliases or `"follow-within-root"` for final links too. |
 | `appendRegularFile`, `appendRegularFileSync`, `readRegularFile`, `readRegularFileSync`, `statRegularFile`, `statRegularFileSync`, `resolveRegularFileAppendFlags`, `AppendRegularFileOptions`, `RegularFileStatResult` | [regular-file.md](regular-file.md) | Type-checked regular-file I/O. |
@@ -150,6 +152,71 @@ walk to stop only at an actually absent suffix. When an existing non-directory
 component is followed by another segment, both helpers throw
 `FsSafeError("not-file")` before the platform can expose that state as POSIX
 `ENOTDIR` or Windows `ENOENT`.
+
+#### Borrowed-handle writes
+
+Use `writeFileWindowFully()` when you already own a writable file handle and
+need to complete a byte-window write, including positive short writes.
+
+```ts
+import { root } from "@openclaw/fs-safe";
+import { writeFileWindowFully } from "@openclaw/fs-safe/advanced";
+
+const workspace = await root("/srv/workspace");
+await using opened = await workspace.openWritable("record.bin", { writeMode: "update" });
+await writeFileWindowFully(opened.handle, Buffer.from([1, 2, 3]), 16);
+```
+
+```ts
+type WriteFileWindowOptions = {
+  signal?: AbortSignal;
+  assertBeforeMutation?: () => void;
+};
+
+function writeFileWindowFully(
+  handle: import("node:fs/promises").FileHandle,
+  bytes: Uint8Array,
+  position: number | null,
+  options?: WriteFileWindowOptions,
+): Promise<void>;
+```
+
+A numeric `position` writes at that offset without moving the handle's cursor.
+It and the exclusive window end (`position + bytes.byteLength`) must be
+non-negative safe integers; invalid ranges throw `RangeError` before mutation.
+Bounds come from the intrinsic byte view, ignoring shadowed metadata properties.
+Pass `null` to write at and advance the current cursor. Each syscall writes at
+most 512 KiB. A write that makes no progress throws
+`FsSafeError("helper-failed")`; filesystem errors propagate unchanged.
+Empty input still validates the range and checks cancellation, but performs no
+I/O and does not call `assertBeforeMutation`.
+
+The caller must supply a writable regular-file handle, opened **without append
+mode** for numeric positions. Some operating systems ignore positioned-write
+offsets on append handles, and this helper does not inspect file type or open
+flags. Opening, path admission, identity checks, and closing remain the caller's
+responsibility. Keep the handle open and the borrowed bytes unchanged, attached,
+and accessible until the promise settles; avoid concurrent I/O when it can change
+the intended contents or shared cursor. The helper does not acquire a lock.
+
+`assertBeforeMutation` runs synchronously immediately before every write,
+including short-write retries. A thrown value propagates unchanged; a Promise or
+thenable return rejects with `TypeError` before that write. The callback must not
+modify the payload or handle. It does not run as a final completion check; the
+caller owns any authority check before later publication or other mutations.
+
+`signal` is checked at admission, before and after each authority callback, and
+after each pending write settles. Cancellation waits for an in-flight write and
+then rejects with the signal's reason without starting another syscall. If that
+write fails, its filesystem error or zero-progress failure takes precedence over cancellation. Already
+written bytes remain changed; there is no rollback or hidden write after the
+promise settles.
+
+The helper neither truncates an existing suffix nor changes permissions,
+synchronizes, or closes the handle. Callers retain those responsibilities and
+any wider transaction policy. For complete replacement with best-effort
+rollback, use [`overwriteFileHandle()`](in-place-write.md); for root-bounded
+atomic replacement, use [`Root.write()`](writing.md).
 
 ### Local roots and file URLs
 

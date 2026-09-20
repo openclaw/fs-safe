@@ -292,6 +292,93 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
     for (const name of ["sha256File", "sha256FileSync"]) {
       add(`${name}/${size}`, () => a[name](filePath), { divisor, sync: name.endsWith("Sync"), verify: (r) => assert.deepEqual(r, { bytes: size, digest }) });
     }
+    const windowFixture = Buffer.alloc(size + 2, 121);
+    windowFixture[0] = 91;
+    windowFixture[windowFixture.length - 1] = 93;
+    const windowExpected = Buffer.concat([Buffer.from("["), payload, Buffer.from("]")]);
+    for (const { name, position, authorize } of [
+      { name: "position=1", position: 1, authorize: false },
+      { name: "position=current", position: null, authorize: false },
+      ...(size === 2 * 1024 * 1024
+        ? [{ name: "position=1/signal+authority", position: 1, authorize: true }]
+        : []),
+    ]) {
+      const windowPath = path.join(w, `handle-window-${size}-${position ?? "current"}-${authorize}`);
+      const cursorByte = Buffer.alloc(1);
+      let authorityCalls = 0;
+      const options = authorize ? {
+        signal: new AbortController().signal,
+        assertBeforeMutation: () => { authorityCalls += 1; },
+      } : undefined;
+      add(`writeFileWindowFully/${size}/${name}`, (handle) => a.writeFileWindowFully(handle, payload, position, options), {
+        divisor,
+        skip: typeof a.writeFileWindowFully !== "function"
+          ? "Not exported by this explicitly selected older comparison build."
+          : undefined,
+        before: async () => {
+          authorityCalls = 0;
+          fs.writeFileSync(windowPath, windowFixture, { mode: 0o600 });
+          const handle = await fsp.open(windowPath, "r+");
+          try {
+            if (position === null) assert.equal((await handle.read(cursorByte, 0, 1, null)).bytesRead, 1);
+            return handle;
+          } catch (error) { await handle.close(); throw error; }
+        },
+        after: async (result, handle) => {
+          try {
+            assert.equal(result, undefined);
+            assert.equal((await handle.read(cursorByte, 0, 1, null)).bytesRead, 1);
+            assert.equal(cursorByte[0], position === null ? 93 : 91);
+            assert.deepEqual(fs.readFileSync(windowPath), windowExpected);
+            if (authorize) assert(authorityCalls >= Math.ceil(size / (512 * 1024)));
+            else assert.equal(authorityCalls, 0);
+          } finally { await handle.close(); }
+        },
+      });
+    }
+    const comparisonPayload = Buffer.from(payload);
+    comparisonPayload[0] = 3;
+    comparisonPayload[1] = 71;
+    const comparisonSource = path.join(w, `compare-source-${size}`);
+    fs.writeFileSync(comparisonSource, comparisonPayload);
+    for (const mismatch of ["none", "first", "last"]) {
+      const comparisonTarget = path.join(w, `compare-${mismatch}-${size}`);
+      const targetPayload = Buffer.from(comparisonPayload);
+      if (mismatch !== "none") targetPayload[mismatch === "first" ? 0 : size - 1] ^= 0xff;
+      fs.writeFileSync(comparisonTarget, targetPayload);
+      const options = { maxBytes: size };
+      const cursorByte = Buffer.alloc(1);
+      add(`sameFileContentsSync/mismatch=${mismatch}/${size}`, ({ left, right }) =>
+        a.sameFileContentsSync(left, right, options), {
+        divisor, sync: true,
+        skip: typeof a.sameFileContentsSync !== "function"
+          ? "Not exported by this explicitly selected older comparison build."
+          : undefined,
+        before: () => {
+          const left = fs.openSync(comparisonSource, "r");
+          let right;
+          try {
+            right = fs.openSync(comparisonTarget, "r");
+            for (const fd of [left, right]) assert.equal(fs.readSync(fd, cursorByte, 0, 1, null), 1);
+            return { left, right };
+          } catch (error) {
+            try { fs.closeSync(left); } finally { if (right !== undefined) fs.closeSync(right); }
+            throw error;
+          }
+        },
+        after: (result, { left, right }) => {
+          try {
+            assert.equal(result, mismatch === "none");
+            for (const fd of [left, right]) {
+              assert.equal(fs.readSync(fd, cursorByte, 0, 1, null), 1);
+              assert.equal(cursorByte[0], comparisonPayload[1]);
+            }
+          } finally {
+            try { fs.closeSync(left); } finally { fs.closeSync(right); }
+          }
+        },
+      });
+    }
     const copyPath = path.join(w, `handle-copy-${size}`);
     add(`copyFileHandle/${size}`, ({ source, target }) => a.copyFileHandle(source, target), {
       divisor,

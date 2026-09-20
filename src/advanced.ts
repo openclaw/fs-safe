@@ -7,6 +7,7 @@ export {
   type CreateDirectoryOptions, type CreateFileOptions, type OwnedFileDescriptorSync,
 } from "./create.js";
 export { copyFileHandle, copyFileDescriptorSync, type CopyFileHandleOptions } from "./file-handle-transfer.js";
+export { sameFileContentsSync, type SameFileContentsOptions } from "./file-contents.js";
 export { overwriteFileHandle, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
 export { probePathCaseInsensitiveSync, type ProbePathCaseOptions } from "./path-case.js";
 export { resolvePathPrefixSync, type ResolvedPathPrefix } from "./path-prefix.js";
@@ -35,6 +36,7 @@ export {
   readFileWindowFullySync,
   type ReadFileWindowOptions,
 } from "./positional-read.js";
+export { writeFileWindowFully, type WriteFileWindowOptions } from "./write-file-handle.js";
 export {
   assertNoUnsafeDeviceReadPath,
   isUnsafeDeviceReadPath,

@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Enforce archive deadlines at monotonic checks, queued mutation dispatch, and successful settlement even when synchronous work delays the timer callback; preserve caller errors and join active destination mutations.
+- Add `sameFileContentsSync()` for bounded-memory, exact byte comparison of borrowed regular-file descriptors, preserving their cursors and lifetime while completing short reads and enforcing optional byte limits.
+- Add `writeFileWindowFully()` and `WriteFileWindowOptions` under `/advanced` for complete writes through borrowed handles at explicit offsets or the current cursor, with cancellation and synchronous per-write authority checks; callers retain admission, truncation, durability, and handle ownership.
 - Add `extractArchive({ entryUmask })` to remove rwx bits from final file and directory modes after the selected mode policy, including implicit parents, while preserving private staging and existing defaults.
 - Preserve physical ZIP entry order for extraction filters in the JavaScript fallback, so numeric filenames and Unicode names select the same entries as native extraction without changing the public loader's files object.
 - Preserve paired temporary-workspace parent-admission and descriptor-close failures on alias and newly created roots instead of silently selecting compatible cleanup or losing the original diagnostic.

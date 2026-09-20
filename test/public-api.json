@@ -305,6 +305,7 @@
         "safeFileURLToPath",
         "safePathSegmentHashed",
         "safePathSegmentHashedV2",
+        "sameFileContentsSync",
         "sameFileIdentity",
         "sanitizeTempFileName",
         "sanitizeUntrustedFileName",
@@ -316,6 +317,7 @@
         "trySafeFileURLToPath",
         "withTempFile",
         "withTimeout",
+        "writeFileWindowFully",
         "writeSiblingTempFile",
         "writeViaSiblingTempPath"
       ],
@@ -361,6 +363,7 @@
         "RootFileOpenFailureReason",
         "RootFileOpenResult",
         "RootPathAliasPolicy",
+        "SameFileContentsOptions",
         "StagedFile",
         "StagedFileCleanupReceipt",
         "StagedFileFailureDetails",
@@ -372,6 +375,7 @@
         "UnsafeDeviceReadPathReason",
         "WindowsAclEntry",
         "WindowsAclSummary",
+        "WriteFileWindowOptions",
         "WriteSiblingTempFileOptions",
         "WriteSiblingTempFileResult"
       ],
