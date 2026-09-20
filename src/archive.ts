@@ -217,6 +217,7 @@ async function extractZip(params: {
   limits?: ArchiveExtractLimits;
   deadline: ExtractionDeadline;
   entryModes?: ExtractArchiveOptions["entryModes"];
+  entryUmask?: number;
   entryFilter?: ExtractArchiveOptions["entryFilter"];
   onFiltered?: ExtractArchiveOptions["onFiltered"];
 }): Promise<void> {
@@ -303,6 +304,7 @@ async function extractZip(params: {
         await mergePlannedArchiveIntoDestination({
           entries: acceptedEntries,
           durable: params.durable,
+          entryUmask: params.entryUmask,
           sourceDir: stagingRealDir,
           destinationGuard,
           deadline: params.deadline,
@@ -318,6 +320,10 @@ async function extractZip(params: {
 export async function extractArchive(params: ExtractArchiveOptions): Promise<void> {
   const archivePath = params.archivePath;
   const destDir = params.destDir;
+  const { entryUmask = 0 } = params;
+  if (!Number.isInteger(entryUmask) || entryUmask < 0 || entryUmask > 0o777) {
+    throw new RangeError("archive entryUmask must be an integer between 0 and 0o777");
+  }
   const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
   const kind = params.kind ?? resolveArchiveKind(archivePath);
   if (!kind) {
@@ -336,7 +342,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
     archivePath, destDir,
     durable: params.durable,
     stripComponents: params.stripComponents, limits,
-    entryModes: params.entryModes, entryFilter: params.entryFilter, onFiltered,
+    entryModes: params.entryModes, entryUmask, entryFilter: params.entryFilter, onFiltered,
   };
   if (native) {
     await withExtractionDeadline(params.timeoutMs, label, async (deadline) =>
@@ -366,7 +372,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
 }
 
 async function extractWasmTar(params: {
-  archivePath: string; kind: Exclude<ArchiveKind, "zip">; options: Pick<ExtractArchiveOptions, "destDir" | "durable" | "stripComponents" | "entryModes" | "entryFilter" | "onFiltered">;
+  archivePath: string; kind: Exclude<ArchiveKind, "zip">; options: Pick<ExtractArchiveOptions, "destDir" | "durable" | "stripComponents" | "entryModes" | "entryUmask" | "entryFilter" | "onFiltered">;
   limits: ResolvedArchiveExtractLimits;
   tarLimits: TarMeterLimits; deadline: ExtractionDeadline;
 }): Promise<void> {
@@ -402,7 +408,7 @@ async function extractWasmTar(params: {
     });
     deadline.check();
     await mergePlannedArchiveIntoDestination({ entries: accepted, sourceDir: stagingDir, destinationGuard,
-      deadline, durable: options.durable });
+      deadline, durable: options.durable, entryUmask: options.entryUmask });
     deadline.check();
   } });
 }

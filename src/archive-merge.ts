@@ -36,10 +36,10 @@ type GuardedMergeParams = Pick<MergeParams, "sourceDir" | "deadline"> & {
 };
 
 export async function mergePlannedArchiveIntoDestination(
-  params: GuardedMergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean },
+  params: GuardedMergeParams & { entries: readonly ArchivePublicationEntry[]; durable?: boolean; entryUmask?: number },
 ): Promise<void> {
   assertMergePathInputs(params);
-  await mergeTree(params, params.entries, params.durable === true);
+  await mergeTree(params, params.entries, params.durable === true, params.entryUmask);
 }
 
 export async function mergeExtractedTreeIntoDestination(params: MergeParams): Promise<void> {
@@ -59,7 +59,7 @@ function assertMergePathInputs(params: GuardedMergeParams): void {
   assertNoWindowsPathAlias(params.destinationGuard.realPath);
 }
 
-async function mergeTree(params: GuardedMergeParams, publication?: readonly ArchivePublicationEntry[], durable = true): Promise<void> {
+async function mergeTree(params: GuardedMergeParams, publication?: readonly ArchivePublicationEntry[], durable = true, entryUmask = 0): Promise<void> {
   const publishedFiles: ArchivePublishedFile[] = [];
   const publishedDirectories: ArchivePublishedDirectory[] = [];
   const check = () => params.deadline?.check();
@@ -147,7 +147,7 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
       if (plan && ((planned && planned.kind !== kind) || (!planned && kind === "file"))) {
         throw new FsSafeError("path-mismatch", "archive staging disagrees with the admitted publication plan");
       }
-      let mode = plan ? planned?.mode ?? 0o755 : Number(sourceStat.mode & 0o777n);
+      let mode = plan ? (planned?.mode ?? 0o755) & ~entryUmask : Number(sourceStat.mode & 0o777n);
       await preparePrivateArchiveOutputPath({
         destinationDir, destinationRealDir, deadline: params.deadline,
         relPath, outPath: destinationPath, originalPath, isDirectory: kind === "directory",

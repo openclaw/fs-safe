@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { extractArchive } from "../src/archive.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
+import { archiveCodecFixtures } from "./helpers/archive-codec-fixtures.js";
 import { modeArchive, removeModeFixture, type ModeEntry } from "./helpers/archive-modes.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
@@ -99,23 +100,47 @@ describe.skipIf(!nonRootPosix).each(backends)("%s real non-root publication mode
     } finally { process.umask(previousUmask); }
   }));
 
-  it.each(["tar", "zip"] as const)("clamps %s files and implicit parents and calls strip/filter policy once", (kind) => run(async (directory) => {
+  it.each((["tar", "zip"] as const).flatMap((kind) => [
+    { kind, entryModes: "clamp" as const, entryUmask: undefined, expected: { "bin/": 0o755, "bin/tool": 0o755, "implicit/": 0o755, "implicit/value": 0o644, value: 0o644 } },
+    { kind, entryModes: "clamp" as const, entryUmask: 0o077, expected: { "bin/": 0o700, "bin/tool": 0o700, "implicit/": 0o700, "implicit/value": 0o600, value: 0o600 } },
+    { kind, entryModes: "preserve" as const, entryUmask: 0o077, expected: { "bin/": 0o500, "bin/tool": 0o100, "implicit/": 0o700, "implicit/value": 0o600, value: 0 } },
+  ]))("applies $kind $entryModes modes then entryUmask $entryUmask after strip/filter admission", ({ kind, entryModes, entryUmask, expected }) => run(async (directory) => {
     configure();
     const entries = [
-      { path: "pkg/bin/tool", mode: 0o710 }, { path: "pkg/value", mode: 0 },
+      { path: "pkg/bin/tool", mode: 0o100 }, { path: "pkg/bin/", directory: true, mode: 0o500 },
+      { path: "pkg/implicit/value", mode: 0o600 }, { path: "pkg/value", mode: 0 },
       { path: "pkg/skip", mode: 0o200 },
     ];
     const params = await fixture(directory, kind, entries);
+    await fs.chmod(params.destDir, 0o755);
+    const processMask = process.umask();
     const seen: string[] = [];
-    await extractArchive({ ...params, stripComponents: 1, onFiltered: "skip-entry", entryFilter: ({ path }) => {
+    await extractArchive({ ...params, entryModes, entryUmask, stripComponents: 1, onFiltered: "skip-entry", entryFilter: ({ path }) => {
       seen.push(path); return path === "pkg/skip" ? "skip" : "extract";
     } });
-    expect(seen).toEqual(entries.map((entry) => entry.path));
+    expect(seen).toEqual(["pkg/bin/tool", "pkg/bin", "pkg/implicit/value", "pkg/value", "pkg/skip"]);
+    expect(process.umask()).toBe(processMask);
+    expect((await fs.stat(params.destDir)).mode & 0o777).toBe(0o755);
     const actual = await inspectTree(params.destDir, [
-      { path: "bin/", directory: true }, { path: "bin/tool" }, { path: "value" },
+      { path: "bin/", directory: true }, { path: "bin/tool" },
+      { path: "implicit/", directory: true }, { path: "implicit/value" }, { path: "value" },
     ]);
-    expect(Object.fromEntries(actual)).toEqual({ "bin/": 0o755, value: 0o644, "bin/tool": 0o755 });
+    expect(Object.fromEntries(actual)).toEqual(expected);
     await expect(fs.stat(path.join(params.destDir, "skip"))).rejects.toMatchObject({ code: "ENOENT" });
+  }));
+
+  it.each(archiveCodecFixtures)("applies entryUmask to $kind publication", (codec) => run(async (directory) => {
+    configure();
+    const base = await fs.mkdtemp(path.join(directory, "codec-"));
+    const archivePath = path.join(base, "fixture");
+    const destDir = path.join(base, "output");
+    await fs.mkdir(destDir);
+    await fs.writeFile(archivePath, Buffer.from(codec.small, "base64"));
+    await extractArchive({ archivePath, destDir, kind: codec.kind, timeoutMs: 10000,
+      entryModes: "preserve", entryUmask: 0o200 });
+    const target = path.join(destDir, "value.txt");
+    expect((await fs.stat(target)).mode & 0o777).toBe(0o400);
+    expect(await fs.readFile(target, "utf8")).toBe("actual codec and complete container checks\n");
   }));
 
   it("distinguishes absent ZIP metadata from explicit UNIX zero", () => run(async (directory) => {

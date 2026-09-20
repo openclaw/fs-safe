@@ -88,21 +88,26 @@ it("bounds file syncs at eight and joins them on timeout before rejecting", asyn
   expect(started).toBe(8);
 }, 10000);
 
-it.each([undefined, false, true])("keeps restrictive file and directory modes with durable %s", async (durable) => {
+it.each([
+  { durable: undefined, entryUmask: undefined },
+  { durable: false, entryUmask: undefined },
+  { durable: true, entryUmask: undefined },
+  { durable: true, entryUmask: 0o777 },
+])("keeps restrictive file and directory modes (durable=$durable, entryUmask=$entryUmask)", async ({ durable, entryUmask }) => {
   const { options } = await fixture();
   await fs.writeFile(options.archivePath, await modeArchive("tar", [
-    { path: "closed/", directory: true, mode: 0 },
+    { path: "closed/", directory: true, mode: entryUmask === undefined ? 0 : 0o777 },
     { path: "closed/write-only", mode: 0o200 },
     { path: "closed/unreadable", mode: 0 },
     { path: "closed/read-only", mode: 0o400 },
   ]));
   try {
-    await extractArchive({ ...options, entryModes: "preserve", durable });
+    await extractArchive({ ...options, entryModes: "preserve", entryUmask, durable });
     if (process.platform !== "win32") expect((await fs.stat(path.join(options.destDir, "closed"))).mode & 0o777).toBe(0);
     await fs.chmod(path.join(options.destDir, "closed"), 0o700);
     for (const [name, mode] of [["write-only", 0o200], ["unreadable", 0], ["read-only", 0o400]] as const) {
       const target = path.join(options.destDir, "closed", name);
-      if (process.platform !== "win32") expect((await fs.stat(target)).mode & 0o777).toBe(mode);
+      if (process.platform !== "win32") expect((await fs.stat(target)).mode & 0o777).toBe(mode & ~(entryUmask ?? 0));
       await fs.chmod(target, 0o600);
       expect(await fs.readFile(target, "utf8")).toBe("NEW");
     }

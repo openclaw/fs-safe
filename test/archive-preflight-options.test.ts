@@ -28,30 +28,55 @@ for (const mode of ["off", "require"] as const) {
       const archivePath = path.join(base, `archive.${kind}`);
       const destDir = path.join(base, "output");
       await fs.mkdir(destDir);
-      await fs.writeFile(archivePath, await modeArchive(kind, [{ path: "pkg/value", mode: 0o700 }]));
-      const entryFilter = vi.fn<ArchiveEntryFilter>(() => allowed ? "extract" : "skip");
+      await fs.writeFile(archivePath, await modeArchive(kind, [
+        { path: "pkg/value", mode: 0o700 }, { path: "pkg/next", mode: 0o700 },
+      ]));
+      let entryUmask = 0o200;
+      let maskReads = 0;
+      const entryFilter = vi.fn<ArchiveEntryFilter>(() => {
+        entryUmask = 0;
+        return allowed ? "extract" : "skip";
+      });
       class Options {
         get archivePath() { return archivePath; }
         get destDir() { return destDir; }
         get timeoutMs() { return 10_000; }
         get stripComponents() { return 1; }
-        get limits() { return { maxEntries: 1, maxEntryBytes: 3 }; }
+        get limits() { return { maxEntries: 2, maxEntryBytes: 3 }; }
         get entryModes() { return "preserve" as const; }
+        get entryUmask() { maskReads++; return entryUmask; }
         get entryFilter() { return entryFilter; }
         get onFiltered() { return "reject-archive" as const; }
       }
       if (allowed) {
         await extractArchive(new Options());
-        expect(await fs.readFile(path.join(destDir, "value"), "utf8")).toBe("NEW");
-        if (process.platform !== "win32") expect((await fs.stat(path.join(destDir, "value"))).mode & 0o777).toBe(0o700);
+        for (const name of ["value", "next"]) {
+          expect(await fs.readFile(path.join(destDir, name), "utf8")).toBe("NEW");
+          if (process.platform !== "win32") expect((await fs.stat(path.join(destDir, name))).mode & 0o777).toBe(0o500);
+        }
       } else {
         await expect(extractArchive(new Options())).rejects.toMatchObject({ code: "entry-filtered" });
         expect(await fs.readdir(destDir)).toEqual([]);
       }
-      expect(entryFilter).toHaveBeenCalledExactlyOnceWith({ path: "pkg/value", kind: "file", size: 3 });
+      expect(maskReads).toBe(1);
+      expect(entryFilter.mock.calls).toEqual((allowed ? ["pkg/value", "pkg/next"] : ["pkg/value"])
+        .map((path) => [{ path, kind: "file", size: 3 }]));
     });
   });
 }
+
+it.each([-1, 0.5, 0o1000, NaN, Infinity, null, "077"])("rejects invalid entryUmask %s before reading an archive or calling policy", async (entryUmask) => {
+  configureFsSafeNative({ mode: "off" });
+  const base = await tempRoot("fs-safe-invalid-entry-umask-");
+  const entryFilter = vi.fn<ArchiveEntryFilter>(() => "extract");
+  const options = { archivePath: path.join(base, "missing.tar"), destDir: path.join(base, "missing-output"),
+    timeoutMs: 10000, kind: "tar" as const, entryFilter };
+  // Runtime callers need validation even when the input bypasses TypeScript.
+  Object.defineProperty(options, "entryUmask", { value: entryUmask });
+  await expect(extractArchive(options)).rejects.toBeInstanceOf(RangeError);
+  expect(entryFilter).not.toHaveBeenCalled();
+  expect(await fs.readdir(base)).toEqual([]);
+});
 
 describe("structural public preflight options", () => {
   it("reads inherited filters at each check rather than copying options", async () => {

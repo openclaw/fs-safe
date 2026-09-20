@@ -23,6 +23,8 @@ export type ExtractArchiveOptions = {
   limits?: ArchiveExtractLimits;
   logger?: ArchiveLogger;
   entryModes?: ArchiveEntryModePolicy;
+  /** Remove these rwx bits from final entry modes. Defaults to zero. */
+  entryUmask?: number;
   entryFilter?: ArchiveEntryFilter;
   onFiltered?: ArchiveFilteredEntryPolicy;
 };

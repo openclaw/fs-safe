@@ -51,6 +51,7 @@ export async function extractNativeArchive(params: {
   tarLimits: TarMeterLimits;
   deadline: ExtractionDeadline;
   entryModes?: ExtractArchiveOptions["entryModes"];
+  entryUmask?: number;
   entryFilter?: ExtractArchiveOptions["entryFilter"];
   onFiltered?: ExtractArchiveOptions["onFiltered"];
 }): Promise<void> {
@@ -125,6 +126,7 @@ export async function extractNativeArchive(params: {
         await mergePlannedArchiveIntoDestination({
           entries: plan,
           durable: params.durable,
+          entryUmask: params.entryUmask,
           sourceDir: stagingDir,
           destinationGuard,
           deadline: params.deadline,

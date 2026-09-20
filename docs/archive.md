@@ -36,6 +36,7 @@ await extractArchive({
   timeoutMs: 15_000,                  // hard budget; active destination mutation is joined
   stripComponents: 0,                 // tar-style strip-leading-dirs
   entryModes: "clamp",                // default; use "preserve" for archive rwx bits
+  entryUmask: 0,                      // default; remove these bits from final modes
   entryFilter: ({ path, kind, size }) => "extract",
   onFiltered: "reject-archive",        // default; opt into "skip-entry" explicitly
   limits: {
@@ -63,6 +64,7 @@ type ExtractArchiveOptions = {
   limits?: ArchiveExtractLimits;
   logger?: ArchiveLogger;       // { info?, warn? }
   entryModes?: "clamp" | "preserve";
+  entryUmask?: number;          // integer 0..0o777; defaults to 0
   entryFilter?: (entry: { path: string; kind: ArchiveEntryKind; size: number }) =>
     "extract" | "skip";
   onFiltered?: "reject-archive" | "skip-entry";
@@ -108,6 +110,15 @@ including a mode containing only stripped special bits, stays zero under
 directories; ZIP UNIX creator records with zero attributes are explicit zero,
 while non-UNIX ZIP records use the absent-metadata defaults.
 
+`entryUmask` removes permission bits after the selected mode policy: final modes
+are the policy result `& ~entryUmask`. It applies to files, explicit directories,
+and implicit parent directories, including existing destination directories.
+The destination root and private staging modes are unchanged. The default `0`
+preserves existing behavior; invalid masks reject before extraction begins.
+fs-safe neither reads nor changes the process umask. Pass
+`entryUmask: process.umask()` explicitly when that is the caller's policy.
+Windows retains the POSIX-mode limitations described below.
+
 TAR mode fields containing only NUL/ASCII-space padding use absent defaults.
 Both backends recognize GNU binary modes, including signed values,
 within JavaScript's safe-integer range before masking permission bits.
@@ -121,7 +132,7 @@ stay `0o600` and directories `0o700` until publication. Files receive their fina
 mode through the guarded copy's owned writer descriptor. Directories are pinned
 before descending and finalized after their children, including empty and
 restrictive directories. Explicit accepted directory modes win regardless of
-archive order; implicit parents receive `0o755`. Existing destination directories
+archive order; implicit parents receive `0o755 & ~entryUmask`. Existing destination directories
 also receive the requested final mode. They are never temporarily widened to
 allow child writes; insufficient write/search access still rejects.
 
