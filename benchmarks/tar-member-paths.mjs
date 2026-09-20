@@ -22,15 +22,19 @@ function paxPath(name) {
 export function registerTarMemberPaths({ api, workspace, register }) {
   const count = 5000;
   const payload = Buffer.from("payload");
-  for (const shape of ["ascii", "nfc", "nfd", "prefix-nfc", "pax-nfc", "gnu-nfc"]) {
-    const stem = shape === "ascii" ? "member" : shape === "nfd" ? "e\u0301".repeat(20) : "\u00e9".repeat(20);
+  for (const shape of ["ascii", "nfc", "nfd", "prefix-ascii", "prefix-nfc", "prefix-nfd", "pax-nfc", "gnu-nfc"]) {
+    const prefixed = shape.startsWith("prefix-");
+    const form = prefixed ? shape.slice("prefix-".length) : shape;
+    const stem = form === "ascii" ? "member" : form === "nfd" ? "e\u0301".repeat(20) : "\u00e9".repeat(20);
     const names = Array.from({ length: count }, (_, index) =>
-      `${shape === "prefix-nfc" ? "component/".repeat(12) : ""}${stem}-${index}`);
+      `${prefixed ? "component/".repeat(12) : ""}${stem}-${index}`);
     const records = [];
     for (const [index, name] of names.entries()) {
       if (shape === "pax-nfc") records.push(member("PaxHeader", "ExtendedHeader", paxPath(name)));
       if (shape === "gnu-nfc") records.push(member("LongName", "NextFileHasLongPath", Buffer.from(`${name}\0`)));
-      records.push(member(shape === "pax-nfc" || shape === "gnu-nfc" ? `raw-${index}` : name, "File", payload));
+      const entry = member(shape === "pax-nfc" || shape === "gnu-nfc" ? `raw-${index}` : name, "File", payload);
+      if (prefixed) assert.notEqual(entry[345], 0, "fixture must encode a USTAR prefix");
+      records.push(entry);
     }
     records.push(Buffer.alloc(1024));
     const archivePath = path.join(workspace, `tar-member-paths-${shape}.tar`);

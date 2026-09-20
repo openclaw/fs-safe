@@ -30,8 +30,8 @@ dense false signatures, and a missing record. Its latest-valid-record behavior
 is intentionally different from strict admission's ambiguity rejection.
 
 The `inspectTarArchive/tar-member-paths-*` rows admit 5,000 small files with
-ordinary ASCII, NFC, NFD, or USTAR-prefix paths. Matching PAX and GNU Unicode
-override cases retain their separate effective-path validation as controls.
+ASCII, NFC, or NFD paths, each both ordinary and USTAR-prefixed. Matching PAX
+and GNU Unicode override cases retain their separate effective-path validation as controls.
 Run both `off` and `require` against separately built WASM/native artifacts;
 the shared Rust parser supplies both routes. Every row verifies the complete
 ordered manifest, including path spelling, kind, and size, outside timing.

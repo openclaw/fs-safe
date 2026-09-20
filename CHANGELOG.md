@@ -13,6 +13,7 @@
 - Prefer the running executable's ELF interpreter over installed compatibility-loader filenames when Linux process reports cannot identify libc, retaining the matching native prebuild on mixed glibc/musl installations.
 - Resolve deep valid relative paths without exceeding JavaScript argument limits, retaining complete component validation and root containment checks.
 - Report owned file-close failures after successful pathname hashes and portable create-only writes, preserving earlier operation and cancellation failures, completed destinations, and existing publication behavior.
+- Skip redundant validation of empty USTAR prefixes and already-admitted joined path components, preserving raw field decoding, padding checks, and PAX/GNU override checks in the shared native/WASM parser.
 - Enforce archive deadlines at monotonic checks, queued mutation dispatch, and successful settlement even when synchronous work delays the timer callback; preserve caller errors and join active destination mutations.
 - Add `sameFileContentsSync()` for bounded-memory, exact byte comparison of borrowed regular-file descriptors, preserving their cursors and lifetime while completing short reads and enforcing optional byte limits.
 - Add `writeFileWindowFully()` and `WriteFileWindowOptions` under `/advanced` for complete writes through borrowed handles at explicit offsets or the current cursor, with cancellation and synchronous per-write authority checks; callers retain admission, truncation, durability, and handle ownership.

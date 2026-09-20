@@ -14,7 +14,10 @@ ZIP fallback still requires optional `jszip`.
 The shared TAR parser reuses the already-validated owned path for ordinary
 members. Original header names and USTAR prefixes still undergo validation
 even when PAX or GNU metadata supplies an override; effective override paths
-retain their separate checks.
+retain their separate checks. Empty USTAR prefixes retain field decoding and
+padding checks; path validation applies to nonempty prefixes. Joining an
+admitted prefix and name with a separator preserves their checked components,
+so the parser does not repeat the same component validation on the joined path.
 
 `auto` prefers an available native binding; a native operation failure is
 terminal and never retries through WASM. `require` rejects a missing binding

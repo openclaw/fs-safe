@@ -64,11 +64,10 @@ pub fn validate_member(header: &[u8; 512], windows: bool) -> io::Result<String> 
         // Match node-tar's star layout; atime/ctime are not prefix bytes.
         let prefix_end = if header[475] == 0 { 475 } else { 500 };
         let prefix = path_field(&header[345..prefix_end])?;
-        validate_path(prefix, windows)?;
         if !prefix.is_empty() {
-            let path = format!("{prefix}/{name}");
-            validate_path(&path, windows)?;
-            return Ok(path);
+            validate_path(prefix, windows)?;
+            // A separator preserves both independently validated component lists.
+            return Ok(format!("{prefix}/{name}"));
         }
     }
     Ok(name.to_owned())
@@ -76,7 +75,96 @@ pub fn validate_member(header: &[u8; 512], windows: bool) -> io::Result<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::validate_path;
+    use super::{INVALID_PATH, validate_member, validate_path};
+
+    fn ustar_header(name: &[u8], prefix: &[u8]) -> [u8; 512] {
+        assert!(name.len() <= 100 && prefix.len() <= 155);
+        let mut header = [0; 512];
+        header[..name.len()].copy_from_slice(name);
+        header[257..265].copy_from_slice(b"ustar\x0000");
+        header[345..345 + prefix.len()].copy_from_slice(prefix);
+        header
+    }
+
+    #[test]
+    fn admitted_ustar_components_preserve_literal_joined_identity() {
+        for (prefix, name) in [
+            ("".to_owned(), "leaf".to_owned()),
+            ("pkg".to_owned(), "leaf".to_owned()),
+            ("pkg/".to_owned(), "./leaf".to_owned()),
+            ("pkg\\".to_owned(), ".\\leaf".to_owned()),
+            ("./pkg//.".to_owned(), "./leaf".to_owned()),
+            (".".to_owned(), ".".to_owned()),
+            ("nested/cafe\u{301}".to_owned(), "caf\u{e9}".to_owned()),
+            ("각".repeat(28), "각".repeat(28)),
+            ("p".repeat(155), "n".repeat(100)),
+        ] {
+            let expected = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            for windows in [false, true] {
+                let header = ustar_header(name.as_bytes(), prefix.as_bytes());
+                assert_eq!(validate_member(&header, windows).unwrap(), expected);
+                validate_path(&expected, windows).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn ustar_fields_retain_individual_syntax_and_normalization_rejections() {
+        for (prefix, name, windows_only) in [
+            ("pkg".to_owned(), "/absolute".to_owned(), false),
+            ("pkg".to_owned(), "\\absolute".to_owned(), false),
+            ("/absolute".to_owned(), "leaf".to_owned(), false),
+            ("pkg".to_owned(), "C:drive".to_owned(), false),
+            ("C:drive".to_owned(), "leaf".to_owned(), false),
+            ("pkg".to_owned(), "../leaf".to_owned(), false),
+            ("pkg\\..\\bad".to_owned(), "leaf".to_owned(), false),
+            ("각".repeat(29), "leaf".to_owned(), false),
+            ("pkg".to_owned(), "각".repeat(29), false),
+            ("C".to_owned(), ":leaf".to_owned(), true),
+            ("pkg".to_owned(), "leaf:stream".to_owned(), true),
+            ("pkg:stream".to_owned(), "leaf".to_owned(), true),
+        ] {
+            for windows in [false, true] {
+                let result = validate_member(&ustar_header(name.as_bytes(), prefix.as_bytes()), windows);
+                if windows_only && !windows {
+                    assert_eq!(result.unwrap(), format!("{prefix}/{name}"));
+                } else {
+                    assert_eq!(result.unwrap_err().to_string(), INVALID_PATH, "prefix={prefix:?}, name={name:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ustar_fields_still_reject_hidden_nul_suffixes_and_invalid_utf8() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"pkg", b"safe\0hidden"), (b"safe\0hidden", b"leaf"),
+            (b"pkg", &[0xff]), (&[0xff], b"leaf"),
+        ];
+        for (prefix, name) in cases {
+            for windows in [false, true] {
+                let error = validate_member(&ustar_header(name, prefix), windows).unwrap_err();
+                assert_eq!(error.to_string(), INVALID_PATH);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_ustar_prefixes_still_decode_the_selected_field() {
+        let mut header = ustar_header(b"leaf", b"");
+        header[476..488].copy_from_slice(b"00000000001\0");
+        header[488..500].copy_from_slice(b"00000000002\0");
+        for windows in [false, true] {
+            // With byte 475 zero, valid star timestamps are outside the prefix.
+            assert_eq!(validate_member(&header, windows).unwrap(), "leaf");
+            for offset in [346, 474, 475] {
+                let mut hidden = header;
+                hidden[offset] = b'x';
+                let error = validate_member(&hidden, windows).unwrap_err();
+                assert_eq!(error.to_string(), INVALID_PATH, "hidden prefix byte {offset}");
+            }
+        }
+    }
 
     #[test]
     fn component_limits_preserve_ascii_and_unicode_normalization_boundaries() {
