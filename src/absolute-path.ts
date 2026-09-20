@@ -241,22 +241,12 @@ export function assertAbsolutePathInput(filePath: string): string {
 
 export async function findExistingAncestor(filePath: string): Promise<string | null> {
   assertNoWindowsPathAlias(filePath);
-  return (await findExistingAncestorWithStat(filePath))?.path ?? null;
-}
-
-async function findExistingAncestorWithStat(filePath: string): Promise<{
-  path: string;
-  stat: Stats;
-} | null> {
-  assertNoWindowsPathAlias(filePath);
   let current = resolvePathPreservingWindowsRoot(filePath);
   assertNoWindowsPathAlias(current);
   while (true) {
     try {
-      return {
-        path: current,
-        stat: fsSync.lstatSync(pathForWindowsFilesystem(current)),
-      };
+      fsSync.lstatSync(pathForWindowsFilesystem(current));
+      return current;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         throw err;

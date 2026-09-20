@@ -22,12 +22,7 @@ export async function isNonRegularWriteOpenError(
   filePath: string,
   flags: number,
 ): Promise<boolean> {
-  if (!isNonblockingWriteEnxio(error, flags)) return false;
-  try {
-    return !fsSync.lstatSync(filePath).isFile();
-  } catch {
-    return false;
-  }
+  return isNonRegularWriteOpenErrorSync(error, filePath, flags);
 }
 
 export function isNonRegularWriteOpenErrorSync(

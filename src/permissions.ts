@@ -109,23 +109,9 @@ export async function inspectPathPermissions(
   const admissionPlatform = process.platform === "win32"
     ? process.platform
     : (opts?.platform ?? process.platform);
-  if (hasWindowsPathAlias(targetPath, "filesystem", admissionPlatform)) {
-    const st = failedSafeStat("Path uses a Windows filesystem namespace alias");
-    return {
-      ok: false,
-      isSymlink: false,
-      isDir: false,
-      mode: null,
-      bits: null,
-      source: "unknown",
-      worldWritable: false,
-      groupWritable: false,
-      worldReadable: false,
-      groupReadable: false,
-      error: st.error,
-    };
-  }
-  const st = await safeStatAdmitted(targetPath);
+  const st = hasWindowsPathAlias(targetPath, "filesystem", admissionPlatform)
+    ? failedSafeStat("Path uses a Windows filesystem namespace alias")
+    : await safeStatAdmitted(targetPath);
   if (!st.ok) {
     return {
       ok: false,

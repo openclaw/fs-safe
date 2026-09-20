@@ -55,34 +55,7 @@ function formatUnsafePath(params: AssertNoSymlinkParentsOptions, current: string
 export async function assertNoSymlinkParents(
   params: AssertNoSymlinkParentsOptions,
 ): Promise<void> {
-  const walk = resolvePathWalk(params);
-  if (!walk) {
-    return;
-  }
-  let current = walk.root;
-  for (const [index, segment] of walk.segments.entries()) {
-    current = path.join(current, segment);
-    try {
-      const stat = fsSync.lstatSync(current);
-      if (stat.isSymbolicLink()) {
-        if (params.allowRootChildSymlink && path.dirname(current) === walk.root) {
-          continue;
-        }
-        throw new Error(formatUnsafePath(params, current));
-      }
-      if ((params.requireDirectories || index < walk.segments.length - 1) && !stat.isDirectory()) {
-        throw new FsSafeError(
-          "not-file",
-          `${params.messagePrefix ?? "Path"} must traverse directories: ${current}`,
-        );
-      }
-    } catch (err) {
-      if (hasNodeErrorCode(err, "ENOENT") && params.allowMissing !== false) {
-        return;
-      }
-      throw err;
-    }
-  }
+  assertNoSymlinkParentsSync(params);
 }
 
 export function assertNoSymlinkParentsSync(
@@ -110,7 +83,7 @@ export function assertNoSymlinkParentsSync(
         );
       }
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT" && params.allowMissing !== false) {
+      if (hasNodeErrorCode(err, "ENOENT") && params.allowMissing !== false) {
         return;
       }
       throw err;
