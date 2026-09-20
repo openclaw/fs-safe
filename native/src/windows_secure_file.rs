@@ -36,41 +36,12 @@ pub fn inspect_windows_secure_file_handle(
 
 #[cfg(windows)]
 mod windows {
-    use std::ptr::null_mut;
-
-    use windows_sys::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, GetLastError};
-    use windows_sys::Win32::System::Threading::GetCurrentProcess;
-
     use super::WindowsDescriptorSecurityFacts;
     use crate::NativeResult;
-    use crate::windows::{OwnedHandle, handle_identity, root_handle, win_error};
-
-    fn duplicate_node_handle(fd: i32) -> NativeResult<OwnedHandle> {
-        let borrowed = root_handle(fd)?;
-        let process = unsafe { GetCurrentProcess() };
-        let mut duplicate = null_mut();
-        if unsafe {
-            DuplicateHandle(
-                process,
-                borrowed,
-                process,
-                &mut duplicate,
-                0,
-                0,
-                DUPLICATE_SAME_ACCESS,
-            )
-        } == 0
-        {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "duplicate borrowed Node file handle",
-            ));
-        }
-        Ok(OwnedHandle(duplicate))
-    }
+    use crate::windows::{duplicate_handle, handle_identity, root_handle};
 
     pub(super) fn inspect(fd: i32) -> NativeResult<WindowsDescriptorSecurityFacts> {
-        let handle = duplicate_node_handle(fd)?;
+        let handle = duplicate_handle(root_handle(fd)?, "duplicate borrowed Node file handle")?;
         let (volume, file_index, _is_directory) = handle_identity(handle.0)?;
         let security = crate::windows_security::read_owner_and_dacl_for_handle(handle.0)?;
         Ok(WindowsDescriptorSecurityFacts {
