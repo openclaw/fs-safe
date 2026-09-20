@@ -2,11 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { isNotFoundPathError, isPathInside, isSymlinkOpenError } from "./path.js";
 import { realpathSync } from "./realpath.js";
 import {
   assertNoWindowsPathAlias,
   pathForWindowsFilesystem,
+  resolvePathFromBasePreservingWindowsRoot,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
@@ -89,10 +90,6 @@ export function rawPathRelativeToCanonicalRoot(
   return undefined;
 }
 
-function isFilesystemRoot(candidate: string): boolean {
-  return path.parse(candidate).root === candidate;
-}
-
 function pathExists(targetPath: string): boolean {
   try {
     return fs.lstatSync(pathForWindowsFilesystem(targetPath), { throwIfNoEntry: false }) !== undefined;
@@ -105,7 +102,7 @@ function pathExists(targetPath: string): boolean {
 }
 
 export async function resolvePathViaExistingAncestor(targetPath: string): Promise<string> {
-  return resolveExistingAncestor(targetPath, pathExists, realpathSync.native);
+  return resolveExistingAncestor(targetPath, "native");
 }
 
 function pathExistsSync(targetPath: string): boolean {
@@ -113,14 +110,17 @@ function pathExistsSync(targetPath: string): boolean {
 }
 
 export function resolvePathViaExistingAncestorSync(targetPath: string): string {
-  return resolveExistingAncestor(targetPath, pathExistsSync, realpathSync);
+  return resolveExistingAncestor(targetPath, "ordinary");
 }
 
-function resolveExistingAncestor(
+export type RootPathMetadataMode = "native" | "ordinary";
+
+export function resolveExistingAncestor(
   targetPath: string,
-  exists: (pathname: string) => boolean,
-  canonicalize: (pathname: string) => string,
+  mode: RootPathMetadataMode,
 ): string {
+  const exists = mode === "native" ? pathExists : pathExistsSync;
+  const canonicalize = mode === "native" ? realpathSync.native : realpathSync;
   assertNoWindowsPathAlias(targetPath);
   const normalized = resolvePathPreservingWindowsRoot(targetPath);
   assertNoWindowsPathAlias(normalized);
@@ -128,7 +128,7 @@ function resolveExistingAncestor(
   const missingSuffix: string[] = [];
 
   while (
-    !isFilesystemRoot(cursor) &&
+    path.parse(cursor).root !== cursor &&
     !exists(cursor)
   ) {
     missingSuffix.unshift(path.basename(cursor));
@@ -157,4 +157,33 @@ function resolveExistingAncestor(
     : path.resolve(resolvedAncestor, ...missingSuffix);
   assertNoWindowsPathAlias(resolved);
   return resolved;
+}
+
+export function resolveSymlinkHopPath(
+  symlinkPath: string,
+  mode: RootPathMetadataMode,
+  rejectUnresolved?: boolean,
+): string {
+  try {
+    const canonicalize = mode === "native" ? realpathSync.native : realpathSync;
+    const rawRealPath = canonicalize(symlinkPath);
+    assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
+    const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
+    assertNoWindowsPathAlias(realPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
+    return realPath;
+  } catch (error) {
+    if (isSymlinkOpenError(error) || (rejectUnresolved && isNotFoundPathError(error))) {
+      throw new FsSafeError("symlink", "symlink path could not be resolved", {
+        cause: error instanceof Error ? error : undefined,
+      });
+    }
+    if (!isNotFoundPathError(error)) throw error;
+    const linkTarget = fs.readlinkSync(symlinkPath);
+    assertNoWindowsPathAlias(linkTarget, "filesystem", "symlink target uses a Windows filesystem namespace alias");
+    const linkDir = resolvePathPreservingWindowsRoot(path.dirname(symlinkPath));
+    const targetPath = resolvePathFromBasePreservingWindowsRoot(linkDir, linkTarget);
+    const resolved = resolveExistingAncestor(targetPath, mode);
+    assertNoWindowsPathAlias(resolved, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
+    return resolved;
+  }
 }

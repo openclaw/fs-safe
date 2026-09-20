@@ -4,6 +4,8 @@
 
 ### Performance and maintenance
 
+- Simplify root-path metadata traversal and canonicalization, reducing intermediate allocations and Promise scheduling while preserving async/sync resolution behavior, alias checks, and observation receipts.
+
 - Reduce redundant metadata observations and Promise scheduling in secret-file reads, regular-file admission, and staged-file publication while retaining exact identity and mutation checks.
 - Share archive staging, directory admission, temporary-file ownership, lock registration, and native task settlement code without changing public APIs or platform fallback behavior.
 

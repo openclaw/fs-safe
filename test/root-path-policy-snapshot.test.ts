@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveRootPath, resolveRootPathSync } from "../src/root-path.js";
+import {
+  resolveRootPath,
+  resolveRootPathSync,
+  resolveRootPathWithCanonicalRootObservation,
+} from "../src/root-path.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -65,7 +69,7 @@ describe("root traversal policy snapshots", () => {
     },
   );
 
-  it.each(flags)("retains %s while ancestor resolution yields", async flag => {
+  it.each(flags)("retains %s when root observation mutates caller options", async flag => {
     const f = await fixture();
     const params = {
       rootPath: f.rootPath,
@@ -77,21 +81,23 @@ describe("root traversal policy snapshots", () => {
       rejectUnresolvedSymlinks: false,
     };
     params[flag] = true;
-    const pending = resolveRootPath(params);
-    params[flag] = false;
+    const pending = resolveRootPathWithCanonicalRootObservation(params, () => {
+      params[flag] = false;
+    });
     await expect(pending).rejects.toMatchObject({ code: "symlink" });
   });
 
-  it("owns nested alias policy while ancestor resolution yields", async () => {
+  it("owns nested alias policy when root observation mutates caller options", async () => {
     const f = await fixture();
     const policy = { allowFinalSymlinkForUnlink: false, allowFinalHardlinkForUnlink: false };
     const params = {
       rootPath: f.rootPath, absolutePath: f.absolutePath, boundaryLabel: "fixture", policy,
     };
-    const pending = resolveRootPath(params);
-    policy.allowFinalSymlinkForUnlink = true;
-    policy.allowFinalHardlinkForUnlink = true;
-    params.policy = { allowFinalSymlinkForUnlink: true, allowFinalHardlinkForUnlink: true };
+    const pending = resolveRootPathWithCanonicalRootObservation(params, () => {
+      policy.allowFinalSymlinkForUnlink = true;
+      policy.allowFinalHardlinkForUnlink = true;
+      params.policy = { allowFinalSymlinkForUnlink: true, allowFinalHardlinkForUnlink: true };
+    });
     await expect(pending).resolves.toMatchObject({ canonicalPath: f.target, kind: "directory" });
   });
 });

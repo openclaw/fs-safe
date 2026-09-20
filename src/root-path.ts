@@ -12,8 +12,9 @@ import {
 import {
   absolutePathWithRawSegments,
   rawPathRelativeToCanonicalRoot,
-  resolvePathViaExistingAncestor,
-  resolvePathViaExistingAncestorSync,
+  resolveExistingAncestor,
+  resolveSymlinkHopPath,
+  type RootPathMetadataMode,
 } from "./root-path-existing.js";
 import {
   admitPathInsideRoot,
@@ -30,7 +31,6 @@ import {
   type RootPathObservationRequest,
   type RootPathTraversalObservation,
 } from "./root-path-observation.js";
-import { resolveSymlinkHopPath, resolveSymlinkHopPathSync } from "./root-path-symlink.js";
 import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import type { RemovalPathReceipts } from "./root-remove-receipt.js";
 import {
@@ -103,54 +103,23 @@ export type ObservedRootPath = {
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
-  try {
-    return await resolveRootPathInternal(params);
-  } catch (error) {
-    throw sanitizeRootPathError(error);
-  }
+  return resolveRootPathInternal(params);
 }
 
 export async function resolveRootPathWithCanonicalRootObservation(
   params: ResolveRootPathParams,
   observeRoot: (rootCanonicalPath: string) => void,
 ): Promise<ResolvedRootPath> {
-  try {
-    return await resolveRootPathInternal(params, undefined, undefined, observeRoot);
-  } catch (error) {
-    throw sanitizeRootPathError(error);
-  }
-}
-
-async function resolveRootPathInternal(
-  params: ResolveRootPathParams,
-  observationRequest?: RootPathObservationRequest,
-  observationOutput?: { receipt?: RootPathObservationReceipt },
-  observeRoot?: (rootCanonicalPath: string) => void,
-  removalReceipts?: RemovalPathReceipts,
-): Promise<ResolvedRootPath> {
-  const traversal = traverseRootPath(params, observationRequest, observationOutput, observeRoot, removalReceipts);
-  let step = traversal.next();
-  while (!step.done) {
-    const hop = step.value;
-    const canonicalPath = hop.kind === "root"
-      ? await resolvePathViaExistingAncestor(hop.path)
-      : await resolveSymlinkHopPath(hop.path, { rejectUnresolved: hop.rejectUnresolved });
-    step = traversal.next(canonicalPath);
-  }
-  return step.value;
+  return resolveRootPathInternal(params, { observeRoot });
 }
 
 export async function resolveRootPathWithObservation(
   params: ResolveRootPathParams,
   request: RootPathObservationRequest,
 ): Promise<ObservedRootPath> {
-  const output: { receipt?: RootPathObservationReceipt } = {};
-  try {
-    const resolved = await resolveRootPathInternal(params, request, output);
-    return output.receipt ? { resolved, receipt: output.receipt } : { resolved };
-  } catch (error) {
-    throw sanitizeRootPathError(error);
-  }
+  const observation: RootPathObservationOutput = { request };
+  const resolved = resolveRootPathInternal(params, { observation });
+  return observation.receipt ? { resolved, receipt: observation.receipt } : { resolved };
 }
 
 // Removal receipts are separate from metadata observations and canonical-root
@@ -159,46 +128,41 @@ export async function resolveRootPathForRemoval(
   params: ResolveRootPathParams,
   receipts: RemovalPathReceipts,
 ): Promise<ResolvedRootPath> {
-  try {
-    return await resolveRootPathInternal(params, undefined, undefined, undefined, receipts);
-  } catch (error) {
-    throw sanitizeRootPathError(error);
-  }
+  return resolveRootPathInternal(params, { removalReceipts: receipts });
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
-  try {
-    return resolveRootPathSyncInternal(params);
-  } catch (error) {
-    throw sanitizeRootPathError(error);
-  }
+  return resolveRootPathInternal(params, { mode: "ordinary" });
 }
 
 export function resolveRootPathSyncWithCanonicalRootObservation(
   params: ResolveRootPathParams,
   observeRoot: (rootCanonicalPath: string) => void,
 ): ResolvedRootPath {
+  return resolveRootPathInternal(params, { mode: "ordinary", observeRoot });
+}
+
+type RootPathObservationOutput = {
+  request: RootPathObservationRequest;
+  receipt?: RootPathObservationReceipt;
+};
+
+type RootPathTraversalOptions = {
+  mode?: RootPathMetadataMode;
+  observation?: RootPathObservationOutput;
+  observeRoot?: (rootCanonicalPath: string) => void;
+  removalReceipts?: RemovalPathReceipts;
+};
+
+function resolveRootPathInternal(
+  params: ResolveRootPathParams,
+  options: RootPathTraversalOptions = {},
+): ResolvedRootPath {
   try {
-    return resolveRootPathSyncInternal(params, observeRoot);
+    return traverseRootPath(params, options);
   } catch (error) {
     throw sanitizeRootPathError(error);
   }
-}
-
-function resolveRootPathSyncInternal(
-  params: ResolveRootPathParams,
-  observeRoot?: (rootCanonicalPath: string) => void,
-): ResolvedRootPath {
-  const traversal = traverseRootPath(params, undefined, undefined, observeRoot);
-  let step = traversal.next();
-  while (!step.done) {
-    const hop = step.value;
-    const canonicalPath = hop.kind === "root"
-      ? resolvePathViaExistingAncestorSync(hop.path)
-      : resolveSymlinkHopPathSync(hop.path, { rejectUnresolved: hop.rejectUnresolved });
-    step = traversal.next(canonicalPath);
-  }
-  return step.value;
 }
 
 function prepareRootTraversal(
@@ -286,20 +250,18 @@ function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): 
   );
 }
 
-type LexicalTraversalState = {
-  segments: string[];
-  relativePath: string;
-  reuseLexicalCanonical: boolean;
-  finalComponentIndex: number;
-  allowFinalSymlink: boolean;
-  canonicalCursor: string;
-  lexicalCursor: string;
-  preserveFinalSymlink: boolean;
-  missingDepth: number;
-};
-
 type LexicalTraversalContext = {
-  state: LexicalTraversalState;
+  state: {
+    segments: string[];
+    relativePath: string;
+    reuseLexicalCanonical: boolean;
+    finalComponentIndex: number;
+    allowFinalSymlink: boolean;
+    canonicalCursor: string;
+    lexicalCursor: string;
+    preserveFinalSymlink: boolean;
+    missingDepth: number;
+  };
   resolveParams: ResolveRootPathParams;
   rootPath: string;
   rootCanonicalPath: string;
@@ -307,44 +269,26 @@ type LexicalTraversalContext = {
   observationEligible: boolean;
 };
 
-function createLexicalTraversalState(params: {
-  params: ResolveRootPathParams;
-  rawAbsolutePath: string;
-  rootPath: string;
-  rootCanonicalPath: string;
-  absolutePath: string;
-}): LexicalTraversalState {
-  const rawAbsolutePath = params.rawAbsolutePath;
+function createLexicalTraversalContext(params: LexicalResolutionParams): LexicalTraversalContext {
   const relative = admitRawPathInsideRoot(
     params.rootPath,
-    rawAbsolutePath,
+    params.rawAbsolutePath,
     params.params.rootIdentity,
   )?.relativePath;
   if (relative === undefined) throw new Error("Path traversal must begin at the root");
   const segments = splitTraversalSegments(relative);
   return {
-    segments,
-    relativePath: relative,
-    reuseLexicalCanonical: false,
-    finalComponentIndex: segments.findLastIndex((segment) => segment !== "."),
-    allowFinalSymlink: params.params.policy?.allowFinalSymlinkForUnlink === true,
-    canonicalCursor: params.rootCanonicalPath,
-    lexicalCursor: params.rootPath,
-    preserveFinalSymlink: false,
-    missingDepth: 0,
-  };
-}
-
-function createLexicalTraversalContext(params: {
-  params: ResolveRootPathParams;
-  rawAbsolutePath: string;
-  rootPath: string;
-  rootCanonicalPath: string;
-  absolutePath: string;
-  observationEligible: boolean;
-}): LexicalTraversalContext {
-  return {
-    state: createLexicalTraversalState(params),
+    state: {
+      segments,
+      relativePath: relative,
+      reuseLexicalCanonical: false,
+      finalComponentIndex: segments.findLastIndex((segment) => segment !== "."),
+      allowFinalSymlink: params.params.policy?.allowFinalSymlinkForUnlink === true,
+      canonicalCursor: params.rootCanonicalPath,
+      lexicalCursor: params.rootPath,
+      preserveFinalSymlink: false,
+      missingDepth: 0,
+    },
     resolveParams: params.params,
     rootPath: params.rootPath,
     rootCanonicalPath: params.rootCanonicalPath,
@@ -445,40 +389,15 @@ function finalizeLexicalResolution(
     context,
     context.state.canonicalCursor,
   );
-  return buildResolvedRootPath({
+  return {
     absolutePath: context.absolutePath,
     canonicalPath: context.state.canonicalCursor,
     rootPath: context.rootPath,
     rootCanonicalPath: context.rootCanonicalPath,
-    kind,
-  });
-}
-
-function handleLexicalLstatFailure(
-  context: LexicalTraversalContext,
-  error: unknown,
-  segment: string,
-): boolean {
-  if (!isNotFoundPathError(error)) {
-    return false;
-  }
-  advanceCanonicalCursorForSegment(context, segment);
-  context.state.missingDepth = 1;
-  return true;
-}
-
-function lexicalStatDisposition(params: {
-  isSymbolicLink: boolean;
-  isLast: boolean;
-  rejectSymlinks: boolean | undefined;
-  rejectFinalSymlink: boolean;
-  allowFinalSymlink: boolean;
-}): "continue" | "break" | "resolve-link" {
-  if (!params.isSymbolicLink) return "continue";
-  if (params.rejectFinalSymlink || (params.rejectSymlinks === true && params.isLast)) {
-    throw new FsSafeError("symlink", "symlink path component not allowed");
-  }
-  return params.allowFinalSymlink && params.isLast ? "break" : "resolve-link";
+    relativePath: relativeInsideRoot(context.rootCanonicalPath, context.state.canonicalCursor),
+    exists: kind.exists,
+    kind: kind.kind,
+  };
 }
 
 function applyResolvedSymlinkHop(
@@ -533,26 +452,19 @@ type LexicalResolutionParams = {
   observationEligible: boolean;
 };
 
-type RootPathCanonicalization =
-  | { kind: "root"; path: string }
-  | { kind: "symlink"; path: string; rejectUnresolved?: boolean };
-
-// The cursor owns one ordered traversal; drivers select only the resolver's
-// native/ordinary canonicalization route and whether to await its result.
-function* traverseRootPath(
+// Both public APIs use synchronous metadata; only canonicalization and ancestor
+// existence differ. Promise wrappers preserve the asynchronous rejection API.
+function traverseRootPath(
   params: ResolveRootPathParams,
-  observationRequest?: RootPathObservationRequest,
-  observationOutput?: { receipt?: RootPathObservationReceipt },
-  observeRoot?: (rootCanonicalPath: string) => void,
-  removalReceipts?: RemovalPathReceipts,
-): Generator<RootPathCanonicalization, ResolvedRootPath, string> {
+  { mode = "native", observation: observationOutput, observeRoot, removalReceipts }: RootPathTraversalOptions,
+): ResolvedRootPath {
   const input = captureValidRootPathInputs(params);
   const rawAbsolutePath = absolutePathWithRawSegments(input.absolutePath);
   const rootPath = resolvePathPreservingWindowsRoot(input.rootPath);
   const absolutePath = resolvePathPreservingWindowsRoot(rawAbsolutePath);
   const rootCanonicalPath = input.rootCanonicalPath
     ? resolvePathPreservingWindowsRoot(input.rootCanonicalPath)
-    : yield { kind: "root", path: rootPath };
+    : resolveExistingAncestor(rootPath, mode);
   assertNoWindowsPathAlias(rootPath);
   assertNoWindowsPathAlias(absolutePath);
   assertNoWindowsPathAlias(rootCanonicalPath);
@@ -561,7 +473,7 @@ function* traverseRootPath(
     prepareRootTraversal(input, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
   );
   const { state } = context;
-  const observation = createLexicalTraversalObservation(context, observationRequest);
+  const observation = createLexicalTraversalObservation(context, observationOutput?.request);
 
   for (let idx = 0; idx < state.segments.length; idx += 1) {
     const segment = state.segments[idx] ?? "";
@@ -615,8 +527,10 @@ function* traverseRootPath(
           !(error instanceof RootPathObservationError),
         );
       }
-      if (handleLexicalLstatFailure(context, error, segment)) continue;
-      throw error;
+      if (!isNotFoundPathError(error)) throw error;
+      advanceCanonicalCursorForSegment(context, segment);
+      state.missingDepth = 1;
+      continue;
     }
 
     if (isNativeDirectoryObservationGuard(observed)) {
@@ -639,15 +553,15 @@ function* traverseRootPath(
 
     const isSymbolicLink = stat.isSymbolicLink();
     if (!isSymbolicLink) assertDirectoryBeforeMoreSegments(stat, state.lexicalCursor, isLast);
-    const disposition = lexicalStatDisposition({
-      isSymbolicLink,
-      isLast,
-      rejectSymlinks: isSymbolicLink ? context.resolveParams.rejectSymlinks : undefined,
-      rejectFinalSymlink: context.resolveParams.rejectFinalSymlink === true && idx === state.finalComponentIndex,
-      allowFinalSymlink: state.allowFinalSymlink,
-    });
-    if (disposition !== "resolve-link") {
-      state.preserveFinalSymlink = disposition === "break";
+    if (isSymbolicLink && (
+      (context.resolveParams.rejectFinalSymlink === true && idx === state.finalComponentIndex) ||
+      (context.resolveParams.rejectSymlinks === true && isLast)
+    )) {
+      throw new FsSafeError("symlink", "symlink path component not allowed");
+    }
+    const preserveFinalSymlink = isSymbolicLink && state.allowFinalSymlink && isLast;
+    if (!isSymbolicLink || preserveFinalSymlink) {
+      state.preserveFinalSymlink = preserveFinalSymlink;
       advanceCanonicalCursorForSegment(context, segment);
       if (observation?.enabled && isSymbolicLink) {
         disableLexicalTraversalObservation(context, observation);
@@ -673,10 +587,11 @@ function* traverseRootPath(
 
     if (observation?.enabled) disableLexicalTraversalObservation(context, observation);
 
-    const linkCanonical = yield {
-      kind: "symlink", path: state.lexicalCursor,
-      rejectUnresolved: context.resolveParams.rejectUnresolvedSymlinks,
-    };
+    const linkCanonical = resolveSymlinkHopPath(
+      state.lexicalCursor,
+      mode,
+      context.resolveParams.rejectUnresolvedSymlinks,
+    );
     applyResolvedSymlinkHop(context, linkCanonical);
     if (context.resolveParams.rejectSymlinks === true) {
       throw new FsSafeError("symlink", "symlink path component not allowed");
@@ -705,24 +620,6 @@ function* traverseRootPath(
     };
   }
   return finalizeLexicalResolution(context, kind);
-}
-
-function buildResolvedRootPath(params: {
-  absolutePath: string;
-  canonicalPath: string;
-  rootPath: string;
-  rootCanonicalPath: string;
-  kind: { exists: boolean; kind: ResolvedRootPathKind };
-}): ResolvedRootPath {
-  return {
-    absolutePath: params.absolutePath,
-    canonicalPath: params.canonicalPath,
-    rootPath: params.rootPath,
-    rootCanonicalPath: params.rootCanonicalPath,
-    relativePath: relativeInsideRoot(params.rootCanonicalPath, params.canonicalPath),
-    exists: params.kind.exists,
-    kind: params.kind.kind,
-  };
 }
 
 function getPathKindSync(
