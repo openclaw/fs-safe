@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Correct pnpm 12 Crabbox examples to forward provider and lease flags directly, avoiding accidental creation of a new default lease.
 - Tighten validation by detecting widened error-code declarations, requiring consumer-local archive proof packages, repairing the copy-in parent-swap regression, reporting streamed-create outcomes that settle before test producer entry, and removing the superseded packed smoke with stale Windows fallback expectations.
 - Correct creation error handling examples, advanced path helper signatures, Root option references, homepage primitive names, and the distinction between Windows JS payload writes and native sidecar publication.
 - Preserve copied-move replacements and distinct hardlink groups when filesystem IDs exceed JavaScript's safe integer range, reject ambiguous Windows identities, and reuse admitted directory metadata without dropping later checks.
