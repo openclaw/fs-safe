@@ -157,6 +157,10 @@ pnpm archive:producer-smoke ./consumer require
 This uses a child bound to canonical cwd/device/inode running `/usr/bin/tar -czf - .`
 with unchanged stdout, and npm tar, on synthetic Unicode/newline/long-name files,
 then the installed package API for exact payload hashes and bounded reads.
+The consumer must be separate from the source checkout; package resolution must
+stay within its own `node_modules`, including pnpm's local `.pnpm` layout.
+Workspace self-resolution, upward resolution, and external package links reject
+before package imports or archive fixture creation.
 It also rejects a valid PAX override attached to an invalid raw UTF-8 field.
 The `require` command must resolve the freshly packed native binding; the
 `off` command uses the installed WASM asset. No live user files are read.

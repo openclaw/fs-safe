@@ -145,6 +145,13 @@ export function assertPublicApi(actual) {
     if (!expectedEntry || expectedEntry.kind === "json" || actualEntry.kind === "json") continue;
     compareNames(failures, "runtime export", subpath, expectedEntry.runtime, actualEntry.runtime);
     compareNames(failures, "type export", subpath, expectedEntry.types, actualEntry.types);
+    compareNames(
+      failures,
+      "error-code type",
+      subpath,
+      Object.keys(expectedEntry.errorCodes),
+      Object.keys(actualEntry.errorCodes),
+    );
     const sharedErrorCodeTypes = Object.keys(expectedEntry.errorCodes).filter((typeName) =>
       Object.hasOwn(actualEntry.errorCodes, typeName),
     );

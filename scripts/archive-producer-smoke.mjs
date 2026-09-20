@@ -2,22 +2,20 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as tar from "tar";
+import { resolveArchiveProducerConsumer } from "./archive-producer-consumer.mjs";
 
 // Run against an already installed packed consumer, never a workspace source import.
 const consumer = process.argv[2];
 if (!consumer) throw new Error("usage: pnpm archive:producer-smoke <packed-consumer-directory> [off|require]");
 const mode = process.argv[3] ?? "off";
 if (!["off", "require"].includes(mode)) throw new Error("mode must be off or require");
-const require = createRequire(path.resolve(consumer, "package.json"));
-const manifest = require.resolve("@openclaw/fs-safe/package.json");
-const packageDir = path.dirname(manifest);
-const { configureFsSafeNative } = await import(pathToFileURL(require.resolve("@openclaw/fs-safe/config")));
-const { extractArchive, readArchiveEntry } = await import(pathToFileURL(require.resolve("@openclaw/fs-safe/archive")));
+const { manifest, packageDir, configEntry, archiveEntry } = resolveArchiveProducerConsumer(consumer);
+const { configureFsSafeNative } = await import(pathToFileURL(configEntry));
+const { extractArchive, readArchiveEntry } = await import(pathToFileURL(archiveEntry));
 assert.equal(JSON.parse(await fs.readFile(manifest, "utf8")).optionalDependencies.tar, undefined);
 await fs.access(path.join(packageDir, "dist/archive-parser.wasm"));
 configureFsSafeNative({ mode });

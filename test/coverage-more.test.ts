@@ -232,27 +232,41 @@ describe("sibling temp coverage", () => {
     }
   });
 
-  it("removes sibling temp files when copy-in rejects the staged source", async () => {
+  it("removes the staged source when copy-in rejects a replaced destination parent", async () => {
     const root = await tempRoot("fs-safe-sibling-copyin-");
     const outside = await tempRoot("fs-safe-sibling-copyin-outside-");
-    const targetPath = path.join(root, "nested", "out.txt");
+    const parent = path.join(root, "nested");
+    const displaced = path.join(root, "nested-held");
+    const targetPath = path.join(parent, "out.txt");
+    await fs.mkdir(parent);
+    await fs.writeFile(targetPath, "original target");
+    await fs.writeFile(path.join(outside, "out.txt"), "outside target");
+    const opens = vi.spyOn(fs, "open");
     let stagedPath = "";
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    let producerCompleted = false;
+    let opensBeforeCopyIn = 0;
 
-    await expect(
-      writeViaSiblingTempPath({
-        rootDir: root,
-        targetPath,
-        writeTemp: async (candidate) => {
-          stagedPath = candidate;
-          await fs.writeFile(candidate, "bad", "utf8");
-          await fs.symlink(outside, path.dirname(targetPath), "dir");
-        },
-      }),
-    ).rejects.toBeTruthy();
+    await expectFsSafeError(writeViaSiblingTempPath({
+      rootDir: root,
+      targetPath,
+      writeTemp: async (candidate) => {
+        stagedPath = candidate;
+        await fs.writeFile(candidate, "staged payload", "utf8");
+        await fs.rename(parent, displaced);
+        await fs.symlink(outside, parent, process.platform === "win32" ? "junction" : "dir");
+        producerCompleted = true;
+        opensBeforeCopyIn = opens.mock.calls.length;
+      },
+    }), "path-alias");
 
+    expect(producerCompleted).toBe(true);
+    expect(opens.mock.calls.slice(opensBeforeCopyIn).some(([file]) => file === stagedPath)).toBe(true);
+    expect((await fs.lstat(parent)).isSymbolicLink()).toBe(true);
+    await expect(fs.readFile(path.join(displaced, "out.txt"), "utf8")).resolves.toBe("original target");
+    await expect(fs.readFile(path.join(outside, "out.txt"), "utf8")).resolves.toBe("outside target");
+    await expect(fs.readdir(outside)).resolves.toEqual(["out.txt"]);
     await expect(fs.stat(stagedPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.readdir(outside)).resolves.toEqual([]);
+    await expect(fs.stat(path.dirname(stagedPath))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
