@@ -64,19 +64,30 @@ describe.each(modes)("streamed Root.create authority snapshot (native %s)", (mod
         () => ({ completed: true }),
         error => ({ completed: false, error }),
       );
-      await input.entered;
-      authorized = false;
-      if (change === "replace") options.assertBeforeMutation = () => undefined;
-      else delete options.assertBeforeMutation;
-      input.release();
-      const outcome = await pending;
-      const names = await fs.readdir(capability.rootReal);
-      const published = names.includes("file") ? await fs.readFile(path.join(capability.rootReal, "file"), "utf8") : undefined;
-      expect({ outcome, names, published, closed: input.closed }).toEqual({
-        outcome: { completed: false, error: failure }, names: [], published: undefined, closed: true,
-      });
-      expect(receivers.length).toBeGreaterThan(0);
-      expect(receivers.every(receiver => receiver === options)).toBe(true);
+      try {
+        await Promise.race([
+          input.entered,
+          pending.then(outcome => {
+            throw new Error("Root.create settled before entering the paused producer", { cause: outcome });
+          }),
+        ]);
+        authorized = false;
+        if (change === "replace") options.assertBeforeMutation = () => undefined;
+        else delete options.assertBeforeMutation;
+        input.release();
+        const outcome = await pending;
+        const names = await fs.readdir(capability.rootReal);
+        const published = names.includes("file") ? await fs.readFile(path.join(capability.rootReal, "file"), "utf8") : undefined;
+        expect({ outcome, names, published, closed: input.closed }).toEqual({
+          outcome: { completed: false, error: failure }, names: [], published: undefined, closed: true,
+        });
+        expect(receivers.length).toBeGreaterThan(0);
+        expect(receivers.every(receiver => receiver === options)).toBe(true);
+      } finally {
+        input.release();
+        await pending;
+        await input.stream.return(undefined);
+      }
     }, privateCreation && process.platform === "win32" ? 120_000 : undefined);
   }
 
