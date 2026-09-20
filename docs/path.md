@@ -44,7 +44,7 @@ opened or mutated.
 
 ### `isPathInsideWithRealpath(rootDir, target, opts?)`
 
-Synchronous. Same as `isPathInside`, but resolves both inputs through `realpath` first. Use this when you want the canonical answer and either input might be a symlink.
+Synchronous. First requires lexical containment with `isPathInside`, then resolves both inputs through `realpath` and checks containment again. A lexically outside path is rejected even if its resolved target is inside the root.
 
 ```ts
 isPathInsideWithRealpath("/srv/uploads", "/srv/symlink-to-elsewhere"); // false
@@ -121,7 +121,7 @@ The check is intentionally not a normal consumer policy knob. Safe read APIs rej
 
 ### `isNotFoundPathError(err)`
 
-`true` if the error is a `NodeJS.ErrnoException` with code `ENOENT` (file or directory missing).
+`true` if the error has code `ENOENT` (file or directory missing) or `ENOTDIR` (a path component is not a directory).
 
 ```ts
 try {
@@ -207,8 +207,8 @@ import {
 } from "@openclaw/fs-safe/advanced";
 ```
 
-- `assertNoPathAliasEscape({ rootRealPath, candidatePath, policy })` — async. Asserts the candidate's resolved real path is inside the root. Configurable via `PATH_ALIAS_POLICIES` (which currently ships only the default `"strict"` policy).
-- `assertNoHardlinkedFinalPath({ filePath })` — async. Throws if the file at `filePath` has `nlink > 1`.
+- `assertNoPathAliasEscape({ absolutePath, rootPath, boundaryLabel, policy? })` — async. Applies root path resolution and final hardlink checks. `policy` defaults to `PATH_ALIAS_POLICIES.strict`; `PATH_ALIAS_POLICIES.unlinkTarget` permits final symlink and hardlink aliases for unlink operations.
+- `assertNoHardlinkedFinalPath({ filePath, root, boundaryLabel, allowFinalHardlinkForUnlink? })` — async. Rejects a regular file with `nlink > 1`; missing paths and nonregular resolved entries are ignored. Setting `allowFinalHardlinkForUnlink: true` skips this check for unlink operations.
 
 Use these when writing a custom helper that wants the same guards `root()` uses but with different surrounding logic.
 

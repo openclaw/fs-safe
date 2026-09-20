@@ -164,7 +164,7 @@ existing publication and cleanup diagnostics.
 try {
   await fs.create("config/seed.json", initial);
 } catch (err) {
-  if (err instanceof FsSafeError && err.code !== "already-exists") throw err;
+  if (!(err instanceof FsSafeError) || err.code !== "already-exists") throw err;
 }
 ```
 

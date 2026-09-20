@@ -44,9 +44,11 @@ new placeholder, and before publishing to an existing symlink-selected destinati
 They verify alias binding, destination preservation, observed placeholder/stage
 states, and cleanup before fixture teardown. The default native-off and explicit
 `verify-content-with-lock` native-require configurations both select the existing
-Windows JS buffer writer. The compatibility route is expected not to load the
-addon; the receipt does not mislabel this as native publication or evidence that
-content-verification fallback or lock contention was exercised.
+Windows JS buffer writer. In native-require mode, the compatibility route loads
+the addon to publish its retained sidecar lock through `Root.create`; the payload
+writer remains JS. The receipt does not mislabel this as native payload
+publication or evidence that content-verification fallback or lock contention
+was exercised.
 
 ## Bounds and interpretation
 

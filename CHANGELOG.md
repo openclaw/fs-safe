@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Correct creation error handling examples, advanced path helper signatures, Root option references, homepage primitive names, and the distinction between Windows JS payload writes and native sidecar publication.
 - Preserve copied-move replacements and distinct hardlink groups when filesystem IDs exceed JavaScript's safe integer range, reject ambiguous Windows identities, and reuse admitted directory metadata without dropping later checks.
 - Prefer the running executable's ELF interpreter over installed compatibility-loader filenames when Linux process reports cannot identify libc, retaining the matching native prebuild on mixed glibc/musl installations.
 - Resolve deep valid relative paths without exceeding JavaScript argument limits, retaining complete component validation and root containment checks.

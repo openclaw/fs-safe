@@ -100,7 +100,7 @@ type RootReadOptions = {
   hardlinks?: "reject" | "allow";   // override defaults.hardlinks
   maxBytes?: number;                // refuse reads larger than this many bytes
   nonBlockingRead?: boolean;        // compatibility hint; safe opens are already nonblocking where supported
-  symlinks?: "reject" | "follow-within-root"; // override defaults.symlinks
+  symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root"; // override defaults.symlinks
 };
 ```
 

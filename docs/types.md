@@ -128,6 +128,8 @@ type RootOptions = {
 ## `RootReadOptions` / `RootWriteOptions` / `RootCopyOptions`
 
 ```ts
+import type { CopyCloneMode, RootCopyPublicationReceipt } from "@openclaw/fs-safe";
+
 type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
 type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity" | "mutationSymlinks"> & {
   encoding?: BufferEncoding;
@@ -135,6 +137,11 @@ type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutatio
 };
 type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "maxBytes" | "mkdir" | "mode" | "mutationSymlinks"> & {
   sourceHardlinks?: "reject" | "allow";
+  overwrite?: boolean;
+  clone?: CopyCloneMode;
+  signal?: AbortSignal;
+  preserveSourceMode?: boolean;
+  onDestinationPublished?: (receipt: RootCopyPublicationReceipt) => void;
 };
 type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mkdir" | "mode" | "mutationSymlinks"> & {
   writeMode?: "replace" | "append" | "update";
@@ -150,8 +157,17 @@ type RootAppendOptions = RootWriteOptions & {
 type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
   overwrite?: boolean;
 };
-type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
-type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">;
+type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
+  recursive?: boolean;
+  force?: boolean;
+  order?: "filesystem" | "sorted";
+  maxEntries?: number;
+  maxDepth?: number;
+  signal?: AbortSignal;
+};
+type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
+  private?: boolean;
+};
 ```
 
 Per-method option shapes. Each picks the `RootDefaults` keys that apply, plus method-specific extras.

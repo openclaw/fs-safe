@@ -418,7 +418,7 @@ function homeHero(page) {
   const quickstartRel = pageMap.get("quickstart.md")?.outRel
     ? hrefToOutRel(pageMap.get("quickstart.md").outRel, page.outRel)
     : "quickstart.html";
-  const primitives = ["root()", "pathScope()", "replaceFileAtomic", "extractArchive", "writeJsonAtomic", "createPrivateTempWorkspace", "openPinnedFileSync", "FsSafeError"];
+  const primitives = ["root()", "pathScope()", "replaceFileAtomic", "extractArchive", "writeJson", "withTempWorkspace", "openRootFileSync", "FsSafeError"];
   return `<header class="home-hero">
         <p class="eyebrow">Node.js · TypeScript · MIT</p>
         <h1>${escapeHtml(productTagline)}</h1>
