@@ -64,134 +64,6 @@ function inspectStoreDirectory(params: {
   }, params.expected);
 }
 
-function observeStoreDirectory(params: {
-  dir: string;
-  messagePrefix: StoreMessagePrefix;
-  root: boolean;
-}): ExactDirectoryReceipt {
-  return {
-    dir: params.dir,
-    stat: inspectStoreDirectory(params),
-  };
-}
-
-function inspectReceiptCurrent(
-  receipt: ExactDirectoryReceipt,
-  messagePrefix: StoreMessagePrefix,
-  root: boolean,
-): BigIntStats {
-  try {
-    const stat = inspectStoreDirectory({
-      dir: receipt.dir,
-      expected: receipt.stat,
-      messagePrefix,
-      root,
-    });
-    if (stat.dev !== receipt.stat.dev || stat.ino !== receipt.stat.ino) {
-      throw changedStoreDirectory(messagePrefix);
-    }
-    return stat;
-  } catch (error) {
-    if (error instanceof FsSafeError && error.code === "outside-workspace") throw error;
-    throw changedStoreDirectory(messagePrefix, error);
-  }
-}
-
-function assertRootCurrent(
-  rootReceipt: ExactDirectoryReceipt,
-  rootReal: string,
-  messagePrefix: StoreMessagePrefix,
-): BigIntStats {
-  const stat = inspectReceiptCurrent(rootReceipt, messagePrefix, true);
-  try {
-    if (storeDirectoryRealPath(rootReceipt.dir) !== rootReal) {
-      throw changedStoreDirectory(messagePrefix);
-    }
-  } catch (error) {
-    if (error instanceof FsSafeError && error.code === "outside-workspace") throw error;
-    throw changedStoreDirectory(messagePrefix, error);
-  }
-  return stat;
-}
-
-function assertAdmittedEdgeCurrent(
-  receipts: readonly ExactDirectoryReceipt[],
-  rootReal: string | undefined,
-  messagePrefix: StoreMessagePrefix,
-): BigIntStats {
-  const rootReceipt = receipts[0];
-  const targetIndex = receipts.length - 1;
-  const targetReceipt = receipts[targetIndex];
-  if (!rootReceipt || !targetReceipt) {
-    throw new FsSafeError("helper-failed", "store directory receipt is missing");
-  }
-  const rootStat = rootReal === undefined
-    ? inspectReceiptCurrent(rootReceipt, messagePrefix, true)
-    : assertRootCurrent(rootReceipt, rootReal, messagePrefix);
-  if (targetIndex === 0) return rootStat;
-  const parent = receipts[targetIndex - 1];
-  if (!parent) throw new FsSafeError("helper-failed", "store directory receipt is missing");
-  if (targetIndex > 1) inspectReceiptCurrent(parent, messagePrefix, false);
-  const targetStat = inspectReceiptCurrent(targetReceipt, messagePrefix, false);
-  if (path.dirname(targetReceipt.dir) !== parent.dir) {
-    throw changedStoreDirectory(messagePrefix);
-  }
-  return targetStat;
-}
-
-function assertModeTargetCurrent(
-  receipts: readonly ExactDirectoryReceipt[],
-  rootReal: string,
-  messagePrefix: StoreMessagePrefix,
-): BigIntStats {
-  const root = receipts[0];
-  const target = receipts.at(-1);
-  if (!root || !target) throw new FsSafeError("helper-failed", "store directory receipt is missing");
-  // The target's canonical observation shares the exact identity fence. Keep
-  // the trailing root canonical check: an ancestor relocation can retain IDs.
-  assertAdmittedEdgeCurrent(receipts, undefined, messagePrefix);
-  let targetReal: string;
-  try {
-    targetReal = storeDirectoryRealPath(target.dir);
-  } catch (error) {
-    throw changedStoreDirectory(messagePrefix, error);
-  }
-  if (target === root ? targetReal !== rootReal : !isPathInside(rootReal, targetReal)) {
-    throw changedStoreDirectory(messagePrefix);
-  }
-  return assertAdmittedEdgeCurrent(receipts, rootReal, messagePrefix);
-}
-
-function assertReceiptChain(
-  receipts: readonly ExactDirectoryReceipt[],
-  rootReal: string,
-  messagePrefix: StoreMessagePrefix,
-): { finalReal: string; finalStat: BigIntStats } {
-  const rootReceipt = receipts[0];
-  const finalReceipt = receipts.at(-1);
-  if (!rootReceipt || !finalReceipt) {
-    throw new FsSafeError("helper-failed", "store directory receipt is missing");
-  }
-  assertRootCurrent(rootReceipt, rootReal, messagePrefix);
-  let finalStat = rootReceipt.stat;
-  for (const [index, receipt] of receipts.entries()) {
-    if (index === 0) continue;
-    finalStat = inspectReceiptCurrent(receipt, messagePrefix, false);
-  }
-  let finalReal: string;
-  try {
-    finalReal = storeDirectoryRealPath(finalReceipt.dir);
-  } catch (error) {
-    throw changedStoreDirectory(messagePrefix, error);
-  }
-  if (!isPathInside(rootReal, finalReal)) throw changedStoreDirectory(messagePrefix);
-  assertRootCurrent(rootReceipt, rootReal, messagePrefix);
-  if (finalReceipt !== rootReceipt) {
-    finalStat = inspectReceiptCurrent(finalReceipt, messagePrefix, false);
-  }
-  return { finalReal, finalStat };
-}
-
 function directoryOpenFlags(): number {
   const { O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK, O_RDONLY } = fs.constants;
   if ([O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK, O_RDONLY]
@@ -227,146 +99,229 @@ function hasErrorCode(error: unknown, code: string): boolean {
   return false;
 }
 
-function openStoreDirectoryForMode(params: {
-  receipt: ExactDirectoryReceipt;
-  receipts: readonly ExactDirectoryReceipt[];
-  rootReal: string;
-  messagePrefix: StoreMessagePrefix;
-}): number {
-  let openError: unknown;
-  try {
-    return fs.openSync(pathForWindowsFilesystem(params.receipt.dir), directoryOpenFlags());
-  } catch (error) {
-    openError = error;
+class StoreDirectoryChain {
+  private readonly receipts: ExactDirectoryReceipt[] = [];
+  private readonly rootReal: string;
+
+  constructor(rootDir: string, private messagePrefix: StoreMessagePrefix) {
+    this.observe(rootDir, messagePrefix);
+    this.rootReal = storeDirectoryRealPath(rootDir);
   }
 
-  const searchFlags = hasErrorCode(openError, "EACCES") ? directorySearchFlags() : undefined;
-  if (searchFlags !== undefined) {
+  observe(dir: string, messagePrefix: StoreMessagePrefix): void {
+    this.messagePrefix = messagePrefix;
+    this.receipts.push({
+      dir,
+      stat: inspectStoreDirectory({
+        dir,
+        messagePrefix: this.messagePrefix,
+        root: this.receipts.length === 0,
+      }),
+    });
+  }
+
+  private inspectReceipt(receipt: ExactDirectoryReceipt, root = false): BigIntStats {
     try {
-      return fs.openSync(pathForWindowsFilesystem(params.receipt.dir), searchFlags);
-    } catch (searchError) {
-      openError = createSuppressedError(
-        searchError,
-        openError,
-        "ordinary and search-only directory opens both failed",
-      );
+      const stat = inspectStoreDirectory({
+        dir: receipt.dir,
+        expected: receipt.stat,
+        messagePrefix: this.messagePrefix,
+        root,
+      });
+      if (stat.dev !== receipt.stat.dev || stat.ino !== receipt.stat.ino) {
+        throw changedStoreDirectory(this.messagePrefix);
+      }
+      return stat;
+    } catch (error) {
+      if (error instanceof FsSafeError && error.code === "outside-workspace") throw error;
+      throw changedStoreDirectory(this.messagePrefix, error);
     }
   }
 
-  try {
-    assertModeTargetCurrent(params.receipts, params.rootReal, params.messagePrefix);
-  } catch (boundaryError) {
-    throw changedStoreDirectory(
-      params.messagePrefix,
-      createSuppressedError(
-        boundaryError,
-        openError,
-        "directory acquisition and boundary revalidation both failed",
-      ),
-    );
-  }
-  if (hasErrorCode(openError, "EACCES")) {
-    throw new FsSafeError(
-      "permission-unverified",
-      `${params.messagePrefix} directory cannot be safely mode-repaired through a Node descriptor`,
-      { cause: openError },
-    );
-  }
-  throw openError;
-}
-
-function requestedDirectoryMode(mode: number): bigint {
-  return BigInt(mode & 0o7777);
-}
-
-function inspectOpenedStoreDirectory(
-  descriptor: number,
-  receipt: ExactDirectoryReceipt,
-  messagePrefix: StoreMessagePrefix,
-): BigIntStats {
-  try {
-    const stat = inspectFileIdentitySync(
-      () => fs.fstatSync(descriptor, { bigint: true }),
-      receipt.stat,
-    );
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw changedStoreDirectory(messagePrefix);
+  private assertRoot(): BigIntStats {
+    const root = this.receipts[0]!;
+    const stat = this.inspectReceipt(root, true);
+    try {
+      if (storeDirectoryRealPath(root.dir) !== this.rootReal) {
+        throw changedStoreDirectory(this.messagePrefix);
+      }
+    } catch (error) {
+      if (error instanceof FsSafeError && error.code === "outside-workspace") throw error;
+      throw changedStoreDirectory(this.messagePrefix, error);
     }
     return stat;
-  } catch (error) {
-    if (error instanceof FsSafeError && error.code === "outside-workspace") throw error;
-    throw changedStoreDirectory(messagePrefix, error);
-  }
-}
-
-function finalizeDirectoryMode(params: {
-  receipts: readonly ExactDirectoryReceipt[];
-  rootReal: string;
-  mode: number;
-  messagePrefix: StoreMessagePrefix;
-}): ExactDirectoryReceipt {
-  const receipt = params.receipts.at(-1);
-  if (!receipt) throw new FsSafeError("helper-failed", "store directory receipt is missing");
-  const requestedMode = requestedDirectoryMode(params.mode);
-  if ((receipt.stat.mode & 0o7777n) === requestedMode || process.platform === "win32") {
-    const current = assertAdmittedEdgeCurrent(params.receipts, params.rootReal, params.messagePrefix);
-    // Identity can remain stable while permissions change after the first receipt.
-    if (process.platform === "win32" || (current.mode & 0o7777n) === requestedMode) {
-      return { ...receipt, stat: current };
-    }
   }
 
-  // Repair owns the stronger pre/post mode-target fence below, including an
-  // admission check on acquisition failure; no earlier admission is needed.
-  const descriptor = openStoreDirectoryForMode({
-    receipt,
-    receipts: params.receipts,
-    rootReal: params.rootReal,
-    messagePrefix: params.messagePrefix,
-  });
-  let finalStat: BigIntStats | undefined;
-  let operationFailed = false;
-  let operationError: unknown;
-  try {
-    const opened = inspectOpenedStoreDirectory(descriptor, receipt, params.messagePrefix);
-    assertModeTargetCurrent(params.receipts, params.rootReal, params.messagePrefix);
-    if ((opened.mode & 0o7777n) !== requestedMode) {
-      fs.fchmodSync(descriptor, Number(requestedMode));
+  private assertEdge(canonicalRoot = true): BigIntStats {
+    const targetIndex = this.receipts.length - 1;
+    const rootStat = canonicalRoot
+      ? this.assertRoot() : this.inspectReceipt(this.receipts[0]!, true);
+    if (targetIndex === 0) return rootStat;
+    const parent = this.receipts[targetIndex - 1]!;
+    if (targetIndex > 1) this.inspectReceipt(parent);
+    const target = this.receipts[targetIndex]!;
+    const targetStat = this.inspectReceipt(target);
+    if (path.dirname(target.dir) !== parent.dir) {
+      throw changedStoreDirectory(this.messagePrefix);
     }
-    const finalized = inspectOpenedStoreDirectory(descriptor, receipt, params.messagePrefix);
-    const pathname = assertModeTargetCurrent(
-      params.receipts,
-      params.rootReal,
-      params.messagePrefix,
-    );
-    if ((finalized.mode & 0o7777n) !== requestedMode ||
-      (pathname.mode & 0o7777n) !== requestedMode) {
+    return targetStat;
+  }
+
+  private assertModeTarget(): BigIntStats {
+    const root = this.receipts[0]!;
+    const target = this.receipts.at(-1)!;
+    // The target's canonical observation shares the exact identity fence. Keep
+    // the trailing root canonical check: an ancestor relocation can retain IDs.
+    this.assertEdge(false);
+    let targetReal: string;
+    try {
+      targetReal = storeDirectoryRealPath(target.dir);
+    } catch (error) {
+      throw changedStoreDirectory(this.messagePrefix, error);
+    }
+    if (target === root ? targetReal !== this.rootReal : !isPathInside(this.rootReal, targetReal)) {
+      throw changedStoreDirectory(this.messagePrefix);
+    }
+    return this.assertEdge();
+  }
+
+  finish(dir: string, messagePrefix: StoreMessagePrefix): SyncStoreDirectoryReceipt {
+    this.messagePrefix = messagePrefix;
+    const root = this.receipts[0]!;
+    const target = this.receipts.at(-1)!;
+    this.assertRoot();
+    let finalStat = root.stat;
+    for (const [index, receipt] of this.receipts.entries()) {
+      if (index === 0) continue;
+      finalStat = this.inspectReceipt(receipt);
+    }
+    let finalReal: string;
+    try {
+      finalReal = storeDirectoryRealPath(target.dir);
+    } catch (error) {
+      throw changedStoreDirectory(this.messagePrefix, error);
+    }
+    if (!isPathInside(this.rootReal, finalReal)) throw changedStoreDirectory(this.messagePrefix);
+    this.assertRoot();
+    if (target !== root) finalStat = this.inspectReceipt(target);
+    return { dir, realPath: finalReal, exactStat: finalStat };
+  }
+
+  private openForMode(receipt: ExactDirectoryReceipt): number {
+    let openError: unknown;
+    try {
+      return fs.openSync(pathForWindowsFilesystem(receipt.dir), directoryOpenFlags());
+    } catch (error) {
+      openError = error;
+    }
+
+    const searchFlags = hasErrorCode(openError, "EACCES") ? directorySearchFlags() : undefined;
+    if (searchFlags !== undefined) {
+      try {
+        return fs.openSync(pathForWindowsFilesystem(receipt.dir), searchFlags);
+      } catch (searchError) {
+        openError = createSuppressedError(
+          searchError,
+          openError,
+          "ordinary and search-only directory opens both failed",
+        );
+      }
+    }
+
+    try {
+      this.assertModeTarget();
+    } catch (boundaryError) {
+      throw changedStoreDirectory(
+        this.messagePrefix,
+        createSuppressedError(
+          boundaryError,
+          openError,
+          "directory acquisition and boundary revalidation both failed",
+        ),
+      );
+    }
+    if (hasErrorCode(openError, "EACCES")) {
       throw new FsSafeError(
-        "insecure-permissions",
-        `${params.messagePrefix} directory mode could not be finalized`,
+        "permission-unverified",
+        `${this.messagePrefix} directory cannot be safely mode-repaired through a Node descriptor`,
+        { cause: openError },
       );
     }
-    finalStat = pathname;
-  } catch (error) {
-    operationFailed = true;
-    operationError = error;
+    throw openError;
   }
 
-  try {
-    fs.closeSync(descriptor);
-  } catch (closeError) {
-    if (operationFailed) {
-      throw createSuppressedError(
-        closeError,
-        operationError,
-        "store directory finalization and close both failed",
+  private inspectOpened(descriptor: number, receipt: ExactDirectoryReceipt): BigIntStats {
+    try {
+      const stat = inspectFileIdentitySync(
+        () => fs.fstatSync(descriptor, { bigint: true }),
+        receipt.stat,
       );
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw changedStoreDirectory(this.messagePrefix);
+      }
+      return stat;
+    } catch (error) {
+      if (error instanceof FsSafeError && error.code === "outside-workspace") throw error;
+      throw changedStoreDirectory(this.messagePrefix, error);
     }
-    throw closeError;
   }
-  if (operationFailed) throw operationError;
-  if (!finalStat) throw new FsSafeError("helper-failed", "store directory mode receipt is missing");
-  return { ...receipt, stat: finalStat };
+
+  finalizeMode(mode: number, messagePrefix: StoreMessagePrefix): void {
+    this.messagePrefix = messagePrefix;
+    const receipt = this.receipts.at(-1)!;
+    const requestedMode = BigInt(mode & 0o7777);
+    if ((receipt.stat.mode & 0o7777n) === requestedMode || process.platform === "win32") {
+      const current = this.assertEdge();
+      // Identity can remain stable while permissions change after the first receipt.
+      if (process.platform === "win32" || (current.mode & 0o7777n) === requestedMode) {
+        this.receipts[this.receipts.length - 1] = { ...receipt, stat: current };
+        return;
+      }
+    }
+
+    // Repair owns the stronger pre/post mode-target fence below, including an
+    // admission check on acquisition failure; no earlier admission is needed.
+    const descriptor = this.openForMode(receipt);
+    let finalStat: BigIntStats | undefined;
+    let operationFailed = false;
+    let operationError: unknown;
+    try {
+      const opened = this.inspectOpened(descriptor, receipt);
+      this.assertModeTarget();
+      if ((opened.mode & 0o7777n) !== requestedMode) {
+        fs.fchmodSync(descriptor, Number(requestedMode));
+      }
+      const finalized = this.inspectOpened(descriptor, receipt);
+      const pathname = this.assertModeTarget();
+      if ((finalized.mode & 0o7777n) !== requestedMode ||
+        (pathname.mode & 0o7777n) !== requestedMode) {
+        throw new FsSafeError(
+          "insecure-permissions",
+          `${this.messagePrefix} directory mode could not be finalized`,
+        );
+      }
+      finalStat = pathname;
+    } catch (error) {
+      operationFailed = true;
+      operationError = error;
+    }
+
+    try {
+      fs.closeSync(descriptor);
+    } catch (closeError) {
+      if (operationFailed) {
+        throw createSuppressedError(
+          closeError,
+          operationError,
+          "store directory finalization and close both failed",
+        );
+      }
+      throw closeError;
+    }
+    if (operationFailed) throw operationError;
+    if (!finalStat) throw new FsSafeError("helper-failed", "store directory mode receipt is missing");
+    this.receipts[this.receipts.length - 1] = { ...receipt, stat: finalStat };
+  }
 }
 
 export function ensureSyncStoreDirectory(params: {
@@ -387,53 +342,21 @@ export function ensureSyncStoreDirectory(params: {
   }
 
   fs.mkdirSync(recursiveMkdirPath(pathForWindowsFilesystem(rootDir)), { recursive: true, mode: params.mode });
-  const receipts: ExactDirectoryReceipt[] = [observeStoreDirectory({
-    dir: rootDir,
-    messagePrefix: params.messagePrefix,
-    root: true,
-  })];
-  const rootReal = storeDirectoryRealPath(rootDir);
-  receipts[0] = finalizeDirectoryMode({
-    receipts,
-    rootReal,
-    mode: params.mode,
-    messagePrefix: params.messagePrefix,
-  });
-
+  const chain = new StoreDirectoryChain(rootDir, params.messagePrefix);
+  chain.finalizeMode(params.mode, params.messagePrefix);
   let current = rootDir;
   for (const segment of relative.split(path.sep).filter(Boolean)) {
     current = path.join(current, segment);
-    let receipt: ExactDirectoryReceipt;
     try {
-      receipt = observeStoreDirectory({
-        dir: current,
-        messagePrefix: params.messagePrefix,
-        root: false,
-      });
+      chain.observe(current, params.messagePrefix);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       fs.mkdirSync(pathForWindowsFilesystem(current), { mode: params.mode });
-      receipt = observeStoreDirectory({
-        dir: current,
-        messagePrefix: params.messagePrefix,
-        root: false,
-      });
+      chain.observe(current, params.messagePrefix);
     }
-    receipts.push(receipt);
-    receipts[receipts.length - 1] = finalizeDirectoryMode({
-      receipts,
-      rootReal,
-      mode: params.mode,
-      messagePrefix: params.messagePrefix,
-    });
+    chain.finalizeMode(params.mode, params.messagePrefix);
   }
-
-  const finalChain = assertReceiptChain(receipts, rootReal, params.messagePrefix);
-  return {
-    dir,
-    realPath: finalChain.finalReal,
-    exactStat: finalChain.finalStat,
-  };
+  return chain.finish(dir, params.messagePrefix);
 }
 
 export function assertSyncStoreDirectoryReceipt(
