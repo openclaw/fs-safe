@@ -3,8 +3,8 @@ import fs, { type FileHandle } from "node:fs/promises";
 import { readBoundedSync } from "./bounded-read.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { hasErrorCode } from "./file-cleanup.js";
 
 type AsyncSourceFileSystem = Pick<typeof import("node:fs/promises"), "lstat" | "open">;
 type SyncSourceFileSystem = Pick<
@@ -26,11 +26,11 @@ function assertSourcePreview(source: Stats, src: string): void {
   }
 }
 
-function assertOpenedSource(opened: Stats, current: Stats, src: string): void {
-  if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
+function assertOpenedSource(opened: BigIntStats, current: BigIntStats, src: string): void {
+  if (!opened.isFile() || current.isSymbolicLink()) {
     throw new FsSafeError("path-mismatch", `Copy fallback source changed while opening: ${src}`);
   }
-  if (opened.nlink !== 1) {
+  if (opened.nlink !== 1n) {
     throw new FsSafeError("hardlink", `Hardlinked copy fallback source not allowed: ${src}`);
   }
 }
@@ -45,7 +45,7 @@ async function openSource(fsModule: AsyncSourceFileSystem, src: string): Promise
   try {
     return await fsModule.open(src, OPEN_READ_FLAGS);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+    if (hasErrorCode(error, "ELOOP")) {
       throw sourceSymlinkError(src, error);
     }
     throw error;
@@ -56,7 +56,7 @@ function openSourceSync(fsModule: SyncSourceFileSystem, src: string): number {
   try {
     return fsModule.openSync(src, OPEN_READ_FLAGS);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+    if (hasErrorCode(error, "ELOOP")) {
       throw sourceSymlinkError(src, error);
     }
     throw error;
@@ -81,23 +81,18 @@ export async function readOwnedCopySource(params: {
     ? syncFs.lstatSync(params.src) : await params.fsModule.lstat(params.src), params.src);
   const handle = await openSource(params.fsModule, params.src);
   try {
-    if (params.expectedIdentity) {
-      const exact = await inspectFileIdentity(
-        () => params.fsModule === fs
-          ? syncFs.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true }),
-        params.expectedIdentity,
-      );
-      await inspectFileIdentity(
-        () => params.fsModule === fs
-          ? syncFs.lstatSync(params.src, { bigint: true }) : params.fsModule.lstat(params.src, { bigint: true }),
-        exact,
-      );
-    }
-    const opened = params.fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
-    const current = params.fsModule === fs
-      ? syncFs.lstatSync(params.src) : await params.fsModule.lstat(params.src);
+    const opened = await inspectFileIdentity(
+      () => params.fsModule === fs
+        ? syncFs.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true }),
+      params.expectedIdentity,
+    );
+    const current = await inspectFileIdentity(
+      () => params.fsModule === fs
+        ? syncFs.lstatSync(params.src, { bigint: true }) : params.fsModule.lstat(params.src, { bigint: true }),
+      opened,
+    );
     assertOpenedSource(opened, current, params.src);
-    return { replacement: await handle.readFile(), mode: opened.mode };
+    return { replacement: await handle.readFile(), mode: Number(opened.mode) };
   } finally {
     await handle.close().catch(() => undefined);
   }
@@ -111,20 +106,16 @@ export function readOwnedCopySourceSync(params: {
   assertSourcePreview(params.fsModule.lstatSync(params.src), params.src);
   const fd = openSourceSync(params.fsModule, params.src);
   try {
-    if (params.expectedIdentity) {
-      const exact = inspectFileIdentitySync(
-        () => params.fsModule.fstatSync(fd, { bigint: true }),
-        params.expectedIdentity,
-      );
-      inspectFileIdentitySync(
-        () => params.fsModule.lstatSync(params.src, { bigint: true }),
-        exact,
-      );
-    }
-    const opened = params.fsModule.fstatSync(fd);
-    const current = params.fsModule.lstatSync(params.src);
+    const opened = inspectFileIdentitySync(
+      () => params.fsModule.fstatSync(fd, { bigint: true }),
+      params.expectedIdentity,
+    );
+    const current = inspectFileIdentitySync(
+      () => params.fsModule.lstatSync(params.src, { bigint: true }),
+      opened,
+    );
     assertOpenedSource(opened, current, params.src);
-    return { replacement: readAllSync(params.fsModule, fd, opened.size), mode: opened.mode };
+    return { replacement: readAllSync(params.fsModule, fd, Number(opened.size)), mode: Number(opened.mode) };
   } finally {
     try {
       params.fsModule.closeSync(fd);

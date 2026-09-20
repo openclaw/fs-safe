@@ -35,6 +35,7 @@ import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
+import { hasErrorCode, readErrorCode } from "./file-cleanup.js";
 
 export type ReplaceFileAtomicFileSystem = {
   promises: Pick<
@@ -123,15 +124,6 @@ export type ReplaceFileAtomicResult = {
   method: "rename" | "copy-fallback";
 };
 
-function isRetryableRenameError(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === "EBUSY";
-}
-
-function isPermissionRenameError(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === "EPERM" || code === "EEXIST";
-}
-
 async function renameWithRetry(params: {
   fsModule: ReplaceFileAtomicFileSystem["promises"];
   src: string;
@@ -152,11 +144,12 @@ async function renameWithRetry(params: {
       await params.fsModule.rename(params.src, params.dest);
       return { method: "rename" };
     } catch (error) {
-      if (isRetryableRenameError(error) && attempt < params.maxRetries) {
+      const code = readErrorCode(error);
+      if (code === "EBUSY" && attempt < params.maxRetries) {
         await sleep(params.baseDelayMs * 2 ** attempt);
         continue;
       }
-      if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
+      if (params.copyFallbackOnPermissionError && (code === "EPERM" || code === "EEXIST")) {
         await copyFallbackReplace({
           fsModule: params.fsModule,
           src: params.src,
@@ -196,11 +189,12 @@ function renameWithRetrySync(params: {
       params.fsModule.renameSync(params.src, params.dest);
       return { method: "rename" };
     } catch (error) {
-      if (isRetryableRenameError(error) && attempt < params.maxRetries) {
+      const code = readErrorCode(error);
+      if (code === "EBUSY" && attempt < params.maxRetries) {
         sleepSync(params.baseDelayMs * 2 ** attempt);
         continue;
       }
-      if (params.copyFallbackOnPermissionError && isPermissionRenameError(error)) {
+      if (params.copyFallbackOnPermissionError && (code === "EPERM" || code === "EEXIST")) {
         copyFallbackReplaceSync({
           fsModule: params.fsModule,
           src: params.src,
@@ -256,7 +250,7 @@ async function resolveMode(options: ReplaceFileAtomicOptions, filePath: string):
   try {
     stat = fsModule === fs ? syncFs.lstatSync(filePath) : await fsModule.lstat(filePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (hasErrorCode(error, "ENOENT")) {
       return defaultMode;
     }
     throw error;
@@ -274,7 +268,7 @@ function resolveModeSync(options: ReplaceFileAtomicSyncOptions, filePath: string
   try {
     stat = fsModule.lstatSync(filePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!hasErrorCode(error, "ENOENT")) {
       throw error;
     }
   }
