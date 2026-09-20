@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep native-loader detector unit tests independent of real diagnostic-report generation, preserving explicit libc-selection fixtures and their existing timeout.
 - Isolate the native descriptor-close regression from concurrent test subprocesses so inherited lock references cannot make macOS CI report a false close failure.
 - Preserve original nullish failures in synchronous symlink-parent checks, share filesystem admission behind async wrappers, and remove redundant ancestor, permission-report, and write-queue work without changing validation or same-path write ordering.
 - Correct pnpm 12 Crabbox examples to forward provider and lease flags directly, avoiding accidental creation of a new default lease.

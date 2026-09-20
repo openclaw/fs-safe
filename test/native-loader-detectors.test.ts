@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
 import {
   __nativeLoaderDetectorsForTest,
@@ -29,6 +29,13 @@ vi.mock("node:module", async (importOriginal) => ({
 }));
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
+
+function resetDetectorMocks(): void {
+  vi.resetAllMocks();
+  vi.spyOn(process.report, "getReport").mockReturnValue({ header: {}, sharedObjects: [] } as never);
+}
+
+beforeEach(resetDetectorMocks);
 
 afterEach(() => {
   Object.defineProperty(process, "platform", originalPlatform);
@@ -166,7 +173,7 @@ describe("native libc detector failures", () => {
     installElfReads(elf64({ interpreter: "/lib/ld-musl-x86_64.so.1" }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBe(true);
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(elf32BigEndian("/lib/ld-linux.so.2"));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBe(false);
   });
@@ -175,11 +182,11 @@ describe("native libc detector failures", () => {
     installElfReads(new Map([[0, Buffer.alloc(51)]]));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(new Map([[0, Buffer.alloc(64)]]));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     const invalid = Buffer.alloc(64);
     invalid.set([0x7f, 0x45, 0x4c, 0x46, 3, 3]);
     installElfReads(new Map([[0, invalid]]));
@@ -190,19 +197,19 @@ describe("native libc detector failures", () => {
     installElfReads(elf64({ entrySize: 32 }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(elf64({ entryCount: 1025 }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(elf64({ tableOffset: BigInt(Number.MAX_SAFE_INTEGER) + 1n }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(elf64({ interpreterSize: 0 }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(elf64({ interpreterSize: 4097 }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
   });
@@ -211,25 +218,25 @@ describe("native libc detector failures", () => {
     installElfReads(elf64({ type: 1 }));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     const shortProgramHeader = elf64();
     shortProgramHeader.set(64, Buffer.alloc(8));
     installElfReads(shortProgramHeader);
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     const shortInterpreter = elf64();
     shortInterpreter.set(128, Buffer.from("short"));
     installElfReads(shortInterpreter);
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     filesystem.openSync.mockImplementation(() => {
       throw Object.assign(new Error("denied"), { code: "EACCES" });
     });
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBeUndefined();
 
-    vi.resetAllMocks();
+    resetDetectorMocks();
     installElfReads(elf64(), new Error("close failed"));
     expect(__nativeLoaderDetectorsForTest().elfInterpreter).toBe(false);
   });
