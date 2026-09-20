@@ -53,6 +53,8 @@ it("bounds file syncs at eight and joins them on timeout before rejecting", asyn
   let peak = 0;
   let settled = false;
   let expire: (() => void) | undefined;
+  // The captured timer owns expiry; real setup time must not advance the deadline.
+  vi.spyOn(performance, "now").mockReturnValue(0);
   const schedule = timing.scheduleTimeout;
   vi.spyOn(timing, "scheduleTimeout").mockImplementation((callback, ms) => {
     if (ms !== 1000) return schedule(callback, ms);
