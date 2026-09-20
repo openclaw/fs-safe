@@ -14,6 +14,7 @@ import { registerLifecycle } from "./lifecycle.mjs";
 import { registerDarwinClone } from "./darwin-clone.mjs";
 import { registerArchives } from "./archives.mjs";
 import { registerBroad } from "./broad.mjs";
+import { registerLockOwnershipParsing, validateLockOwnershipParsingReport } from "./lock-ownership-parsing.mjs";
 import { registerScaling } from "./scaling.mjs";
 import { registerCollections } from "./collections.mjs";
 import { registerSyncStoreDirectoryModes } from "./sync-store-directory-mode.mjs";
@@ -152,6 +153,7 @@ try {
   await registerDarwinClone(context);
   await registerArchives(context);
   await registerBroad(context);
+  registerLockOwnershipParsing(context);
   await registerScaling(context);
   await registerCollections(context);
   registerSyncStoreDirectoryModes(context);
@@ -272,6 +274,7 @@ try {
 await finalizeBenchmarkReport({
   initialFailures: executionFailures,
   validateReport: () => {
+    validateLockOwnershipParsingReport(completedReport, args.filter, args.iterations);
     validateSyncCopyFallbackAdmissionReport(completedReport, args.filter, args.iterations);
     validateGuestBenchmarkReport(completedReport, args.filter);
     validateCopyFallbackSuccessReport(completedReport, args.filter, args.iterations);

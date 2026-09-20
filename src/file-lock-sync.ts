@@ -4,6 +4,7 @@ import { withSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
 import path from "node:path";
 import type { Root } from "./root-impl.js";
 import {
+  readSidecarLockRawSnapshotSync,
   readSidecarLockSnapshotSync,
   removeSidecarLockIfUnchangedSync,
   serializeSidecarLockPayload,
@@ -99,7 +100,11 @@ function releaseAllSyncHeldLocks(): void {
 }
 
 function verifySyncHeldLock(held: SyncHeldLock): boolean {
-  const current = readSidecarLockSnapshotSync(held.lockPath, held.parsePayload);
+  const lockPath = held.lockPath;
+  const parsePayload = held.parsePayload;
+  const current = parsePayload
+    ? readSidecarLockSnapshotSync(lockPath, parsePayload)
+    : readSidecarLockRawSnapshotSync(lockPath);
   return !!current && sidecarLockSnapshotMatches(current, held.snapshot);
 }
 

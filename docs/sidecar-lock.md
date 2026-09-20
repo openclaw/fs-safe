@@ -337,6 +337,12 @@ sidecar no longer matches or after a verification I/O failure. This is
 detection, not revocation of work already in progress. Asynchronous checks are
 serialized, so a slow verification never overlaps the next timer tick.
 
+Ownership-only checks compare serialized bytes, tokens, and file identities
+without decoding an unused default JSON payload. Stale-policy reads still
+decode the payload. Explicit `parsePayload` callbacks keep their existing
+verification and asynchronous-cleanup calls, receivers, and errors;
+synchronous release continues without invoking a custom parser.
+
 The compromise-check interval is validated before payload evaluation or
 filesystem acquisition. Omit it or pass `0` to disable monitoring; enabled
 intervals must be finite and between 1 and 2,147,483,647 milliseconds. Values

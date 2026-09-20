@@ -293,12 +293,12 @@ export function ensureRootSyncExitCleanupRegistered(): void {
 }
 
 export function verifyRootSyncHeldLock(held: RootSyncHeldLock): boolean {
-  const current = readRootSidecarSnapshotSync(
-    held.rootPath,
-    held.parsePayload,
-    undefined,
-    held.rootReceipt,
-  );
+  const rootPath = held.rootPath;
+  const parsePayload = held.parsePayload;
+  const rootReceipt = held.rootReceipt;
+  const current = parsePayload
+    ? readRootSidecarSnapshotSync(rootPath, parsePayload, undefined, rootReceipt)
+    : readFileLockSyncRootSnapshot(rootPath, { expectedReceipt: rootReceipt });
   if (!current) return false;
   return current.receipt.identity.dev === held.rootReceipt.identity.dev &&
     current.receipt.identity.ino === held.rootReceipt.identity.ino &&

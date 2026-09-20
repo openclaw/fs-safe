@@ -36,6 +36,15 @@ Run both `off` and `require` against separately built WASM/native artifacts;
 the shared Rust parser supplies both routes. Every row verifies the complete
 ordered manifest, including path spelling, kind, and size, outside timing.
 
+The `ownership-parsing` rows measure complete public lock verification and
+release across raw and Root-backed async/sync handles. String and structured
+payloads contain 128 B, 64 KiB, or 1,048,437 bytes of JSON; the ownership suffix
+adds 138 bytes, keeping the largest sidecar one byte below its 1 MiB limit.
+Default and custom-JSON-parser controls retain their respective callback
+contracts. Acquisition, byte/identity checks, result verification, and cleanup
+remain outside the timed method; workload receipts bind every row to its exact
+size, shape, parser behavior, and successful cleanup.
+
 Native-only methods are recorded as skipped when unavailable. Windows ACL and
 private-directory operations require a real Windows run; POSIX does not time
 an unsupported-platform response as if it were useful work. Trash admission is

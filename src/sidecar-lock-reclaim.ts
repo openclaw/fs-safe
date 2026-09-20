@@ -115,6 +115,16 @@ export async function readSidecarLockSnapshot(
   return parseSidecarLockSnapshot(await readSidecarLockRawSnapshot(lockPath, options), options.parsePayload);
 }
 
+async function readSidecarLockComparisonSnapshot(
+  lockPath: string,
+  options: Parameters<typeof readSidecarLockSnapshot>[1],
+): Promise<SidecarLockRawSnapshot | SidecarLockSnapshot | null> {
+  const snapshot = await readSidecarLockRawSnapshot(lockPath, options);
+  const parsePayload = options?.parsePayload;
+  // Ownership uses raw bytes and identity, but custom parsers retain their effects.
+  return parsePayload ? parseSidecarLockSnapshot(snapshot, parsePayload) : snapshot;
+}
+
 export async function readSidecarLockRawSnapshot(
   lockPath: string,
   options: {
@@ -256,7 +266,7 @@ export function removeSidecarLockIfUnchangedSync(
   assertAuthorized?: () => void,
 ): boolean {
   assertAuthorized?.();
-  const current = readSidecarLockSnapshotSync(lockPath);
+  const current = readSidecarLockRawSnapshotSync(lockPath);
   assertAuthorized?.();
   if (!current || !sidecarLockSnapshotMatches(current, observed)) return false;
   assertAuthorized?.();
@@ -265,7 +275,7 @@ export function removeSidecarLockIfUnchangedSync(
 }
 
 export function sidecarLockSnapshotMatches(
-  current: SidecarLockSnapshot,
+  current: SidecarLockRawSnapshot | SidecarLockSnapshot,
   observed: SidecarLockSnapshot,
 ): boolean {
   if (observed.ownershipToken !== undefined) {
@@ -294,7 +304,7 @@ export async function removeSidecarLockIfUnchanged(
   observed: SidecarLockSnapshot | null,
   options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<boolean> {
-  const current = await readSidecarLockSnapshot(lockPath, {
+  const current = await readSidecarLockComparisonSnapshot(lockPath, {
     ...options,
     allowDescriptorIdentityDrift: observed?.ownershipToken !== undefined,
   });
@@ -314,7 +324,7 @@ export async function sidecarLockSnapshotStillPresent(
   observed: SidecarLockSnapshot | null,
   options: { lockRoot?: Root; parsePayload?: (raw: string) => unknown } = {},
 ): Promise<boolean> {
-  const current = await readSidecarLockSnapshot(lockPath, {
+  const current = await readSidecarLockComparisonSnapshot(lockPath, {
     ...options,
     allowDescriptorIdentityDrift: observed?.ownershipToken !== undefined,
   });
