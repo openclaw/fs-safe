@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -39,11 +39,17 @@ it.each(["pnpm.js", "pnpm.cjs", "pnpm.mjs"])("runs the %s lifecycle script throu
   expect(JSON.parse(output)).toEqual(["argument with spaces"]);
 });
 
+it.each(["pnpm-native", "pnpm-native.exe"])("accepts the %s native Corepack lifecycle executable", (name) => {
+  const cli = join(temporary(), name);
+  copyFileSync(process.execPath, cli);
+  expect(resolvePnpmCommand(cli)).toEqual([realpathSync(cli)]);
+});
+
 it("rejects absent lifecycle paths and shell/cmd launchers instead of searching PATH", () => {
   vi.stubEnv("npm_execpath", undefined);
   expect(() => resolvePnpmCommand()).toThrow("run pnpm package:collect or pnpm package:smoke");
   const directory = temporary();
-  for (const name of ["pnpm", "pnpm.exe", "pnpm.cmd", "npm-cli.js"]) {
+  for (const name of ["pnpm", "pnpm.exe", "pnpm-native", "pnpm-native.exe", "pnpm.cmd", "npm-cli.js"]) {
     const launcher = join(directory, name);
     writeFileSync(launcher, "#!/bin/sh\nexit 0\n");
     expect(() => resolvePnpmCommand(launcher)).toThrow("pnpm lifecycle CLI");

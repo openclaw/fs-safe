@@ -63,7 +63,10 @@ function instrument(dest: string, options: {
       if (String(name) !== dest) return handle;
       return new Proxy(handle, {
         get(target, property) {
-          if (property === "stat") return async () => statHint(await target.stat());
+          if (property === "stat") return async (statOptions?: fsSync.StatOptions) => {
+            const stat = await target.stat(statOptions);
+            return statOptions?.bigint ? stat : statHint(stat as fsSync.Stats);
+          };
           if (property === "read") return async (buffer: Buffer, offset: number, length: number, position: number) => {
             beforeRead();
             const result = await target.read(buffer, offset, Math.min(length, options.shortRead ?? length), position);

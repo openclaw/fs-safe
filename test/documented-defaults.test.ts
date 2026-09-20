@@ -13,6 +13,7 @@ const { tempRoot } = useTempDirs();
 
 
 describe("documented defaults observed on real files", () => {
+  // Windows fallback operations can each start a security-command process.
   it("uses the Root read, write, move, JSON, and writable-open defaults", async () => {
     const rootDir = await tempRoot("fs-safe-doc-root-defaults-");
     const scoped = await root(rootDir);
@@ -52,7 +53,7 @@ describe("documented defaults observed on real files", () => {
       await writable.handle.close();
     }
     await expect(scoped.readText("state.txt")).resolves.toBe("replacement");
-  });
+  }, process.platform === "win32" ? 30_000 : undefined);
 
   it("enforces Root's default 16 MiB cap without a maxBytes option", async () => {
     const rootDir = await tempRoot("fs-safe-doc-root-limit-");

@@ -103,9 +103,9 @@ describe("copy fallback source and destination guards", () => {
     let sourceLstats = 0;
     const asyncFs = {
       ...fs,
-      async lstat(candidate: fs.PathLike) {
-        if (String(candidate) === source && ++sourceLstats === 2) return await fs.lstat(other);
-        return await fs.lstat(candidate);
+      async lstat(candidate: fs.PathLike, options?: fsSync.StatOptions) {
+        if (String(candidate) === source && ++sourceLstats === 2) return await fs.lstat(other, options);
+        return await fs.lstat(candidate, options);
       },
     };
     await expectFsSafeError(copyFallbackReplace({
@@ -119,9 +119,9 @@ describe("copy fallback source and destination guards", () => {
     sourceLstats = 0;
     const syncModule = {
       ...fsSync,
-      lstatSync(candidate: fsSync.PathLike) {
-        if (String(candidate) === source && ++sourceLstats === 2) return fsSync.lstatSync(other);
-        return fsSync.lstatSync(candidate);
+      lstatSync(candidate: fsSync.PathLike, options?: fsSync.StatOptions) {
+        if (String(candidate) === source && ++sourceLstats === 2) return fsSync.lstatSync(other, options);
+        return fsSync.lstatSync(candidate, options);
       },
     };
     expect(() => copyFallbackReplaceSync({
@@ -238,9 +238,9 @@ describe("copy fallback source and destination guards", () => {
     let destLstats = 0;
     const symlinkAfterOpen = {
       ...fs,
-      async lstat(candidate: fs.PathLike) {
-        if (String(candidate) === dest && ++destLstats === 2) return await fs.lstat(link);
-        return await fs.lstat(candidate);
+      async lstat(candidate: fs.PathLike, options?: fsSync.StatOptions) {
+        if (String(candidate) === dest && ++destLstats === 2) return await fs.lstat(link, options);
+        return await fs.lstat(candidate, options);
       },
     };
     await expectFsSafeError(copyFallbackReplace({
@@ -252,14 +252,13 @@ describe("copy fallback source and destination guards", () => {
       sync: false,
     }), "symlink");
 
-    const directoryStat = await fs.stat(directory);
     const nonFileAfterOpen = {
       ...fs,
       async open(candidate: fs.PathLike, flags: string | number, mode?: number) {
         const handle = await fs.open(candidate, flags, mode);
         if (String(candidate) !== dest) return handle;
         return bindHandle(handle, {
-          stat: (async () => directoryStat) as FileHandle["stat"],
+          stat: (async (options) => await fs.stat(directory, options)) as FileHandle["stat"],
           async close() {
             await handle.close();
             throw new Error("close receipt lost");

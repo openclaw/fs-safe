@@ -370,6 +370,13 @@ this receipt instead of inferring ownership from path existence. The original
 failure remains available as `cause`. Failures before target creation retain
 their existing error shape and do not claim a cleanup result.
 
+Source and target identities are checked again after successful or unsupported
+directory synchronization, while their descriptors remain owned. A late
+verification failure retains its strategy's verification phase and is not a
+directory-sync failure. Completed copied targets stay pinned during conditional
+cleanup; substituted entries remain untouched. Returned numeric metadata comes
+from the retained target descriptor and grants no continuing pathname authority.
+
 ### Directory-sync failure policy
 
 `onSyncFailure` applies only after target creation and content/identity fencing

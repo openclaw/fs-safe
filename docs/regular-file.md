@@ -110,6 +110,9 @@ descriptor, and current pathname identities remain exact bigints through the
 append boundary; rounded-equal replacements and persistent unknown Windows
 identities reject before chmod or writing bytes. With
 `rejectSymlinkParents: true`, it also rejects symlinked ancestor directories.
+Supported option values are captured once before filesystem work, so replacing
+the content, encoding, mode or cap cannot change an in-flight append. Byte-array
+contents remain caller-owned; leave them unchanged until the append completes.
 
 On POSIX, `O_NONBLOCK` prevents a no-reader FIFO substituted before open from
 stalling admission. A confirmed non-regular target is refused before chmod or

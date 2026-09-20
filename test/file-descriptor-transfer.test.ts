@@ -60,6 +60,7 @@ describe("borrowed file descriptor copying", () => {
     expect(fs.readFileSync(empty.targetPath, "utf8")).toBe("retained");
   });
 
+  // Hosted Windows I/O can exceed the default deadline for this large fixture.
   it("copies large files with bounded scratch and rejects source growth before excess writes", async () => {
     const f = await fixture("", "");
     const size = 17 * 1024 * 1024;
@@ -81,7 +82,7 @@ describe("borrowed file descriptor copying", () => {
     read.mockRestore();
     expect(copyFileDescriptorSync(f.source.fd, f.target.fd)).toBe(size + 6);
     expect(fs.readFileSync(f.targetPath).equals(fs.readFileSync(f.sourcePath))).toBe(true);
-  });
+  }, process.platform === "win32" ? 30_000 : undefined);
 
   it.each(["observer", "authority", "async-observer", "async-authority"] as const)(
     "propagates %s rejection before changing the current chunk", async kind => {

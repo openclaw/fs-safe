@@ -75,6 +75,20 @@ export async function registerArchives(context) {
   add("createTarEntryPreflightChecker", () => a.createTarEntryPreflightChecker({ rootDir: destination }), { sync: true });
   add("createTarEntryPreflightChecker/call", (check) => check({ path: "entry.json", type: "File", size: 11 }), { sync: true, before: () => a.createTarEntryPreflightChecker({ rootDir: destination }) });
   add("loadZipArchiveWithPreflight", () => a.loadZipArchiveWithPreflight(zipBytes));
+  for (const shape of ["payload", "comment", "dense-payload"]) {
+    const tailZip = new JSZip();
+    const payload = shape === "comment" ? Buffer.from("payload") : Buffer.alloc(64 * 1024,
+      shape === "dense-payload" ? Buffer.from([0x50, 0x4b, 0x05, 0x06]) : 0x61);
+    tailZip.file("payload.bin", payload);
+    if (shape === "comment") tailZip.comment = "a".repeat(65_535);
+    const bytes = await tailZip.generateAsync({ type: "nodebuffer", compression: "STORE" });
+    add(`loadZipArchiveWithPreflight/zip-end-scan-${shape}`, () => a.loadZipArchiveWithPreflight(bytes), {
+      verify: result => {
+        assert.deepEqual(Object.keys(result.files), ["payload.bin"]);
+        assert.equal(result.files["payload.bin"].dir, false);
+      },
+    });
+  }
   add("prepareArchiveDestinationDir", () => a.prepareArchiveDestinationDir(destination));
   add("prepareArchiveOutputPath", () => a.prepareArchiveOutputPath({ destinationDir: destination, destinationRealDir: destination, outPath: path.join(destination, "entry.json"), relPath: "entry.json", originalPath: "entry.json", isDirectory: false }));
   add("resolvePackedRootDir", () => a.resolvePackedRootDir(source, { rootMarkers: ["entry.json"] }));
