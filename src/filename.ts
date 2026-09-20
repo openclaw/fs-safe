@@ -1,6 +1,7 @@
 import path from "node:path";
 import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { maxNormalizedUtf8Bytes } from "./unicode-path.js";
+import { hasWindowsDrivePrefix } from "./windows-path-syntax.js";
 
 const INVALID_FILE_NAME_CHARACTERS = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/g;
 const HAS_INVALID_FILE_NAME_CHARACTER = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*]/;
@@ -63,13 +64,6 @@ function isBoundedSanitizedFileName(
     trimmedFileName === fileName &&
     !HAS_INVALID_FILE_NAME_CHARACTER.test(fileName) &&
     suffixWindowsReservedDeviceName(fileName) === fileName;
-}
-
-function hasWindowsDrivePrefix(value: string): boolean {
-  if (value.length < 2 || value.charCodeAt(1) !== 0x3a) return false;
-  const firstCodeUnit = value.charCodeAt(0);
-  return (firstCodeUnit >= 0x41 && firstCodeUnit <= 0x5a) ||
-    (firstCodeUnit >= 0x61 && firstCodeUnit <= 0x7a);
 }
 
 function normalizedFileNameBytes(value: string): number {

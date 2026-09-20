@@ -6,6 +6,7 @@
 
 - Share synchronous lock admission, retry budgets, and compromise-monitor setup across raw-path and Root locks, preserving their distinct authority and stale-recovery behavior.
 - Share ordered deny-policy matching between Root mutations and synchronous Root locks, retaining their different canonicalization guarantees and validation errors. Run the public mutation proof when these shared policy and path owners change.
+- Share Windows drive and namespace prefix recognition across path admission, network classification, and filename sanitization while preserving their distinct policies and raw path handling.
 - Simplify root-path metadata traversal and canonicalization, reducing intermediate allocations and Promise scheduling while preserving async/sync resolution behavior, alias checks, and observation receipts.
 
 - Reduce redundant metadata observations and Promise scheduling in secret-file reads, regular-file admission, and staged-file publication while retaining exact identity and mutation checks.

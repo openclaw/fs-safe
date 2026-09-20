@@ -1,58 +1,16 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import {
+  hasWindowsDrivePrefix,
+  rootedWindowsDriveColonIndex,
+  windowsNamespaceMarker,
+} from "./windows-path-syntax.js";
 
 export type WindowsPathAliasKind = "filesystem" | "relative";
 
-const COLON = 0x3a;
-const FORWARD_SLASH = 0x2f;
-const BACKSLASH = 0x5c;
-const DOT = 0x2e;
-const QUESTION_MARK = 0x3f;
-
-function isAsciiLetter(code: number): boolean {
-  return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
-}
-
-function isSeparator(code: number): boolean {
-  return code === FORWARD_SLASH || code === BACKSLASH;
-}
-
-function rootedDriveColonIndex(value: string): number {
-  if (
-    value.length >= 3 &&
-    isAsciiLetter(value.charCodeAt(0)) &&
-    value.charCodeAt(1) === COLON &&
-    isSeparator(value.charCodeAt(2))
-  ) {
-    return 1;
-  }
-
-  if (
-    value.length >= 7 &&
-    isSeparator(value.charCodeAt(0)) &&
-    isSeparator(value.charCodeAt(1)) &&
-    (value.charCodeAt(2) === QUESTION_MARK || value.charCodeAt(2) === DOT) &&
-    isSeparator(value.charCodeAt(3)) &&
-    isAsciiLetter(value.charCodeAt(4)) &&
-    value.charCodeAt(5) === COLON &&
-    isSeparator(value.charCodeAt(6))
-  ) {
-    return 5;
-  }
-
-  return -1;
-}
-
 function isBareWindowsNamespaceDrive(value: string): boolean {
-  return (
-    value.length === 6 &&
-    isSeparator(value.charCodeAt(0)) &&
-    isSeparator(value.charCodeAt(1)) &&
-    (value.charCodeAt(2) === QUESTION_MARK || value.charCodeAt(2) === DOT) &&
-    isSeparator(value.charCodeAt(3)) &&
-    isAsciiLetter(value.charCodeAt(4)) &&
-    value.charCodeAt(5) === COLON
-  );
+  return value.length === 6 && windowsNamespaceMarker(value) !== undefined &&
+    hasWindowsDrivePrefix(value, 4);
 }
 
 /**
@@ -62,11 +20,7 @@ function isBareWindowsNamespaceDrive(value: string): boolean {
  */
 export function anchorWindowsDriveRelativePath(value: string): string {
   if (process.platform !== "win32" || path.isAbsolute(value)) return value;
-  if (
-    value.length < 2 ||
-    !isAsciiLetter(value.charCodeAt(0)) ||
-    value.charCodeAt(1) !== COLON
-  ) {
+  if (!hasWindowsDrivePrefix(value)) {
     return value;
   }
   const drive = value.slice(0, 2);
@@ -83,7 +37,7 @@ export function resolvePathPreservingWindowsRoot(value: string): string {
   if (
     value.length === 7 &&
     process.platform === "win32" &&
-    rootedDriveColonIndex(value) === 5
+    rootedWindowsDriveColonIndex(value) === 5
   ) {
     return value.includes("/") ? value.replaceAll("/", "\\") : value;
   }
@@ -143,7 +97,7 @@ export function resolvePathFromBasePreservingWindowsRoot(
 export function pathForWindowsFilesystem(value: string): string {
   if (
     process.platform !== "win32" ||
-    rootedDriveColonIndex(value) !== 5
+    rootedWindowsDriveColonIndex(value) !== 5
   ) {
     return value;
   }
@@ -170,7 +124,7 @@ export function hasWindowsPathAlias(
   const firstColon = value.indexOf(":");
   if (firstColon === -1) return false;
   if (kind === "relative") return true;
-  return firstColon !== rootedDriveColonIndex(value) || value.indexOf(":", firstColon + 1) !== -1;
+  return firstColon !== rootedWindowsDriveColonIndex(value) || value.indexOf(":", firstColon + 1) !== -1;
 }
 
 export function assertNoWindowsPathAliasForPlatform(

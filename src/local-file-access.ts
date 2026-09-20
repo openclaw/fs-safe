@@ -2,6 +2,11 @@ import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
+import {
+  isWindowsSeparator,
+  rootedWindowsDriveColonIndex,
+  windowsNamespaceMarker,
+} from "./windows-path-syntax.js";
 
 const ENCODED_FILE_URL_SEPARATOR_RE = /%(?:2f|5c)/i;
 const FILE_URL_PREFIX_RE = /^file:\/\//i;
@@ -26,17 +31,8 @@ export function isWindowsNetworkPath(
   if (platform !== "win32") {
     return false;
   }
-  const normalized = filePath.replace(/\//g, "\\");
-  const extendedDrive =
-    normalized.length >= 7 &&
-    normalized.startsWith("\\\\?\\") &&
-    /^[a-z]$/i.test(normalized[4] ?? "") &&
-    normalized[5] === ":" &&
-    normalized[6] === "\\";
-  if (extendedDrive) {
-    return false;
-  }
-  return normalized.startsWith("\\\\");
+  return isWindowsSeparator(filePath, 0) && isWindowsSeparator(filePath, 1) &&
+    !(windowsNamespaceMarker(filePath) === "?" && rootedWindowsDriveColonIndex(filePath) === 5);
 }
 
 export function isWindowsDriveLetterPath(
