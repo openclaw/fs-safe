@@ -2,22 +2,32 @@
 
 ## Unreleased
 
+- Recheck exclusive-publication source and target identities after directory synchronization, preserving substituted entries and verification-phase cleanup while sharing finalization and complete-write logic.
+
 - Recheck private POSIX ownership and permissions before mode preparation, after producer and authority callbacks, and through fallback publication; verify final modes while preserving completed destinations on late failure and share the policy with native staging.
 - Renew overwrite-move and removal admission after authority callbacks, preserving replaced entries and outside targets and honoring callback-triggered removal cancellation; share source checks with native no-replace moves.
 - Preserve copied-move source files and symlinks replaced by authority callbacks before cleanup, retaining the published destination and avoiding extra observations when no callback is supplied.
 - Mark native POSIX beneath-open and duplicated descriptors close-on-exec atomically, preventing child processes from inheriting filesystem capabilities.
 - Preserve caller POSIX record locks during macOS ACL inspection while removing unnecessary descriptor duplication and closure.
+- Capture regular-file append content, encoding, mode, and byte caps before filesystem work so option mutation cannot bypass limits or change the write; share preview admission between async and sync paths.
+- Keep empty string appends from inserting an unwanted newline, while retaining missing-file creation and durability behavior.
+
 - Write streamed `Uint8Array` slices without copying their payloads, retaining sliced bounds, per-chunk backpressure, and byte limits even when chunk metadata properties are overridden.
+- Preserve arbitrary atomic filesystem-adapter failures, including nullish values and throwing error-code getters, while keeping retry, fallback, cleanup, and post-publication ownership explicit.
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Reduce repeated bigint metadata allocations in `Root.entries()` and `Root.walk()` while preserving exact directory identities, Windows unknown-identity retries, cancellation, and every observation fence.
 - Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.
 - Avoid preparing archive publication parents twice; each file copy still performs fresh parent and source admission after the shared output preparation.
+- Accelerate ZIP end-record admission with bounded native signature searches, retaining complete comment and ambiguity checks and a byte-scan fallback for dense markers.
 
 - Keep observed sidecar-lock tokens separate from creator authority, reject asynchronous stale-policy results in synchronous locks, stop compromise monitoring after manager reset, and preserve both protected-callback and release failures; avoid redundant ownership-token scans.
 - Accept exact bigint directory receipts in durability, publication, and staging inputs while preserving numeric `Stats` metadata, fractional timestamps, and private exact identities in returned durability receipts.
 - Keep synchronous JSON staging descriptor-bound through publication and cleanup, preserving substituted files and staging-name collisions while removing redundant reopen-and-chmod probes.
 - Reuse synchronous store JSON readers and resolve queue filesystem roots directly, avoiding repeated store construction and discarded common-ancestor scans while retaining per-call file admission and directory durability checks.
+- Allow package validation with Corepack's native pnpm 12 launcher while continuing to reject shell launchers and implicit PATH substitutions.
+- Compare exact source, destination, and parent-directory identities in atomic copy fallback and mode admission, rejecting rounded inode collisions while removing duplicate source metadata reads.
+- Reduce repeated string scans for legacy install-name sanitization and ASCII filename byte budgets, preserving encoded names, Unicode normalization limits, and archive path admission.
 
 ## 0.16.0 - 2026-09-19
 

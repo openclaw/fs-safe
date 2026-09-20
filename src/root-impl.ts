@@ -957,8 +957,9 @@ async function appendFileInRoot(
       params.prependNewlineIfNeeded === true &&
       !target.createdForWrite &&
       target.stat.size > 0 &&
+      params.data.length > 0 &&
       ((typeof params.data === "string" && !params.data.startsWith("\n")) ||
-        (Buffer.isBuffer(params.data) && params.data.length > 0 && params.data[0] !== 0x0a))
+        (Buffer.isBuffer(params.data) && params.data[0] !== 0x0a))
     ) {
       const newline = Buffer.from("\n", typeof params.data === "string" ? params.encoding : "utf8");
       const tail = Buffer.alloc(newline.length);

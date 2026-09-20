@@ -16,7 +16,7 @@ import {
 
 Write `content` to a sibling temp file in the destination directory, apply the parent-directory and final file modes through verified descriptors, optionally `fsync` the file descriptor, optionally `fsync` the parent directory after rename, then atomically rename over the destination. No permission change follows a caller-supplied pathname.
 
-On POSIX, the parent is opened with no-follow and directory-only flags, checked against its pre-open identity, and mode-adjusted through that descriptor. A replacement symlink is rejected rather than followed. If the directory cannot be opened for descriptor access, the operation fails closed instead of retrying by pathname. Windows does not enforce POSIX directory modes and Node cannot consistently open directory descriptors there, so `dirMode` is passed only to `mkdir`; no pathname `chmod` fallback is attempted.
+On POSIX, the parent is opened with no-follow and directory-only flags, checked against its exact pre-open device/inode identity, and mode-adjusted through that descriptor. A replacement symlink is rejected rather than followed. If the directory cannot be opened for descriptor access, the operation fails closed instead of retrying by pathname. Windows does not enforce POSIX directory modes and Node cannot consistently open directory descriptors there, so `dirMode` is passed only to `mkdir`; no pathname `chmod` fallback is attempted.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
 
@@ -92,10 +92,13 @@ await replaceFileAtomic({
 
 If `beforeRename` throws, the rename is skipped and the owned temp file is removed — the destination is unchanged. Cleanup unlinks only the exact admitted single-link file; a substitute observed at the temp name is preserved and removed from cleanup authority. The same identity is rechecked before every rename retry, when entering copy fallback, and at the final name after rename. A post-rename verification failure reports the race without rolling back or deleting the published name.
 
-JavaScript permits `beforeRename` callbacks to throw any value, including
+JavaScript permits `beforeRename` callbacks and filesystem adapters to throw any value, including
 `undefined`, `null`, `false`, signed zero, `0n`, an empty string, and `NaN`.
-Once such an operation failure reaches temp-owner settlement, atomic replacement
-preserves that value when cleanup and close succeed. With
+Atomic replacement preserves such operational failures when cleanup and close
+succeed, including rename and post-rename verification failures. Rename retry
+and copy-fallback classification reads the error code once without coercion;
+missing or unreadable codes preserve the original failure. A rejected call has
+no success receipt even if an adapter committed its rename before throwing. With
 `throwOnCleanupError: true`, an additional owned-temp cleanup failure keeps the
 existing cleanup wrapper whose `cause` is the original thrown value. A later
 descriptor-close failure is reported in an `AggregateError`, in operation/cleanup
@@ -149,6 +152,14 @@ Set `destinationHardlinks: "reject"` when an existing regular-file destination
 must not have aliases. The policy reads `nlink` from a pinned destination
 descriptor, not pathname metadata, before rename and rechecks it in the copy
 fallback.
+
+Source and pinned destination admission compare exact bigint device/inode
+observations, so distinct identities that round to the same JavaScript number
+cannot authorize a copy. Unknown Windows identities get one bounded reinspection
+of the same descriptor or path; incomplete or inconsistent observations fail
+closed without reopening. Injected filesystem adapters must honor the
+`{ bigint: true }` stat option. Source admission reuses that exact pair instead
+of immediately repeating it with numeric metadata.
 
 The default `copyFallbackRestore: "none"` preserves the existing fallback
 contract: a failed copy can leave a partial destination. For state files where

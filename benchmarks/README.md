@@ -14,6 +14,11 @@ methods on Root, stores, path scopes, locks, directory pins, staged files, and
 temporary workspaces. An uncovered callable fails before measurement. Re-exports
 share one case; constants and types are not calls. Test-only instrumentation and
 the deprecated Python configuration alias have explicit exclusion reasons.
+The `loadZipArchiveWithPreflight/zip-end-scan-*` rows cover complete public ZIP
+loading with a 64 KiB stored payload, a maximum-length ordinary comment, and a
+64 KiB stored payload full of false end-record signatures. The dense fixture
+checks that sparse-search improvements do not penalize hostile marker patterns.
+
 Native-only methods are recorded as skipped when unavailable. Windows ACL and
 private-directory operations require a real Windows run; POSIX does not time
 an unsupported-platform response as if it were useful work. Trash admission is
@@ -117,6 +122,9 @@ The broader cases add lexical paths at depths 0/8/32, batches of 100/1,000
 paths, 1,000-entry listings and walks, private/public stores through 1 MiB with
 both durability settings, 1,000-item JSON documents and concurrent updates,
 contended/distinct lock groups, and loading 100 fresh or resumed queue claims.
+Legacy install-name rows cover unchanged ASCII, path separators, Unicode and
+empty input, verifying the documented names and hash suffixes. Archive-name
+rows compare ASCII, NFC and NFD component checks at depths 1/8/32.
 `PathScope.resolveAll/count=100` and `count=1000` exercise repeated absolute-root
 normalization across ordinary lexical path batches. Compare these with the
 singleton `PathScope.resolveAll` row when evaluating batch optimizations; relative

@@ -5,6 +5,8 @@ export function lowerCaseNfc(value: string): string {
 }
 
 export function maxNormalizedUtf8Bytes(value: string, includeRaw = false): number {
+  // ASCII has identical raw, NFC and NFD forms, with one UTF-8 byte per unit.
+  if (typeof value === "string" && !NON_ASCII.test(value)) return value.length;
   const nfc = value.normalize("NFC");
   const bytes = Buffer.byteLength(nfc, "utf8");
   const maximum = includeRaw && nfc !== value ? Math.max(bytes, Buffer.byteLength(value, "utf8")) : bytes;

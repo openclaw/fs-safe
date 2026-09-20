@@ -19,12 +19,19 @@ describe.skipIf(process.platform === "win32")("directory mode ownership", () => 
   it("keeps partial injected adapters on descriptor chmod without host fd operations", async () => {
     const dir = await tempRoot("fs-safe-mode-adapter-");
     const identity = await fs.stat(dir);
+    const exactIdentity = await fs.stat(dir, { bigint: true });
     let mode = 0o300;
     const descriptorChmod = vi.fn(async (next: number) => { mode = next; });
     const close = vi.fn(async () => undefined);
-    const fake = { fd: 1234567, stat: async () => ({ ...identity, mode, isDirectory: () => true, isSymbolicLink: () => false }), chmod: descriptorChmod, close };
+    const fake = {
+      fd: 1234567, stat: async (options?: fsSync.StatOptions) => ({
+        ...(options?.bigint ? exactIdentity : identity), mode: options?.bigint ? BigInt(mode) : mode,
+        isDirectory: () => true, isSymbolicLink: () => false,
+      }), chmod: descriptorChmod, close,
+    };
     const adapter = {
-      lstat: vi.fn(async () => identity), open: vi.fn(async () => fake), writeFile: vi.fn(),
+      lstat: vi.fn(async (_path, options) => options?.bigint ? exactIdentity : identity),
+      open: vi.fn(async () => fake), writeFile: vi.fn(),
     } as unknown as Pick<typeof fs, "lstat" | "open" | "writeFile">;
     const hostOpen = vi.spyOn(fs, "open");
     const hostChmod = vi.spyOn(fs, "chmod");

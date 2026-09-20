@@ -175,7 +175,7 @@ export class AsyncAtomicTempOwner {
         return stat;
       }, opened);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (hasErrorCode(error, "ENOENT")) {
         throw missingOwnedFile(pathname, error);
       }
       throw error;
@@ -191,7 +191,7 @@ export class AsyncAtomicTempOwner {
       await this.assertCurrent(fsModule, pathname);
       return;
     } catch (error) {
-      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch" || !expectedHash) {
+      if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
         throw error;
       }
     }
@@ -201,7 +201,7 @@ export class AsyncAtomicTempOwner {
       try {
         published = await fsModule.open(pathname, PUBLISHED_READ_FLAGS);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+        if (hasErrorCode(error, "ELOOP")) {
           throw new FsSafeError("symlink", `Atomic replace published file became a symlink: ${pathname}`, {
             cause: error,
           });
@@ -327,7 +327,7 @@ export class SyncAtomicTempOwner {
         return stat;
       }, opened);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (hasErrorCode(error, "ENOENT")) {
         throw missingOwnedFile(pathname, error);
       }
       throw error;
@@ -343,7 +343,7 @@ export class SyncAtomicTempOwner {
       this.assertCurrent(fsModule, pathname);
       return;
     } catch (error) {
-      if (!(error instanceof FsSafeError) || error.code !== "path-mismatch" || !expectedHash) {
+      if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
         throw error;
       }
     }
@@ -353,7 +353,7 @@ export class SyncAtomicTempOwner {
       try {
         publishedFd = fsModule.openSync(pathname, PUBLISHED_READ_FLAGS);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+        if (hasErrorCode(error, "ELOOP")) {
           throw new FsSafeError("symlink", `Atomic replace published file became a symlink: ${pathname}`, {
             cause: error,
           });

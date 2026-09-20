@@ -49,6 +49,30 @@ describe("ZIP metadata framing and encoding", () => {
       expect(Object.keys((await loadZipArchiveWithPreflight(bytes)).files)).toEqual(["first", "second"]);
     }
   });
+  it.each([0, 1, 65_534, 65_535])("admits complete end records with %i comment bytes", (length) => {
+    const bytes = zipRecords([{ name: "good" }], { comment: Buffer.alloc(length, 0x61) });
+    expect(admit(bytes)).toBe(1);
+    malformed(bytes.subarray(0, -1));
+  });
+  it("ignores incomplete and dense false end signatures without hiding ambiguity", () => {
+    const signature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+    const comment = Buffer.alloc(65_535);
+    for (let offset = 0; offset + signature.length <= comment.length; offset += 4) {
+      signature.copy(comment, offset);
+    }
+    // False signatures cannot reach EOF, including trailing signatures too
+    // short to contain a complete end record.
+    expect(admit(zipRecords([{ name: "good" }], { comment }))).toBe(1);
+    const ambiguous = zipRecords([], { comment });
+    signature.copy(ambiguous, ambiguous.length - 22);
+    ambiguous.writeUInt16LE(0, ambiguous.length - 2);
+    malformed(ambiguous);
+  });
+  it.each([0, 1, 3, 4, 20, 21])("rejects a %i-byte input without a complete end record", (length) => {
+    const bytes = Buffer.alloc(length);
+    Buffer.from([0x50, 0x4b, 0x05, 0x06]).copy(bytes);
+    malformed(bytes);
+  });
   it("bounds optional directory signatures and ZIP64 extensible records", () => {
     const signed = zipRecords([{ name: "good" }], { directorySignature: Buffer.from("signature") });
     expect(admit(signed)).toBe(1);

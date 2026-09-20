@@ -21,11 +21,8 @@ export function safeDirName(input: string): string {
 export function safePathSegmentHashed(input: string): string {
   const trimmed = input.trim();
   const base = trimmed
-    .replaceAll(/[\\/]/g, "-")
-    .replaceAll(/[^a-zA-Z0-9._-]/g, "-")
-    .replaceAll(/-+/g, "-")
-    .replaceAll(/^-+/g, "")
-    .replaceAll(/-+$/g, "");
+    .replaceAll(/[^a-zA-Z0-9._]+/g, "-")
+    .replaceAll(/^-|-$/g, "");
 
   const normalized = base.length > 0 ? base : "skill";
   const safe = normalized === "." || normalized === ".." ? "skill" : normalized;

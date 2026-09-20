@@ -4,15 +4,19 @@ import { assertAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./direct
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 
-export function hasErrorCode(error: unknown, expected: string): boolean {
+export function readErrorCode(error: unknown): unknown {
   if ((typeof error !== "object" || error === null) && typeof error !== "function") {
-    return false;
+    return undefined;
   }
   try {
-    return Reflect.get(error as object, "code") === expected;
+    return Reflect.get(error as object, "code");
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+export function hasErrorCode(error: unknown, expected: string): boolean {
+  return readErrorCode(error) === expected;
 }
 
 type OwnedPathCleanupStatus = "removed" | "name-absent" | "preserved";

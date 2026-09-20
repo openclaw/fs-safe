@@ -167,6 +167,8 @@ cleanup, and filesystem requirements.
 `append` accepts `prependNewlineIfNeeded: true` to separate text from existing
 content when neither side supplies a newline. String data uses its `encoding`
 for the newline check, including UTF-16LE; Buffer data uses a single LF byte.
+Empty strings and Buffers add no separator; an empty append still creates a
+missing file.
 
 These five methods and `copyIn` also accept `durable?: boolean`: the per-call value overrides
 `Root.defaults.durable`, which defaults to `true` when omitted. An explicitly
