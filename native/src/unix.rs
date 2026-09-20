@@ -1700,6 +1700,23 @@ mod tests {
 
     #[test]
     fn closes_only_the_exported_descriptor_and_preserves_close_errors() {
+        const TEST: &str = "unix::tests::closes_only_the_exported_descriptor_and_preserves_close_errors";
+        const CHILD: &str = "FS_SAFE_CLOSE_OWNED_FD_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Other tests may spawn a child that briefly retains this test's flock.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--test-threads=1"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "owned descriptor close child failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
         let root = temp_root("close-owned");
         fs::write(root.join("file"), b"owned").unwrap();
         let root_handle = fs::File::open(&root).unwrap();
