@@ -344,7 +344,8 @@ describe("copy fallback failure and restoration", () => {
     });
     await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
     await expect(fs.readFile(source, "utf8")).resolves.toBe("replacement");
-  });
+    // Real restoration flushes can exceed the default budget under Windows coverage.
+  }, process.platform === "win32" ? 30_000 : undefined);
 
   it("reports a synchronous double fault when neither write makes progress", async () => {
     const root = await tempRoot("fs-safe-copy-zero-write-sync-");

@@ -4,6 +4,7 @@
 
 ### Performance and maintenance
 
+- Allow the durable copy-restoration regression enough time to complete on instrumented Windows CI, retaining all restoration and content assertions.
 - Share guest Python operand admission and descriptor cleanup across filesystem operations while preserving operation-specific exit statuses and failure behavior.
 - Share synchronous lock admission, retry budgets, and compromise-monitor setup across raw-path and Root locks, preserving their distinct authority and stale-recovery behavior.
 - Share ordered deny-policy matching between Root mutations and synchronous Root locks, retaining their different canonicalization guarantees and validation errors. Run the public mutation proof when these shared policy and path owners change.
