@@ -23,6 +23,7 @@
 
 - Recheck hardlink policy on the existing final Root and root-file metadata observations, rejecting late-added links before reading bytes or returning a handle.
 - Reduce repeated bigint metadata allocations in `Root.entries()` and `Root.walk()` while preserving exact directory identities, Windows unknown-identity retries, cancellation, and every observation fence.
+- Reduce repeated path normalization in standalone directory walks while preserving lexical paths, callback timing, and traversal checks.
 - Renew guarded directory ancestry after authority callbacks before creating components, preserving replaced roots for `mkdir`, `openWritable`, and `append` while sharing the creation path.
 - Avoid preparing archive publication parents twice; each file copy still performs fresh parent and source admission after the shared output preparation.
 - Accelerate ZIP end-record admission with bounded native signature searches, retaining complete comment and ambiguity checks and a byte-scan fallback for dense markers.

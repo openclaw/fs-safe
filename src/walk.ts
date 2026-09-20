@@ -170,13 +170,14 @@ export function walkDirectorySync(
       recordFailedDir(result, root, dir, depth, error);
       return;
     }
+    const childPrefix = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`;
     for (const dirent of entries) {
       if (shouldStop(result, options)) {
         result.truncated = true;
         return;
       }
       result.scannedEntryCount += 1;
-      const fullPath = path.join(dir, dirent.name);
+      const fullPath = childPrefix + dirent.name;
       const kind = resolveKind(fullPath, dirent, symlinks);
       if (!kind) continue;
       const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
@@ -235,13 +236,14 @@ export async function walkDirectory(
       recordFailedDir(result, root, dir, depth, error);
       return;
     }
+    const childPrefix = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`;
     for (const dirent of entries) {
       if (shouldStop(result, options)) {
         result.truncated = true;
         return;
       }
       result.scannedEntryCount += 1;
-      const fullPath = path.join(dir, dirent.name);
+      const fullPath = childPrefix + dirent.name;
       const kind = resolveKind(fullPath, dirent, symlinks);
       if (!kind) continue;
       const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;

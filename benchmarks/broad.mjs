@@ -26,11 +26,16 @@ export async function registerBroad({ api: a, workspace: w, register: add, onCle
   const names = Array.from({ length: 1000 }, (_, i) => `entry-${i}`);
   for (const name of names) fs.writeFileSync(path.join(wide, name), "x");
   const sorted = [...names].sort();
-  for (const method of ["walkDirectory", "walkDirectorySync"]) {
-    add(`${method}/1000`, () => a[method](wide), {
+  const deepWalkRoot = path.join(directoryRoot, ...Array.from({ length: 8 }, (_, i) => `walk-level-${i}`));
+  fs.mkdirSync(deepWalkRoot, { recursive: true });
+  for (const name of names) fs.writeFileSync(path.join(deepWalkRoot, name), "x");
+  for (const [walkRoot, suffix] of [[wide, ""], [deepWalkRoot, "/depth=8"]]) {
+    for (const method of ["walkDirectory", "walkDirectorySync"]) add(`${method}/1000${suffix}`, () => a[method](walkRoot), {
       sync: method.endsWith("Sync"), divisor: 100,
       verify: result => {
         assert.deepEqual(result.entries.map(entry => entry.relativePath), sorted);
+        assert.deepEqual(result.entries.map(entry => entry.path), sorted.map(name => path.join(walkRoot, name)));
+        assert.ok(result.entries.every(entry => entry.kind === "file" && entry.depth === 1 && entry.name === entry.relativePath));
         assert.equal(result.scannedEntryCount, names.length);
         assert.equal(result.truncated, false);
         assert.deepEqual(result.failedDirs, []);
