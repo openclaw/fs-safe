@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Share the native archive entry schema while preserving plan-input diagnostics and independent manifest snapshots.
 - Make the in-flight archive mutation deadline regression deterministic without increasing its timeout or weakening settlement assertions.
 - Remove unused private descriptor metadata and lock-handle methods while retaining temp-workspace admission checks and shared lock cleanup ownership.
 - Share native link and rename argument admission, preserving source-before-target validation, descriptor-relative dispatch, and platform errors.
