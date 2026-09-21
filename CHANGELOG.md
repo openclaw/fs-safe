@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance and maintenance
+
+- Retry transient LLVM SDK download failures in CI while retaining pinned checksums, exclusive archive writes, and compiler verification.
+
 ## 0.18.0 - 2026-09-21
 
 ### Highlights

@@ -1,10 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
 import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { downloadArchive } from "./download.mjs";
 
 // Use the official WASI SDK 34 LLVM tools. Verify before extracting because
 // upstream release assets can be replaced without changing their names.
@@ -31,19 +28,12 @@ const directory = await mkdtemp(join(process.env.RUNNER_TEMP, "fs-safe-archive-l
 const sdkName = `wasi-sdk-34.0-${platform}`;
 const archive = join(directory, `${sdkName}.tar.gz`);
 try {
-  const response = await fetch(
+  await downloadArchive(
     `https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/${sdkName}.tar.gz`,
-    { signal: AbortSignal.timeout(180_000) },
+    archive,
+    expectedHash,
+    sdkName,
   );
-  if (!response.ok || !response.body) throw new Error(`LLVM download failed: HTTP ${response.status}`);
-  const hash = createHash("sha256");
-  await pipeline(response.body, new Transform({
-    transform(chunk, _encoding, callback) {
-      hash.update(chunk);
-      callback(null, chunk);
-    },
-  }), createWriteStream(archive, { flags: "wx" }));
-  if (hash.digest("hex") !== expectedHash) throw new Error(`LLVM checksum mismatch: ${sdkName}`);
   const tar = process.platform === "win32"
     ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
     : "tar";
