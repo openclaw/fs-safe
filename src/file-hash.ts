@@ -22,6 +22,41 @@ export type Sha256FileResult = {
   digest: string;
 };
 
+// Idle storage is bounded independently of caller concurrency. A pending read
+// retains its exclusive borrow until the async hasher settles.
+const hashScratchBuffers: Buffer[] = [];
+
+function takeHashScratch(size: number): Buffer {
+  const index = hashScratchBuffers.findIndex((buffer) => buffer.length >= size);
+  return index < 0 ? Buffer.allocUnsafe(size) : hashScratchBuffers.splice(index, 1)[0]!;
+}
+
+class HashScratch {
+  #storage: Buffer;
+  buffer: Buffer;
+
+  constructor(size: number) {
+    this.#storage = takeHashScratch(size);
+    this.buffer = this.#storage.subarray(0, size);
+  }
+
+  grow(size: number): Buffer {
+    const storage = takeHashScratch(size);
+    this[Symbol.dispose]();
+    this.#storage = storage;
+    return this.buffer = storage.subarray(0, size);
+  }
+
+  [Symbol.dispose](): void {
+    // Clear the used view before retention; a larger unused tail was cleared
+    // by its previous borrower, without making tiny hashes clear large buffers.
+    this.buffer.fill(0);
+    hashScratchBuffers.push(this.#storage);
+    hashScratchBuffers.sort((left, right) => left.length - right.length);
+    if (hashScratchBuffers.length > 4) hashScratchBuffers.shift();
+  }
+}
+
 export async function hashFileHandle(
   handle: FileHandle,
   native: NativeBinding | undefined = getNativeBinding(),
@@ -60,9 +95,10 @@ export async function hashFileHandle(
   }
 
   const hash = createHash("sha256");
-  let buffer = Buffer.allocUnsafe(
+  using scratch = new HashScratch(
     Math.min(256 * 1024, Math.max(1, stat.size + 1), maxBytes + 1),
   );
+  let buffer = scratch.buffer;
   let position = 0;
   while (true) {
     signal?.throwIfAborted();
@@ -79,7 +115,7 @@ export async function hashFileHandle(
     position += bytesRead;
     // A full small buffer can mean growth or a virtual file with an unhelpful size.
     if (bytesRead === buffer.length && buffer.length < 64 * 1024) {
-      buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1));
+      buffer = scratch.grow(Math.min(64 * 1024, maxBytes + 1));
     }
   }
 }
@@ -168,7 +204,8 @@ function hashDescriptorSync(
     throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
   }
   const hash = createHash("sha256");
-  let buffer = Buffer.allocUnsafe(Math.min(256 * 1024, Math.max(1, stat.size + 1), maxBytes + 1));
+  using scratch = new HashScratch(Math.min(256 * 1024, Math.max(1, stat.size + 1), maxBytes + 1));
+  let buffer = scratch.buffer;
   let position = 0;
   while (true) {
     signal?.throwIfAborted();
@@ -184,7 +221,7 @@ function hashDescriptorSync(
     hash.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
     if (bytesRead === buffer.length && buffer.length < 64 * 1024) {
-      buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1));
+      buffer = scratch.grow(Math.min(64 * 1024, maxBytes + 1));
     }
   }
 }
