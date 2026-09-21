@@ -56,13 +56,13 @@ export function readSecretFileSync(
     inspectFileIdentitySync(() => inspectInput("secret path became a symlink"), openedIdentity);
     raw = readFileDescriptorBoundedSync(opened.fd, maxBytes).toString("utf8");
   } catch (error) {
+    try { fs.closeSync(opened.fd); } catch { /* Preserve the read failure. */ }
     throw secretReadError(
       error instanceof FsSafeError ? error.code : "read-failed",
       "read", label, resolvedPath, error,
     );
-  } finally {
-    fs.closeSync(opened.fd);
   }
+  fs.closeSync(opened.fd);
   return trimSecretFileContent(raw, label, resolvedPath);
 }
 

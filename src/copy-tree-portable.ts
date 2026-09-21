@@ -28,7 +28,7 @@ export async function copyOwnedTree(
     copyFileContents?: NativeBinding["copyFileContents"];
   },
 ): Promise<void> {
-  options.signal?.throwIfAborted();
+  const callerSignal = options.signal ? AbortSignal.any([options.signal]) : undefined;
   const cancellation = new AbortController();
   const signal = cancellation.signal;
   setMaxListeners(options.concurrency, signal);
@@ -40,8 +40,7 @@ export async function copyOwnedTree(
     failure ??= { value };
     cancellation.abort(failure);
   }
-  const abort = () => recordFailure(options.signal?.reason);
-  options.signal?.addEventListener("abort", abort, { once: true });
+  if (callerSignal) callerSignal.onabort = () => recordFailure(callerSignal.reason);
   async function schedule(
     operation: () => Promise<void>,
     children: Set<Promise<void>>,
@@ -73,8 +72,8 @@ export async function copyOwnedTree(
       }
       output = await fsp.open(to, "wx", 0o600);
       if (options.copyFileContents) {
-        // napi-rs owns onabort. Each admitted file gets a separate signal so
-        // concurrent native copies cannot replace one another's cancellation.
+        // napi-rs owns onabort. Each admitted file gets a separate signal; the
+        // shared failure signal is private, so callers cannot intercept its relay.
         const fileCancellation = new AbortController();
         const abortFile = () => fileCancellation.abort();
         signal.addEventListener("abort", abortFile, { once: true });
@@ -83,6 +82,7 @@ export async function copyOwnedTree(
           await options.copyFileContents(input.fd, output.fd, fileCancellation.signal);
         } finally {
           signal.removeEventListener("abort", abortFile);
+          fileCancellation.signal.onabort = null;
         }
       } else {
         const buffer =
@@ -243,6 +243,7 @@ export async function copyOwnedTree(
     signal.throwIfAborted();
   }
   try {
+    callerSignal?.throwIfAborted();
     await copyDirectory(source.receipt.realPath, destination);
     await Promise.all(finishing);
     signal.throwIfAborted();
@@ -250,7 +251,7 @@ export async function copyOwnedTree(
     recordFailure(error);
   } finally {
     await Promise.all(finishing);
-    options.signal?.removeEventListener("abort", abort);
+    if (callerSignal) callerSignal.onabort = null;
   }
   if (failure) throw failure.value;
   options.signal?.throwIfAborted();
