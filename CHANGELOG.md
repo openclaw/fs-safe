@@ -4,6 +4,7 @@
 
 ### Correctness
 
+- Deliver cancellation to tree-copy workers even when a caller's abort handler stops event propagation, preserving caller handlers and waiting for admitted work before descriptor cleanup across native cloning and byte-copy fallbacks.
 - Keep asynchronous atomic admission-pin, parent-sync, and rejected replacement-pin closes best-effort when a filesystem adapter throws synchronously, preserving selected failures and the synchronous helper's close reporting.
 - Preserve asynchronous copy-source results and destination-admission failures when a custom adapter's best-effort close throws synchronously.
 - Reject Windows permission-query results with missing or nonboolean locality instead of reporting otherwise trusted owners as local.
@@ -11,6 +12,8 @@
 ### Performance and maintenance
 
 - Share the native archive entry schema while preserving plan-input diagnostics and independent manifest snapshots.
+- Use the existing Windows SDK bindings for native syscall declarations and constants, preserving filesystem policy and handle ownership while checking the built addon's imports in CI.
+- Reuse normalized missing-path suffixes during ancestor resolution and synchronous lock checks, preserving canonicalization, path admission, and filesystem failure behavior without per-component suffix arrays.
 - Make the in-flight archive mutation deadline regression deterministic without increasing its timeout or weakening settlement assertions.
 - Remove unused private descriptor metadata and lock-handle methods while retaining temp-workspace admission checks and shared lock cleanup ownership.
 - Share native link and rename argument admission, preserving source-before-target validation, descriptor-relative dispatch, and platform errors.
@@ -40,6 +43,7 @@
 - Reduce redundant metadata observations and Promise scheduling in secret-file reads, regular-file admission, and staged-file publication while retaining exact identity and mutation checks.
 - Share archive staging, directory admission, temporary-file ownership, lock registration, and native task settlement code without changing public APIs or platform fallback behavior.
 - Reuse bounded scratch storage across fallback SHA-256 operations, preserving exclusive in-flight reads, byte limits, cancellation settlement, and clearing retained file contents.
+- Reduce npm package size by omitting declaration maps that point to unpublished TypeScript sources, while preserving declarations and public exports.
 
 ## 0.17.0 - 2026-09-20
 

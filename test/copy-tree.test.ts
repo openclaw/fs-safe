@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
 import { copyTree } from "../src/copy.js";
+import { copyOwnedTree } from "../src/copy-tree-portable.js";
+import { openStagedDirectory } from "../src/staged-directory.js";
 import {
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
@@ -265,6 +267,8 @@ describe("directory copying", () => {
     }
     const copied = path.join(destination, names[0]!);
     const controller = new AbortController();
+    const callerAbort = vi.fn((event: Event) => event.stopImmediatePropagation());
+    controller.signal.onabort = callerAbort;
     const reason = new Error("cancel after partial byte copy");
     const release = Promise.withResolvers<void>();
     const open = fs.open.bind(fs);
@@ -292,7 +296,7 @@ describe("directory copying", () => {
     });
     let settled = false;
     const pending = copyTree(source, destination, {
-      clone: "never",
+      clone: "auto",
       concurrency: 2,
       signal: controller.signal,
     }).then(
@@ -313,6 +317,8 @@ describe("directory copying", () => {
       expect(partial.size).toBeGreaterThan(0);
       expect(partial.size).toBeLessThan(bytes.length / 2);
       controller.abort(reason);
+      expect(callerAbort).toHaveBeenCalledOnce();
+      expect(controller.signal.onabort).toBe(callerAbort);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
       expect(copiedFds).toHaveLength(2);
@@ -346,9 +352,14 @@ describe("directory copying", () => {
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform === "win32").for(["abort", "file error"] as const)(
-    "joins admitted native file writes after %s without exceeding concurrency",
-    async (stop, context) => {
+  it.for((["abort", "file error"] as const).flatMap(stop =>
+    (["public", "portable owner"] as const).map(route => ({ stop, route }))))(
+    "joins admitted native file writes after $stop via $route without exceeding concurrency",
+    async ({ stop, route }, context) => {
+      if (route === "public" && process.platform !== "win32" && process.platform !== "linux") {
+        context.skip("native byte copying is available on Linux and Windows");
+        return;
+      }
       configureFsSafeNative({ mode: "auto" });
       const binding = getNativeBinding();
       if (!binding) {
@@ -364,16 +375,20 @@ describe("directory copying", () => {
       const failed = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       const controller = new AbortController();
+      const callerAbort = vi.fn((event: Event) => event.stopImmediatePropagation());
+      controller.signal.onabort = callerAbort;
       const reason = Object.assign(new Error(`copy stopped by ${stop}`), { code: "EIO" });
       const calls: { sourceFd: number; targetFd: number; signal?: AbortSignal }[] = [];
+      const nativeAborts = [vi.fn(), vi.fn()];
       let active = 0;
       let peakActive = 0;
       let writes = 0;
-      __setNativeLoaderForTest(() => ({
+      const native = {
         ...binding,
         probeTreeClone: () => null,
-        async copyFileContents(sourceFd, targetFd, signal) {
+        async copyFileContents(sourceFd: number, targetFd: number, signal?: AbortSignal) {
           const index = calls.push({ sourceFd, targetFd, signal }) - 1;
+          signal!.onabort = nativeAborts[index]!;
           active++;
           peakActive = Math.max(peakActive, active);
           if (calls.length === 2) entered.resolve();
@@ -392,12 +407,14 @@ describe("directory copying", () => {
             active--;
           }
         },
-      }));
+      };
+      __setNativeLoaderForTest(() => native);
       let settled = false;
-      const pending = copyTree(source, destination, {
-        concurrency: 2,
-        signal: controller.signal,
-      }).then(
+      const pinned = route === "portable owner" ? openStagedDirectory(source) : undefined;
+      const options = { concurrency: 2, signal: controller.signal };
+      const pending = (pinned
+        ? copyOwnedTree(pinned, destination, { ...options, copyFileContents: native.copyFileContents })
+        : copyTree(source, destination, options)).then(
         () => {
           settled = true;
           return undefined;
@@ -416,7 +433,10 @@ describe("directory copying", () => {
         ]);
         expect(calls[0]!.signal).not.toBe(controller.signal);
         expect(calls[0]!.signal).not.toBe(calls[1]!.signal);
-        if (stop === "abort") controller.abort(reason);
+        if (stop === "abort") {
+          controller.abort(reason);
+          expect(nativeAborts[0]).toHaveBeenCalledOnce();
+        }
         fail.resolve();
         await failed.promise;
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -425,10 +445,15 @@ describe("directory copying", () => {
         expect(calls).toHaveLength(2);
         expect(peakActive).toBe(2);
         expect(calls[0]!.signal?.aborted).toBe(true);
+        expect(nativeAborts[0]).toHaveBeenCalledOnce();
+        if (stop === "file error") controller.abort(new Error("later caller cancellation"));
+        expect(callerAbort).toHaveBeenCalledOnce();
+        expect(controller.signal.onabort).toBe(callerAbort);
         release.resolve();
         expect(await pending).toBe(reason);
         expect(active).toBe(0);
         expect(writes).toBe(1);
+        expect(calls.every(call => call.signal!.onabort === null)).toBe(true);
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(calls).toHaveLength(2);
         expect(writes).toBe(1);
@@ -446,6 +471,7 @@ describe("directory copying", () => {
         fail.resolve();
         release.resolve();
         await pending;
+        if (pinned) fsSync.closeSync(pinned.fd);
       }
     },
   );
