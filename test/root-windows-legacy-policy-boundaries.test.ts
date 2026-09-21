@@ -167,25 +167,45 @@ describe.skipIf(process.platform !== "win32")(
       }
     });
 
-    it.each([
-      { boundary: "stage", callback: 2 },
-      { boundary: "publication", callback: 4 },
-    ])("cleans its owned placeholder and stage after $boundary revocation", async ({ callback }) => {
+    it.each(["stage", "publication"] as const)("keeps a missing destination absent after %s revocation", async boundary => {
       configureFsSafeNative({ mode: "off" });
       const directory = await tempRoot("fs-safe-win-policy-owned-cleanup-");
+      const target = path.join(directory, "target");
+      const payload = Buffer.from("replacement");
       const revoked = new Error("revoked");
-      let callbacks = 0;
+      let refused = false;
+      let callbacksAfterRefusal = 0;
+      let completeStageObserved = false;
       const safe = await root(directory);
+      const rename = vi.spyOn(fs, "rename");
 
-      await expect(safe.write("target", Buffer.from("replacement"), {
+      await expect(safe.write("target", payload, {
         denyMutations: unrelatedPolicy(directory),
         durable: false,
         assertBeforeMutation() {
-          if (++callbacks === callback) throw revoked;
+          if (refused) { callbacksAfterRefusal += 1; throw revoked; }
+          expect(fsSync.lstatSync(target, { throwIfNoEntry: false })).toBeUndefined();
+          const stages = atomicStages(fsSync.readdirSync(directory));
+          if (boundary === "stage") expect(stages).toEqual([]);
+          else {
+            expect(stages.length).toBeLessThanOrEqual(1);
+            if (!stages.length) return;
+            const stage = path.join(directory, stages[0]!);
+            const stat = fsSync.lstatSync(stage);
+            if (stat.size !== payload.length) return;
+            expect(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1).toBe(true);
+            expect(fsSync.readFileSync(stage)).toEqual(payload);
+            completeStageObserved = true;
+          }
+          refused = true;
+          throw revoked;
         },
       })).rejects.toBe(revoked);
 
-      expect(callbacks).toBe(callback);
+      expect(refused).toBe(true);
+      expect(callbacksAfterRefusal).toBe(0);
+      expect(completeStageObserved).toBe(boundary === "publication");
+      expect(rename.mock.calls.some(([, destination]) => destination === target)).toBe(false);
       expect(await fs.readdir(directory)).toEqual([]);
     });
 

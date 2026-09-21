@@ -39,10 +39,12 @@ sentinel. The same rejection object must escape, no callback may follow refusal,
 and the owned stage must be gone before fixture teardown.
 
 Windows workers exercise buffer `Root.write` through a stable final-file symlink,
-then refuse before staging a newly created placeholder, before publishing over a
-new placeholder, and before publishing to an existing symlink-selected destination.
-They verify alias binding, destination preservation, observed placeholder/stage
-states, and cleanup before fixture teardown. The default native-off and explicit
+then refuse before stage creation for a missing destination, before publishing a
+complete stage to that still-missing destination, and before publishing to an
+existing symlink-selected destination. Missing destinations must remain absent at
+every authority callback and after refusal. The workers verify alias binding,
+destination preservation, complete single-link stages, and cleanup before fixture
+teardown. The default native-off and explicit
 `verify-content-with-lock` native-require configurations both select the existing
 Windows JS buffer writer. In native-require mode, the compatibility route loads
 the addon to publish its retained sidecar lock through `Root.create`; the payload

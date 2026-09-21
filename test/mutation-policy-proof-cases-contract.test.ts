@@ -44,8 +44,9 @@ describe("hosted mutation proof completeness contract", () => {
         route: mode === "off" ? "windows-buffer-legacy" : "windows-buffer-compat",
         renamePolicy: mode === "off" ? "default" : "verify-content-with-lock",
         stableFinalSymlinkPublished: true, aliasPreserved: true,
-        refusals: 3, callbacksAfterRefusal: 0, placeholdersObserved: 2,
-        placeholdersAbsentAfterRefusal: true, completedStagesObserved: 2,
+        refusals: 3, callbacksAfterRefusal: 0, missingDestinationRefusals: 2,
+        missingDestinationsAbsentAtCallbacks: true,
+        missingDestinationsAbsentAfterRefusal: true, completedStagesObserved: 2,
         destinationPreserved: true, ownedStagesRemoved: true,
       });
     }
@@ -67,7 +68,7 @@ describe("hosted mutation proof completeness contract", () => {
     expect(helper).toContain("callbackState.refused && callbackState.after === 0");
     expect(helper).toContain("stat.nlink === 1n");
     expect(helper).toContain("fsSync.readFileSync(file).equals(payload)");
-    expect(helper).toContain('"PLACEHOLDER_RETAINED_AT_PUBLICATION"');
+    expect(helper).toContain('"DESTINATION_VISIBLE_BEFORE_PUBLICATION"');
     expect(helper).not.toMatch(/if\s*\(\s*(?:calls|state\.calls|authorityCalls)\s*===?\s*\d/u);
     expect(harness).toContain('caseName.startsWith("pinned-policy-") ? { NODE_ENV: "test" }');
     for (const label of ["proofCases", "publicTestHooksSource", "publicTestHooksBuilt",

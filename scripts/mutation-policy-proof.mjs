@@ -292,7 +292,7 @@ function expectedCoverage(platform) {
       "parent-identity-fences",
       ...(platform === "win32" ? [] : ["posix-pinned-off-and-require"]),
       ...(platform === "win32"
-        ? ["windows-buffer-write-refusal-and-placeholder-cleanup"]
+        ? ["windows-buffer-write-refusal-and-private-stage-cleanup"]
         : ["posix-pinned-parent-denial-and-replacement", "posix-pinned-write-refusal-epochs"]),
       "selected-destination-authority-boundary",
     ],
