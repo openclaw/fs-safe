@@ -6,7 +6,7 @@ import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -67,11 +67,16 @@ function processingPathFromJsonPath(jsonPath: string): string {
     : `${jsonPath}.processing`;
 }
 
-async function regularQueueFileIdentity(filePath: string): Promise<BigIntStats | null> {
-  const identity = await lstatOrNull(filePath);
+function regularQueueFileIdentity(
+  filePath: string,
+  subject: "entry" | "retirement" = "entry",
+): BigIntStats | null {
+  const identity = lstatOrNull(filePath);
   if (!identity) return null;
   if (identity.isSymbolicLink() || !identity.isFile()) {
-    throw new Error(`queue entry is not a regular file: ${filePath}`);
+    throw subject === "retirement"
+      ? new FsSafeError("path-mismatch", "queue retirement path is not a regular file")
+      : new Error(`queue entry is not a regular file: ${filePath}`);
   }
   return identity;
 }
@@ -92,9 +97,9 @@ async function claimDurableQueueEntryUnlocked(
 ): Promise<string | null> {
   const processingPath = paths.processingPath;
   await recoverDurableQueueRetirement({ jsonPath: paths.jsonPath, processingPath });
-  const existingProcessing = await regularQueueFileIdentity(processingPath);
+  const existingProcessing = regularQueueFileIdentity(processingPath);
   if (existingProcessing) {
-    const pending = await lstatOrNull(paths.jsonPath);
+    const pending = lstatOrNull(paths.jsonPath);
     const retiresPending = pending !== null &&
       !pending.isSymbolicLink() &&
       pending.isFile() &&
@@ -112,7 +117,7 @@ async function claimDurableQueueEntryUnlocked(
     }
     return processingPath;
   }
-  const pending = await lstatOrNull(paths.jsonPath);
+  const pending = lstatOrNull(paths.jsonPath);
   if (!pending || pending.isSymbolicLink() || !pending.isFile()) return null;
   if (pending.nlink > 1n || !sameFileIdentityForCleanup(pending, pending)) {
     // Batch admission may skip unowned input, never a failed owned transition.
@@ -123,7 +128,7 @@ async function claimDurableQueueEntryUnlocked(
     await fs.link(paths.jsonPath, processingPath);
   } catch (error) {
     if (getErrorCode(error) === "EEXIST") {
-      if (!(await regularQueueFileIdentity(processingPath))) return null;
+      if (!regularQueueFileIdentity(processingPath)) return null;
       await syncDirectory(path.dirname(processingPath));
       return processingPath;
     }
@@ -131,7 +136,7 @@ async function claimDurableQueueEntryUnlocked(
     throw error;
   }
   await syncDirectory(path.dirname(processingPath));
-  const claimed = await regularQueueFileIdentity(processingPath);
+  const claimed = regularQueueFileIdentity(processingPath);
   if (!claimed || claimed.nlink > 2n) {
     throw new FsSafeError("path-mismatch", "queue claim is not an owned regular file");
   }
@@ -144,7 +149,7 @@ export async function claimDurableQueueEntry(
   options: { skipUnowned?: boolean } = {},
 ): Promise<string | null> {
   const validatedPaths = ownDurableQueueEntryPaths(paths);
-  if (!(await lstatOrNull(path.dirname(validatedPaths.jsonPath)))) return null;
+  if (!lstatOrNull(path.dirname(validatedPaths.jsonPath))) return null;
   return await withQueueEntryLock(
     validatedPaths,
     async () => await claimDurableQueueEntryUnlocked(validatedPaths, options),
@@ -161,9 +166,9 @@ export async function migrateDurableQueueEntry<T>(
   const validatedPaths = ownDurableQueueEntryPaths(paths);
   return await withQueueEntryLock(validatedPaths, async () => {
     const processingPath = validatedPaths.processingPath;
-    const assertCurrent = async (): Promise<void> => {
+    const assertCurrent = (): void => {
       try {
-        await inspectFileIdentity(() => {
+        inspectFileIdentitySync(() => {
           const current = fsSync.lstatSync(processingPath, { bigint: true });
           if (current.isSymbolicLink() || !current.isFile() || current.nlink !== 1n) {
             throw new FsSafeError(
@@ -181,14 +186,14 @@ export async function migrateDurableQueueEntry<T>(
         throw error;
       }
     };
-    await assertCurrent();
+    assertCurrent();
     return await run(processingPath, async () => {
-      await assertCurrent();
+      assertCurrent();
       if (process.platform === "win32") {
         // Windows cannot replace our still-open target. Keep the transfer lock
         // across release and reject changes made while the async close settles.
         await releaseReadPin();
-        await assertCurrent();
+        assertCurrent();
       }
     });
   });
@@ -198,10 +203,10 @@ export async function completeDeliveredQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<boolean> {
   const validatedPaths = ownDurableQueueEntryPaths(paths);
-  if (!(await lstatOrNull(path.dirname(validatedPaths.deliveredPath)))) return false;
+  if (!lstatOrNull(path.dirname(validatedPaths.deliveredPath))) return false;
   return await withQueueEntryLock(validatedPaths, async () => {
-    if (!(await regularQueueFileIdentity(validatedPaths.deliveredPath))) return false;
-    const processing = await regularQueueFileIdentity(validatedPaths.processingPath);
+    if (!regularQueueFileIdentity(validatedPaths.deliveredPath)) return false;
+    const processing = regularQueueFileIdentity(validatedPaths.processingPath);
     await fs.unlink(validatedPaths.deliveredPath);
     await syncDirectory(path.dirname(validatedPaths.deliveredPath));
     return !processing;
@@ -212,17 +217,17 @@ export async function acknowledgeDurableQueueEntry(
   paths: DurableQueueEntryPathsLike,
 ): Promise<void> {
   const validatedPaths = ownDurableQueueEntryPaths(paths);
-  if (!(await lstatOrNull(path.dirname(validatedPaths.jsonPath)))) return;
+  if (!lstatOrNull(path.dirname(validatedPaths.jsonPath))) return;
   await withQueueEntryLock(validatedPaths, async () => {
     const processingPath = validatedPaths.processingPath;
-    const processing = await regularQueueFileIdentity(processingPath);
-    const delivered = await regularQueueFileIdentity(validatedPaths.deliveredPath);
+    const processing = regularQueueFileIdentity(processingPath);
+    const delivered = regularQueueFileIdentity(validatedPaths.deliveredPath);
     if (!processing) {
       if (delivered) {
         await fs.unlink(validatedPaths.deliveredPath);
       }
       await syncDirectory(path.dirname(validatedPaths.deliveredPath));
-      if (await regularQueueFileIdentity(validatedPaths.jsonPath)) {
+      if (regularQueueFileIdentity(validatedPaths.jsonPath)) {
         throw new FsSafeError(
           "path-mismatch",
           "queue acknowledgement requires a processing claim",
@@ -249,12 +254,12 @@ export async function moveDurableQueueEntryToFailed(params: {
   assertNoWindowsPathAlias(failedPath);
   await withQueueEntryLock(paths, async () => {
     const processingPath = paths.processingPath;
-    const processing = await regularQueueFileIdentity(processingPath);
-    const existingFailed = await regularQueueFileIdentity(failedPath);
+    const processing = regularQueueFileIdentity(processingPath);
+    const existingFailed = regularQueueFileIdentity(failedPath);
     if (!processing && existingFailed) {
       await syncDirectory(path.dirname(failedPath));
       await syncDirectory(path.dirname(processingPath));
-      const recoveredFailed = await regularQueueFileIdentity(failedPath);
+      const recoveredFailed = regularQueueFileIdentity(failedPath);
       if (
         !recoveredFailed ||
         !sameFileIdentityForCleanup(existingFailed, recoveredFailed)
@@ -264,7 +269,7 @@ export async function moveDurableQueueEntryToFailed(params: {
           "failed queue destination changed during recovery",
         );
       }
-      if (await regularQueueFileIdentity(paths.jsonPath)) {
+      if (regularQueueFileIdentity(paths.jsonPath)) {
         throw new FsSafeError(
           "already-exists",
           "failed queue destination already exists",
@@ -279,18 +284,12 @@ export async function moveDurableQueueEntryToFailed(params: {
     if (!sourcePath) {
       throw Object.assign(new Error("queue entry does not exist"), { code: "ENOENT" });
     }
-    const source = await regularQueueFileIdentity(sourcePath);
-    const failed = await regularQueueFileIdentity(failedPath);
-    if (failed) {
-      if (source && sameFileIdentityForCleanup(source, failed)) {
-        await syncDirectory(path.dirname(failedPath));
-        await fs.unlink(sourcePath);
-        await syncDirectory(path.dirname(sourcePath));
-        return;
-      }
+    const source = regularQueueFileIdentity(sourcePath);
+    const failed = regularQueueFileIdentity(failedPath);
+    if (failed && (!source || !sameFileIdentityForCleanup(source, failed))) {
       throw new FsSafeError("already-exists", "failed queue destination already exists");
     }
-    await fs.link(sourcePath, failedPath);
+    if (!failed) await fs.link(sourcePath, failedPath);
     await syncDirectory(path.dirname(failedPath));
     await fs.unlink(sourcePath);
     await syncDirectory(path.dirname(sourcePath));
@@ -306,7 +305,7 @@ export function getErrorCode(error: unknown): string | null {
     : null;
 }
 
-async function lstatOrNull(filePath: string): Promise<BigIntStats | null> {
+function lstatOrNull(filePath: string): BigIntStats | null {
   try {
     return fsSync.lstatSync(filePath, { bigint: true });
   } catch (error) {
@@ -321,15 +320,6 @@ function assertDirectory(identity: BigIntStats, label: string): void {
   }
 }
 
-async function regularFileIdentity(filePath: string): Promise<BigIntStats | null> {
-  const identity = await lstatOrNull(filePath);
-  if (!identity) return null;
-  if (identity.isSymbolicLink() || !identity.isFile()) {
-    throw new FsSafeError("path-mismatch", "queue retirement path is not a regular file");
-  }
-  return identity;
-}
-
 function retirementPaths(jsonPath: string): {
   dirPath: string;
   entryPath: string;
@@ -338,14 +328,6 @@ function retirementPaths(jsonPath: string): {
   const rootPath = path.join(path.dirname(jsonPath), RETIREMENT_ROOT_NAME);
   const dirPath = path.join(rootPath, path.basename(jsonPath));
   return { dirPath, entryPath: path.join(dirPath, RETIREMENT_ENTRY_NAME), rootPath };
-}
-
-async function inspectRetirementRoot(jsonPath: string): Promise<string | null> {
-  const rootPath = retirementPaths(jsonPath).rootPath;
-  const root = await lstatOrNull(rootPath);
-  if (!root) return null;
-  assertDirectory(root, "queue retirement root");
-  return rootPath;
 }
 
 async function ensureRetirementRoot(jsonPath: string): Promise<string> {
@@ -374,10 +356,11 @@ async function recoverDurableQueueRetirement(params: {
   jsonPath: string;
   processingPath: string;
 }): Promise<void> {
-  const rootPath = await inspectRetirementRoot(params.jsonPath);
-  if (!rootPath) return;
-  const { dirPath, entryPath } = retirementPaths(params.jsonPath);
-  const dir = await lstatOrNull(dirPath);
+  const { rootPath, dirPath, entryPath } = retirementPaths(params.jsonPath);
+  const root = lstatOrNull(rootPath);
+  if (!root) return;
+  assertDirectory(root, "queue retirement root");
+  const dir = lstatOrNull(dirPath);
   if (!dir) return;
   assertDirectory(dir, "queue retirement record");
   const names = await fs.readdir(dirPath);
@@ -388,14 +371,14 @@ async function recoverDurableQueueRetirement(params: {
   if (names.length !== 1 || names[0] !== RETIREMENT_ENTRY_NAME) {
     throw new FsSafeError("path-mismatch", "queue retirement record is ambiguous");
   }
-  const entry = await regularFileIdentity(entryPath);
-  const processing = await regularFileIdentity(params.processingPath);
+  const entry = regularQueueFileIdentity(entryPath, "retirement");
+  const processing = regularQueueFileIdentity(params.processingPath, "retirement");
   if (!entry || !processing) {
     throw new FsSafeError("path-mismatch", "queue retirement ownership is incomplete");
   }
 
   if (!sameFileIdentityForCleanup(entry, processing)) {
-    const pending = await regularFileIdentity(params.jsonPath);
+    const pending = regularQueueFileIdentity(params.jsonPath, "retirement");
     if (!pending) {
       await fs.link(entryPath, params.jsonPath);
       await syncDirectory(path.dirname(params.jsonPath));

@@ -2,19 +2,19 @@ import fs, { type BigIntStats } from "node:fs";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { readBoundedAsync } from "./bounded-read.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export const DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES = 16 * 1024 * 1024;
 
-async function inspectQueueEntry(
+function inspectQueueEntry(
   inspect: () => BigIntStats,
   maxBytes: number,
   expected?: BigIntStats,
-): Promise<BigIntStats> {
+): BigIntStats {
   let inspectionFailed = false;
   try {
-    return await inspectFileIdentity(async () => {
+    return inspectFileIdentitySync(() => {
       try {
         const stat = inspect();
         if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -45,16 +45,16 @@ export async function withJsonDurableQueueEntry<T, R>(
   })!;
   assertNoWindowsPathAlias(filePath);
   const inspectPath = () => fs.lstatSync(filePath, { bigint: true });
-  const initialStat = await inspectQueueEntry(inspectPath, maxBytes);
+  const initialStat = inspectQueueEntry(inspectPath, maxBytes);
   const handle = await fs.promises.open(filePath, resolveReadOpenFlags());
   let closePromise: Promise<void> | undefined;
   const releaseReadPin = (): Promise<void> =>
     closePromise ??= (async () => { await handle.close(); })();
   try {
-    const openedStat = await inspectQueueEntry(
+    const openedStat = inspectQueueEntry(
       () => fs.fstatSync(handle.fd, { bigint: true }), maxBytes, initialStat,
     );
-    await inspectQueueEntry(inspectPath, maxBytes, openedStat);
+    inspectQueueEntry(inspectPath, maxBytes, openedStat);
     const bytes = await readBoundedAsync(
       maxBytes,
       async (buffer, length) => (await handle.read(buffer, 0, length, null)).bytesRead,
