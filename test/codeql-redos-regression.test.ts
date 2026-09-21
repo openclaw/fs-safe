@@ -39,9 +39,9 @@ describe("CodeQL ReDoS regressions", () => {
     const internalHyphens = `a${"-".repeat(ADVERSARIAL_RUN_LENGTH)}b`;
 
     expect(
-      expectBounded(() => sanitizeSafePathSegment(internalHyphens, "fallback")),
+      expectBounded(() => sanitizeSafePathSegment(internalHyphens)),
     ).toBe(internalHyphens);
-    expect(sanitizeSafePathSegment(`---${internalHyphens}---`, "fallback")).toBe(
+    expect(sanitizeSafePathSegment(`---${internalHyphens}---`)).toBe(
       internalHyphens,
     );
   });

@@ -94,10 +94,9 @@ function sanitizeExtension(extension?: string): string {
 }
 
 export function sanitizeTempFileName(fileName: string): string {
-  const sanitized = sanitizeSafePathSegment(path.basename(fileName), "download.bin", {
-    allowDotPrefix: true,
-  });
-  return suffixWindowsReservedDeviceName(sanitized);
+  return suffixWindowsReservedDeviceName(
+    sanitizeSafePathSegment(path.basename(fileName)) ?? "download.bin",
+  );
 }
 
 export function buildRandomTempFilePath(params: {

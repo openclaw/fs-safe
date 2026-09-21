@@ -9,6 +9,7 @@
 
 ### Performance and maintenance
 
+- Keep temporary filename fallback selection with its public caller, removing unused private sanitizer options while preserving shared path validation and Windows device-name protection.
 - Remove unused internal policy modes from Root lock acquisition, store writes and streams, and JSON read retries while retaining public defaults and filesystem safeguards.
 
 - Retain each Root's originally admitted context across operations while preserving readonly path metadata, live defaults, and root-replacement checks.

@@ -18,10 +18,8 @@ import {
   resolveRootPath,
   resolveRootPathSync,
 } from "../src/root-path.js";
-import {
-  isSafePathSegment,
-  sanitizeSafePathSegment,
-} from "../src/safe-path-segment.js";
+import { isSafePathSegment } from "../src/safe-path-segment.js";
+import { sanitizeTempFileName } from "../src/temp-target.js";
 
 const SEEDS = [0x00000001, 0x5eedc0de, 0x9e3779b9, 0xc001d00d, 0xffffffff] as const;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u;
@@ -98,14 +96,10 @@ describe("seeded path property stress", () => {
     const random = seededRandom(seed);
     for (let index = 0; index < 2_000; index += 1) {
       const input = generatedString(random);
-      for (const allowDotPrefix of [false, true]) {
-        const segment = sanitizeSafePathSegment(input, "fallback", { allowDotPrefix });
-        expect(isSafePathSegment(segment, { allowDotPrefix }), `${seed}:${index}:${input}`).toBe(true);
-        expect(
-          sanitizeSafePathSegment(segment, "fallback", { allowDotPrefix }),
-          `${seed}:${index}:${input}`,
-        ).toBe(segment);
-      }
+      const segment = sanitizeTempFileName(input);
+      expect(isSafePathSegment(segment, { allowDotPrefix: true }), `${seed}:${index}:${input}`).toBe(true);
+      expect(isUnsafeDeviceReadPath(`C:\\tmp\\${segment}`, { platform: "win32" })).toBe(false);
+      expect(sanitizeTempFileName(segment), `${seed}:${index}:${input}`).toBe(segment);
 
       const fileName = sanitizeUntrustedFileName(input, "fallback.bin");
       expect(fileName, `${seed}:${index}:${input}`).toBe(path.posix.basename(fileName));
@@ -115,6 +109,24 @@ describe("seeded path property stress", () => {
       expect(isUnsafeDeviceReadPath(`C:\\tmp\\${fileName}`, { platform: "win32" })).toBe(false);
       expect(sanitizeUntrustedFileName(fileName, "fallback.bin")).toBe(fileName);
     }
+  });
+
+  it.each([
+    ["file.txt", true, true],
+    ["-file", true, true],
+    [".hidden", false, true],
+    ["..hidden", false, true],
+    ["", false, false],
+    [".", false, false],
+    ["..", false, false],
+    ["a/b", false, false],
+    ["a\\b", false, false],
+    ["a\0b", false, false],
+    ["a:b", false, false],
+  ])("retains strict and dot-prefixed segment admission for %j", (segment, strict, dotPrefixed) => {
+    expect(isSafePathSegment(segment)).toBe(strict);
+    expect(isSafePathSegment(segment, { allowDotPrefix: false })).toBe(strict);
+    expect(isSafePathSegment(segment, { allowDotPrefix: true })).toBe(dotPrefixed);
   });
 
   it.each(SEEDS)("matches path.relative containment semantics (seed %i)", (seed) => {

@@ -70,21 +70,14 @@ export function assertSafePathSegment(
   return segment;
 }
 
-export function sanitizeSafePathSegment(
-  value: string,
-  fallback: string,
-  options: SafePathSegmentOptions = {},
-): string {
+export function sanitizeSafePathSegment(value: string): string | undefined {
   const sanitized = value
     .trim()
     .replace(/[\\/]+/g, "-")
     .replace(/\0/g, "")
     .replace(/[^A-Za-z0-9._-]+/g, "-");
   const trimmed = trimHyphenEdges(sanitized);
-  if (isSafePathSegment(trimmed, options)) {
-    return trimmed;
-  }
-  return assertSafePathSegment(fallback, { ...options, label: "fallback path segment" });
+  return isSafePathSegment(trimmed, { allowDotPrefix: true }) ? trimmed : undefined;
 }
 
 export function assertSafePathPrefix(
