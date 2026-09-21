@@ -1505,7 +1505,7 @@ async function writeFileFallbackUnlocked(
     return;
   }
 
-  const admission = await openWritableFileInRoot(root, {
+  const admissionParams = {
     relativePath: params.relativePath,
     mkdir: params.mkdir,
     denyMutations: params.denyMutations,
@@ -1513,7 +1513,8 @@ async function writeFileFallbackUnlocked(
     mutationSymlinks: params.mutationSymlinks,
     truncateExisting: false,
     expectedWritePath,
-  }, { createIfMissing: false });
+  };
+  const admission = await openWritableFileInRoot(root, admissionParams, { createIfMissing: false });
   const existing = "missing" in admission ? undefined : admission;
   const target = existing?.opened;
   const retainedSelection = existing?.writeSelection;
@@ -1574,7 +1575,7 @@ async function writeFileFallbackUnlocked(
       // A raced file needs its own access admission, not the old handle's rights.
       if (publicationIdentity && (!existing || !sameFileIdentity(publicationIdentity, existing.identity))) {
         const admitted = await openWritableFileInRoot(root, {
-          ...params, mkdir: false, truncateExisting: false, expectedWritePath: destinationPath,
+          ...admissionParams, mkdir: false, expectedWritePath: destinationPath,
         }, { createIfMissing: false });
         lateTargetHandle = "missing" in admitted ? undefined : admitted.opened.handle;
         publicationIdentity = "missing" in admitted ? undefined : admitted.identity;

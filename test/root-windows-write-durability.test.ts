@@ -212,7 +212,7 @@ it.skipIf(platform.value === "win32").each([
 });
 
 it.each(["regular", "write-only", "read-only", "hardlink", "directory"] as const)(
-  "readmits a raced %s destination before replacement",
+  "readmits a raced %s destination with wider write options",
   async kind => {
     const { dir, scoped, target } = await fixture(false);
     const sentinel = path.join(dir, "sentinel");
@@ -247,7 +247,8 @@ it.each(["regular", "write-only", "read-only", "hardlink", "directory"] as const
       if (String(args[1]) === target) publications++;
       await rename(...args);
     });
-    const pending = scoped.write("target", Buffer.from("complete"));
+    const options = { durable: false, append: true };
+    const pending = scoped.write("target", Buffer.from("complete"), options);
     if (kind === "regular" || kind === "write-only") {
       await pending;
       expect(await fs.readFile(target, "utf8")).toBe("complete");
