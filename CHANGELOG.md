@@ -23,6 +23,7 @@
 - Keep native POSIX beneath-open descriptors owned until handoff and share cleanup metadata inspection, preserving platform containment and error behavior.
 - Close Windows process-token handles through the shared handle owner while preserving query order and security errors.
 - Send stdin in guest lifecycle tests only when the selected operation consumes it, avoiding spurious broken-pipe failures without ignoring process errors.
+- Keep Root publication-mode and ZIP-kind test fixtures and backend settings alive until timed-out filesystem work settles, preventing teardown from deleting files still in use.
 - Keep native and JavaScript write-policy callbacks on one shared type contract, with unchanged behavior.
 - Keep synchronous store directory admission and mode finalization under one receipt-chain owner, preserving exact identity checks, failure ordering, and platform fallbacks.
 - Share synchronous lock admission, retry budgets, and compromise-monitor setup across raw-path and Root locks, preserving their distinct authority and stale-recovery behavior.
