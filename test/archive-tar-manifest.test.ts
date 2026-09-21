@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { MAX_TAR_MANIFEST_BYTES, resolveTarMeterLimits } from "../src/archive-limits.js";
-import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession } from "../src/archive-tar-wasm.js";
 import { manifestMember, nearMaxPath } from "./helpers/archive-admission.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxNative } from "./helpers/archive-pax-native.js";
@@ -35,12 +35,20 @@ it("charges object/string overhead and UTF-8 bytes exactly at the boundary", asy
   expect(tarManifestEntryCost(name)).toBe(cost);
   for (const maximum of [cost - 1, cost]) {
     let emitted = 0;
-    const meter = new TarParserStream({ ...resolveTarMeterLimits(), maxManifestBytes: maximum }, () => { emitted++; });
-    meter.resume();
-    meter.on("error", () => {});
-    const error = await new Promise<Error | null | undefined>((resolve) => meter.end(tarFixture([{ path: name }]), resolve));
-    expect(error?.message).toBe(maximum < cost ? "archive manifest size exceeds limit" : undefined);
-    expect(emitted).toBe(maximum < cost ? 0 : 1);
+    const session = new TarWasmSession({ ...resolveTarMeterLimits(), maxManifestBytes: maximum });
+    const meter = new TarParserStream(session, () => { emitted++; });
+    const closed = new Promise<void>((resolve) => meter.once("close", resolve));
+    try {
+      meter.resume();
+      meter.on("error", () => {});
+      const error = await new Promise<Error | null | undefined>((resolve) => meter.end(tarFixture([{ path: name }]), resolve));
+      expect(error?.message).toBe(maximum < cost ? "archive manifest size exceeds limit" : undefined);
+      expect(emitted).toBe(maximum < cost ? 0 : 1);
+    } finally {
+      meter.destroy();
+      await closed;
+      session.dispose();
+    }
   }
 });
 
@@ -62,18 +70,26 @@ describe.each(["GNU", "PAX"] as const)("streamed %s manifest retention", (extens
   it("stops before emitting the overflowing member or requesting another body", async () => {
     let emitted = 0;
     const limits = resolveTarMeterLimits();
-    const meter = new TarParserStream(limits, () => { emitted++; });
-    meter.resume();
-    meter.on("error", () => {});
-    const member = manifestMember(extension);
-    const allowed = Math.floor(limits.maxManifestBytes / tarManifestEntryCost(nearMaxPath));
-    expect(allowed).toBe(32);
-    for (let index = 0; index <= allowed; index++) {
-      const error = await new Promise<Error | null | undefined>((resolve) => meter.write(member, resolve));
-      if (index < allowed) expect(error).toBeFalsy();
-      else expect(error).toMatchObject({ name: "ArchiveLimitError", code: "archive-manifest-size-exceeds-limit" });
+    const session = new TarWasmSession(limits);
+    const meter = new TarParserStream(session, () => { emitted++; });
+    const closed = new Promise<void>((resolve) => meter.once("close", resolve));
+    try {
+      meter.resume();
+      meter.on("error", () => {});
+      const member = manifestMember(extension);
+      const allowed = Math.floor(limits.maxManifestBytes / tarManifestEntryCost(nearMaxPath));
+      expect(allowed).toBe(32);
+      for (let index = 0; index <= allowed; index++) {
+        const error = await new Promise<Error | null | undefined>((resolve) => meter.write(member, resolve));
+        if (index < allowed) expect(error).toBeFalsy();
+        else expect(error).toMatchObject({ name: "ArchiveLimitError", code: "archive-manifest-size-exceeds-limit" });
+      }
+      expect(emitted).toBe(allowed);
+    } finally {
+      meter.destroy();
+      await closed;
+      session.dispose();
     }
-    expect(emitted).toBe(allowed);
   });
 
   it("rejects a compressed path-retention bomb in a 128 MiB JavaScript heap", async () => {

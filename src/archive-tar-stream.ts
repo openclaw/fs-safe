@@ -34,7 +34,7 @@ async function withTarStream<T>(params: TarInput & {
   const gzip = kind === "tar" && (buffer !== undefined ? isGzipBuffer(buffer) : await gzipFile(params.archivePath!));
   const session = new TarWasmSession(params.limits);
   try {
-    const parser = new TarParserStream(params.limits, params.onMember, session);
+    const parser = new TarParserStream(session, params.onMember);
     const input = buffer !== undefined
       ? Readable.from(bufferChunks(buffer), { objectMode: false, highWaterMark: 65536 })
       : fs.createReadStream(params.archivePath!, { highWaterMark: 65536 });

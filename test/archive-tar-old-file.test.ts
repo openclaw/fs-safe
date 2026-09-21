@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { gzipSync } from "node:zlib";
-import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession } from "../src/archive-tar-wasm.js";
 import { resolveTarMeterLimits } from "../src/archive-limits.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
@@ -25,9 +25,14 @@ describe("TAR regular-file admission", () => {
     const bytes = tarFixture([{ path: "./pkg//legacy.bin", body: payload,
       mutateHeader(header) { header[156] = byte; } }]);
     const parsed: TarEntryInfo[] = [];
-    const parser = new TarParserStream(resolveTarMeterLimits(), (entry) => parsed.push(entry));
-    parser.resume();
-    await pipeline(Readable.from([bytes]), parser);
+    const session = new TarWasmSession(resolveTarMeterLimits());
+    try {
+      const parser = new TarParserStream(session, (entry) => parsed.push(entry));
+      parser.resume();
+      await pipeline(Readable.from([bytes]), parser);
+    } finally {
+      session.dispose();
+    }
     expect(parsed).toEqual([{ path: "./pkg//legacy.bin", type: "File", size: payload.length, mode: 0o644, offset: 512 }]);
   });
 });

@@ -176,14 +176,10 @@ export class TarWasmSession {
   }
 }
 
-/** Backpressure-aware transport only; all TAR semantics live in the Rust core. */
+/** Backpressure-aware transport borrowing its caller's joined WASM session. */
 export class TarParserStream extends Transform {
-  private readonly session: TarWasmSession;
-  private readonly ownsSession: boolean;
-  constructor(limits: TarMeterLimits, private readonly onMember?: (entry: AdmittedTarMember) => void, session?: TarWasmSession) {
+  constructor(private readonly session: TarWasmSession, private readonly onMember?: (entry: AdmittedTarMember) => void) {
     super();
-    this.session = session ?? new TarWasmSession(limits);
-    this.ownsSession = session === undefined;
   }
   override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
     try { this.session.parse(chunk, this.onMember); callback(null, chunk); }
@@ -192,10 +188,5 @@ export class TarParserStream extends Transform {
   override _flush(callback: TransformCallback): void {
     try { this.session.finish(); callback(); }
     catch (error) { callback(error instanceof Error ? error : new Error(String(error))); }
-  }
-  override _destroy(error: Error | null, callback: (error: Error | null) => void): void {
-    try { if (this.ownsSession) this.session.dispose(); }
-    catch (cause) { error ??= cause instanceof Error ? cause : new Error(String(cause)); }
-    callback(error);
   }
 }

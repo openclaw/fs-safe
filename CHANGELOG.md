@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Keep the portable TAR parser and codecs under one session owner, preserving stream teardown, cancellation, and their shared memory limit.
 - Simplify native SHA-256 worker state while preserving positioned reads, byte limits, cancellation checks, and descriptor ownership.
 - Keep temporary filename fallback selection with its public caller, removing unused private sanitizer options while preserving shared path validation and Windows device-name protection.
 - Remove unused internal policy modes from Root lock acquisition, store writes and streams, and JSON read retries while retaining public defaults and filesystem safeguards.

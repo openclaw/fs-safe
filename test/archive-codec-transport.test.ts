@@ -53,7 +53,7 @@ it.each([1, 7, 65535, 65536, 65537])("retains decoded bytes when compressed chun
   const session = new TarWasmSession(limits), admitted: AdmittedTarMember[] = [], retained: Buffer[] = [];
   try {
     await pipeline(Readable.from(chunks(), { objectMode: false }), source => session.decode(source, "tar-zstd"),
-      new TarParserStream(limits, member => admitted.push(member), session),
+      new TarParserStream(session, member => admitted.push(member)),
       new Writable({ write(chunk: Buffer, _encoding, callback) { retained.push(chunk); callback(); } }));
     expect(admitted.map(entry => entry.path)).toEqual(["value"]);
     expect(retained.reduce((maximum, chunk) => Math.max(maximum, chunk.length), 0)).toBeLessThanOrEqual(65536);

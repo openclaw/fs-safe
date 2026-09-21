@@ -2,7 +2,7 @@ import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { resolveExtractLimits, resolveTarMeterLimits } from "../src/archive-limits.js";
-import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession } from "../src/archive-tar-wasm.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxHeader } from "./helpers/archive-pax.js";
 
@@ -13,9 +13,14 @@ async function admit(bytes: Buffer, maxDecodedBytes: number, chunkSize = 511): P
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   }
   const output: Buffer[] = [];
-  await pipeline(Readable.from(chunks()), new TarParserStream({ ...resolveTarMeterLimits(), maxDecodedBytes }), new Writable({
-    write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
-  }));
+  const session = new TarWasmSession({ ...resolveTarMeterLimits(), maxDecodedBytes });
+  try {
+    await pipeline(Readable.from(chunks()), new TarParserStream(session), new Writable({
+      write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
+    }));
+  } finally {
+    session.dispose();
+  }
   return Buffer.concat(output);
 }
 
@@ -61,23 +66,31 @@ describe("absolute decoded TAR admission", () => {
     ["PAX metadata", tarFixture([paxHeader([["size", "0"]]), { path: "empty" }], false)],
   ] as const)("stops an unbounded %s tail at the ceiling plus one probe", async (_label, pattern) => {
     const ceiling = pattern.length * 4;
-    const meter = new TarParserStream({ ...resolveTarMeterLimits(), maxDecodedBytes: ceiling });
-    const error = new Promise<Error>((resolve) => meter.once("error", resolve));
-    let forwarded = 0;
-    meter.on("data", (chunk: Buffer) => { forwarded += chunk.length; });
-    let supplied = 0;
-    while (true) {
-      if (supplied > ceiling) throw new Error("producer consumed forbidden tail");
-      const length = Math.min(512, ceiling + 1 - supplied);
-      const offset = supplied % pattern.length;
-      const chunk = pattern.subarray(offset, offset + length);
-      supplied += chunk.length;
-      const failure = await new Promise<Error | null | undefined>((resolve) => meter.write(chunk, resolve));
-      if (failure) break;
+    const session = new TarWasmSession({ ...resolveTarMeterLimits(), maxDecodedBytes: ceiling });
+    const meter = new TarParserStream(session);
+    const closed = new Promise<void>((resolve) => meter.once("close", resolve));
+    try {
+      const error = new Promise<Error>((resolve) => meter.once("error", resolve));
+      let forwarded = 0;
+      meter.on("data", (chunk: Buffer) => { forwarded += chunk.length; });
+      let supplied = 0;
+      while (true) {
+        if (supplied > ceiling) throw new Error("producer consumed forbidden tail");
+        const length = Math.min(512, ceiling + 1 - supplied);
+        const offset = supplied % pattern.length;
+        const chunk = pattern.subarray(offset, offset + length);
+        supplied += chunk.length;
+        const failure = await new Promise<Error | null | undefined>((resolve) => meter.write(chunk, resolve));
+        if (failure) break;
+      }
+      expect(await error).toMatchObject(decodedError);
+      expect(supplied).toBe(ceiling + 1);
+      expect(forwarded).toBe(ceiling);
+    } finally {
+      meter.destroy();
+      await closed;
+      session.dispose();
     }
-    expect(await error).toMatchObject(decodedError);
-    expect(supplied).toBe(ceiling + 1);
-    expect(forwarded).toBe(ceiling);
   });
 
   const bytes = Buffer.concat([

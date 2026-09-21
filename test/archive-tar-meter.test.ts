@@ -2,7 +2,7 @@ import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { resolveTarMeterLimits, type ArchiveExtractLimits } from "../src/archive-limits.js";
-import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession } from "../src/archive-tar-wasm.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { paxArchive, paxHeader } from "./helpers/archive-pax.js";
 import { malformedTarFraming } from "./helpers/archive-tar-framing.js";
@@ -12,9 +12,12 @@ async function meter(bytes: Buffer, chunkSize: number): Promise<Buffer> {
   function* chunks() {
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   }
-  await pipeline(Readable.from(chunks()), new TarParserStream(resolveTarMeterLimits({ maxMetaEntryBytes: 1024 })), new Writable({
-    write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
-  }));
+  const session = new TarWasmSession(resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }));
+  try {
+    await pipeline(Readable.from(chunks()), new TarParserStream(session), new Writable({
+      write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
+    }));
+  } finally { session.dispose(); }
   return Buffer.concat(output);
 }
 
@@ -71,18 +74,22 @@ describe("raw TAR logical entry counts", () => {
   ];
 
   it.each(cases)("rejects %s before asking its producer for body bytes", async (_label, prefix, options, code) => {
-    const meter = new TarParserStream(resolveTarMeterLimits(options));
-    meter.resume();
-    const error = new Promise<Error>((resolve) => meter.once("error", resolve));
-    let bodyRequested = false;
-    // The producer offers the next body only after admission acknowledges its
-    // header. No body exists here: a late check would instead hit the tail trap.
-    await new Promise<void>((resolve) => meter.write(prefix, (failure) => {
-      if (!failure) { bodyRequested = true; meter.destroy(new Error("forbidden body tail")); }
-      resolve();
-    }));
-    expect(await error).toMatchObject({ name: "ArchiveLimitError", code });
-    expect(bodyRequested).toBe(false);
+    const session = new TarWasmSession(resolveTarMeterLimits(options));
+    const meter = new TarParserStream(session);
+    const closed = new Promise<void>(resolve => meter.once("close", resolve));
+    try {
+      meter.resume();
+      const error = new Promise<Error>((resolve) => meter.once("error", resolve));
+      let bodyRequested = false;
+      // The producer offers the next body only after admission acknowledges its
+      // header. No body exists here: a late check would instead hit the tail trap.
+      await new Promise<void>((resolve) => meter.write(prefix, (failure) => {
+        if (!failure) { bodyRequested = true; meter.destroy(new Error("forbidden body tail")); }
+        resolve();
+      }));
+      expect(await error).toMatchObject({ name: "ArchiveLimitError", code });
+      expect(bodyRequested).toBe(false);
+    } finally { meter.destroy(); await closed; session.dispose(); }
   });
 
   it("excludes PAX/GNU records and padding from logical counts", async () => {
@@ -90,9 +97,11 @@ describe("raw TAR logical entry counts", () => {
       tarFixture([paxHeader([["size", "0"]])], false), header(700),
       tarFixture([{ path: "LongName", type: "L", body: "name\0" }, { path: "LongLink", type: "K", body: "link\0" }, member]),
     ]);
-    const meter = new TarParserStream(resolveTarMeterLimits({ ...limits, maxEntries: 2 }));
+    const session = new TarWasmSession(resolveTarMeterLimits({ ...limits, maxEntries: 2 }));
     const output: Buffer[] = [];
-    await pipeline(Readable.from([bytes]), meter, new Writable({ write(chunk, _encoding, callback) { output.push(chunk); callback(); } }));
+    try {
+      await pipeline(Readable.from([bytes]), new TarParserStream(session), new Writable({ write(chunk, _encoding, callback) { output.push(chunk); callback(); } }));
+    } finally { session.dispose(); }
     expect(Buffer.concat(output)).toEqual(bytes);
   });
 });

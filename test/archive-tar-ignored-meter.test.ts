@@ -2,7 +2,8 @@ import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession } from "../src/archive-tar-wasm.js";
+import { inspectTar } from "../src/archive-tar-stream.js";
 import { resolveTarMeterLimits, type TarMeterLimits } from "../src/archive-limits.js";
 import { createTarEntryPreflightChecker, type TarEntryInfo } from "../src/archive-tar.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
@@ -20,8 +21,8 @@ it("rejects raw linkname/type contradictions for all 256 flags before metadata o
       mutateHeader(header) { header[156] = type; },
     }], false);
     const entries: TarEntryInfo[] = [];
-    const meter = new TarParserStream(resolveTarMeterLimits({ maxEntries: 0, maxMetaEntryBytes: 0 }), (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size }));
-    await expect(pipeline(Readable.from([header]), meter, new Writable({ write(_chunk, _encoding, callback) { callback(); } })))
+    await expect(inspectTar({ archiveBuffer: header, limits: resolveTarMeterLimits({ maxEntries: 0, maxMetaEntryBytes: 0 }),
+      onMember: (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size }) }))
       .rejects.toMatchObject({ name: "ArchiveFormatError", code: "archive-header-invalid",
         message: `invalid TAR header: linkname ${isLink ? "required on a link" : "forbidden on a non-link"} header` });
     expect(entries).toEqual([]);
@@ -34,16 +35,19 @@ async function admit(bytes: Buffer, chunkSize: number, maxEntries = 50_000) {
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   };
   const output: Buffer[] = [];
-  await pipeline(Readable.from(chunks()), new TarParserStream(resolveTarMeterLimits({ maxEntries }), (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size })),
-    new Writable({ write(chunk, _encoding, callback) { output.push(chunk); callback(); } }));
+  const session = new TarWasmSession(resolveTarMeterLimits({ maxEntries }));
+  try {
+    await pipeline(Readable.from(chunks()), new TarParserStream(session, (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size })),
+      new Writable({ write(chunk, _encoding, callback) { output.push(chunk); callback(); } }));
+  } finally { session.dispose(); }
   expect(Buffer.concat(output)).toEqual(bytes);
   return entries;
 }
 
 async function rejectsBeforeEmission(bytes: Buffer, code: string, limits: Partial<TarMeterLimits> = {}, expected: TarEntryInfo[] = []) {
   const entries: TarEntryInfo[] = [];
-  const meter = new TarParserStream({ ...resolveTarMeterLimits(), ...limits }, (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size }));
-  await expect(pipeline(Readable.from([bytes]), meter, new Writable({ write(_chunk, _encoding, callback) { callback(); } })))
+  await expect(inspectTar({ archiveBuffer: bytes, limits: { ...resolveTarMeterLimits(), ...limits },
+    onMember: (entry) => entries.push({ path: entry.path, type: entry.type, size: entry.size }) }))
     .rejects.toMatchObject({ code });
   expect(entries).toEqual(expected);
 }
@@ -110,12 +114,16 @@ describe.each([1, 7, 511, 512, 513, 64 * 1024])("ignored raw admission chunk=%i"
     ]);
   });
   it.each(ignoredTypes)("counts ignored %s headers before requesting their bodies", async (type) => {
-    const meter = new TarParserStream(resolveTarMeterLimits({ maxEntries: 1 }));
-    meter.resume();
-    const failure = new Promise<Error>((resolve) => meter.once("error", resolve));
-    const prefix = Buffer.concat([tarFixture([ignored(type)], false), tarFixture([ignored(type, "second")]).subarray(0, 512)]);
-    await new Promise<void>((resolve) => meter.write(prefix, () => resolve()));
-    expect(await failure).toMatchObject({ code: "archive-entry-count-exceeds-limit" });
+    const session = new TarWasmSession(resolveTarMeterLimits({ maxEntries: 1 }));
+    const meter = new TarParserStream(session);
+    const closed = new Promise<void>(resolve => meter.once("close", resolve));
+    try {
+      meter.resume();
+      const failure = new Promise<Error>((resolve) => meter.once("error", resolve));
+      const prefix = Buffer.concat([tarFixture([ignored(type)], false), tarFixture([ignored(type, "second")]).subarray(0, 512)]);
+      await new Promise<void>((resolve) => meter.write(prefix, () => resolve()));
+      expect(await failure).toMatchObject({ code: "archive-entry-count-exceeds-limit" });
+    } finally { meter.destroy(); await closed; session.dispose(); }
   });
 });
 

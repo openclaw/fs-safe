@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
 import { resolveTarMeterLimits } from "../src/archive-limits.js";
-import { TarParserStream, type AdmittedTarMember } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession, type AdmittedTarMember } from "../src/archive-tar-wasm.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __setNativeLoaderForTest, __resetNativeLoaderForTest } from "../src/native.js";
 import { paxNative } from "./helpers/archive-pax-native.js";
@@ -24,8 +24,13 @@ afterEach(() => { __resetFsSafeNativeConfigForTest(); __resetNativeLoaderForTest
 async function parse(bytes: Buffer, chunkSize: number) {
   const members: AdmittedTarMember[] = [];
   function* chunks() { for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize); }
-  await pipeline(Readable.from(chunks()), new TarParserStream(resolveTarMeterLimits(), (entry) => members.push(entry)),
-    new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
+  const session = new TarWasmSession(resolveTarMeterLimits());
+  try {
+    await pipeline(Readable.from(chunks()), new TarParserStream(session, (entry) => members.push(entry)),
+      new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
+  } finally {
+    session.dispose();
+  }
   return members;
 }
 

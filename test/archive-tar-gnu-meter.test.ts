@@ -2,7 +2,7 @@ import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import { resolveTarMeterLimits } from "../src/archive-limits.js";
-import { TarParserStream } from "../src/archive-tar-wasm.js";
+import { TarParserStream, TarWasmSession } from "../src/archive-tar-wasm.js";
 import { gnu, gnuFixture, invalidGnu, validGnu } from "./helpers/archive-gnu.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 
@@ -11,9 +11,12 @@ async function meter(bytes: Buffer, chunkSize: number, maxMetaEntryBytes = 1024)
     for (let offset = 0; offset < bytes.length; offset += chunkSize) yield bytes.subarray(offset, offset + chunkSize);
   }
   const output: Buffer[] = [];
-  await pipeline(Readable.from(chunks()), new TarParserStream(resolveTarMeterLimits({ maxMetaEntryBytes })), new Writable({
-    write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
-  }));
+  const session = new TarWasmSession(resolveTarMeterLimits({ maxMetaEntryBytes }));
+  try {
+    await pipeline(Readable.from(chunks()), new TarParserStream(session), new Writable({
+      write(chunk: Buffer, _encoding, callback) { output.push(chunk); callback(); },
+    }));
+  } finally { session.dispose(); }
   return Buffer.concat(output);
 }
 
