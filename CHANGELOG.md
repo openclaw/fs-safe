@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Make the in-flight archive mutation deadline regression deterministic without increasing its timeout or weakening settlement assertions.
 - Remove unused private descriptor metadata and lock-handle methods while retaining temp-workspace admission checks and shared lock cleanup ownership.
 - Simplify native SHA-256 worker state while preserving positioned reads, byte limits, cancellation checks, and descriptor ownership.
 - Keep temporary filename fallback selection with its public caller, removing unused private sanitizer options while preserving shared path validation and Windows device-name protection.
