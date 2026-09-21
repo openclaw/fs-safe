@@ -113,6 +113,10 @@ If an already validated descriptor fails while reading, both readers throw an
 operational `FsSafeError` with `code: "read-failed"`; inspect `cause` for the
 underlying Node filesystem code such as `EIO`.
 
+A synchronous reader closes its descriptor once. A close failure preserves an
+earlier read or identity-validation error; after a successful read, the close
+failure is reported before trimming or rejecting empty content.
+
 Use the async strict reader when a service cannot start safely without the
 credential:
 
