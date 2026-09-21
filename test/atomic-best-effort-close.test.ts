@@ -79,6 +79,11 @@ async function runAdapter(params: {
       },
       async rename(from, to) {
         renames++;
+        if (params.route === "hardlinks-rename") {
+          // Release fixture-owned failed closes so Windows can replace the target.
+          await Promise.all(retained.map(handle => handle.close()));
+          expect(retained.every(handle => handle.fd === -1)).toBe(true);
+        }
         if (params.route === "hardlinks-fallback") {
           throw Object.assign(new Error("force copy fallback"), { code: "EPERM" });
         }
