@@ -39,6 +39,8 @@ function useWindowsIdentityBackend(inspectStage?: () => void, missing: readonly 
   configureFsSafeNative({ mode: "require" });
   const binding = {
     closeOwnedFd: fs.closeSync,
+    // Bun retains its POSIX host resolver while this fixture models Windows identity.
+    canonicalizePath: (pathname: string) => ({ path: fs.realpathSync(pathname) }),
     inspectWindowsDirectory: (pathname: string) => {
       if (path.basename(pathname).startsWith(".fs-safe-create-")) inspectStage?.();
       return { identity: observed(pathname) };
