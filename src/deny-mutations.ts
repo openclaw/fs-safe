@@ -24,14 +24,13 @@ function strictMutationComparablePaths(pathname: string): readonly string[] {
   const resolved = resolvePathPreservingWindowsRoot(pathname);
   assertNoWindowsPathAlias(resolved, "filesystem", "mutation path uses a Windows filesystem namespace alias");
   let cursor = resolved;
-  const missing: string[] = [];
-  while (path.parse(cursor).root !== cursor) {
+  const filesystemRoot = path.parse(resolved).root;
+  while (cursor !== filesystemRoot) {
     try {
       fs.lstatSync(pathForWindowsFilesystem(cursor));
       break;
     } catch (error) {
       if (!isNotFoundPathError(error)) throw error;
-      missing.unshift(path.basename(cursor));
       cursor = path.dirname(cursor);
     }
   }
@@ -39,9 +38,9 @@ function strictMutationComparablePaths(pathname: string): readonly string[] {
   // ambiguous existing ancestors distinct from Root's lexical fallback.
   const canonicalAncestor = realpathSync.native(pathForWindowsFilesystem(cursor));
   assertNoWindowsPathAlias(canonicalAncestor, "filesystem", "mutation path uses a Windows filesystem namespace alias");
-  const canonical = missing.length === 0
+  const canonical = cursor === resolved
     ? canonicalAncestor
-    : path.resolve(canonicalAncestor, ...missing);
+    : path.resolve(canonicalAncestor, `.${path.sep}${resolved.slice(cursor.length)}`);
   assertNoWindowsPathAlias(canonical, "filesystem", "mutation path uses a Windows filesystem namespace alias");
   return path.relative(path.resolve(resolved), path.resolve(canonical)) === ""
     ? [resolved] : [resolved, canonical];

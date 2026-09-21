@@ -6,22 +6,34 @@ use std::os::windows::io::FromRawHandle;
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
 
+use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+use windows_sys::Wdk::Storage::FileSystem::{
+    FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF,
+    FILE_OPEN_REPARSE_POINT, FILE_OVERWRITE, FILE_OVERWRITE_IF,
+    FILE_RENAME_POSIX_SEMANTICS as FILE_RENAME_FLAG_POSIX_SEMANTICS,
+    FILE_RENAME_REPLACE_IF_EXISTS as FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
+    FILE_SYNCHRONOUS_IO_NONALERT, FileLinkInformation as FILE_LINK_INFORMATION_CLASS,
+    FileRenameInformationEx as FILE_RENAME_INFORMATION_EX_CLASS, NtCreateFile, NtReadFile,
+    NtSetInformationFile,
+};
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
     ERROR_CALL_NOT_IMPLEMENTED, ERROR_DISK_FULL, ERROR_FILE_EXISTS, ERROR_FILE_NOT_FOUND,
     ERROR_HANDLE_DISK_FULL, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_LOCK_VIOLATION,
     ERROR_NOT_SUPPORTED, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
-    GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE,
+    OBJ_DONT_REPARSE, RtlNtStatusToDosError, STATUS_END_OF_FILE, UNICODE_STRING,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+    BY_HANDLE_FILE_INFORMATION, CreateFileW, DELETE as DELETE_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
     FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
     FILE_DISPOSITION_INFO_EX, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_BOTH_DIR_INFO,
-    FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo,
+    FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FileAttributeTagInfo,
     FileDispositionInfoEx, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, FileIdInfo,
-    GetFileInformationByHandle, GetFileInformationByHandleEx, OPEN_EXISTING, ReOpenFile,
-    SetFileInformationByHandle,
+    GetFileInformationByHandle, GetFileInformationByHandleEx, OPEN_EXISTING, READ_CONTROL, ReOpenFile,
+    SYNCHRONIZE as SYNCHRONIZE_ACCESS, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -36,81 +48,6 @@ const O_RDWR: i32 = 0x0002;
 const O_CREAT: i32 = 0x0100;
 const O_TRUNC: i32 = 0x0200;
 const O_EXCL: i32 = 0x0400;
-
-const DELETE_ACCESS: u32 = 0x0001_0000;
-const READ_CONTROL: u32 = 0x0002_0000;
-const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
-const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
-const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
-const FILE_OPEN: u32 = 1;
-const FILE_CREATE: u32 = 2;
-const FILE_OPEN_IF: u32 = 3;
-const FILE_OVERWRITE: u32 = 4;
-const FILE_OVERWRITE_IF: u32 = 5;
-const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
-const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
-const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
-const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
-const OBJ_DONT_REPARSE: u32 = 0x0000_1000;
-const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x0000_0001;
-const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x0000_0002;
-const FILE_LINK_INFORMATION_CLASS: i32 = 11;
-const FILE_RENAME_INFORMATION_EX_CLASS: i32 = 65;
-
-#[repr(C)]
-struct UnicodeString {
-    length: u16,
-    maximum_length: u16,
-    buffer: *mut u16,
-}
-
-#[repr(C)]
-struct ObjectAttributes {
-    length: u32,
-    root_directory: HANDLE,
-    object_name: *mut UnicodeString,
-    attributes: u32,
-    security_descriptor: *mut c_void,
-    security_quality_of_service: *mut c_void,
-}
-
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    fn NtCreateFile(
-        file_handle: *mut HANDLE,
-        desired_access: u32,
-        object_attributes: *mut ObjectAttributes,
-        io_status_block: *mut IO_STATUS_BLOCK,
-        allocation_size: *const i64,
-        file_attributes: u32,
-        share_access: u32,
-        create_disposition: u32,
-        create_options: u32,
-        ea_buffer: *const c_void,
-        ea_length: u32,
-    ) -> i32;
-    fn NtSetInformationFile(
-        file_handle: HANDLE,
-        io_status_block: *mut IO_STATUS_BLOCK,
-        file_information: *const c_void,
-        length: u32,
-        file_information_class: i32,
-    ) -> i32;
-    fn NtReadFile(
-        file_handle: HANDLE,
-        event: HANDLE,
-        apc_routine: *const c_void,
-        apc_context: *const c_void,
-        io_status_block: *mut IO_STATUS_BLOCK,
-        buffer: *mut c_void,
-        length: u32,
-        byte_offset: *const i64,
-        key: *const u32,
-    ) -> i32;
-    fn RtlNtStatusToDosError(status: i32) -> u32;
-}
 
 pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 
@@ -531,22 +468,22 @@ fn nt_open_relative_with_security_descriptor(
         }
     }
     let mut name = wide_relative(path)?;
-    let mut unicode = UnicodeString {
-        length: (name.len() * 2) as u16,
-        maximum_length: (name.len() * 2) as u16,
-        buffer: name.as_mut_ptr(),
+    let unicode = UNICODE_STRING {
+        Length: (name.len() * 2) as u16,
+        MaximumLength: (name.len() * 2) as u16,
+        Buffer: name.as_mut_ptr(),
     };
-    let mut attributes = ObjectAttributes {
-        length: size_of::<ObjectAttributes>() as u32,
-        root_directory: root,
-        object_name: &mut unicode,
-        attributes: OBJ_CASE_INSENSITIVE | match reparse_policy {
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: root,
+        ObjectName: &unicode,
+        Attributes: OBJ_CASE_INSENSITIVE | match reparse_policy {
             ReparsePolicy::Reject => OBJ_DONT_REPARSE,
             // Validated direct child: no intermediate components can reparse.
             ReparsePolicy::AllowLeaf => 0,
         },
-        security_descriptor,
-        security_quality_of_service: null_mut(),
+        SecurityDescriptor: security_descriptor.cast(),
+        SecurityQualityOfService: null(),
     };
     // SAFETY: all pointers reference initialized, call-scoped storage.
     let mut io: IO_STATUS_BLOCK = unsafe { zeroed() };
@@ -555,7 +492,7 @@ fn nt_open_relative_with_security_descriptor(
         NtCreateFile(
             &mut handle,
             desired_access | FILE_READ_ATTRIBUTES | SYNCHRONIZE_ACCESS,
-            &mut attributes,
+            &attributes,
             &mut io,
             null(),
             0,
@@ -1287,7 +1224,6 @@ pub(crate) fn open_independent_reader_handle(handle: HANDLE) -> NativeResult<Ind
 }
 
 pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> NativeResult<usize> {
-    const STATUS_END_OF_FILE: i32 = 0xC000_0011_u32 as i32;
     let offset = i64::try_from(offset)
         .map_err(|_| native_error("EINVAL", "read offset exceeds Windows range"))?;
     let length = u32::try_from(buffer.len())
@@ -1299,7 +1235,7 @@ pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> Na
         NtReadFile(
             reader.0.0,
             null_mut(),
-            null(),
+            None,
             null(),
             &mut io,
             buffer.as_mut_ptr().cast(),
@@ -1349,6 +1285,36 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn sdk_object_layouts_match_windows_64_bit_abi() {
+        use std::mem::{align_of, offset_of};
+
+        assert_eq!(
+            [
+                size_of::<UNICODE_STRING>(),
+                align_of::<UNICODE_STRING>(),
+                offset_of!(UNICODE_STRING, Length),
+                offset_of!(UNICODE_STRING, MaximumLength),
+                offset_of!(UNICODE_STRING, Buffer),
+            ],
+            [16, 8, 0, 2, 8],
+        );
+        assert_eq!(
+            [
+                size_of::<OBJECT_ATTRIBUTES>(),
+                align_of::<OBJECT_ATTRIBUTES>(),
+                offset_of!(OBJECT_ATTRIBUTES, Length),
+                offset_of!(OBJECT_ATTRIBUTES, RootDirectory),
+                offset_of!(OBJECT_ATTRIBUTES, ObjectName),
+                offset_of!(OBJECT_ATTRIBUTES, Attributes),
+                offset_of!(OBJECT_ATTRIBUTES, SecurityDescriptor),
+                offset_of!(OBJECT_ATTRIBUTES, SecurityQualityOfService),
+            ],
+            [48, 8, 0, 8, 16, 24, 32, 40],
+        );
+    }
 
     #[test]
     fn directory_observation_retains_exact_identity_and_unknown_values() {

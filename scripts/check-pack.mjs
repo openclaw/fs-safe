@@ -96,8 +96,9 @@ try {
     throw new Error(`packed package is missing: ${missing.join(", ")}`);
   }
 
+  // Declaration maps target src/, which the published package intentionally excludes.
   const forbidden = [...paths].filter((path) =>
-    /^(?:\.agents|\.github|scripts|src|test)\//.test(path),
+    /^(?:\.agents|\.github|scripts|src|test)\//.test(path) || path.endsWith(".d.ts.map"),
   );
   if (forbidden.length > 0) {
     throw new Error(`packed package contains repository-only files: ${forbidden.join(", ")}`);
