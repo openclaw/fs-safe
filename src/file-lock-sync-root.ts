@@ -338,16 +338,13 @@ function resolveTargetPathViaExistingAncestorSync(targetPath: string): string {
   const normalized = resolvePathPreservingWindowsRoot(targetPath);
   const canonicalize = process.platform === "win32" ? realpathSync.native : realpathSync;
   let cursor = normalized;
-  const missing: string[] = [];
+  let canonicalAncestor: string;
   while (true) {
     try {
       fs.lstatSync(pathForWindowsFilesystem(cursor));
       try {
-        const canonicalAncestor = canonicalize(pathForWindowsFilesystem(cursor));
-        assertNoWindowsPathAlias(canonicalAncestor, "filesystem", "file-lock target ancestor uses a Windows filesystem namespace alias");
-        return missing.length === 0
-          ? resolvePathPreservingWindowsRoot(canonicalAncestor)
-          : resolvePathPreservingWindowsRoot(path.resolve(canonicalAncestor, ...missing));
+        canonicalAncestor = canonicalize(pathForWindowsFilesystem(cursor));
+        break;
       } catch (error) {
         if (!isNotFoundPathError(error)) throw error;
         // A dangling link is an existing lexical entry but not a canonical
@@ -361,15 +358,15 @@ function resolveTargetPathViaExistingAncestorSync(targetPath: string): string {
     if (parent === cursor) {
       // Filesystem roots are expected to exist; preserve the underlying
       // not-found diagnosis if a synthetic namespace violates that premise.
-      const canonicalAncestor = canonicalize(pathForWindowsFilesystem(cursor));
-      assertNoWindowsPathAlias(canonicalAncestor, "filesystem", "file-lock target ancestor uses a Windows filesystem namespace alias");
-      return missing.length === 0
-        ? resolvePathPreservingWindowsRoot(canonicalAncestor)
-        : resolvePathPreservingWindowsRoot(path.resolve(canonicalAncestor, ...missing));
+      canonicalAncestor = canonicalize(pathForWindowsFilesystem(cursor));
+      break;
     }
-    missing.unshift(path.basename(cursor));
     cursor = parent;
   }
+  assertNoWindowsPathAlias(canonicalAncestor, "filesystem", "file-lock target ancestor uses a Windows filesystem namespace alias");
+  return resolvePathPreservingWindowsRoot(cursor === normalized
+    ? canonicalAncestor
+    : path.resolve(canonicalAncestor, `.${path.sep}${normalized.slice(cursor.length)}`));
 }
 
 export function normalizeFileLockSyncTargetWithRoot(
