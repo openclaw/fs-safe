@@ -676,10 +676,6 @@ fn remove_directory_contents_with_hook(
     Ok(())
 }
 
-fn remove_directory_contents(directory_fd: i32, root_device: u64) -> NativeResult<()> {
-    remove_directory_contents_with_hook(directory_fd, root_device, &mut |_| {})
-}
-
 fn remove_owned_tree_root_with_hook(
     parent_fd: i32,
     name: &str,
@@ -725,7 +721,7 @@ fn remove_owned_tree_with_hook(
     }
     let root = rustix::fs::fstat(borrowed(directory_fd))
         .map_err(|error| os_error(error, "inspect owned tree root"))?;
-    remove_directory_contents(directory_fd, root.st_dev as u64)?;
+    remove_directory_contents_with_hook(directory_fd, root.st_dev as u64, &mut |_| {})?;
     if !directory_name_matches_fd(parent_fd, name, directory_fd)? {
         return Ok("preserved".to_owned());
     }
@@ -741,11 +737,6 @@ pub fn remove_owned_tree(
     directory_fd: i32,
 ) -> NativeResult<String> {
     remove_owned_tree_with_hook(parent_fd, name, directory_fd, || {})
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn remove_created_target(root_fd: i32, rel_path: &str, target: &OwnedFd) {
-    let _ = remove_created_target_checked(root_fd, rel_path, target);
 }
 
 fn remove_created_target_checked(
@@ -1253,14 +1244,14 @@ pub fn copy_file_range_exclusive(
     let target_offset = match copied {
         Ok(bytes) => bytes,
         Err(error) => {
-            remove_created_target(target_root_fd, target_rel_path, &target);
+            let _ = remove_created_target_checked(target_root_fd, target_rel_path, &target);
             return Err(error);
         }
     };
     if let Err(error) = rustix::fs::fchmod(target.as_fd(), Mode::from_bits_retain(0o600))
         .and_then(|()| rustix::fs::fsync(target.as_fd()))
     {
-        remove_created_target(target_root_fd, target_rel_path, &target);
+        let _ = remove_created_target_checked(target_root_fd, target_rel_path, &target);
         return Err(os_error(error, "normalize copied file"));
     }
     Ok((target.into_raw_fd(), target_offset))
@@ -2281,7 +2272,7 @@ mod tests {
                 fs::rename(&target_path, root.join("nested/original")).unwrap();
                 fs::write(&target_path, b"substitute").unwrap();
             }
-            remove_created_target(parent.as_raw_fd(), "nested/target", &target);
+            let _ = remove_created_target_checked(parent.as_raw_fd(), "nested/target", &target);
             if substituted {
                 assert_eq!(fs::read(&target_path).unwrap(), b"substitute");
                 assert_eq!(fs::read(root.join("nested/original")).unwrap(), b"owned");
