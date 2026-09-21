@@ -8,7 +8,7 @@ import type {
 import { captureRootSyncAcquireOptions } from "./file-lock-sync-root-options.js";
 import { defaultSyncShouldReclaim, foreignSyncHeldLock } from "./file-lock-sync-admission.js";
 import type { Root } from "./root-impl.js";
-import { isTransientLockFileDenial } from "./sidecar-lock-policy.js";
+import { isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
 import {
   serializeSidecarLockPayload,
   type SidecarLockSnapshot,
@@ -324,11 +324,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             }
             releaseReclaimGuard();
           }
-          throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
-            code: "file_lock_stale",
-            lockPath,
-            normalizedTargetPath,
-          });
+          throw sidecarLockStale(lockPath, normalizedTargetPath);
         }
         acquisition.waitForRetry();
       }

@@ -34,8 +34,9 @@ export const EXTENDED_CASES = Object.freeze([
       route: mode === "off" ? "windows-buffer-legacy" : "windows-buffer-compat",
       renamePolicy: mode === "off" ? "default" : "verify-content-with-lock",
       stableFinalSymlinkPublished: true, aliasPreserved: true,
-      refusals: 3, callbacksAfterRefusal: 0, placeholdersObserved: 2,
-      placeholdersAbsentAfterRefusal: true, completedStagesObserved: 2,
+      refusals: 3, callbacksAfterRefusal: 0, missingDestinationRefusals: 2,
+      missingDestinationsAbsentAtCallbacks: true,
+      missingDestinationsAbsentAfterRefusal: true, completedStagesObserved: 2,
       destinationPreserved: true, ownedStagesRemoved: true,
     }),
   })),
@@ -246,7 +247,7 @@ async function windowsWriteCases(definition, api, fixture, helpers) {
   const activeLockEntries = compatibility.renameIdentity
     ? [`.fs-safe-write-${createHash("sha256").update("selected").digest("hex")}.lock`]
     : [];
-  for (const scenario of ["stable", "stage-placeholder", "publish-placeholder", "publish-alias"]) {
+  for (const scenario of ["stable", "stage-missing", "publish-missing", "publish-alias"]) {
     const scope = await subroot(fixture, scenario, api, io);
     const aliasCase = scenario === "stable" || scenario === "publish-alias";
     const target = path.join(scope.directory, "selected");
@@ -261,31 +262,23 @@ async function windowsWriteCases(definition, api, fixture, helpers) {
       await io(scope.safe.write("alias", PAYLOAD, options));
       invariant(fsSync.readFileSync(target).equals(PAYLOAD), "WINDOWS_ALIAS_NOT_PUBLISHED");
     } else {
-      let placeholderObserved = false;
       let observedStage;
       const state = authorityState(() => {
         assertSentinel(path.join(scope.directory, "sentinel"), invariant);
         if (aliasCase) assertSentinel(target, invariant);
-        else if (!absent(target)) {
-          const stat = fsSync.lstatSync(target);
-          invariant(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size === 0,
-            "PLACEHOLDER_NOT_EMPTY_SINGLE_LINK_FILE");
-          placeholderObserved = true;
-        }
-        if (scenario === "stage-placeholder") {
-          if (!placeholderObserved) return false;
-          assertEntries(scope.directory, [...activeLockEntries, "selected", "sentinel"], invariant);
+        else invariant(absent(target), "DESTINATION_VISIBLE_BEFORE_PUBLICATION");
+        if (scenario === "stage-missing") {
+          assertEntries(scope.directory, [...activeLockEntries, "sentinel"], invariant);
           return true;
         }
         observedStage = completeStage(scope.directory, PAYLOAD, invariant);
-        if (observedStage && !aliasCase) invariant(absent(target), "PLACEHOLDER_RETAINED_AT_PUBLICATION");
         return observedStage !== undefined;
       }, invariant);
       await refusal(() => io(scope.safe.write(aliasCase ? "alias" : "selected", PAYLOAD, {
         ...options, assertBeforeMutation: state.callback,
       })), state, invariant);
-      invariant(aliasCase || (placeholderObserved && absent(target)), "PLACEHOLDER_NOT_REMOVED");
-      if (scenario !== "stage-placeholder") invariant(observedStage !== undefined && absent(observedStage), "OWNED_STAGE_NOT_REMOVED");
+      invariant(aliasCase || absent(target), "MISSING_DESTINATION_CREATED");
+      if (scenario !== "stage-missing") invariant(observedStage !== undefined && absent(observedStage), "OWNED_STAGE_NOT_REMOVED");
       if (aliasCase) assertSentinel(target, invariant);
     }
     if (aliasCase) {

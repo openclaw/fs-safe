@@ -108,7 +108,11 @@ export function openPinnedFileSync(params: {
     return { ok: false, reason: "io", error };
   } finally {
     if (fd !== null) {
-      ioFs.closeSync(fd);
+      try {
+        ioFs.closeSync(fd);
+      } catch {
+        // Preserve the failed admission result; success transfers fd above.
+      }
     }
   }
 }

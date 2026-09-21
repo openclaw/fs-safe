@@ -45,8 +45,14 @@ wrong file. Resolve an intended alias explicitly with `Root.resolve()` before
 passing its canonical path to a mutation.
 
 A failure before the final rename leaves the destination at its previous
-contents. A successful rename publishes the complete replacement. This
-old-or-new guarantee does not apply to `append()` or `openWritable()`, which
+contents. A successful rename publishes the complete replacement. Buffered
+Windows replacement writes also keep a missing destination absent while staging;
+they do not reserve an empty file at the final name. An ordinary writable file created
+concurrently may be replaced under `overwrite: true`. Immediately before rename,
+the writer rechecks the selected destination's type and link count, admits a raced
+file's access, and verifies retained file/parent identities and mutation policy.
+
+The old-or-new guarantee does not apply to `append()` or `openWritable()`, which
 write in place, or to lower-level atomic helpers when their explicitly
 non-atomic permission-error copy fallback is enabled.
 
@@ -610,7 +616,7 @@ await fs.write("state.json", body); // succeeds on rclone FUSE
 
 **Security note.** `verify-content-with-lock` proves that the bytes observed after rename match the requested write and prevents *cooperating* writers from interleaving. It does **not** prove that the destination still names the temp-file object, retain fd-relative parent pinning, or stop a same-UID process that ignores the advisory lock. Do not use this option on directories writable by untrusted same-UID processes. Strict identity verification remains the default.
 
-Windows `Root.write()` and `Root.writeJson()` honor this policy both as a Root default and as a per-call option. The Windows buffered writer acquires the same Root compatibility lock before creating parents, placeholders, or content. It keeps staging writable until publication, then applies the final mode through the retained destination descriptor. When content verification accepts a changed rename identity, that destination remains pinned through file sync, parent sync, and final strict identity checks.
+Windows `Root.write()` and `Root.writeJson()` honor this policy both as a Root default and as a per-call option. The Windows buffered writer acquires the same Root compatibility lock before creating parents or staging content. It keeps staging writable until publication, then applies the final mode through the retained destination descriptor. When content verification accepts a changed rename identity, that destination remains pinned through file sync, parent sync, and final strict identity checks.
 
 The Windows buffered compatibility path resolves permitted in-root aliases before choosing its lock and binds publication to that effective destination. With the existing lock protocol, effective path components beneath the Root must contain only lower-case ASCII letters, digits, `.`, `_`, or `-`, with no trailing `.`. Unsupported spellings, including missing upper-case or non-ASCII names, fail with `path-alias` before mutation; no filesystem case-sensitivity or Unicode-folding behavior is guessed. This restriction does not apply to strict writes. Opaque Windows pathname identities still use strict verification against the retained original descriptor: they never, by themselves, authorize content-based acceptance of a replacement.
 

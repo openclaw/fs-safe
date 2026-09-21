@@ -10,6 +10,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockStaleRecovery } from "./sidecar-lock-types.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
+import { sidecarLockStale } from "./sidecar-lock-policy.js";
 
 export type SyncStaleOptionsState<TPayload extends Record<string, unknown>> = {
   shouldReclaimObserved?: boolean;
@@ -155,11 +156,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
       throw error;
     }
     if (!approved) {
-      throw Object.assign(new Error(`file lock stale for ${acquisition.normalizedTargetPath}`), {
-        code: "file_lock_stale",
-        lockPath: acquisition.lockPath,
-        normalizedTargetPath: acquisition.normalizedTargetPath,
-      });
+      throw sidecarLockStale(acquisition.lockPath, acquisition.normalizedTargetPath);
     }
     try {
       fs.mkdirSync(params.reclaimGuardPath);
@@ -199,9 +196,5 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
       return;
     }
   }
-  throw Object.assign(new Error(`file lock stale for ${acquisition.normalizedTargetPath}`), {
-    code: "file_lock_stale",
-    lockPath: acquisition.lockPath,
-    normalizedTargetPath: acquisition.normalizedTargetPath,
-  });
+  throw sidecarLockStale(acquisition.lockPath, acquisition.normalizedTargetPath);
 }

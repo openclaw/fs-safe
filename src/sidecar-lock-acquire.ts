@@ -369,8 +369,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
       } catch (err) {
         try {
           if (createdHeld) stopSidecarLockMonitoring(createdHeld);
+          let failedSnapshot = createdSnapshot;
           if (handle) {
-            const failedSnapshot: SidecarLockSnapshot = createdSnapshot ?? { payload: null };
+            failedSnapshot ??= { payload: null };
             try {
               failedSnapshot.stat = fsSync.fstatSync(handle.fd);
             } catch {
@@ -381,17 +382,10 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               context.held.delete(normalizedTargetPath);
             }
             await handle.close().catch(() => undefined);
-            // Root records use the creator receipt; partial raw writes use fd identity.
+          }
+          // Root records use the creator receipt; partial raw writes use fd identity.
+          if (failedSnapshot) {
             await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
-              lockRoot,
-              parsePayload: conditionalSidecarLockParser(
-                parserState,
-                admission,
-                () => admission.hasToken() && !context.held.has(normalizedTargetPath),
-              ),
-            });
-          } else if (createdSnapshot) {
-            await removeSidecarLockIfUnchanged(lockPath, createdSnapshot, {
               lockRoot,
               parsePayload: conditionalSidecarLockParser(
                 parserState,

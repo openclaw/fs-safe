@@ -111,8 +111,9 @@ describe.skipIf(process.platform === "win32")("initial directory-mode admission 
       return fd;
     });
     vi.spyOn(fsSync, "closeSync").mockImplementation(fd => {
+      if (fd === descriptor) closes++;
       close(fd);
-      if (fd === descriptor) { closes++; throw failures.close; }
+      if (fd === descriptor) throw failures.close;
     });
     vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
       if (kind === "inspection" && args[0] === descriptor && !injected) {

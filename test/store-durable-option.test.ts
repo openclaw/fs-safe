@@ -147,6 +147,7 @@ for (const backend of ["auto", "require", "off"] as const) {
               .write("target", "payload")).toThrow(expect.objectContaining({ code: "path-mismatch" }));
           } else {
             vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
+              if (params.targetPath !== target) return await verifyPublished(params);
               await fs.rename(target, published);
               await fs.writeFile(target, "substitute");
               await verifyPublished(params);

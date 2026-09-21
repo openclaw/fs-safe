@@ -106,7 +106,9 @@ before component traversal. Immediately before transferring descriptor ownership
 they check that root, freshly canonicalize the consumed pathname, admit the fresh
 spelling under the captured root, compare a no-follow canonical-leaf observation
 with the retained descriptor, and check the root again. Boundary or identity drift
-is a validation failure and the descriptor is closed. A custom `ioFs` supplies
+is a validation failure and triggers one descriptor-close attempt. If cleanup also
+fails, the selected admission failure result is preserved. Successful opens transfer
+descriptor ownership to the caller. A custom `ioFs` supplies
 these observations; the built-in adapter uses fs-safe's native realpath wrapper.
 On Windows, the built-in adapter binds native root spelling before traversal,
 including supplied `rootRealPath`, and returns that spelling in its root receipt.

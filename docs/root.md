@@ -49,6 +49,10 @@ Every `maxBytes` value must be a non-negative safe integer or positive `Infinity
 
 Every method on the returned handle accepts paths relative to the root and rejects anything that would escape it.
 
+Explicit path, data, and copy-source arguments select the operation. Properties
+with those names in an options object do not replace them; a supplied source
+Root retains ownership of source admission and read policy.
+
 ### Reads
 
 ```ts
