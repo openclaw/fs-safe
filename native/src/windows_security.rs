@@ -66,164 +66,122 @@ fn ace_flags(raw: u8) -> WindowsAceFlags {
     }
 }
 
-#[napi(js_name = "createPrivateDirectory")]
-pub fn create_private_directory(env: Env, path: String) -> Result<()> {
-    #[cfg(windows)]
-    return into_napi(
-        env,
-        validate_windows_filesystem_path(&path)
-            .and_then(|()| windows::create_private_directory(&path)),
-    );
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "private Windows directories are only available on Windows",
-            )),
-        )
-    }
+macro_rules! windows_security_export {
+    (
+        $js_name:literal,
+        fn $name:ident($env:ident: Env, $($args:tt)*) -> $result:ty,
+        $operation:expr,
+        $unused:expr,
+        $unsupported:literal
+    ) => {
+        #[napi(js_name = $js_name)]
+        pub fn $name($env: Env, $($args)*) -> Result<$result> {
+            #[cfg(windows)]
+            return into_napi(
+                $env,
+                $operation,
+            );
+            #[cfg(not(windows))]
+            {
+                let _ = $unused;
+                into_napi(
+                    $env,
+                    Err(native_error(
+                        "ENOTSUP",
+                        $unsupported,
+                    )),
+                )
+            }
+        }
+    };
 }
 
-#[napi(js_name = "inspectWindowsDirectory")]
-pub fn inspect_windows_directory(
-    env: Env,
-    path: String,
-    require_private: bool,
-) -> Result<WindowsIdentityReceipt> {
-    #[cfg(windows)]
-    return into_napi(
-        env,
-        validate_windows_filesystem_path(&path)
-            .and_then(|()| windows::inspect_directory(&path, require_private)),
-    );
-    #[cfg(not(windows))]
-    {
-        let _ = (path, require_private);
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "Windows directory inspection is only available on Windows",
-            )),
-        )
-    }
-}
+windows_security_export!(
+    "createPrivateDirectory",
+    fn create_private_directory(env: Env, path: String) -> (),
+    validate_windows_filesystem_path(&path)
+        .and_then(|()| windows::create_private_directory(&path)),
+    path,
+    "private Windows directories are only available on Windows"
+);
 
-#[napi(js_name = "createPrivateDirectoryWithParentIdentity")]
-pub fn create_private_directory_with_parent_identity(
-    env: Env,
-    path: String,
-    expected_parent_identity: String,
-) -> Result<WindowsIdentityReceipt> {
-    #[cfg(windows)]
-    return into_napi(
-        env,
-        validate_windows_filesystem_path(&path).and_then(|()| {
-            windows::create_private_directory_with_parent_identity(&path, &expected_parent_identity)
-        }),
-    );
-    #[cfg(not(windows))]
-    {
-        let _ = (path, expected_parent_identity);
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "private Windows directories are only available on Windows",
-            )),
-        )
-    }
-}
+windows_security_export!(
+    "inspectWindowsDirectory",
+    fn inspect_windows_directory(
+        env: Env,
+        path: String,
+        require_private: bool,
+    ) -> WindowsIdentityReceipt,
+    validate_windows_filesystem_path(&path)
+        .and_then(|()| windows::inspect_directory(&path, require_private)),
+    (path, require_private),
+    "Windows directory inspection is only available on Windows"
+);
 
-#[napi(js_name = "protectPrivateWindowsFile")]
-pub fn protect_private_windows_file(
-    env: Env,
-    fd: i32,
-    path: String,
-    expected_parent_identity: String,
-) -> Result<WindowsIdentityReceipt> {
-    #[cfg(windows)]
-    return into_napi(
-        env,
-        validate_windows_filesystem_path(&path)
-            .and_then(|()| windows::protect_private_file(fd, &path, &expected_parent_identity)),
-    );
-    #[cfg(not(windows))]
-    {
-        let _ = (fd, path, expected_parent_identity);
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "private Windows file protection is only available on Windows",
-            )),
-        )
-    }
-}
+windows_security_export!(
+    "createPrivateDirectoryWithParentIdentity",
+    fn create_private_directory_with_parent_identity(
+        env: Env,
+        path: String,
+        expected_parent_identity: String,
+    ) -> WindowsIdentityReceipt,
+    validate_windows_filesystem_path(&path).and_then(|()| {
+        windows::create_private_directory_with_parent_identity(&path, &expected_parent_identity)
+    }),
+    (path, expected_parent_identity),
+    "private Windows directories are only available on Windows"
+);
 
-#[napi(js_name = "verifyPrivateWindowsFile")]
-pub fn verify_private_windows_file(
-    env: Env,
-    fd: i32,
-    path: String,
-    expected_file_identity: String,
-    expected_parent_identity: String,
-    expected_links: u32,
-) -> Result<()> {
-    #[cfg(windows)]
-    return into_napi(
-        env,
-        validate_windows_filesystem_path(&path).and_then(|()| {
-            windows::verify_private_file(
-                fd,
-                &path,
-                &expected_file_identity,
-                &expected_parent_identity,
-                expected_links,
-            )
-        }),
-    );
-    #[cfg(not(windows))]
-    {
-        let _ = (
+windows_security_export!(
+    "protectPrivateWindowsFile",
+    fn protect_private_windows_file(
+        env: Env,
+        fd: i32,
+        path: String,
+        expected_parent_identity: String,
+    ) -> WindowsIdentityReceipt,
+    validate_windows_filesystem_path(&path)
+        .and_then(|()| windows::protect_private_file(fd, &path, &expected_parent_identity)),
+    (fd, path, expected_parent_identity),
+    "private Windows file protection is only available on Windows"
+);
+
+windows_security_export!(
+    "verifyPrivateWindowsFile",
+    fn verify_private_windows_file(
+        env: Env,
+        fd: i32,
+        path: String,
+        expected_file_identity: String,
+        expected_parent_identity: String,
+        expected_links: u32,
+    ) -> (),
+    validate_windows_filesystem_path(&path).and_then(|()| {
+        windows::verify_private_file(
             fd,
-            path,
-            expected_file_identity,
-            expected_parent_identity,
+            &path,
+            &expected_file_identity,
+            &expected_parent_identity,
             expected_links,
-        );
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "private Windows file verification is only available on Windows",
-            )),
         )
-    }
-}
+    }),
+    (
+        fd,
+        path,
+        expected_file_identity,
+        expected_parent_identity,
+        expected_links,
+    ),
+    "private Windows file verification is only available on Windows"
+);
 
-#[napi(js_name = "readOwnerAndDacl")]
-pub fn read_owner_and_dacl(env: Env, path: String) -> Result<WindowsSecurityFacts> {
-    #[cfg(windows)]
-    return into_napi(
-        env,
-        validate_windows_filesystem_path(&path).and_then(|()| windows::read_owner_and_dacl(&path)),
-    );
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "Windows owner and DACL inspection is only available on Windows",
-            )),
-        )
-    }
-}
+windows_security_export!(
+    "readOwnerAndDacl",
+    fn read_owner_and_dacl(env: Env, path: String) -> WindowsSecurityFacts,
+    validate_windows_filesystem_path(&path).and_then(|()| windows::read_owner_and_dacl(&path)),
+    path,
+    "Windows owner and DACL inspection is only available on Windows"
+);
 
 #[cfg(windows)]
 mod windows {
