@@ -321,9 +321,9 @@ export class RootHandle implements Root {
 
   async open(relativePath: string, options: RootOpenOptions = {}): Promise<OpenResult> {
     return await openFileInRoot(this.context, {
-      relativePath,
       ...readDefaults(this.defaults),
       ...options,
+      relativePath,
     });
   }
 
@@ -381,10 +381,11 @@ export class RootHandle implements Root {
     assertValidRootDestinationPath(relativePath);
     const writeMode = options.writeMode ?? "replace";
     const target = await openWritableFileInRoot(this.context, {
-      relativePath,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
+      relativePath,
+      expectedWritePath: undefined,
       append: writeMode === "append",
       truncateExisting: writeMode === "replace",
     }).catch(rethrowMutationAuthorityError);
@@ -394,11 +395,11 @@ export class RootHandle implements Root {
   async append(relativePath: string, data: string | Buffer, options: RootAppendOptions = {}): Promise<void> {
     assertValidRootDestinationPath(relativePath);
     await appendFileInRoot(this.context, {
-      relativePath,
-      data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(options),
+      relativePath,
+      data,
       durable: options.durable ?? this.defaults.durable ?? true,
     }).catch(rethrowMutationAuthorityError);
   }
@@ -408,24 +409,25 @@ export class RootHandle implements Root {
     validateRemoveOptions(options);
     options.signal?.throwIfAborted();
     await removePathInRoot(this.context, {
-      relativePath,
       ...this.mutationOptions(options),
+      relativePath,
     }).catch(rethrowMutationAuthorityError);
   }
 
   async mkdir(relativePath: string, options: RootMkdirOptions = {}): Promise<void> {
     assertValidRootDestinationPath(relativePath);
     await mkdirPathInRoot(this.context, {
-      relativePath,
       ...this.mutationOptions(options),
+      relativePath,
+      allowRoot: false,
     }).catch(rethrowMutationAuthorityError);
   }
 
   async ensureRoot(options: RootMkdirOptions = {}): Promise<void> {
     await mkdirPathInRoot(this.context, {
+      ...this.mutationOptions(options),
       relativePath: "",
       allowRoot: true,
-      ...this.mutationOptions(options),
     }).catch(rethrowMutationAuthorityError);
   }
 
@@ -436,12 +438,12 @@ export class RootHandle implements Root {
   ): Promise<void> {
     assertValidRootDestinationPath(relativePath);
     await writeFileInRoot(this.context, {
-      relativePath,
-      data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       renameIdentity: this.defaults.renameIdentity,
       ...this.mutationOptions(options),
+      relativePath,
+      data,
       durable: options.durable ?? this.defaults.durable ?? true,
     }).catch(rethrowMutationAuthorityError);
   }
@@ -456,11 +458,11 @@ export class RootHandle implements Root {
     assertValidRootDestinationPath(relativePath);
     const durable = options.durable ?? this.defaults.durable ?? true;
     await writeFileInRoot(this.context, {
-      relativePath,
-      data,
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       ...this.mutationOptions(createInputOptions(data, options, this.defaults.maxBytes)),
+      relativePath,
+      data,
       durable: durable !== false,
       strictFileSync: durable === "file",
       overwrite: false,
@@ -495,12 +497,13 @@ export class RootHandle implements Root {
     options.signal?.throwIfAborted();
     assertValidRootDestinationPath(relativePath);
     const { maxBytes, ...copyOptions } = this.mutationOptions(options);
+    const copySource = typeof source === "string" ? source : { root: source.root, relativePath: source.relativePath };
     await copyFileInRoot(this.context, {
-      source: typeof source === "string" ? source : { root: source.root, relativePath: source.relativePath },
-      relativePath,
       maxBytes: normalizeMaxBytes(maxBytes, { defaultValue: this.defaults.maxBytes }),
       mkdir: this.defaults.mkdir,
       ...copyOptions,
+      source: copySource,
+      relativePath,
       mode: options.mode ?? this.defaults.mode,
       durable: options.durable ?? this.defaults.durable ?? true,
       verifyPublished: (options as CopyPublicationOptions)[onCopyPublication],
@@ -1015,16 +1018,11 @@ async function mkdirPathInRoot(
   const policy = params.denyMutations === undefined && params.mutationSymlinks === undefined
     ? undefined
     : snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks);
+  const resolution = { relativePath: params.relativePath, allowRoot: params.allowRoot, ...policy };
   const resolveCurrent = policy
-    ? async () => await resolvePinnedPathInRoot(root, {
-      ...params,
-      denyMutations: policy.denyMutations,
-      mutationSymlinks: policy.mutationSymlinks,
-    })
+    ? async () => await resolvePinnedPathInRoot(root, resolution)
     : undefined;
-  const resolved = resolveCurrent
-    ? await resolveCurrent()
-    : await resolvePinnedPathInRoot(root, params);
+  const resolved = await resolvePinnedPathInRoot(root, resolution);
   const prepared = policy && resolved.relativePosix !== ""
     ? await preparePinnedWriteMutationAdmission({
       rootReal: resolved.rootReal,
