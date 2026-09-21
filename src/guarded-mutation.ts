@@ -5,8 +5,6 @@ import {
   assertAsyncDirectoryGuard,
   assertSyncDirectoryGuard,
   createAsyncDirectoryGuard,
-  createNearestExistingDirectoryGuard,
-  createNearestExistingSyncDirectoryGuard,
   createSyncDirectoryGuard,
   type AnyAsyncDirectoryGuard,
   type SyncDirectoryGuard,
@@ -69,13 +67,9 @@ export async function guardedRename(params: {
   onRenamed?: () => void;
   from: string;
   to: string;
-  targetRoot?: string;
-  verifyAfter?: boolean;
 }): Promise<void> {
   const sourceGuard = await createAsyncDirectoryGuard(path.dirname(params.from));
-  const targetGuard = params.targetRoot
-    ? await createNearestExistingDirectoryGuard(params.targetRoot, path.dirname(params.to))
-    : await createAsyncDirectoryGuard(path.dirname(params.to));
+  const targetGuard = await createAsyncDirectoryGuard(path.dirname(params.to));
   await withAsyncDirectoryGuards(
     [sourceGuard, targetGuard],
     async () => {
@@ -87,24 +81,18 @@ export async function guardedRename(params: {
       await fs.rename(params.from, params.to);
       params.onRenamed?.();
     },
-    { verifyAfter: params.verifyAfter },
   );
 }
 
 export function guardedRenameSync(params: {
   from: string;
   to: string;
-  targetRoot?: string;
-  verifyAfter?: boolean;
 }): void {
   const sourceGuard = createSyncDirectoryGuard(path.dirname(params.from));
-  const targetGuard = params.targetRoot
-    ? createNearestExistingSyncDirectoryGuard(params.targetRoot, path.dirname(params.to))
-    : createSyncDirectoryGuard(path.dirname(params.to));
+  const targetGuard = createSyncDirectoryGuard(path.dirname(params.to));
   withSyncDirectoryGuards(
     [sourceGuard, targetGuard],
     () => fsSync.renameSync(params.from, params.to),
-    { verifyAfter: params.verifyAfter },
   );
 }
 
@@ -112,8 +100,6 @@ export async function guardedRm(params: {
   target: string;
   assertBeforeMutation?: () => void;
   recursive?: boolean;
-  force?: boolean;
-  verifyAfter?: boolean;
 }): Promise<void> {
   const guard = await createAsyncDirectoryGuard(path.dirname(params.target));
   await withAsyncDirectoryGuards(
@@ -122,10 +108,8 @@ export async function guardedRm(params: {
       params.assertBeforeMutation?.();
       await fs.rm(params.target, {
         ...(params.recursive !== undefined ? { recursive: params.recursive } : {}),
-        ...(params.force !== undefined ? { force: params.force } : {}),
       });
     },
-    { verifyAfter: params.verifyAfter },
   );
 }
 
