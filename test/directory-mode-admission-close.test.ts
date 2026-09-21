@@ -146,7 +146,13 @@ describe.skipIf(process.platform === "win32")("initial directory-mode admission 
       if (kind === "swap") expect(fsSync.lstatSync(moved).mode & 0o7777).toBe(0o500);
     } finally {
       fsSync.chmodSync(rootDir, 0o700);
-      if (kind === "swap") fsSync.chmodSync(moved, 0o700);
+      if (kind === "swap") {
+        try { fsSync.chmodSync(moved, 0o700); }
+        catch (error) {
+          // A failed swap leaves no moved directory; keep its original diagnostic.
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
     }
   });
 });
