@@ -1,3 +1,4 @@
+import { setMaxListeners } from "node:events";
 import fs from "node:fs";
 import fsp, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -30,6 +31,7 @@ export async function copyOwnedTree(
   const callerSignal = options.signal ? AbortSignal.any([options.signal]) : undefined;
   const cancellation = new AbortController();
   const signal = cancellation.signal;
+  setMaxListeners(options.concurrency, signal);
   const pending = new Set<Promise<void>>();
   const finishing = new Set<Promise<void>>();
   const buffers: Buffer[] = [];
@@ -70,14 +72,17 @@ export async function copyOwnedTree(
       }
       output = await fsp.open(to, "wx", 0o600);
       if (options.copyFileContents) {
-        // napi-rs owns onabort. Each admitted file gets a separate signal so
-        // concurrent native copies cannot replace one another's cancellation.
-        const fileSignal = AbortSignal.any([signal]);
+        // napi-rs owns onabort. Each admitted file gets a separate signal; the
+        // shared failure signal is private, so callers cannot intercept its relay.
+        const fileCancellation = new AbortController();
+        const abortFile = () => fileCancellation.abort();
+        signal.addEventListener("abort", abortFile, { once: true });
         try {
           signal.throwIfAborted();
-          await options.copyFileContents(input.fd, output.fd, fileSignal);
+          await options.copyFileContents(input.fd, output.fd, fileCancellation.signal);
         } finally {
-          fileSignal.onabort = null;
+          signal.removeEventListener("abort", abortFile);
+          fileCancellation.signal.onabort = null;
         }
       } else {
         const buffer =
