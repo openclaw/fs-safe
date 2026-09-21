@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import * as directoryDurability from "../src/directory-durability.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import {
   ackJsonDurableQueueEntry,
@@ -76,7 +77,7 @@ it("rejects replaced failed evidence after retry synchronization without consumi
   await fs.writeFile(replacement, '{"generation":3}');
   const replacementIdentity = await fs.lstat(replacement, { bigint: true });
   const failedReal = await fs.realpath(failedDir);
-  const open = fs.open.bind(fs);
+  const syncDirectory = directoryDurability.syncDirectory;
   const lstat = fsSync.lstatSync.bind(fsSync);
   let observedFailed = false;
   let replaced = false;
@@ -85,19 +86,16 @@ it("rejects replaced failed evidence after retry synchronization without consumi
     if (args[0] === failedPath) observedFailed = true;
     return stat;
   });
-  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-    const handle = await open(...args);
-    if (![path.resolve(failedDir), failedReal].includes(path.resolve(String(args[0])))) return handle;
-    const sync = handle.sync.bind(handle);
-    vi.spyOn(handle, "sync").mockImplementation(async () => {
-      await sync();
-      if (observedFailed && !replaced) {
-        replaced = true;
-        await fs.rename(failedPath, displaced);
-        await fs.rename(replacement, failedPath);
-      }
-    });
-    return handle;
+  vi.spyOn(directoryDurability, "syncDirectory").mockImplementation(async (...args) => {
+    const outcome = await syncDirectory(...args);
+    const target = typeof args[0] === "string" ? args[0] : args[0].path;
+    // Recovery must recheck evidence after supported or unsupported directory sync.
+    if (observedFailed && !replaced && [path.resolve(failedDir), failedReal].includes(path.resolve(target))) {
+      replaced = true;
+      await fs.rename(failedPath, displaced);
+      await fs.rename(replacement, failedPath);
+    }
+    return outcome;
   });
 
   await expect(moveJsonDurableQueueEntryToFailed({ queueDir, failedDir, id: "job" }))
