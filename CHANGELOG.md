@@ -12,6 +12,7 @@
 
 ### Performance and maintenance
 
+- Share the native archive entry schema while preserving plan-input diagnostics and independent manifest snapshots.
 - Use the existing Windows SDK bindings for native syscall declarations and constants, preserving filesystem policy and handle ownership while checking the built addon's imports in CI.
 - Reuse normalized missing-path suffixes during ancestor resolution and synchronous lock checks, preserving canonicalization, path admission, and filesystem failure behavior without per-component suffix arrays.
 - Make the in-flight archive mutation deadline regression deterministic without increasing its timeout or weakening settlement assertions.

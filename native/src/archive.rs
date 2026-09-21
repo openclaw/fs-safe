@@ -18,15 +18,8 @@ use crate::{
     validate_windows_filesystem_path,
 };
 
-#[napi(object)]
-#[derive(Clone)]
-pub struct NativeArchiveEntry {
-    pub index: u32,
-    pub path: String,
-    pub kind: String,
-    pub size: f64,
-    pub mode: u32,
-}
+#[napi]
+pub type NativeArchiveEntry = NativeArchivePlanEntry;
 
 #[napi(object)]
 #[derive(Clone)]
