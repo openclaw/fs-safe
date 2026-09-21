@@ -55,6 +55,7 @@ import {
   type RootContext,
 } from "./root-context.js";
 import {
+  errorCauseOptions,
   fileNotFoundError,
   hardlinkedPathNotAllowedError,
   isAlreadyExistsError,
@@ -1141,9 +1142,7 @@ async function commitPinnedWriteInRoot(
       throw error;
     }
     if (params.overwrite === false && isAlreadyExistsError(error)) {
-      throw new FsSafeError("already-exists", "file already exists", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("already-exists", "file already exists", errorCauseOptions(error));
     }
     throw normalizePinnedWriteError(error);
   }
@@ -1460,9 +1459,7 @@ async function movePathFallback(
       throw fileNotFoundError(error instanceof Error ? error : undefined);
     }
     if (hasNodeErrorCode(error, "EEXIST")) {
-      throw new FsSafeError("already-exists", "destination exists", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("already-exists", "destination exists", errorCauseOptions(error));
     }
     throw error;
   }
@@ -1720,9 +1717,7 @@ async function writeMissingFileFallback(
   } catch (err) {
     if (verifyingPublication) throw err;
     if (hasNodeErrorCode(err, "EEXIST")) {
-      throw new FsSafeError("already-exists", "file already exists", {
-        cause: err instanceof Error ? err : undefined,
-      });
+      throw new FsSafeError("already-exists", "file already exists", errorCauseOptions(err));
     }
     throw err;
   } finally {

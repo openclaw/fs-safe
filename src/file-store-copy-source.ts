@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { FsSafeError } from "./errors.js";
 import { assertFileStoreMaxBytes } from "./file-store-limit.js";
 import { readRegularFile } from "./regular-file.js";
+import { errorCauseOptions } from "./root-errors.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export async function readFileStoreCopySource(params: {
@@ -24,14 +25,14 @@ export async function readFileStoreCopySource(params: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("regular file") || message.includes("not a regular file")) {
-      throw new FsSafeError("not-file", "source path is not a file", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("not-file", "source path is not a file", errorCauseOptions(error));
     }
     if (message.includes(`exceeds ${params.maxBytes} bytes`)) {
-      throw new FsSafeError("too-large", `file exceeds maximum size of ${params.maxBytes} bytes`, {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError(
+        "too-large",
+        `file exceeds maximum size of ${params.maxBytes} bytes`,
+        errorCauseOptions(error),
+      );
     }
     throw error;
   }

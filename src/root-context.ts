@@ -19,7 +19,7 @@ import {
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
-import { outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
+import { errorCauseOptions, outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { realpathSync } from "./realpath.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
@@ -278,17 +278,13 @@ export async function resolvePathInRoot(
       throw error;
     }
     if (hasNodeErrorCode(error, "ENAMETOOLONG")) {
-      throw new FsSafeError("invalid-path", "relative path is too long", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("invalid-path", "relative path is too long", errorCauseOptions(error));
     }
     const code = options?.aliasErrorCode ?? "outside-workspace";
     throw new FsSafeError(
       code,
       code === "path-alias" ? "path alias escape blocked" : "file is outside workspace root",
-      {
-        cause: error instanceof Error ? error : undefined,
-      },
+      errorCauseOptions(error),
     );
   }
   return { rootReal: root.rootReal, rootWithSep: root.rootWithSep, resolved };

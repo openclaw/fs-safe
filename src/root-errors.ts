@@ -49,9 +49,7 @@ export function normalizePinnedWriteError(error: unknown): Error {
   const message = code
     ? `${PINNED_WRITE_ERRNO_MESSAGES.get(code) ?? "filesystem write failed"} (${code})`
     : "path is not a regular file under root";
-  return new FsSafeError("invalid-path", message, {
-    cause: error instanceof Error ? error : undefined,
-  });
+  return new FsSafeError("invalid-path", message, errorCauseOptions(error));
 }
 
 export function normalizePinnedPathError(error: unknown, details?: FsSafeErrorDetails): Error {
@@ -99,4 +97,9 @@ export function throwFsSafeReadError(error: unknown, label: string): never {
     throw new FsSafeError("read-failed", `${label} target could not be read`, { cause: error });
   }
   throw error;
+}
+
+/** Existing boundaries retain only Error instances as their cause. */
+export function errorCauseOptions(error: unknown): { cause: Error | undefined } {
+  return { cause: error instanceof Error ? error : undefined };
 }

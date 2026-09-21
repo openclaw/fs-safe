@@ -14,6 +14,7 @@ import { assertRootIdentityCurrent, assertRootIdentityCurrentSync, type RootCont
 import { resolveRootPathSync } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import {
+  errorCauseOptions,
   fileNotFoundError,
   hardlinkedPathNotAllowedError,
   isAlreadyExistsError,
@@ -58,18 +59,18 @@ function normalizeMoveError(error: unknown): unknown {
     return fileNotFoundError(error instanceof Error ? error : undefined);
   }
   if (nativePrimitiveUnavailable(error)) {
-    return new FsSafeError("helper-unavailable", "native no-replace move is unavailable", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return new FsSafeError("helper-unavailable", "native no-replace move is unavailable", errorCauseOptions(error));
   }
   return error;
 }
 
 function normalizeRenameNoReplaceError(error: unknown): unknown {
   if ((error as NodeJS.ErrnoException | undefined)?.code === "EINVAL") {
-    return new FsSafeError("helper-unavailable", "native no-replace move is unavailable on this filesystem", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return new FsSafeError(
+      "helper-unavailable",
+      "native no-replace move is unavailable on this filesystem",
+      errorCauseOptions(error),
+    );
   }
   return normalizeMoveError(error);
 }
@@ -189,9 +190,7 @@ export async function movePathNoReplaceNative(
       );
     } catch (error) {
       if (isAlreadyExistsError(error) || (error as NodeJS.ErrnoException | undefined)?.code === "ENOTEMPTY") {
-        throw new FsSafeError("already-exists", "destination exists", {
-          cause: error instanceof Error ? error : undefined,
-        });
+        throw new FsSafeError("already-exists", "destination exists", errorCauseOptions(error));
       }
       throw normalizeRenameNoReplaceError(error);
     }

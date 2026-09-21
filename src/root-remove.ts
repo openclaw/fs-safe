@@ -14,7 +14,7 @@ import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
-import { normalizeRemoveGuardError, normalizeRemovePathError, rootPathChangedError } from "./root-errors.js";
+import { errorCauseOptions, normalizeRemoveGuardError, normalizeRemovePathError, rootPathChangedError } from "./root-errors.js";
 import type { RootRemoveOptions } from "./root-options.js";
 import {
   assertRemovalDirectoryCurrent,
@@ -70,9 +70,7 @@ type NonrecursiveRemovalAdmission = Readonly<{
 }>;
 
 function removalAncestorChanged(error?: unknown): FsSafeError {
-  return new FsSafeError("path-mismatch", "removal ancestor changed during operation", {
-    cause: error instanceof Error ? error : undefined,
-  });
+  return new FsSafeError("path-mismatch", "removal ancestor changed during operation", errorCauseOptions(error));
 }
 
 function sameCanonicalDirectory(left: string, right: string): boolean {

@@ -27,6 +27,7 @@ import {
 } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { realpathSync } from "./realpath.js";
+import { errorCauseOptions } from "./root-errors.js";
 import { isNotFoundPathError, isSymlinkOpenError } from "./path.js";
 import {
   checkedMutationDirectory,
@@ -82,12 +83,8 @@ async function authorizePinnedMutation(
 function normalizePolicyParentOpenError(error: unknown, params: PinnedWriteParams): unknown {
   if (!isSymlinkOpenError(error)) return error;
   return params.mutationAdmission?.rejectParentSymlinks
-    ? new FsSafeError("symlink", "symlink path component not allowed", {
-      cause: error instanceof Error ? error : undefined,
-    })
-    : new FsSafeError("path-mismatch", "native write parent changed during policy admission", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    ? new FsSafeError("symlink", "symlink path component not allowed", errorCauseOptions(error))
+    : new FsSafeError("path-mismatch", "native write parent changed during policy admission", errorCauseOptions(error));
 }
 
 async function describePosixParent(parentFd: number, pathname: string): Promise<PosixParentAdmission> {

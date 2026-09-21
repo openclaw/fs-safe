@@ -20,7 +20,7 @@ import {
 } from "./native-directory-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
-import { rootPathChangedError } from "./root-errors.js";
+import { errorCauseOptions, rootPathChangedError } from "./root-errors.js";
 import type {
   RootPathDirectoryObservationGuard,
   RootPathObservationReceipt,
@@ -77,9 +77,7 @@ export async function createRootDirectoryObservationGuard(
 
 function directoryChangedError(error: unknown): FsSafeError {
   if (error instanceof FsSafeError && error.code === "path-mismatch") return error;
-  return new FsSafeError("path-mismatch", "directory changed during operation", {
-    cause: error instanceof Error ? error : undefined,
-  });
+  return new FsSafeError("path-mismatch", "directory changed during operation", errorCauseOptions(error));
 }
 
 export async function assertRootDirectoryObservationGuard(
@@ -196,9 +194,7 @@ export function assertRootPathObservationReceiptCurrent(
 
 function normalizeDirectoryError(error: unknown): unknown {
   if (isNotFoundPathError(error)) {
-    return new FsSafeError("not-found", "directory not found", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return new FsSafeError("not-found", "directory not found", errorCauseOptions(error));
   }
   return error;
 }

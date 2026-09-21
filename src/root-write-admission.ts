@@ -19,7 +19,7 @@ import type { PinnedWriteMutationAdmission } from "./pinned-write-types.js";
 import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { resolvePathInRoot } from "./root-context.js";
-import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
+import { errorCauseOptions, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import {
   mutationSymlinkResolution,
@@ -79,9 +79,7 @@ export function createRootWriteSelectionForFd(
 }
 
 function writeSelectionChanged(cause?: unknown): FsSafeError {
-  return new FsSafeError("path-mismatch", "write target changed during operation", {
-    cause: cause instanceof Error ? cause : undefined,
-  });
+  return new FsSafeError("path-mismatch", "write target changed during operation", errorCauseOptions(cause));
 }
 
 function inspectRegularSelectionPath(
@@ -313,9 +311,7 @@ export async function resolveGuardedWritePathInRoot(
         boundaryLabel: "root",
       });
     } catch (error) {
-      throw new FsSafeError("path-alias", "path alias escape blocked", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("path-alias", "path alias escape blocked", errorCauseOptions(error));
     }
   }
   return resolvedPath;

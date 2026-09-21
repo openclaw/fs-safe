@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Share failure-only cause options across Root and store diagnostics while retaining caller-local error construction, metadata ownership, and underlying Error instances.
 - Validate captured Root and pinned-write path values directly, removing private payload wrappers while preserving argument ownership, traversal rejection, and error ordering.
 - Export rooted, staged, and atomic-write types directly from their declaration owners, removing private forwarding chains without changing runtime code or public type contracts.
 - Share Windows native security export dispatch and unsupported-platform errors while preserving argument validation, return types, and diagnostic details.

@@ -17,7 +17,7 @@ import {
   expandRelativePathWithHome,
   type RootContext,
 } from "./root-context.js";
-import { fileNotFoundError, outsideWorkspaceError } from "./root-errors.js";
+import { errorCauseOptions, fileNotFoundError, outsideWorkspaceError } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type PinnedObservedPath = {
@@ -70,9 +70,7 @@ export async function resolvePinnedObservedPathInRoot(
         if (kind === "stat") {
           throw fileNotFoundError(error.error instanceof Error ? error.error : undefined);
         }
-        throw new FsSafeError("not-found", "directory not found", {
-          cause: error.error instanceof Error ? error.error : undefined,
-        });
+        throw new FsSafeError("not-found", "directory not found", errorCauseOptions(error.error));
       }
       throw error.error;
     }

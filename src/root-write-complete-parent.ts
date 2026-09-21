@@ -15,6 +15,7 @@ import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary
 import { ordinaryWindowsSegments } from "./pinned-mutation-shared-route.js";
 import type { RootContext } from "./root-context.js";
 import { prepareRootWriteTarget } from "./root-directory-creation.js";
+import { errorCauseOptions } from "./root-errors.js";
 import type { GuardedRootWriteTarget } from "./root-write-admission.js";
 import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -54,9 +55,7 @@ export type SharedRootWriteTarget = Readonly<{
 }>;
 
 function writeSelectionChanged(cause?: unknown): FsSafeError {
-  return new FsSafeError("path-mismatch", "write target changed during operation", {
-    cause: cause instanceof Error ? cause : undefined,
-  });
+  return new FsSafeError("path-mismatch", "write target changed during operation", errorCauseOptions(cause));
 }
 
 function ordinarySharedWriteRoute(

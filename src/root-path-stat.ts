@@ -11,7 +11,7 @@ import {
   pathStatFromStats,
 } from "./root-directory-list.js";
 import type { RootContext } from "./root-context.js";
-import { fileNotFoundError } from "./root-errors.js";
+import { errorCauseOptions, fileNotFoundError } from "./root-errors.js";
 import type { RootPathObservationReceipt } from "./root-path.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertStatObservationSync } from "./stat-observation.js";
@@ -59,9 +59,7 @@ async function missingObservedFileError(
   assertParents: () => Promise<void> | void,
   proof: { failure?: StatLeafFailure },
 ): Promise<FsSafeError> {
-  const failure = new FsSafeError("path-mismatch", "file changed during operation", {
-    cause: cause instanceof Error ? cause : undefined,
-  });
+  const failure = new FsSafeError("path-mismatch", "file changed during operation", errorCauseOptions(cause));
   if (hasNodeErrorCode(cause, "ENOENT") && before?.isFile() && !before.isSymbolicLink() &&
     (before.nlink === 1 || before.nlink === 1n)) {
     try {

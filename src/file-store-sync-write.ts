@@ -14,6 +14,7 @@ import { isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { writeTempFileSync } from "./replace-file-descriptor.js";
 import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
+import { errorCauseOptions } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -119,9 +120,7 @@ export function writeFileSyncAtomic(params: {
       if (error instanceof FsSafeError) {
         throw error;
       }
-      throw new FsSafeError("path-mismatch", "store target changed after write", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("path-mismatch", "store target changed after write", errorCauseOptions(error));
     }
     assertSyncStoreDirectoryReceipt(parentGuard);
     if (params.durable) {

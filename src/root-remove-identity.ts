@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { realpathSync } from "./realpath.js";
-import { directoryComponentNotDirectoryError } from "./root-errors.js";
+import { directoryComponentNotDirectoryError, errorCauseOptions } from "./root-errors.js";
 
 type ExactDirectoryIdentity = Readonly<Pick<BigIntStats, "dev" | "ino">>;
 const MAX_SAFE_DIRECTORY_IDENTITY = BigInt(Number.MAX_SAFE_INTEGER);
@@ -19,9 +19,11 @@ export type RemovalDirectoryAssertion = Readonly<{
 }>;
 
 function identityMismatch(cause?: unknown): FsSafeError {
-  return new FsSafeError("path-mismatch", "removal ancestor identity changed or could not be verified", {
-    cause: cause instanceof Error ? cause : undefined,
-  });
+  return new FsSafeError(
+    "path-mismatch",
+    "removal ancestor identity changed or could not be verified",
+    errorCauseOptions(cause),
+  );
 }
 
 function safeIdentityNumber(value: bigint): number | undefined {

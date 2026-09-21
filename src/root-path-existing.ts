@@ -11,6 +11,7 @@ import {
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
+import { errorCauseOptions } from "./root-errors.js";
 
 export function absolutePathWithRawSegments(candidate: string): string {
   if (path.sep !== "\\") {
@@ -169,9 +170,7 @@ export function resolveSymlinkHopPath(
     return realPath;
   } catch (error) {
     if (isSymlinkOpenError(error) || (rejectUnresolved && isNotFoundPathError(error))) {
-      throw new FsSafeError("symlink", "symlink path could not be resolved", {
-        cause: error instanceof Error ? error : undefined,
-      });
+      throw new FsSafeError("symlink", "symlink path could not be resolved", errorCauseOptions(error));
     }
     if (!isNotFoundPathError(error)) throw error;
     const linkTarget = fs.readlinkSync(symlinkPath);
