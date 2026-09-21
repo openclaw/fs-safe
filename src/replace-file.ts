@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { RenameIdentityPolicy } from "./pinned-write-types.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import {
   assertDestinationHardlinkPolicy,
@@ -25,7 +26,6 @@ import {
 import { inheritedRegularFileMode } from "./replace-file-mode.js";
 import {
   atomicExpectedContentHash,
-  type RenameIdentityPolicy,
   validateRenameIdentity,
   withAtomicRenameIdentityLock,
   withAtomicRenameIdentityLockSync,
@@ -77,14 +77,6 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   /** @deprecated Accepted for adapter compatibility but never called. */
   chmodSync?: typeof syncFs.chmodSync;
   fchmodSync?: typeof syncFs.fchmodSync;
-};
-
-export type {
-  RenameIdentityPolicy,
-  ReplaceFileAtomicRestoreCleanup,
-  ReplaceFileAtomicRestoreFailureDetails,
-  ReplaceFileCopyFallbackRestorePolicy,
-  ReplaceFileDestinationHardlinkPolicy,
 };
 
 type ReplaceFileAtomicBaseOptions = {

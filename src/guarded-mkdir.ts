@@ -23,7 +23,7 @@ import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
   PinnedMutationAuthorizationToken,
-} from "./pinned-write.js";
+} from "./pinned-write-types.js";
 import {
   createPathSegmentRoute,
   joinPathSegmentRoute,

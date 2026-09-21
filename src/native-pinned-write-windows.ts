@@ -15,7 +15,7 @@ import {
 import { writePinnedInput } from "./pinned-write-input.js";
 import type { NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
-import type { PinnedWriteParams } from "./pinned-write.js";
+import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { classifyNativeRenameFailure } from "./native-rename-outcome.js";

@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import type { MutationDirectoryObservation } from "../../src/pinned-mutation-observation.js";
-import type { PinnedCreatedDirectoryReceipt } from "../../src/pinned-write.js";
+import type { PinnedCreatedDirectoryReceipt } from "../../src/pinned-write-types.js";
 import * as writeAdmission from "../../src/root-write-admission.js";
 
 export type MutationAdmissionRequest = Readonly<{

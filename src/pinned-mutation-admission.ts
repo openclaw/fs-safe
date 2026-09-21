@@ -9,7 +9,7 @@ import type {
   PinnedMutationAuthorizationToken,
   PinnedMutationParentWalkSession,
   PinnedWriteMutationAdmission,
-} from "./pinned-write.js";
+} from "./pinned-write-types.js";
 import {
   ordinarySharedAbsoluteInsideRoot,
   simpleSharedRoute,

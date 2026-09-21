@@ -1,17 +1,19 @@
 export {
   replaceFileAtomic,
   replaceFileAtomicSync,
-  type RenameIdentityPolicy,
   type ReplaceFileAtomicFileSystem,
   type ReplaceFileAtomicOptions,
-  type ReplaceFileAtomicRestoreCleanup,
-  type ReplaceFileAtomicRestoreFailureDetails,
   type ReplaceFileAtomicResult,
-  type ReplaceFileCopyFallbackRestorePolicy,
-  type ReplaceFileDestinationHardlinkPolicy,
   type ReplaceFileAtomicSyncFileSystem,
   type ReplaceFileAtomicSyncOptions,
 } from "./replace-file.js";
+export type { RenameIdentityPolicy } from "./pinned-write-types.js";
+export type {
+  ReplaceFileAtomicRestoreCleanup,
+  ReplaceFileAtomicRestoreFailureDetails,
+  ReplaceFileCopyFallbackRestorePolicy,
+  ReplaceFileDestinationHardlinkPolicy,
+} from "./replace-file-copy-fallback.js";
 export { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 export { replaceDirectoryAtomic, type ReplaceDirectoryAtomicOptions } from "./replace-directory.js";
 export {

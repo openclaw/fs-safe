@@ -12,7 +12,7 @@ import { resolvePathInRoot, resolveRootContext } from "../src/root-context.js";
 import type { MutationSymlinkPolicy } from "../src/root-symlink-policy.js";
 import { mutationSymlinkResolution } from "../src/root-symlink-policy.js";
 import { realpathSync } from "../src/realpath.js";
-import type { PinnedMutationAdmissionReceipt } from "../src/pinned-write.js";
+import type { PinnedMutationAdmissionReceipt } from "../src/pinned-write-types.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();

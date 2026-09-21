@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { runPinnedWriteNative } from "../src/native-pinned-write.js";
-import type { PinnedWriteMutationAdmission, PinnedWriteParams } from "../src/pinned-write.js";
+import type { PinnedWriteMutationAdmission, PinnedWriteParams } from "../src/pinned-write-types.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { windowsPolicyBinding } from "./helpers/windows-policy-binding.js";
 

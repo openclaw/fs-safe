@@ -16,12 +16,14 @@ export {
   publishFileExclusive,
   type PublishFileExclusiveResult,
   type PublishFileExclusiveStrategy,
-  type PublishFileExclusiveCleanup,
-  type PublishFileExclusiveDirectorySyncFailure,
-  type PublishFileExclusiveFailureDetails,
-  type PublishFileExclusiveFailurePhase,
-  type PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file.js";
+export type {
+  PublishFileExclusiveCleanup,
+  PublishFileExclusiveDirectorySyncFailure,
+  PublishFileExclusiveFailureDetails,
+  PublishFileExclusiveFailurePhase,
+  PublishFileExclusiveSyncFailurePolicy,
+} from "./publish-file-failure.js";
 export {
   sha256File,
   sha256FileSync,

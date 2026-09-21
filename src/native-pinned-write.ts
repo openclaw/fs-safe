@@ -8,15 +8,15 @@ import { capturePolicyAwareWindowsParent } from "./native-policy-parent-windows.
 import { openNativeParentAdmission, openNativeRootAdmission } from "./native-parent-admission.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
 import type { NativeBinding } from "./native.js";
-import type { PinnedMutationParentRequest } from "./pinned-write-types.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { NativePolicyDirectoryMismatch } from "./native-policy-directory-observation.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
   PinnedMutationAuthorizationToken,
+  PinnedMutationParentRequest,
   PinnedWriteParams,
-} from "./pinned-write.js";
+} from "./pinned-write-types.js";
 import {
   assertPolicyStagedDirectoryCurrent,
   assertStagedDirectoryCurrent,

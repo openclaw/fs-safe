@@ -4,33 +4,37 @@ export {
   readLocalFileSafely,
   resolveOpenedFileRealPathForHandle,
   root,
-  type DenyMutationPolicy,
-  type HardlinkPolicy,
-  type MutationSymlinkPolicy,
-  type RenameIdentityPolicy,
   type OpenResult,
-  type ReadResult,
   type Root,
-  type RootAppendOptions,
-  type RootCopyOptions,
-  type RootCopySource,
-  type RootCreateJsonOptions,
-  type RootCreateOptions,
-  type RootCreateStreamOptions,
-  type RootDefaults,
-  type RootMkdirOptions,
-  type RootMoveOptions,
-  type RootOpenOptions,
-  type RootOpenWritableOptions,
-  type RootOptions,
-  type RootReadOptions,
-  type RootRemoveOptions,
-  type RootWriteJsonOptions,
-  type RootWriteOptions,
-  type SymlinkPolicy,
-  type WritableOpenMode,
   type WritableOpenResult,
 } from "./root-impl.js";
+export type {
+  HardlinkPolicy,
+  RootAppendOptions,
+  RootCopyOptions,
+  RootCopySource,
+  RootCreateJsonOptions,
+  RootCreateOptions,
+  RootCreateStreamOptions,
+  RootDefaults,
+  RootMkdirOptions,
+  RootMoveOptions,
+  RootOpenOptions,
+  RootOpenWritableOptions,
+  RootOptions,
+  RootReadOptions,
+  RootRemoveOptions,
+  RootWriteJsonOptions,
+  RootWriteOptions,
+  WritableOpenMode,
+} from "./root-options.js";
+export type { DenyMutationPolicy } from "./deny-mutations.js";
+export type { RenameIdentityPolicy } from "./pinned-write-types.js";
+export type {
+  MutationSymlinkPolicy,
+  SymlinkPolicy,
+} from "./root-symlink-policy.js";
+export type { ReadResult } from "./read-opened-file.js";
 export type { RootCopyPublicationReceipt } from "./copy-publication.js";
 export type { CopyCloneMode } from "./copy-policy.js";
 export type { RootEntriesOptions } from "./root-entries.js";

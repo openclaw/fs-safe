@@ -12,7 +12,7 @@ import { captureNativeFdClose } from "./native-binding.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { createPathSegmentRoute, joinPathSegmentRoute } from "./path-segment-route.js";
 import { isSymlinkOpenError } from "./path.js";
-import type { PinnedWriteParams, PinnedMutationAdmissionReceipt, PinnedMutationParentWalkSession, PinnedCreatedDirectoryReceipt } from "./pinned-write.js";
+import type { PinnedWriteParams, PinnedMutationAdmissionReceipt, PinnedMutationParentWalkSession, PinnedCreatedDirectoryReceipt } from "./pinned-write-types.js";
 import { checkedMutationDirectory, type MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";

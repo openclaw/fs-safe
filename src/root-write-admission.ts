@@ -15,7 +15,7 @@ import {
   preparePinnedWriteMutationAdmission,
   snapshotPinnedMutationPolicy,
 } from "./pinned-mutation-admission.js";
-import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
+import type { PinnedWriteMutationAdmission } from "./pinned-write-types.js";
 import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { resolvePathInRoot } from "./root-context.js";

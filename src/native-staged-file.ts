@@ -13,7 +13,7 @@ import type { FileIdentityStat } from "./file-identity.js";
 import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { writePinnedInput } from "./pinned-write-input.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
-import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write.js";
+import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write-types.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import type {
@@ -417,11 +417,6 @@ class NativeStagedFile implements StagedFile {
 export const createNativeStage: (...args: Parameters<typeof NativeStagedFile.create>) => Promise<StagedFile> =
   NativeStagedFile.create;
 export const writeNativeStage = NativeStagedFile.write;
-
-export type {
-  PublishedFileReceipt, StagedFile, StagedFileCleanupReceipt, StagedFileFailureDetails,
-  StagedFilePublication, StagedFileReceipt,
-} from "./staged-file-types.js";
 
 export async function stageFileInDirectory(options: {
   directory: string | DirectoryReceipt<Stats | BigIntStats>;

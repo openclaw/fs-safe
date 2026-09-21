@@ -1,9 +1,7 @@
 import path from "node:path";
 import { withFileLock, withFileLockSync } from "./file-lock.js";
 import { sha256Hex } from "./file-identity.js";
-import type { RenameIdentityPolicy } from "./pinned-write.js";
-
-export type { RenameIdentityPolicy };
+import type { RenameIdentityPolicy } from "./pinned-write-types.js";
 
 export function validateRenameIdentity(policy: RenameIdentityPolicy | undefined): void {
   if (policy !== undefined && policy !== "strict" && policy !== "verify-content-with-lock") {

@@ -27,7 +27,7 @@ import {
   describePolicyStagedDirectory,
 } from "../src/staged-directory.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
-import type { PinnedWriteMutationAdmission } from "../src/pinned-write.js";
+import type { PinnedWriteMutationAdmission } from "../src/pinned-write-types.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();

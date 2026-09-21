@@ -5,7 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
 import { assertNoUnsafeDeviceReadPath, hasNodeErrorCode, isNotFoundPathError, isSymlinkOpenError } from "./path.js";
-import type { PublishedWriteIdentity } from "./pinned-write.js";
+import type { PublishedWriteIdentity } from "./pinned-write-types.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";

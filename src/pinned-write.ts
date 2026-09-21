@@ -25,12 +25,6 @@ import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import type { PinnedWriteParams, RenameIdentityPolicy } from "./pinned-write-types.js";
-export type {
-  PinnedWriteInput, RenameIdentityPolicy, PublishedWriteIdentity,
-  PinnedMutationAdmissionReceipt, PinnedMutationAuthorizationToken,
-  PinnedCreatedDirectoryReceipt, PinnedMutationParentWalkSession,
-  PinnedWriteMutationAdmission, PinnedWriteParams,
-} from "./pinned-write-types.js";
 
 function assertSafeBasename(basename: string): void {
   if (

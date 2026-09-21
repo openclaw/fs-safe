@@ -17,7 +17,7 @@ import {
   checkedMutationDirectory,
   type MutationDirectoryObservation,
 } from "./pinned-mutation-observation.js";
-import type { PinnedWriteMutationAdmission } from "./pinned-write.js";
+import type { PinnedWriteMutationAdmission } from "./pinned-write-types.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";

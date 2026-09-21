@@ -1,7 +1,7 @@
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
-import type { PinnedWriteInput } from "./pinned-write.js";
+import type { PinnedWriteInput } from "./pinned-write-types.js";
 import type { RootCreateOptions, RootCreateStreamOptions, RootWriteOptions } from "./root-options.js";
 
 // Lock records need exclusive creation, not private-before-visible publication.

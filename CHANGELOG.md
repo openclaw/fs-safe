@@ -9,6 +9,7 @@
 
 ### Performance and maintenance
 
+- Export rooted, staged, and atomic-write types directly from their declaration owners, removing private forwarding chains without changing runtime code or public type contracts.
 - Share Windows native security export dispatch and unsupported-platform errors while preserving argument validation, return types, and diagnostic details.
 - Retry transient LLVM SDK download failures in CI while retaining pinned checksums, exclusive archive writes, and compiler verification.
 - Share lock-acquisition failure cleanup and stale-error construction while preserving ownership checks, parser callbacks, and error precedence.

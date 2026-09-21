@@ -10,7 +10,7 @@ import {
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { pinDirectory, syncDirectory, type PinnedDirectory } from "./directory-durability.js";
 import { syncFileBestEffort } from "./file-sync.js";
-import type { PublishedWriteIdentity } from "./pinned-write.js";
+import type { PublishedWriteIdentity } from "./pinned-write-types.js";
 import type { Root } from "./root.js";
 import { normalizePinnedWriteError } from "./root-errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";

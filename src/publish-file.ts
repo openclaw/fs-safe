@@ -33,14 +33,6 @@ import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 
-export type {
-  PublishFileExclusiveCleanup,
-  PublishFileExclusiveDirectorySyncFailure,
-  PublishFileExclusiveFailureDetails,
-  PublishFileExclusiveFailurePhase,
-  PublishFileExclusiveSyncFailurePolicy,
-} from "./publish-file-failure.js";
-
 export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "rename-noreplace";
 
 export type PublishFileExclusiveResult = {

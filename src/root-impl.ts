@@ -17,7 +17,7 @@ import { assertMutationNotDenied, mergeDenyMutationPolicies, type DenyMutationPo
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
 import { openedPathResolutionError, recordExclusiveCreateFailure, recordOpenedFileFailure } from "./opened-file-failure.js";
 import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-write.js";
-import type { PinnedWriteInput, RenameIdentityPolicy } from "./pinned-write.js";
+import type { PinnedWriteInput, RenameIdentityPolicy } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedOperationPayload } from "./pinned-operation.js";
@@ -108,19 +108,9 @@ import {
   type RootWriteJsonOptions, type RootWriteOptions,
 } from "./root-options.js";
 import { composeMutationAssertions, MutationAuthorityError, rethrowMutationAuthorityError } from "./mutation-authority.js";
-export type {
-  HardlinkPolicy, RootAppendOptions, RootCopyOptions, RootCopySource, RootCreateJsonOptions,
-  RootCreateOptions, RootCreateStreamOptions, RootDefaults, RootMkdirOptions, RootMoveOptions,
-  RootOpenOptions, RootOpenWritableOptions, RootOptions, RootReadOptions,
-  RootRemoveOptions, RootWriteJsonOptions, RootWriteOptions, WritableOpenMode,
-} from "./root-options.js";
 export { DEFAULT_ROOT_MAX_BYTES } from "./root-options.js";
 
-export type { DenyMutationPolicy } from "./deny-mutations.js";
-export type { RenameIdentityPolicy } from "./pinned-write.js";
-export type { MutationSymlinkPolicy, SymlinkPolicy } from "./root-symlink-policy.js";
 export { resolveOpenedFileRealPathForHandle } from "./opened-realpath.js";
-export type { ReadResult } from "./read-opened-file.js";
 export type OpenResult = {
   handle: FileHandle;
   containment: ContainmentGuarantee;

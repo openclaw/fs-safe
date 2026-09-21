@@ -1,6 +1,6 @@
 import { normalizeMaxBytes } from "./byte-budget.js";
 import type { DenyMutationPolicy } from "./deny-mutations.js";
-import type { RenameIdentityPolicy } from "./pinned-write.js";
+import type { RenameIdentityPolicy } from "./pinned-write-types.js";
 import type { MutationSymlinkPolicy, SymlinkPolicy } from "./root-symlink-policy.js";
 import type { CopyCloneMode } from "./copy-policy.js";
 import type { RootCopyPublicationReceipt } from "./copy-publication.js";

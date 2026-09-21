@@ -15,9 +15,8 @@ import {
 import {
   runPinnedWriteHelper,
   runPinnedWriteWithRenamePolicy,
-  type PinnedWriteParams,
-  type RenameIdentityPolicy,
 } from "../src/pinned-write.js";
+import type { PinnedWriteParams, RenameIdentityPolicy } from "../src/pinned-write-types.js";
 import { realpathSync } from "../src/realpath.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 

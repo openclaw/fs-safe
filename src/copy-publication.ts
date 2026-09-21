@@ -1,5 +1,5 @@
 import type { BigIntStats } from "node:fs";
-import type { PinnedWriteParams, PublishedWriteIdentity } from "./pinned-write.js";
+import type { PinnedWriteParams, PublishedWriteIdentity } from "./pinned-write-types.js";
 import { FsSafeError } from "./errors.js";
 
 export type RootCopyPublicationReceipt = Readonly<{

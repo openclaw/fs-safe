@@ -19,13 +19,15 @@ export {
 } from "./directory-guard.js";
 export {
   stageFileInDirectory,
-  type StagedFile,
-  type StagedFileReceipt,
-  type PublishedFileReceipt,
-  type StagedFilePublication,
-  type StagedFileCleanupReceipt,
-  type StagedFileFailureDetails,
 } from "./native-staged-file.js";
+export type {
+  StagedFile,
+  StagedFileReceipt,
+  PublishedFileReceipt,
+  StagedFilePublication,
+  StagedFileCleanupReceipt,
+  StagedFileFailureDetails,
+} from "./staged-file-types.js";
 export {
   readFileDescriptorBounded,
   readFileDescriptorBoundedSync,

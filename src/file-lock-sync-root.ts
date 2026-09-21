@@ -14,7 +14,8 @@ import {
   directoryComponentNotDirectoryError,
   outsideWorkspaceError,
 } from "./root-errors.js";
-import type { Root, RootDefaults } from "./root-impl.js";
+import type { Root } from "./root-impl.js";
+import type { RootDefaults } from "./root-options.js";
 import {
   mutationSymlinkResolution,
   readSymlinkResolution,
