@@ -100,18 +100,14 @@ describe.skipIf(process.platform === "win32")("initial directory-mode admission 
     const open = fsSync.openSync.bind(fsSync);
     const close = fsSync.closeSync.bind(fsSync);
     const fstat = fsSync.fstatSync.bind(fsSync);
+    const fixtureFchmod = fsSync.fchmodSync.bind(fsSync);
     let descriptor: number | undefined, closes = 0, injected = false;
+    let swapSetupFailure: { error: unknown } | undefined;
     vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+      const selected = String(args[0]) === rootDir;
+      if (selected) expect(descriptor).toBeUndefined();
       const fd = open(...args);
-      if (String(args[0]) !== rootDir) return fd;
-      expect(descriptor).toBeUndefined();
-      descriptor = fd;
-      if (kind === "swap") {
-        fsSync.renameSync(rootDir, moved);
-        fsSync.mkdirSync(rootDir, { mode: 0o750 });
-        fsSync.chmodSync(rootDir, 0o750);
-        injected = true;
-      }
+      if (selected) descriptor = fd;
       return fd;
     });
     vi.spyOn(fsSync, "closeSync").mockImplementation(fd => {
@@ -123,7 +119,24 @@ describe.skipIf(process.platform === "win32")("initial directory-mode admission 
         injected = true;
         throw failures.inspection;
       }
-      return fstat(...args);
+      const observed = fstat(...args);
+      if (kind === "swap" && args[0] === descriptor && !injected) {
+        try {
+          // The helper owns this fd now. Grant owner-write for the macOS 15 rename.
+          const originalMode = Number(observed.mode) & 0o7777;
+          expect(originalMode).toBe(0o500);
+          fixtureFchmod(descriptor, originalMode | 0o200);
+          try { fsSync.renameSync(rootDir, moved); }
+          finally { fixtureFchmod(descriptor, originalMode); }
+          fsSync.mkdirSync(rootDir, { mode: 0o750 });
+          fsSync.chmodSync(rootDir, 0o750);
+          injected = true;
+        } catch (error) {
+          swapSetupFailure = { error };
+          throw error;
+        }
+      }
+      return observed;
     });
     const chmod = vi.spyOn(fsSync, "fchmodSync");
     let caught = false, error: unknown;
@@ -135,21 +148,21 @@ describe.skipIf(process.platform === "win32")("initial directory-mode admission 
     finally { process.umask(previous); }
     try {
       expect(caught).toBe(true);
-      expectFailure(error, kind, failures);
       expect(closes).toBe(1);
       expect(descriptor).toBeDefined();
       expect(() => fstat(descriptor!)).toThrowError(expect.objectContaining({ code: "EBADF" }));
+      if (swapSetupFailure) throw swapSetupFailure.error;
+      expectFailure(error, kind, failures);
       expect(injected).toBe(kind !== "close-only");
       expect(chmod).toHaveBeenCalledTimes(kind === "close-only" ? 1 : 0);
       expect(fsSync.readdirSync(rootDir)).toEqual([]);
       expect(fsSync.lstatSync(rootDir).mode & 0o7777).toBe(kind === "swap" ? 0o750 : kind === "inspection" ? 0o500 : 0o700);
       if (kind === "swap") expect(fsSync.lstatSync(moved).mode & 0o7777).toBe(0o500);
     } finally {
-      fsSync.chmodSync(rootDir, 0o700);
-      if (kind === "swap") {
-        try { fsSync.chmodSync(moved, 0o700); }
+      for (const directory of kind === "swap" ? [rootDir, moved] : [rootDir]) {
+        try { fsSync.chmodSync(directory, 0o700); }
         catch (error) {
-          // A failed swap leaves no moved directory; keep its original diagnostic.
+          // Either name may be absent after failed setup; retain that diagnostic.
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
       }
