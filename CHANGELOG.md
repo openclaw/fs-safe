@@ -4,6 +4,7 @@
 
 ### Correctness
 
+- Deliver cancellation to native tree-clone workers even when a caller's abort handler stops event propagation, preserving caller handlers and waiting for admitted work before descriptor cleanup.
 - Keep asynchronous atomic admission-pin, parent-sync, and rejected replacement-pin closes best-effort when a filesystem adapter throws synchronously, preserving selected failures and the synchronous helper's close reporting.
 - Preserve asynchronous copy-source results and destination-admission failures when a custom adapter's best-effort close throws synchronously.
 - Reject Windows permission-query results with missing or nonboolean locality instead of reporting otherwise trusted owners as local.

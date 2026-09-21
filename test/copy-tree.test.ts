@@ -346,7 +346,7 @@ describe("directory copying", () => {
     await expect(fs.access(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it.runIf(process.platform === "win32").for(["abort", "file error"] as const)(
+  it.runIf(process.platform === "win32" || process.platform === "linux").for(["abort", "file error"] as const)(
     "joins admitted native file writes after %s without exceeding concurrency",
     async (stop, context) => {
       configureFsSafeNative({ mode: "auto" });
@@ -364,8 +364,11 @@ describe("directory copying", () => {
       const failed = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       const controller = new AbortController();
+      const callerAbort = vi.fn();
+      controller.signal.onabort = callerAbort;
       const reason = Object.assign(new Error(`copy stopped by ${stop}`), { code: "EIO" });
       const calls: { sourceFd: number; targetFd: number; signal?: AbortSignal }[] = [];
+      const nativeAborts = [vi.fn(), vi.fn()];
       let active = 0;
       let peakActive = 0;
       let writes = 0;
@@ -374,6 +377,7 @@ describe("directory copying", () => {
         probeTreeClone: () => null,
         async copyFileContents(sourceFd, targetFd, signal) {
           const index = calls.push({ sourceFd, targetFd, signal }) - 1;
+          signal!.onabort = nativeAborts[index]!;
           active++;
           peakActive = Math.max(peakActive, active);
           if (calls.length === 2) entered.resolve();
@@ -425,10 +429,15 @@ describe("directory copying", () => {
         expect(calls).toHaveLength(2);
         expect(peakActive).toBe(2);
         expect(calls[0]!.signal?.aborted).toBe(true);
+        expect(nativeAborts[0]).toHaveBeenCalledOnce();
+        if (stop === "file error") controller.abort(new Error("later caller cancellation"));
+        expect(callerAbort).toHaveBeenCalledOnce();
+        expect(controller.signal.onabort).toBe(callerAbort);
         release.resolve();
         expect(await pending).toBe(reason);
         expect(active).toBe(0);
         expect(writes).toBe(1);
+        expect(calls.every(call => call.signal!.onabort === null)).toBe(true);
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(calls).toHaveLength(2);
         expect(writes).toBe(1);

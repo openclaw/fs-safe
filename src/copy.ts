@@ -125,17 +125,16 @@ async function materializeTree(
     let cloned = false;
     // napi-rs uses the supplied signal's onabort property. Give it a private
     // signal so caller handlers and other admitted native operations stay intact.
-    const cancellation = options.signal && supported ? new AbortController() : undefined;
-    const abort = () => cancellation?.abort();
-    options.signal?.addEventListener("abort", abort, { once: true });
+    const nativeSignal = options.signal && supported ? AbortSignal.any([options.signal]) : undefined;
     try {
       if (native && supported) {
+        nativeSignal?.throwIfAborted();
         await native.cloneTree(
           original?.fd ?? null,
           parent.fd,
           name,
           concurrency,
-          cancellation?.signal,
+          nativeSignal,
         );
         cloned = true;
       }
@@ -148,7 +147,7 @@ async function materializeTree(
         throw error;
       }
     } finally {
-      options.signal?.removeEventListener("abort", abort);
+      if (nativeSignal) nativeSignal.onabort = null;
     }
     options.signal?.throwIfAborted();
     assertStagedDirectoryCurrent(parent.receipt);
