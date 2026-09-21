@@ -94,7 +94,11 @@ export async function readOwnedCopySource(params: {
     assertOpenedSource(opened, current, params.src);
     return { replacement: await handle.readFile(), mode: Number(opened.mode) };
   } finally {
-    await handle.close().catch(() => undefined);
+    try {
+      await handle.close();
+    } catch {
+      // Best-effort close includes synchronous adapter throws.
+    }
   }
 }
 

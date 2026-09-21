@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Correctness
+
+- Preserve asynchronous copy-source results and destination-admission failures when a custom adapter's best-effort close throws synchronously.
+
 ### Performance and maintenance
 
 - Allow the durable copy-restoration regression enough time to complete on instrumented Windows CI, retaining all restoration and content assertions.

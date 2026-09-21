@@ -161,6 +161,10 @@ closed without reopening. Injected filesystem adapters must honor the
 `{ bigint: true }` stat option. Source admission reuses that exact pair instead
 of immediately repeating it with numeric metadata.
 
+Copy-source close is best-effort. A failed pinned-destination admission also
+preserves its selected failure when close fails. These cleanup rules include
+synchronous throws and rejected promises from custom asynchronous adapters.
+
 The default `copyFallbackRestore: "none"` preserves the existing fallback
 contract: a failed copy can leave a partial destination. For state files where
 preserving the old bytes is more important, choose `"restore-original"` and set

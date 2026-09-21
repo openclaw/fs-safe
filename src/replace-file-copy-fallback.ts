@@ -118,7 +118,11 @@ async function openPinnedDestination(
     }
     return handle;
   } catch (error) {
-    await handle.close().catch(() => undefined);
+    try {
+      await handle.close();
+    } catch {
+      // Preserve the already-selected admission failure.
+    }
     throw error;
   }
 }
