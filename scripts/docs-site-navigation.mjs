@@ -9,6 +9,7 @@ export const sections = [
   ["Specialized", ["copy.md", "guest.md", "secret-file.md", "secure-file.md", "permissions.md", "creation.md", "regular-file.md", "positional-read.md", "file-contents.md", "in-place-write.md", "sidecar-lock.md", "local-roots.md"]],
   ["Path & filename", ["path.md", "filename.md", "install-path.md", "directory-identity.md", "path-case.md", "path-prefix.md", "path-suffix-aliases.md"]],
   ["Reference", ["errors.md", "types.md", "public-api.md", "testing.md", "mutation-policy-proof.md", "timing.md", "advanced.md", "test-hooks.md", "migrating-to-0.5.md", "migrating-to-0.6.md", "contributing.md"]],
+  ["Proposals", ["proposals/directory-relation.md"]],
 ];
 
 export const buildExcludes = [];
