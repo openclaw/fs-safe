@@ -509,7 +509,6 @@ pub(crate) fn nt_open_relative_with_sharing(
         reparse_policy,
         share_access,
         null_mut(),
-        true,
     )
 }
 
@@ -524,22 +523,7 @@ fn nt_open_relative_with_security_descriptor(
     reparse_policy: ReparsePolicy,
     share_access: u32,
     security_descriptor: *mut c_void,
-    post_open_reparse_check: bool,
 ) -> NativeResult<OwnedHandle> {
-    if !security_descriptor.is_null() && disposition != FILE_CREATE {
-        return Err(native_error(
-            "EINVAL",
-            "a security descriptor is allowed only for exclusive creation",
-        ));
-    }
-    if !post_open_reparse_check
-        && (security_descriptor.is_null() || disposition != FILE_CREATE)
-    {
-        return Err(native_error(
-            "EINVAL",
-            "only secured exclusive creation may defer the first handle query",
-        ));
-    }
     if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
         crate::validate_relative_path(path, false)?;
         if path.contains(['/', '\\']) {
@@ -587,7 +571,8 @@ fn nt_open_relative_with_security_descriptor(
         return Err(nt_error(status, "open path relative to root handle"));
     }
     let owned = OwnedHandle(handle);
-    if post_open_reparse_check && matches!(reparse_policy, ReparsePolicy::Reject) {
+    // Secured exclusive creation returns the owned handle before any fallible query.
+    if security_descriptor.is_null() && matches!(reparse_policy, ReparsePolicy::Reject) {
         assert_not_reparse(owned.0)?;
     }
     Ok(owned)
@@ -614,8 +599,6 @@ pub(crate) fn nt_create_directory_relative(
         ReparsePolicy::Reject,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         security_descriptor,
-        // Exclusive creation must return the exact handle before any fallible query.
-        false,
     )
 }
 
@@ -820,27 +803,19 @@ fn set_link_information(
     Ok(())
 }
 
-fn open_source_for_metadata(
-    root_fd: i32,
-    path: &str,
-    extra_access: u32,
-) -> NativeResult<OwnedHandle> {
-    nt_open_relative(
-        root_handle(root_fd)?,
-        path,
-        FILE_READ_ATTRIBUTES | extra_access,
-        FILE_OPEN,
-        FILE_NON_DIRECTORY_FILE,
-    )
-}
-
 pub fn link_beneath(
     source_root_fd: i32,
     source_rel_path: &str,
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<()> {
-    let source = open_source_for_metadata(source_root_fd, source_rel_path, FILE_WRITE_ATTRIBUTES)?;
+    let source = nt_open_relative(
+        root_handle(source_root_fd)?,
+        source_rel_path,
+        FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE,
+    )?;
     set_link_information(source.0, root_handle(target_root_fd)?, target_rel_path)
 }
 

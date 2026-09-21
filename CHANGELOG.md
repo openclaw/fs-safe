@@ -11,6 +11,10 @@
 ### Performance and maintenance
 
 - Reuse normalized missing-path suffixes during ancestor resolution and synchronous lock checks, preserving canonicalization, path admission, and filesystem failure behavior without per-component suffix arrays.
+- Make the in-flight archive mutation deadline regression deterministic without increasing its timeout or weakening settlement assertions.
+- Remove unused private descriptor metadata and lock-handle methods while retaining temp-workspace admission checks and shared lock cleanup ownership.
+- Share native link and rename argument admission, preserving source-before-target validation, descriptor-relative dispatch, and platform errors.
+- Remove redundant Windows native-open policy switches while preserving reparse checks, exact created-directory ownership, and hardlink access.
 - Simplify native SHA-256 worker state while preserving positioned reads, byte limits, cancellation checks, and descriptor ownership.
 - Remove unused private rename and move-cleanup options while preserving parent identity checks, mutation callbacks, and trash fallback behavior.
 - Keep temporary filename fallback selection with its public caller, removing unused private sanitizer options while preserving shared path validation and Windows device-name protection.

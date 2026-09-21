@@ -58,6 +58,7 @@ describe("archive timeout lifetime", () => {
   });
 
   it("joins a destination mutation already in flight at the deadline", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     let enterMutation: (() => void) | undefined;
     let releaseMutation: (() => void) | undefined;
     let settled = false;
@@ -83,11 +84,20 @@ describe("archive timeout lifetime", () => {
       },
     );
 
-    await mutationEntered;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(settled).toBe(false);
-    releaseMutation?.();
-    await expect(operation).rejects.toThrow("extract tar timed out after 10ms");
+    try {
+      await expect(Promise.race([
+        mutationEntered.then(() => "entered"),
+        operation.then(() => "settled"),
+      ])).resolves.toBe("entered");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(settled).toBe(false);
+      releaseMutation?.();
+      await expect(operation).rejects.toThrow("extract tar timed out after 10ms");
+    } finally {
+      releaseMutation?.();
+      try { await operation.catch(() => undefined); }
+      finally { vi.useRealTimers(); }
+    }
   });
 
   describe.each(backends)("%s extraction", (backend) => {
