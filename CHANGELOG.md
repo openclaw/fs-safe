@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Remove redundant Windows native-open policy switches while preserving reparse checks, exact created-directory ownership, and hardlink access.
 - Simplify native SHA-256 worker state while preserving positioned reads, byte limits, cancellation checks, and descriptor ownership.
 - Remove unused private rename and move-cleanup options while preserving parent identity checks, mutation callbacks, and trash fallback behavior.
 - Keep temporary filename fallback selection with its public caller, removing unused private sanitizer options while preserving shared path validation and Windows device-name protection.
