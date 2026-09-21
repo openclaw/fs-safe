@@ -27,7 +27,7 @@ export async function copyOwnedTree(
     copyFileContents?: NativeBinding["copyFileContents"];
   },
 ): Promise<void> {
-  options.signal?.throwIfAborted();
+  const callerSignal = options.signal ? AbortSignal.any([options.signal]) : undefined;
   const cancellation = new AbortController();
   const signal = cancellation.signal;
   const pending = new Set<Promise<void>>();
@@ -38,8 +38,7 @@ export async function copyOwnedTree(
     failure ??= { value };
     cancellation.abort(failure);
   }
-  const abort = () => recordFailure(options.signal?.reason);
-  options.signal?.addEventListener("abort", abort, { once: true });
+  if (callerSignal) callerSignal.onabort = () => recordFailure(callerSignal.reason);
   async function schedule(
     operation: () => Promise<void>,
     children: Set<Promise<void>>,
@@ -239,6 +238,7 @@ export async function copyOwnedTree(
     signal.throwIfAborted();
   }
   try {
+    callerSignal?.throwIfAborted();
     await copyDirectory(source.receipt.realPath, destination);
     await Promise.all(finishing);
     signal.throwIfAborted();
@@ -246,7 +246,7 @@ export async function copyOwnedTree(
     recordFailure(error);
   } finally {
     await Promise.all(finishing);
-    options.signal?.removeEventListener("abort", abort);
+    if (callerSignal) callerSignal.onabort = null;
   }
   if (failure) throw failure.value;
   options.signal?.throwIfAborted();

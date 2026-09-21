@@ -178,7 +178,7 @@ These are low-level operations on caller-owned absolute paths, not Root-relative
 
 An already aborted signal prevents dispatch. In-flight cancellation stops cancellable traversal and waits for admitted native writes to finish before rejecting. APFS and Btrfs bulk operations cannot be interrupted once dispatched. An aborted or failed call can therefore leave a destination, including a complete bulk clone. It remains caller-owned; after settlement, the caller decides whether to retain or remove it. Do not start cleanup by racing the cloning promise against an abort promise.
 
-Native cloning preserves caller abort handlers and receives cancellation even when a caller handler stops event propagation.
+Tree copying preserves caller abort handlers and receives cancellation even when a caller handler stops event propagation, including native cloning and byte-copy fallbacks.
 
 Completion is not a crash-durability guarantee. The API is suitable for reconstructible templates and checkouts; it does not sync every file or replace application-level publication and recovery rules.
 
