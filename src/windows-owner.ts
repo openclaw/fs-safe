@@ -124,7 +124,10 @@ export async function inspectWindowsOwner(params: {
     if (!ownerSid || !currentUserSid) {
       return { error: "Windows owner query returned invalid SID data" };
     }
-    const remote = parsed.remote === true;
+    const remote = parsed.remote;
+    if (typeof remote !== "boolean") {
+      return { error: "Windows owner query returned invalid locality data" };
+    }
     return {
       sid: ownerSid,
       currentUserSid,

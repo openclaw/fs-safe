@@ -99,7 +99,7 @@ describe("permission inspection failure modes", () => {
 
   it("retains explicit advanced classification and translation-failure options", async () => {
     const exec = vi.fn(async () => ({ stdout: JSON.stringify({
-      ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42", complete: true, daclPresent: true,
+      ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42", remote: false, complete: true, daclPresent: true,
       aces: [{ sid: "S-1-5-21-99", mask: 1, deny: false, inheritOnly: false }],
     }), stderr: "" }));
     const result = await inspectWindowsAcl("C:\\fixture", { exec, currentUserSid: "S-1-5-21-99" });
@@ -121,6 +121,7 @@ describe("permission inspection failure modes", () => {
           stdout: JSON.stringify({
             ownerSid: "S-1-5-21-42",
             currentUserSid: "S-1-5-21-42",
+            remote: false,
             complete: true,
             daclPresent,
             aces,
@@ -194,7 +195,7 @@ describe("permission inspection failure modes", () => {
   ])("leaves incomplete or malformed descriptor facts unverified", async override => {
     const result = await inspectWindowsAcl("C:\\fixture", {
       exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
-        complete: true, daclPresent: true, aces: [], ...override }), stderr: "" }),
+        remote: false, complete: true, daclPresent: true, aces: [], ...override }), stderr: "" }),
     });
     expect(result).toMatchObject({ ok: false, entries: [], error: expect.stringContaining("Windows ACL query returned") });
   });
@@ -202,7 +203,7 @@ describe("permission inspection failure modes", () => {
   it.each([false, true])("distinguishes a null DACL from an empty DACL (present=%s)", async daclPresent => {
     const result = await inspectWindowsAcl("C:\\fixture", {
       exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
-        complete: true, daclPresent, aces: [] }), stderr: "" }),
+        remote: false, complete: true, daclPresent, aces: [] }), stderr: "" }),
     });
     expect(result.ok).toBe(true);
     if (daclPresent) expect(result.entries).toEqual([]);
@@ -212,7 +213,7 @@ describe("permission inspection failure modes", () => {
   it("ignores inherit-only grants and never subtracts deny entries from coarse grants", async () => {
     const result = await inspectWindowsAcl("C:\\fixture", {
       exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
-        complete: true, daclPresent: true, aces: [
+        remote: false, complete: true, daclPresent: true, aces: [
           { sid: "S-1-1-0", mask: 0x001f01ff, deny: true, inheritOnly: false },
           { sid: "S-1-1-0", mask: 1, deny: false, inheritOnly: false },
           { sid: "S-1-5-32-545", mask: 0x001f01ff, deny: false, inheritOnly: true },

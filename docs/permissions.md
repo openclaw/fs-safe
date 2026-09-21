@@ -87,6 +87,12 @@ The advanced options retain `currentUserSid` as an explicit classification
 override and `principalTranslationFailed: true` as an immediate unverified
 result. The optional `principalSids` translation cache is still accepted but
 is no longer needed because the query returns SIDs directly.
+Injected executors must return the same structured success JSON as the built-in
+query: valid `ownerSid` and `currentUserSid` strings, an explicit boolean
+`remote`, and complete DACL facts (`complete`, `daclPresent`, and `aces`).
+Missing or nonboolean locality leaves both inspectors unverified; only
+`remote: false` establishes locality for owner trust. An explicit `remote: true`
+retains the ACL report but never grants trusted ownership.
 The existing classifier assigns principals to trusted, world, or group;
 trusted defaults include the current user, SYSTEM, and Administrators.
 The built-in query has a fixed 30-second process deadline. A command failure or timeout returns an

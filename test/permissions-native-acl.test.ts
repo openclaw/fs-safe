@@ -37,7 +37,7 @@ function facts(override: Partial<NativeWindowsSecurityFacts> = {}): NativeWindow
 function queryOutput(value: NativeWindowsSecurityFacts) {
   return { stdout: JSON.stringify({
     ownerSid: value.ownerSid, currentUserSid: value.currentUserSid,
-    complete: true, daclPresent: value.daclPresent,
+    remote: !value.isLocal, complete: true, daclPresent: value.daclPresent,
     aces: value.aces.map(entry => ({
       sid: entry.sid, mask: entry.mask, deny: entry.aceType === "deny",
       inheritOnly: entry.flags.inheritOnly,

@@ -5,6 +5,7 @@
 ### Correctness
 
 - Preserve asynchronous copy-source results and destination-admission failures when a custom adapter's best-effort close throws synchronously.
+- Reject Windows permission-query results with missing or nonboolean locality instead of reporting otherwise trusted owners as local.
 
 ### Performance and maintenance
 
