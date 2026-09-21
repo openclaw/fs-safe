@@ -14,10 +14,10 @@ import {
   createByteBudgetTracker,
   resolveExtractLimits,
   type ResolvedArchiveExtractLimits,
+  type ArchiveExtractLimits,
 } from "./archive-limits.js";
-import type { ExtractArchiveOptions } from "./archive-options.js";
-import { resolveArchiveEntryMode, shouldExtractArchiveEntry, type ArchiveEntryKind } from "./archive-policy.js";
 import { formatErrorDetail } from "./error-detail.js";
+import type { ExtractionDeadline } from "./archive-deadline.js";
 
 export type ArchiveMemberKind = "file" | "directory" | "symlink" | "hardlink" | "blocked" | "sparse" | "other";
 export type ArchivePlanEntry = { path: string; kind: "file" | "directory"; size: number; mode: number };
@@ -88,3 +88,123 @@ export function createArchiveEntryPlanner(params: ArchivePlanOptions, archiveKin
       mode: resolveArchiveEntryMode({ kind, archivedMode: entry.mode, policy: params.entryModes }) };
   };
 }
+export type ArchiveEntryKind = "file" | "directory" | "symlink" | "other";
+export type ArchiveEntryModePolicy = "clamp" | "preserve";
+export type ArchiveFilteredEntryPolicy = "reject-archive" | "skip-entry";
+export type ArchiveEntryFilter = (entry: {
+  /** Validated canonical archive path before stripping: / separators, no empty or . components. */
+  path: string;
+  kind: ArchiveEntryKind;
+  size: number;
+}) => "extract" | "skip";
+
+export function archiveEntryKindFromTarType(type: string): ArchiveEntryKind {
+  if (type === "Directory" || type === "GNUDumpDir") return "directory";
+  if (type === "File" || type === "OldFile" || type === "ContiguousFile") return "file";
+  if (type === "SymbolicLink" || type === "Link") return "symlink";
+  return "other";
+}
+
+export function resolveArchiveEntryMode(params: {
+  kind: "file" | "directory";
+  archivedMode?: number | null;
+  policy?: ArchiveEntryModePolicy;
+}): number {
+  const archivedMode = (params.archivedMode ?? 0) & 0o777;
+  if (params.policy === "preserve") {
+    return params.archivedMode == null ? (params.kind === "directory" ? 0o755 : 0o644) : archivedMode;
+  }
+  if (params.kind === "directory") {
+    return 0o755;
+  }
+  return archivedMode & 0o100 ? 0o755 : 0o644;
+}
+
+export function resolveArchiveFilteredEntryPolicy(
+  value: unknown,
+): ArchiveFilteredEntryPolicy {
+  if (value === undefined || value === "reject-archive") return "reject-archive";
+  if (value === "skip-entry") return "skip-entry";
+  throw new RangeError(
+    'archive onFiltered must be "reject-archive" or "skip-entry"',
+  );
+}
+
+export function shouldExtractArchiveEntry(params: {
+  filter?: ArchiveEntryFilter;
+  onFiltered?: ArchiveFilteredEntryPolicy;
+  entry: Parameters<ArchiveEntryFilter>[0];
+}): boolean {
+  const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
+  if (!params.filter || params.filter(params.entry) === "extract") {
+    return true;
+  }
+  if (onFiltered === "reject-archive") {
+    throw new ArchiveSecurityError(
+      "entry-filtered",
+      `archive entry rejected by filter: ${formatErrorDetail(params.entry.path)}`,
+    );
+  }
+  return false;
+}
+export type TarEntryInfo = { path: string; type: string; size: number; mode?: number };
+
+const BLOCKED_TAR_ENTRY_TYPES = new Set([
+  "BlockDevice",
+  "CharacterDevice",
+  "FIFO",
+  "Socket",
+]);
+
+export function createTarEntryPlanner(params: ArchivePlanOptions):
+  (entry: TarEntryInfo) => ArchivePlanEntry | null {
+  // Preserve inherited/getter-backed public options and per-entry policy reads.
+  const plan = createArchiveEntryPlanner(params, "tar");
+  return (entry) => {
+    const kind = BLOCKED_TAR_ENTRY_TYPES.has(entry.type) ? "blocked" : archiveEntryKindFromTarType(entry.type);
+    // The public checker accepts structural entry objects, including class getters.
+    return plan({ path: entry.path, kind, size: entry.size, mode: entry.mode });
+  };
+}
+
+export function createTarEntryPreflightChecker(params: {
+  rootDir: string;
+  stripComponents?: number;
+  limits?: ArchiveExtractLimits;
+  escapeLabel?: string;
+  entryFilter?: ArchiveEntryFilter;
+  onFiltered?: ArchiveFilteredEntryPolicy;
+}): (entry: TarEntryInfo) => boolean {
+  const plan = createTarEntryPlanner(params);
+  return (entry) => plan(entry) !== null;
+}
+export type ArchiveLogger = {
+  info?: (message: string) => void;
+  warn?: (message: string) => void;
+};
+
+export type ExtractArchiveOptions = {
+  archivePath: string;
+  destDir: string;
+  timeoutMs: number;
+  /** Sync published files and directories before returning. Defaults to false. */
+  durable?: boolean;
+  kind?: ArchiveKind;
+  stripComponents?: number;
+  tarGzip?: boolean;
+  limits?: ArchiveExtractLimits;
+  logger?: ArchiveLogger;
+  entryModes?: ArchiveEntryModePolicy;
+  /** Remove these rwx bits from final entry modes. Defaults to zero. */
+  entryUmask?: number;
+  entryFilter?: ArchiveEntryFilter;
+  onFiltered?: ArchiveFilteredEntryPolicy;
+};
+
+/** Private executors receive owned options and an already-staged archive path. */
+export type StagedArchiveExtractOptions = Pick<ExtractArchiveOptions,
+  "archivePath" | "destDir" | "durable" | "stripComponents" | "entryModes" |
+  "entryUmask" | "entryFilter" | "onFiltered"> & {
+  limits: ResolvedArchiveExtractLimits;
+  deadline: ExtractionDeadline;
+};

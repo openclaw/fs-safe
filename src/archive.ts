@@ -1,14 +1,22 @@
-import { createTarEntryPlanner } from "./archive-tar.js";
+import {
+  createTarEntryPlanner,
+  createArchiveEntrySelector,
+  resolveArchiveFilteredEntryPolicy,
+  type ExtractArchiveOptions,
+  type StagedArchiveExtractOptions,
+  createArchiveEntryPlanner,
+  type ArchivePlanEntry,
+} from "./archive-plan.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
 import { constants as fsConstants } from "node:fs";
-import type { FileHandle } from "node:fs/promises";
-import fs from "node:fs/promises";
+import fs, {
+  type FileHandle,
+} from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createArchiveEntrySelector } from "./archive-plan.js";
 import {
   createPipelineTimeoutError,
   waitForDeadline,
@@ -41,21 +49,31 @@ import {
   createZipIntegrityTransform,
   normalizeZipIntegrityError,
 } from "./archive-zip-integrity.js";
-import { ArchiveSecurityError } from "./archive-errors.js";
-import { extractNativeArchive } from "./archive-native.js";
+import {
+  ArchiveSecurityError,
+  ArchiveFormatError,
+  isArchiveFormatErrorMessage,
+} from "./archive-errors.js";
 import { stageArchiveFileForExtraction } from "./archive-input.js";
-import { getNativeBinding } from "./native.js";
-import { resolveArchiveFilteredEntryPolicy } from "./archive-policy.js";
-import type { ExtractArchiveOptions, StagedArchiveExtractOptions } from "./archive-options.js";
+import {
+  getNativeBinding,
+  type NativeBinding,
+} from "./native.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
-export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-options.js";
+import { classifyArchiveParserError } from "./archive-parser-errors.js";
+import { validateArchiveEntryPath } from "./archive-entry.js";
+import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
+import { admitZipFile } from "./archive-zip-admission.js";
+import { validateNativeZipManifest } from "./archive-zip-manifest.js";
+
+export type { ArchiveLogger, ExtractArchiveOptions } from "./archive-plan.js";
 export type {
   ArchiveEntryFilter,
   ArchiveEntryKind,
   ArchiveEntryModePolicy,
   ArchiveFilteredEntryPolicy,
-} from "./archive-policy.js";
+} from "./archive-plan.js";
 export {
   isWindowsDrivePath,
   normalizeArchiveEntryPath,
@@ -65,7 +83,7 @@ export {
 } from "./archive-entry.js";
 export { resolveArchiveKind, resolvePackedRootDir, type ArchiveKind } from "./archive-kind.js";
 export { readArchiveEntry } from "./archive-read.js";
-export { inspectTarArchive, type InspectTarArchiveOptions, type InspectedTarEntry } from "./archive-tar-inspect.js";
+
 export {
   ARCHIVE_LIMIT_ERROR_CODE,
   ArchiveLimitError,
@@ -87,7 +105,7 @@ export {
   prepareArchiveOutputPath,
   withStagedArchiveDestination,
 } from "./archive-staging.js";
-export { createTarEntryPreflightChecker, type TarEntryInfo } from "./archive-tar.js";
+export { createTarEntryPreflightChecker, type TarEntryInfo } from "./archive-plan.js";
 export {
   loadZipArchiveWithPreflight,
   readZipCentralDirectoryEntryCount,
@@ -289,5 +307,135 @@ async function extractWasmTar(params: StagedArchiveExtractOptions & {
       },
     });
     return accepted;
+  });
+}
+function throwMappedNativeArchiveError(error: unknown): never {
+  if (error instanceof Error) {
+    const mapped = classifyArchiveParserError(error.message, { cause: error });
+    if (mapped) throw mapped;
+    if (isArchiveFormatErrorMessage(error.message)) {
+      throw new ArchiveFormatError(error.message, { cause: error });
+    }
+    if ((error as Error & { code?: unknown }).code === "InvalidArg") {
+      throw new ArchiveFormatError(`invalid archive: ${error.message}`, { cause: error });
+    }
+  }
+  throw error;
+}
+
+async function extractNativeArchive(params: StagedArchiveExtractOptions & {
+  binding: NativeBinding;
+  kind: ArchiveKind;
+  tarLimits: TarMeterLimits;
+}): Promise<void> {
+  const { archivePath, limits, tarLimits, deadline } = params;
+  const zipEntries: ZipDirectoryEntry[] = [];
+  if (params.kind === "zip") {
+    await admitZipFile(archivePath, limits, deadline, (entry) => { zipEntries.push(entry); });
+  }
+  const destinationGuard = await prepareArchiveDestinationGuard(params.destDir);
+  await withStagedArchivePublication({ ...params, destinationGuard }, async (stagingDir) => {
+    deadline.check();
+    // N-API retains completed task state on its signal; each pass needs its own.
+    const manifest = await params.binding
+      .inspectArchiveNative(
+        archivePath,
+        params.kind,
+        tarLimits,
+        AbortSignal.any([deadline.signal]),
+      )
+      .catch(throwMappedNativeArchiveError);
+    deadline.check();
+    assertArchiveEntryCountWithinLimit(manifest.length, limits);
+    if (params.kind === "zip") {
+      validateNativeZipManifest(manifest, zipEntries);
+    }
+    // Recheck the native manifest before any caller callback observes an entry.
+    if (params.kind !== "zip") {
+      for (const entry of manifest) validateArchiveEntryPath(entry.path);
+    }
+    const planEntry = createArchiveEntryPlanner({ ...params, rootDir: stagingDir }, params.kind);
+    const plan: Array<ArchivePlanEntry & { index: number }> = [];
+    for (const entry of manifest) {
+      deadline.check();
+      const mode = params.kind === "zip"
+        ? zipEntries[entry.index]!.creatorSystem === 3
+          ? zipEntries[entry.index]!.externalAttributes >>> 16
+          : undefined
+        : entry.mode;
+      const accepted = planEntry({ ...entry, mode });
+      if (accepted) plan.push({ ...accepted, index: entry.index });
+    }
+
+    const directory = await fs.open(
+      stagingDir,
+      fsConstants.O_RDONLY |
+        (typeof fsConstants.O_DIRECTORY === "number" ? fsConstants.O_DIRECTORY : 0),
+    );
+    try {
+      deadline.check();
+      await params.binding.extractArchiveNative(
+        archivePath,
+        params.kind,
+        directory.fd,
+        plan.map((entry) => ({ ...entry, mode: entry.kind === "directory" ? 0o700 : 0o600 })),
+        tarLimits,
+        AbortSignal.any([deadline.signal]),
+      ).catch(throwMappedNativeArchiveError);
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+    return plan;
+  });
+}
+export type InspectTarArchiveOptions = Pick<ExtractArchiveOptions,
+  "archivePath" | "timeoutMs" | "limits" | "entryFilter" | "onFiltered">;
+export type InspectedTarEntry = Readonly<Pick<ArchivePlanEntry, "path" | "kind" | "size">>;
+
+/** Complete TAR/gzip admission and zero-strip extraction policy, without output writes. */
+export async function inspectTarArchive(params: InspectTarArchiveOptions): Promise<readonly InspectedTarEntry[]> {
+  const archivePath = params.archivePath;
+  const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
+  const limits = resolveExtractLimits(params.limits);
+  const tarLimits = resolveTarMeterLimits(limits);
+  const native = getNativeBinding();
+  assertNoWindowsPathAlias(archivePath, "filesystem", "archive source uses a Windows filesystem namespace alias");
+  return await withExtractionDeadline(params.timeoutMs, "inspect tar", async (deadline) => {
+    const staged = await stageArchiveFileForExtraction({ archivePath, limits, deadline });
+    try {
+      // Staging closes descriptors asynchronously; expiry there must not start a decoder.
+      deadline.check();
+      const entries: InspectedTarEntry[] = [];
+      const append = (entry: ArchivePlanEntry | null) => {
+        if (entry) entries.push(Object.freeze({ path: entry.path, kind: entry.kind, size: entry.size }));
+      };
+      const policy = { limits, entryFilter: params.entryFilter, onFiltered };
+      if (native) {
+        const manifest = await native.inspectArchiveNative(staged.path, "tar", tarLimits, deadline.signal)
+          .catch(throwMappedNativeArchiveError);
+        deadline.check();
+        // Match extraction's whole-manifest validation before caller policy runs.
+        for (const entry of manifest) validateArchiveEntryPath(entry.path);
+        const planEntry = createArchiveEntryPlanner(policy, "tar");
+        for (const entry of manifest) {
+          deadline.check();
+          append(planEntry(entry));
+        }
+      } else {
+        const manifest: AdmittedTarMember[] = [];
+        await inspectTar({ archivePath: staged.path, limits: tarLimits, signal: deadline.signal,
+          onMember: (entry) => { manifest.push(entry); } });
+        const planEntry = createTarEntryPlanner(policy);
+        for (const entry of manifest) {
+          deadline.check();
+          append(planEntry(entry));
+        }
+      }
+      deadline.check();
+      // This is bounded evidence about the staged bytes, not a reusable write plan.
+      return Object.freeze(entries);
+    } finally {
+      await staged.cleanup();
+    }
   });
 }

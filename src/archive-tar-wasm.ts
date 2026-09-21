@@ -4,7 +4,7 @@ import { Transform, type TransformCallback } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 import { ArchiveFormatError } from "./archive-errors.js";
 import type { TarMeterLimits } from "./archive-limits.js";
-import type { TarEntryInfo } from "./archive-tar.js";
+import type { TarEntryInfo } from "./archive-plan.js";
 
 export type AdmittedTarMember = TarEntryInfo & { offset: number };
 type Abi = {

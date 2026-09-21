@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractArchive, readArchiveEntry, resolveArchiveKind } from "../src/archive.js";
-import * as nativeArchive from "../src/archive-native.js";
 import { TarWasmSession } from "../src/archive-tar-wasm.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __setNativeLoaderForTest, __resetNativeLoaderForTest, type NativeBinding } from "../src/native.js";
@@ -49,13 +48,19 @@ for (const kind of ["tar-zstd", "tar-bzip2"] as const) {
       configureFsSafeNative({ mode: "auto" });
       const failure = new Error("native operation failed after dispatch");
       const openTarBufferNative = vi.fn(async () => { throw failure; });
-      __setNativeLoaderForTest(() => ({ closeOwnedFd() {}, openTarBufferNative }) as unknown as NativeBinding);
-      const extract = vi.spyOn(nativeArchive, "extractNativeArchive").mockRejectedValue(failure);
+      const inspectArchiveNative = vi.fn(async () => [
+        { index: 0, path: "value", kind: "file", size: 7, mode: 0o644 },
+      ]);
+      const extractArchiveNative = vi.fn(async () => { throw failure; });
+      __setNativeLoaderForTest(() => ({
+        closeOwnedFd() {}, openTarBufferNative, inspectArchiveNative, extractArchiveNative,
+      }) as unknown as NativeBinding);
       const decode = vi.spyOn(TarWasmSession.prototype, "decode");
       const input = await fixture();
       await expect(extractArchive(input)).rejects.toBe(failure);
       await expect(readArchiveEntry(input.archivePath, "value", { maxBytes: 7 })).rejects.toBe(failure);
-      expect(extract).toHaveBeenCalledTimes(1);
+      expect(inspectArchiveNative).toHaveBeenCalledTimes(1);
+      expect(extractArchiveNative).toHaveBeenCalledTimes(1);
       expect(openTarBufferNative).toHaveBeenCalledTimes(1);
       expect(decode).not.toHaveBeenCalled();
     });

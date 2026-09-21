@@ -13,7 +13,7 @@ import {
 } from "../src/absolute-path.js";
 import {
   createTarEntryPreflightChecker,
-} from "../src/archive-tar.js";
+} from "../src/archive-plan.js";
 import { resolveArchiveKind, resolvePackedRootDir } from "../src/archive-kind.js";
 import { pathExists, pathExistsSync } from "../src/fs.js";
 import {

@@ -7,7 +7,7 @@ import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { resolveTarMeterLimits } from "../src/archive-limits.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractArchive, readArchiveEntry } from "../src/archive.js";
-import { type TarEntryInfo } from "../src/archive-tar.js";
+import { type TarEntryInfo } from "../src/archive-plan.js";
 import { __resetFsSafeNativeConfigForTest, configureFsSafeNative } from "../src/native-config.js";
 import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
 import { useTempDirs } from "./helpers/vitest.js";

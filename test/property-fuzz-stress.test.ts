@@ -8,8 +8,7 @@ import {
   stripArchivePath,
   validateArchiveEntryPath,
 } from "../src/archive-entry.js";
-import { shouldExtractArchiveEntry } from "../src/archive-policy.js";
-import { createTarEntryPreflightChecker } from "../src/archive-tar.js";
+import { shouldExtractArchiveEntry, createTarEntryPreflightChecker } from "../src/archive-plan.js";
 import { isUnsafeDeviceReadPath } from "../src/device-path.js";
 import { sanitizeUntrustedFileName } from "../src/filename.js";
 import { isPathInside } from "../src/path.js";

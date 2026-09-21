@@ -2,7 +2,7 @@ import {
   resolveArchiveEntryMode,
   type ArchiveEntryModePolicy,
   type ArchiveEntryKind,
-} from "./archive-policy.js";
+} from "./archive-plan.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 
 export type ZipEntry = {

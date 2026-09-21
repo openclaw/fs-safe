@@ -1,13 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { expect, it } from "vitest";
-import { extractNativeArchive } from "../src/archive-native.js";
-import { resolveExtractLimits, resolveTarMeterLimits } from "../src/archive-limits.js";
-import type { NativeBinding } from "../src/native.js";
+import { afterEach, expect, it, vi } from "vitest";
+import { extractArchive } from "../src/archive.js";
+import * as archiveDeadline from "../src/archive-deadline.js";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import { __setNativeLoaderForTest, __resetNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
+afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); __resetNativeLoaderForTest(); });
 
 it("cancels native extraction after inspection completes on the same deadline", async () => {
   const dir = await tempRoot("fs-safe-native-cancel-");
@@ -37,6 +39,7 @@ it("cancels native extraction after inspection completes on the same deadline", 
   let entered: () => void = () => {};
   const extractionEntered = new Promise<void>((resolve) => { entered = resolve; });
   const binding = {
+    closeOwnedFd() {},
     async inspectArchiveNative(...args: Parameters<NativeBinding["inspectArchiveNative"]>) {
       registerTask(args[3], { complete: true, abort() {} });
       return [{ index: 0, path: "entry", kind: "file", size: 7, mode: 0o644 }];
@@ -51,17 +54,18 @@ it("cancels native extraction after inspection completes on the same deadline", 
       return pending;
     },
   } as NativeBinding;
-  const limits = resolveExtractLimits();
-  const operation = extractNativeArchive({
-    binding, archivePath, destDir, kind: "tar", limits, tarLimits: resolveTarMeterLimits(limits),
-    deadline: {
+  configureFsSafeNative({ mode: "auto" });
+  __setNativeLoaderForTest(() => binding);
+  vi.spyOn(archiveDeadline, "withExtractionDeadline").mockImplementation(async (_timeoutMs, _label, run) =>
+    await run({
       signal: controller.signal,
       check: () => controller.signal.throwIfAborted(),
       ownDestinationMutation: async (run) => await run(),
       waitForDestinationMutations: async () => {},
       dispose() {},
-    },
-  }).then(() => undefined, (error: unknown) => error);
+    }));
+  const operation = extractArchive({ archivePath, destDir, kind: "tar", timeoutMs: 10_000 })
+    .then(() => undefined, (error: unknown) => error);
   try {
     await Promise.race([extractionEntered, operation.then((error) => { throw error; })]);
     controller.abort(abortError);

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
-import { inspectTarArchive } from "../src/archive-tar-inspect.js";
+import { inspectTarArchive } from "../src/archive.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { useRealTempDirs } from "./helpers/vitest.js";

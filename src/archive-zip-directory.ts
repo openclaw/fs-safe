@@ -3,7 +3,7 @@ import {
   type ResolvedArchiveExtractLimits,
 } from "./archive-limits.js";
 import { admitZipNames, zipExtraFields, zipFormat, zipUInt64 } from "./archive-zip-names.js";
-import type { ArchiveEntryKind } from "./archive-policy.js";
+import type { ArchiveEntryKind } from "./archive-plan.js";
 
 export type ZipRead = { offset: number; length: number };
 export type ZipScan = Generator<ZipRead, number, Buffer>;

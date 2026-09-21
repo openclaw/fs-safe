@@ -18,7 +18,7 @@ import {
   resolveArchiveEntryMode,
   resolveArchiveFilteredEntryPolicy,
   shouldExtractArchiveEntry,
-} from "../src/archive-policy.js";
+} from "../src/archive-plan.js";
 import { readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
 
 const { tempRoot } = useTempDirs();

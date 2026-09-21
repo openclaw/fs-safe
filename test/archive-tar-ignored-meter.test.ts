@@ -4,7 +4,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { TarParserStream } from "../src/archive-tar-wasm.js";
 import { resolveTarMeterLimits, type TarMeterLimits } from "../src/archive-limits.js";
-import { createTarEntryPreflightChecker, type TarEntryInfo } from "../src/archive-tar.js";
+import { createTarEntryPreflightChecker, type TarEntryInfo } from "../src/archive-plan.js";
 import { tarFixture } from "./helpers/archive-fuzz.js";
 import { ignored, ignoredTypes, unsafeIgnoredPaths } from "./helpers/archive-ignored.js";
 
