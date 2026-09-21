@@ -153,6 +153,10 @@ must not have aliases. The policy reads `nlink` from a pinned destination
 descriptor, not pathname metadata, before rename and rechecks it in the copy
 fallback.
 
+The asynchronous helper closes a successfully admitted hardlink-check pin
+best-effort, including synchronous adapter throws and rejected close promises.
+The synchronous helper reports a close failure after successful admission.
+
 Source and pinned destination admission compare exact bigint device/inode
 observations, so distinct identities that round to the same JavaScript number
 cannot authorize a copy. Unknown Windows identities get one bounded reinspection
@@ -164,6 +168,12 @@ of immediately repeating it with numeric metadata.
 Copy-source close is best-effort. A failed pinned-destination admission also
 preserves its selected failure when close fails. These cleanup rules include
 synchronous throws and rejected promises from custom asynchronous adapters.
+
+The best-effort parent-directory synchronization helper also ignores either form
+of close failure. Parent-directory mode admission and its close remain fail-closed.
+A compatibility-publication handle that was not adopted also receives one
+best-effort close, preserving the selected verification or previous-handle close
+failure. The retained owner's close failures remain reportable.
 
 The default `copyFallbackRestore: "none"` preserves the existing fallback
 contract: a failed copy can leave a partial destination. For state files where

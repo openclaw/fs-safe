@@ -161,7 +161,12 @@ export async function assertDestinationHardlinkPolicy(
 ): Promise<void> {
   if (policy !== "reject") return;
   const handle = await openPinnedDestination(fsModule, dest, "hardlinks");
-  if (handle) await handle.close().catch(() => undefined);
+  if (!handle) return;
+  try {
+    await handle.close();
+  } catch {
+    // The asynchronous admission pin has best-effort close semantics.
+  }
 }
 
 export function assertDestinationHardlinkPolicySync(

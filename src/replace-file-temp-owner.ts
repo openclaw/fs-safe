@@ -254,7 +254,11 @@ export class AsyncAtomicTempOwner extends AtomicTempOwner<FileHandle> {
       this.recordedIdentity = identity;
       published = undefined;
     } finally {
-      await published?.close().catch(() => undefined);
+      try {
+        await published?.close();
+      } catch {
+        // Preserve the selected verification or previous-handle close failure.
+      }
     }
   }
 

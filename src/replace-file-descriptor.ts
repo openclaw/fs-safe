@@ -24,7 +24,11 @@ export async function syncDirectoryBestEffort(
   } catch {
     // Best-effort on platforms/filesystems that do not support directory fsync.
   } finally {
-    await handle?.close().catch(() => undefined);
+    try {
+      await handle?.close();
+    } catch {
+      // Best-effort close also covers synchronous adapter throws.
+    }
   }
 }
 
