@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share pathname permission-report metadata across native and command inspection while preserving independent results, ACL policy, and fallback diagnostics.
+
 ### Correctness
 
 - Keep asynchronous atomic admission-pin, parent-sync, and rejected replacement-pin closes best-effort when a filesystem adapter throws synchronously, preserving selected failures and the synchronous helper's close reporting.
