@@ -40,6 +40,48 @@ function deferred() {
   return { promise, resolve };
 }
 
+describe.runIf(Boolean(native))("direct native SHA-256 limits", () => {
+  it.each([-1, -Infinity, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid limit %s synchronously",
+    async (maxBytes) => {
+      const handle = await fs.open(await fixture("abcdef"), "r");
+      const operations: Promise<unknown>[] = [];
+      try {
+        expect(() => { operations.push(native!.sha256File(handle.fd, maxBytes)); }).toThrow(
+          expect.objectContaining({
+            code: "InvalidArg",
+            message: "maxBytes must be a non-negative safe integer",
+          }),
+        );
+      } finally {
+        // Join an unexpectedly accepted worker before releasing its borrowed fd.
+        await Promise.allSettled(operations);
+        await handle.close();
+      }
+    },
+  );
+
+  it.each([
+    ["", 0],
+    ["abcdef", 6],
+    ["abcdef", Number.MAX_SAFE_INTEGER],
+  ] as const)("hashes %j with direct limit %s without moving the cursor", async (contents, maxBytes) => {
+    const handle = await fs.open(await fixture(contents), "r");
+    try {
+      await handle.read(Buffer.alloc(2), 0, 2, null);
+      await expect(native!.sha256File(handle.fd, maxBytes)).resolves.toEqual({
+        bytes: contents.length,
+        digest: createHash("sha256").update(contents).digest("hex"),
+      });
+      const next = Buffer.alloc(1);
+      const { bytesRead } = await handle.read(next, 0, 1, null);
+      expect(next.subarray(0, bytesRead).toString()).toBe(contents.slice(2, 3));
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
 for (const mode of ["off", "require"] as const) {
   describe.runIf(mode === "off" || Boolean(native))(`bounded SHA-256 (${mode})`, () => {
     beforeEach(() => {
