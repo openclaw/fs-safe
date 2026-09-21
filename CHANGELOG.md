@@ -36,6 +36,7 @@
 - Reduce redundant metadata observations and Promise scheduling in secret-file reads, regular-file admission, and staged-file publication while retaining exact identity and mutation checks.
 - Share archive staging, directory admission, temporary-file ownership, lock registration, and native task settlement code without changing public APIs or platform fallback behavior.
 - Reuse bounded scratch storage across fallback SHA-256 operations, preserving exclusive in-flight reads, byte limits, cancellation settlement, and clearing retained file contents.
+- Reduce npm package size by omitting declaration maps that point to unpublished TypeScript sources, while preserving declarations and public exports.
 
 ## 0.17.0 - 2026-09-20
 

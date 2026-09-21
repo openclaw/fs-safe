@@ -29,7 +29,6 @@
     "dist/windows-security-bridge.ps1",
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "dist/**/*.d.ts.map",
     "docs/**/*.md",
     "docs/assets/readme-banner.jpg",
     "README.md",
