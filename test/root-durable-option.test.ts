@@ -202,7 +202,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
 
     await safe.write("target", "payload", { mode: 0o400 });
 
-    expect(creationModes).toEqual([0o600, 0o600]);
+    expect(creationModes).toEqual([0o600]);
     expect(events).toEqual(["chmod", "verify"]);
     expect((await fs.stat(target)).mode & 0o777).toBe(0o400);
     expect(await fs.readFile(target, "utf8")).toBe("payload");

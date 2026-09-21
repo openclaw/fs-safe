@@ -32,6 +32,36 @@ const settings = [
   { label: "disabled override", root: true, call: false, enabled: false },
 ];
 
+it.each([false, true])("keeps the destination old or absent while buffering (existing=%s)", async existing => {
+  const { scoped, target } = await fixture(false);
+  if (existing) await fs.writeFile(target, "original");
+  const entered = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  const open = fs.open.bind(fs);
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (path.basename(String(args[0])).startsWith(".fs-safe-")) {
+      const write = handle.write.bind(handle);
+      vi.spyOn(handle, "write").mockImplementation(async (...writeArgs) => {
+        entered.resolve();
+        await resume.promise;
+        return await write(...writeArgs);
+      });
+    }
+    return handle;
+  });
+  const pending = scoped.write("target", Buffer.from("complete replacement"));
+  try {
+    await entered.promise;
+    if (existing) expect(await fs.readFile(target, "utf8")).toBe("original");
+    else await expect(fs.readFile(target)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    resume.resolve();
+    await pending;
+  }
+  expect(await fs.readFile(target, "utf8")).toBe("complete replacement");
+});
+
 it.each(operations.flatMap(operation => settings.map(setting => ({ operation, ...setting }))))(
   "$operation honors $label durability through Windows fallback dispatch",
   async ({ operation, enabled, root: defaultDurable, call }) => {
@@ -147,17 +177,15 @@ it.each(["write failure", "sync failure", "successful sync"] as const)(
   },
 );
 
-it("preserves a substituted destination placeholder after staging sync failure", async () => {
+it("preserves a destination created by another writer after staging sync failure", async () => {
   const { dir, scoped, target } = await fixture();
-  const displaced = path.join(dir, "placeholder");
   const error = Object.assign(new Error("sync failed"), { code: "EIO" });
   const open = fs.open.bind(fs);
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await open(...args);
     if (path.basename(String(args[0])).startsWith(".fs-safe-")) {
       vi.spyOn(handle, "sync").mockImplementation(async () => {
-        await fs.rename(target, displaced);
-        await fs.writeFile(target, "unowned destination");
+        await fs.writeFile(target, "unowned destination", { flag: "wx" });
         throw error;
       });
     }
@@ -165,6 +193,115 @@ it("preserves a substituted destination placeholder after staging sync failure",
   });
   await expect(scoped.write("target", "new bytes")).rejects.toBe(error);
   expect(await fs.readFile(target, "utf8")).toBe("unowned destination");
-  expect(await fs.readFile(displaced, "utf8")).toBe("");
-  expect((await fs.readdir(dir)).sort()).toEqual(["placeholder", "target"]);
+  expect(await fs.readdir(dir)).toEqual(["target"]);
+});
+
+it.skipIf(platform.value === "win32").each([
+  { mode: undefined, expectedMode: 0o400 },
+  { mode: 0o660, expectedMode: 0o660 },
+])("preserves masked new-file mode unless explicitly overridden ($mode)", async ({ mode, expectedMode }) => {
+  const { scoped, target } = await fixture(false);
+  const previous = process.umask(0o277);
+  try {
+    await scoped.write("target", Buffer.from("complete"), { mode });
+    expect((await fs.stat(target)).mode & 0o777).toBe(expectedMode);
+    expect(await fs.readFile(target, "utf8")).toBe("complete");
+  } finally {
+    process.umask(previous);
+  }
+});
+
+it.each(["regular", "write-only", "read-only", "hardlink", "directory"] as const)(
+  "readmits a raced %s destination before replacement",
+  async kind => {
+    const { dir, scoped, target } = await fixture(false);
+    const sentinel = path.join(dir, "sentinel");
+    await fs.writeFile(sentinel, "unowned");
+    const open = fs.open.bind(fs);
+    let injected = false;
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (path.basename(String(args[0])).startsWith(".fs-safe-")) {
+        const write = handle.write.bind(handle);
+        vi.spyOn(handle, "write").mockImplementation(async (...writeArgs) => {
+          const result = await write(...writeArgs);
+          if (!injected) {
+            injected = true;
+            await fs.rm(target, { force: true });
+            if (kind === "regular" || kind === "write-only" || kind === "read-only") {
+              await fs.writeFile(target, "raced ordinary file", {
+                mode: kind === "read-only" ? 0o400 : kind === "write-only" ? 0o200 : 0o600,
+              });
+            }
+            else if (kind === "hardlink") await fs.link(sentinel, target);
+            else await fs.mkdir(target);
+          }
+          return result;
+        });
+      }
+      return handle;
+    });
+    const rename = fs.rename.bind(fs);
+    let publications = 0;
+    vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
+      if (String(args[1]) === target) publications++;
+      await rename(...args);
+    });
+    const pending = scoped.write("target", Buffer.from("complete"));
+    if (kind === "regular" || kind === "write-only") {
+      await pending;
+      expect(await fs.readFile(target, "utf8")).toBe("complete");
+    } else if (kind === "read-only") {
+      await expect(pending).rejects.toMatchObject({ code: expect.stringMatching(/^(?:EACCES|EPERM)$/) });
+      expect(await fs.readFile(target, "utf8")).toBe("raced ordinary file");
+      await fs.chmod(target, 0o600);
+    } else {
+      await expect(pending).rejects.toMatchObject({ code: kind === "hardlink" ? "hardlink" : "path-mismatch" });
+    }
+    expect(injected).toBe(true);
+    expect(publications).toBe(kind === "regular" || kind === "write-only" ? 1 : 0);
+    expect(await fs.readFile(sentinel, "utf8")).toBe("unowned");
+  },
+);
+
+it.each([undefined, "reject"] as const)("rejects a final junction inserted by the last authority callback (%s)", async mutationSymlinks => {
+  const { scoped, target } = await fixture(false);
+  const outside = await tempRoot("fs-safe-windows-write-outside-");
+  const sentinel = path.join(outside, "sentinel");
+  await fs.writeFile(sentinel, "unowned");
+  const open = fs.open.bind(fs);
+  let written = false;
+  let injected = false;
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (path.basename(String(args[0])).startsWith(".fs-safe-")) {
+      const write = handle.write.bind(handle);
+      vi.spyOn(handle, "write").mockImplementation(async (...writeArgs) => {
+        const result = await write(...writeArgs);
+        written = true;
+        return result;
+      });
+    }
+    return handle;
+  });
+  const rename = fs.rename.bind(fs);
+  let publications = 0;
+  vi.spyOn(fs, "rename").mockImplementation(async (...args) => {
+    if (String(args[1]) === target) publications++;
+    await rename(...args);
+  });
+  await expect(scoped.write("target", Buffer.from("complete"), {
+    mutationSymlinks,
+    assertBeforeMutation: () => {
+      if (written && !injected) {
+        injected = true;
+        fsSync.rmSync(target, { force: true });
+        fsSync.symlinkSync(outside, target, "junction");
+      }
+    },
+  })).rejects.toMatchObject({ code: "path-mismatch" });
+  expect(injected).toBe(true);
+  expect(publications).toBe(0);
+  expect((await fs.lstat(target)).isSymbolicLink()).toBe(true);
+  expect(await fs.readFile(sentinel, "utf8")).toBe("unowned");
 });

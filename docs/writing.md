@@ -45,8 +45,14 @@ wrong file. Resolve an intended alias explicitly with `Root.resolve()` before
 passing its canonical path to a mutation.
 
 A failure before the final rename leaves the destination at its previous
-contents. A successful rename publishes the complete replacement. This
-old-or-new guarantee does not apply to `append()` or `openWritable()`, which
+contents. A successful rename publishes the complete replacement. Buffered
+Windows replacement writes also keep a missing destination absent while staging;
+they do not reserve an empty file at the final name. An ordinary writable file created
+concurrently may be replaced under `overwrite: true`. Immediately before rename,
+the writer rechecks the selected destination's type and link count, admits a raced
+file's access, and verifies retained file/parent identities and mutation policy.
+
+The old-or-new guarantee does not apply to `append()` or `openWritable()`, which
 write in place, or to lower-level atomic helpers when their explicitly
 non-atomic permission-error copy fallback is enabled.
 
