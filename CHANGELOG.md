@@ -4,6 +4,7 @@
 
 ### Features
 
+- Expose the existing pre-publication hook and staging-prefix options through `writeTextAtomic`, preserving atomic replacement's validation and identity checks.
 - **Retained symlink publication:** `retainSymlinkInDirectory()` on the advanced surface holds an explicitly identified POSIX symlink through exact-slot no-replace publication and explicit recovery, preserving observed foreign replacements and uncertain outcomes.
 
 - **Batched Windows ACL facts:** add `readOwnerAndDaclBatch()` to inspect ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Existing synchronous inspection remains unchanged.

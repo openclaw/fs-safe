@@ -1,7 +1,7 @@
-import { replaceFileAtomic } from "./replace-file.js";
+import { replaceFileAtomic, type ReplaceFileAtomicOptions } from "./replace-file.js";
 import { admitStandalonePublicationPath } from "./windows-path-alias.js";
 
-export type WriteTextAtomicOptions = {
+export type WriteTextAtomicOptions = Pick<ReplaceFileAtomicOptions, "beforeRename" | "tempPrefix"> & {
   mode?: number;
   dirMode?: number;
   trailingNewline?: boolean;
@@ -30,5 +30,7 @@ export async function writeTextAtomic(
     copyFallbackOnPermissionError: true,
     syncTempFile: durable,
     syncParentDir: durable,
+    beforeRename: options?.beforeRename,
+    tempPrefix: options?.tempPrefix,
   });
 }

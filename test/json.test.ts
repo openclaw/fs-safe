@@ -111,6 +111,85 @@ describe("json file helpers", () => {
     expect(dirEntries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
   });
 
+  it("waits for the text publication prerequisite with a complete custom-prefix stage", async () => {
+    const root = await tempRoot("fs-safe-text-hook-");
+    const filePath = path.join(root, "note.txt");
+    const backupPath = path.join(root, "note.bak");
+    await fs.writeFile(filePath, "old");
+    const entered = Promise.withResolvers<void>();
+    const prerequisite = Promise.withResolvers<void>();
+    let stagedPath = "";
+    const pending = writeTextAtomic(filePath, "new", {
+      durable: false,
+      trailingNewline: true,
+      tempPrefix: ".note-stage",
+      beforeRename: async ({ filePath: destination, tempPath }) => {
+        expect(destination).toBe(filePath);
+        stagedPath = tempPath;
+        entered.resolve();
+        await prerequisite.promise;
+        await fs.copyFile(destination, backupPath);
+      },
+    });
+    try {
+      await Promise.race([entered.promise, pending]);
+      expect(path.dirname(stagedPath)).toBe(root);
+      expect(path.basename(stagedPath)).toMatch(/^\.note-stage\..+\.tmp$/);
+      expect(await fs.readFile(stagedPath, "utf8")).toBe("new\n");
+      expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    } finally {
+      prerequisite.resolve();
+      await pending;
+    }
+    expect(await fs.readFile(backupPath, "utf8")).toBe("old");
+    expect(await fs.readFile(filePath, "utf8")).toBe("new\n");
+    expect((await fs.readdir(root)).sort()).toEqual(["note.bak", "note.txt"]);
+  });
+
+  it("preserves the old text and removes its stage when the publication hook refuses", async () => {
+    const root = await tempRoot("fs-safe-text-hook-refusal-");
+    const filePath = path.join(root, "note.txt");
+    await fs.writeFile(filePath, "old");
+    const refusal = new Error("backup prerequisite failed");
+    await expect(writeTextAtomic(filePath, "new", {
+      durable: false,
+      tempPrefix: ".note-stage",
+      beforeRename: async () => { throw refusal; },
+    })).rejects.toBe(refusal);
+    expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    expect(await fs.readdir(root)).toEqual(["note.txt"]);
+  });
+
+  it("rejects a text hook's substituted stage without publishing or deleting it", async () => {
+    const root = await tempRoot("fs-safe-text-hook-substitute-");
+    const filePath = path.join(root, "note.txt");
+    const movedPath = path.join(root, "owned-stage");
+    await fs.writeFile(filePath, "old");
+    let stagedPath = "";
+    await expect(writeTextAtomic(filePath, "new", {
+      durable: false,
+      tempPrefix: ".note-stage",
+      beforeRename: async ({ tempPath }) => {
+        stagedPath = tempPath;
+        await fs.rename(tempPath, movedPath);
+        await fs.writeFile(tempPath, "substitute");
+      },
+    })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    expect(await fs.readFile(movedPath, "utf8")).toBe("new");
+    expect(await fs.readFile(stagedPath, "utf8")).toBe("substitute");
+  });
+
+  it.each(["", "../escape"])("rejects unsafe text stage prefix %j before publication", async tempPrefix => {
+    const root = await tempRoot("fs-safe-text-prefix-");
+    const filePath = path.join(root, "note.txt");
+    await fs.writeFile(filePath, "old");
+    await expect(writeTextAtomic(filePath, "new", { durable: false, tempPrefix }))
+      .rejects.toMatchObject({ code: "invalid-path" });
+    expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    expect(await fs.readdir(root)).toEqual(["note.txt"]);
+  });
+
   it("threads durable option through JSON writes", async () => {
     const root = await tempRoot("fs-safe-json-");
     const filePath = path.join(root, "state.json");
