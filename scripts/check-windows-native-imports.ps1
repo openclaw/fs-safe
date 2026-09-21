@@ -41,7 +41,7 @@ $imports = (& $dumpbin /nologo /imports:ntdll.dll $Binary) -join "`n"
 if ($LASTEXITCODE -ne 0 -or $imports -notmatch '(?im)^\s*ntdll\.dll\s*$') {
     throw 'Could not inspect ntdll.dll imports.'
 }
-$symbols = @('NtCreateFile', 'NtSetInformationFile', 'NtReadFile', 'RtlNtStatusToDosError')
+$symbols = @('NtCreateFile', 'NtSetInformationFile', 'NtReadFile', 'NtQueryInformationFile', 'RtlNtStatusToDosError')
 foreach ($symbol in $symbols) {
     if (-not [regex]::IsMatch($imports, '(?m)^\s*[0-9A-Fa-f]+\s+' + [regex]::Escape($symbol) + '\s*$')) {
         throw "Missing ntdll.dll import: $symbol"
