@@ -46,9 +46,7 @@ type DirectorySnapshot = {
 type InspectedDirectorySnapshot = { entry: DirectorySnapshot; stat: BigIntStats };
 export type TempWorkspaceRootAdmission = {
   dir: string;
-  identity: ExactIdentity;
   ownerUid: number | undefined;
-  realPath: string;
   retainCleanupParent(descriptorFd: number): void;
   prepareCleanupProbe(descriptorFd: number): void;
   prepareChildCreation(descriptorFd?: number): void;
@@ -324,9 +322,7 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
   const current = chain[chain.length - 1]!;
   return {
     dir: current.dir,
-    identity: current.identity,
     ownerUid,
-    realPath: current.realPath,
     retainCleanupParent: (descriptorFd) => {
       assertSnapshot(current, ownerUid);
       associateTempWorkspaceRoot(current, ownerUid, descriptorFd);
@@ -361,9 +357,7 @@ function canonicalRootAdmission(
   };
   return {
     dir: discovery.dir,
-    identity: discovery.identity,
     ownerUid,
-    realPath: discovery.realPath,
     // Merely opening the cleanup-parent descriptor grants no authority. The
     // exact association is completed only at a bounded probe or the mutation
     // boundary below.

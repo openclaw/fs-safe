@@ -70,10 +70,19 @@ for (const variant of ["async", "sync"] as const) {
       await fs.symlink(real, alias, directoryLink);
       const target = path.join(alias, "caf\u00e9", "Child");
       const admitted = await admit(target);
-      const expected = realpathSync.native(path.join(real, "caf\u00e9", "Child"));
-      expect(admitted.realPath).toBe(expected);
+      const canonical = realpathSync.native(target);
+      const original = await fs.stat(target, { bigint: true });
       expect(() => admitted.assertCurrent()).not.toThrow();
       expect(() => admitted.assertAncestry()).not.toThrow();
+
+      const relocated = path.join(base, "relocated");
+      await fs.rename(real, relocated);
+      await fs.symlink(relocated, real, directoryLink);
+      const current = await fs.stat(target, { bigint: true });
+      expect({ dev: current.dev, ino: current.ino }).toEqual({ dev: original.dev, ino: original.ino });
+      expect(realpathSync.native(target)).not.toBe(canonical);
+      expect(() => admitted.assertCurrent()).toThrowError(expect.objectContaining({ code: "path-mismatch" }));
+      expect(() => admitted.assertAncestry()).toThrowError(expect.objectContaining({ code: "not-file" }));
     });
 
     it("keeps parent-first failures when canonical spelling differs", async () => {
@@ -225,9 +234,15 @@ for (const variant of ["async", "sync"] as const) {
       });
       const admitted = await admit(target);
       expect(childCanonicalizations).toBe(2);
-      expect(admitted.realPath).toBe(target);
-      expect(admitted.identity).toEqual(originalIdentity);
+      const current = fsSync.lstatSync(target, { bigint: true });
+      expect({ dev: current.dev, ino: current.ino }).toEqual(originalIdentity);
       expect(() => admitted.assertCurrent()).not.toThrow();
+      expect(() => admitted.assertAncestry()).not.toThrow();
+
+      fsSync.renameSync(target, saved);
+      fsSync.mkdirSync(target, { mode: 0o700 });
+      expect(() => admitted.assertCurrent()).toThrowError(expect.objectContaining({ code: "path-mismatch" }));
+      expect(() => admitted.assertAncestry()).toThrowError(expect.objectContaining({ code: "path-mismatch" }));
       expect(await fs.readFile(path.join(outside, "keep"), "utf8")).toBe("untouched");
     });
 

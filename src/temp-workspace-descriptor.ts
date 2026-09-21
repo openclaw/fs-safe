@@ -39,8 +39,6 @@ export type RetainedDirectory = {
   access: DirectoryDescriptorAccess;
   receipt: Readonly<{
     path: string;
-    realPath: string;
-    identity: Readonly<{ dev: bigint; ino: bigint }>;
   }>;
 };
 
@@ -121,8 +119,6 @@ export function openTempWorkspaceCleanupParent(
       access: opened.access,
       receipt: Object.freeze({
         path: pathname,
-        realPath: admission.realPath,
-        identity: admission.identity,
       }),
     };
   } catch (error) {
