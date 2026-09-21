@@ -417,6 +417,12 @@ fs.rootWithSep   // rootReal with a trailing separator, for prefix comparisons
 fs.defaults      // the RootDefaults you passed
 ```
 
+The path properties are readonly metadata. Each Root retains the canonical
+directory and exact identity admitted when it was created; changing object
+properties is not a supported way to retarget it. Create another Root to use a
+different directory. The `defaults` reference is readonly, while the supplied
+object's option values remain live for later calls.
+
 ## Failure semantics
 
 Boundary and policy failures throw `FsSafeError` with a `code`. Parsing callbacks

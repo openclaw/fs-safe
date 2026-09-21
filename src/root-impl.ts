@@ -283,31 +283,19 @@ export interface Root {
 }
 
 export class RootHandle implements Root {
-  private readonly rootGuard: RootContext["rootGuard"];
-  private readonly rootIdentity: RootContext["rootIdentity"];
+  private readonly context: RootContext;
   readonly rootDir: string;
   readonly rootReal: string;
   readonly rootWithSep: string;
   readonly defaults: RootDefaults;
 
   constructor(context: RootContext, defaults: RootDefaults = {}) {
-    this.rootGuard = context.rootGuard;
-    this.rootIdentity = context.rootIdentity;
+    this.context = context;
     this.rootDir = context.rootDir;
     this.rootReal = context.rootReal;
     this.rootWithSep = context.rootWithSep;
     this.defaults = defaults;
     registerFileLockSyncRootAdapter(this, context, defaults);
-  }
-
-  private get context(): RootContext {
-    return {
-      rootDir: this.rootDir,
-      rootGuard: this.rootGuard,
-      rootIdentity: this.rootIdentity,
-      rootReal: this.rootReal,
-      rootWithSep: this.rootWithSep,
-    };
   }
 
   private mutationOptions<T extends { denyMutations?: DenyMutationPolicy; assertBeforeMutation?: () => void; mutationSymlinks?: MutationSymlinkPolicy }>(options: T): T {
@@ -585,7 +573,7 @@ export class RootHandle implements Root {
   walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry> {
     assertValidRootRelativePath(relativePath);
     return walkRoot({
-      rootReal: this.rootReal,
+      rootReal: this.context.rootReal,
       stat: relative => this.stat(relative),
       list: async (relative, listingOptions) => {
         validatePinnedOperationPayload({ relativePath: relative });

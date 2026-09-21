@@ -8,6 +8,7 @@
 
 ### Performance and maintenance
 
+- Retain each Root's originally admitted context across operations while preserving readonly path metadata, live defaults, and root-replacement checks.
 - Allow the durable copy-restoration regression enough time to complete on instrumented Windows CI, retaining all restoration and content assertions.
 - Share guest Python operand admission and descriptor cleanup across filesystem operations while preserving operation-specific exit statuses and failure behavior.
 - Keep native POSIX beneath-open descriptors owned until handoff and share cleanup metadata inspection, preserving platform containment and error behavior.
