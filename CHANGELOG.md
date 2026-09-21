@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Share public Root type exports through one private catalog while preserving declaration owners, interface augmentation, and runtime exports.
 - Consolidate exclusive file and directory creation under one implementation owner while preserving private permissions, callbacks, publication outcomes, and descriptor cleanup.
 - Consolidate archive extraction, inspection, and entry-policy ownership while preserving public helpers, lazy codec loading, cancellation, and admission order.
 - Share failure-only cause options across Root and store diagnostics while retaining caller-local error construction, metadata ownership, and underlying Error instances.

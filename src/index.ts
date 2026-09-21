@@ -1,69 +1,25 @@
 export {
   FsSafeError,
   categorizeFsSafeError,
-  type FsSafeErrorCategory,
-  type FsSafeErrorCode,
-  type FsSafeErrorDetails,
 } from "./errors.js";
+export type * from "./errors.js";
 export {
   DEFAULT_ROOT_MAX_BYTES,
   root,
-  type DenyMutationPolicy,
-  type HardlinkPolicy,
-  type RenameIdentityPolicy,
-  type OpenResult,
-  type ReadResult,
   type Root,
-  type RootAppendOptions,
-  type RootCopyOptions,
-  type RootCopySource,
-  type RootCopyPublicationReceipt,
-  type CopyCloneMode,
-  type RootCreateJsonOptions,
-  type RootCreateOptions,
-  type RootCreateStreamOptions,
-  type RootDefaults,
-  type RootEntriesOptions,
-  type RootMkdirOptions,
-  type RootMoveOptions,
-  type RootOpenOptions,
-  type RootOpenWritableOptions,
-  type RootOptions,
-  type RootReadOptions,
-  type RootRemoveOptions,
-  type RootWriteJsonOptions,
-  type RootWriteOptions,
-  type RootWalkDataEntry,
-  type RootWalkDataEntryKind,
-  type RootWalkDirectoryErrorBehavior,
-  type RootWalkEntry,
-  type RootWalkEntryFilter,
-  type RootWalkEntryFilterResult,
-  type RootWalkEntryKind,
-  type RootWalkLimitBehavior,
-  type RootWalkOptions,
-  type RootWalkSymlinkPolicy,
-  type SymlinkPolicy,
-  type MutationSymlinkPolicy,
-  type WritableOpenMode,
-  type WritableOpenResult,
 } from "./root.js";
-export type { ContainmentGuarantee } from "./containment.js";
+export type * from "./root-public-types.js";
 export {
   configureFsSafePython,
   configureFsSafeNative,
   getFsSafeNativeConfig,
-  type FsSafePythonConfig,
-  type FsSafeNativeConfig,
-  type FsSafeNativeMode,
 } from "./native-config.js";
+export type * from "./config.js";
 export {
   writeExternalFileWithinRoot,
-  type ExternalFileWriteOptions,
-  type ExternalFileWriteResult,
 } from "./output.js";
+export type * from "./output.js";
 export {
   configureFsSafeLocks,
   getFsSafeLockConfig,
-  type FsSafeLockConfig,
 } from "./lock-config.js";

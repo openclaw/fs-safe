@@ -43,3 +43,20 @@ it("detects a real declaration widened from a literal union to string", async ()
   actual.packageSubpaths["."].errorCodes = inspected.packageSubpaths["."].errorCodes;
   expect(() => assertPublicApi(actual)).toThrow("error-code type vanished from .: FsSafeErrorCode");
 }, 15_000);
+
+it("rejects function type-query exports introduced by a type-only star", async () => {
+  const consumer = await tempRoot("fs-safe-api-surface-");
+  const installed = path.join(consumer, "node_modules", "@openclaw", "fs-safe");
+  await fs.mkdir(installed, { recursive: true });
+  await fs.writeFile(path.join(consumer, "package.json"), '{"private":true,"type":"module"}');
+  await fs.writeFile(path.join(installed, "package.json"), JSON.stringify({
+    name: "@openclaw/fs-safe", type: "module",
+    exports: { ".": { types: "./index.d.ts", default: "./index.js" } },
+  }));
+  await fs.writeFile(path.join(installed, "index.js"), "export {};\n");
+  await fs.writeFile(path.join(installed, "index.d.ts"), 'export type * from "./root.js";\n');
+  await fs.writeFile(path.join(installed, "root.d.ts"), "export declare function rootOnly(): void;\n");
+  expect(() => inspectPublicApi({
+    packageName: "@openclaw/fs-safe", packageSubpaths: ["."], workdir: consumer,
+  })).toThrow("unrecorded type-query export at .: rootOnly");
+}, 15_000);

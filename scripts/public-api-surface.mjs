@@ -26,6 +26,12 @@ export function inspectPublicApi(options) {
   const packageSubpaths = Object.fromEntries(
     options.packageSubpaths.map((subpath) => {
       if (subpath === "./package.json") return [subpath, { kind: "json" }];
+      const recorded = new Set([...runtime[subpath], ...declarations[subpath].types]);
+      for (const name of declarations[subpath].names) {
+        if (!recorded.has(name)) {
+          throw new Error(`unrecorded type-query export at ${subpath}: ${name}`);
+        }
+      }
       return [
         subpath,
         {
@@ -90,9 +96,11 @@ function inspectDeclarationExports(workdir, subpaths, specifiers) {
       if (!moduleSymbol) {
         throw new Error(`could not resolve declarations for ${specifiers[index]}`);
       }
+      const names = [];
       const types = [];
       const errorCodes = {};
       for (const exportedSymbol of checker.getExportsOfModule(moduleSymbol)) {
+        names.push(exportedSymbol.name);
         const symbol =
           exportedSymbol.flags & SymbolFlags.Alias
             ? checker.getAliasedSymbol(exportedSymbol)
@@ -110,6 +118,7 @@ function inspectDeclarationExports(workdir, subpaths, specifiers) {
       return [
         subpaths[index],
         {
+          names,
           types: types.sort(),
           errorCodes: Object.fromEntries(
             Object.entries(errorCodes).sort(([left], [right]) =>
