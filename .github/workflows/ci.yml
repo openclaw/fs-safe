@@ -1352,6 +1352,11 @@ jobs:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm package:smoke
 
+      - name: Verify Windows native PE imports
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-windows-native-imports.ps1 -Binary packages/win32-x64-msvc/fs-safe-native.node -ConsumerProof release-artifacts/consumer-proof.json -Output release-artifacts/windows-native-pe.json
+
       - name: Prove native descriptor ownership in Node workers
         env:
           FS_SAFE_NATIVE_MODE: require
@@ -1370,4 +1375,5 @@ jobs:
           path: |
             release-artifacts/manifest.json
             release-artifacts/consumer-proof.json
+            release-artifacts/windows-native-pe.json
           if-no-files-found: error
