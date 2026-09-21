@@ -142,29 +142,20 @@ export async function inspectPathPermissions(
 
   const bits = modeBits(effectiveMode);
   const platform = opts?.platform ?? process.platform;
-  if (platform === "win32") {
-    return await inspectWindowsPermissions({
-      targetPath,
-      stat: st,
-      effectiveIsDir,
-      effectiveMode,
-      bits,
-      opts,
-    });
-  }
-
-  return {
+  const windows = platform === "win32";
+  const permissions: PermissionCheck = {
     ok: true,
     isSymlink: st.isSymlink,
     isDir: effectiveIsDir,
     mode: effectiveMode,
     bits,
-    source: "posix",
-    worldWritable: isWorldWritable(bits),
-    groupWritable: isGroupWritable(bits),
-    worldReadable: isWorldReadable(bits),
-    groupReadable: isGroupReadable(bits),
+    source: windows ? "unknown" : "posix",
+    worldWritable: !windows && isWorldWritable(bits),
+    groupWritable: !windows && isGroupWritable(bits),
+    worldReadable: !windows && isWorldReadable(bits),
+    groupReadable: !windows && isGroupReadable(bits),
   };
+  return windows ? await inspectWindowsPermissions(targetPath, permissions, opts) : permissions;
 }
 
 export function formatPermissionDetail(targetPath: string, perms: PermissionCheck): string {

@@ -1,7 +1,7 @@
 import os from "node:os";
 import { getNativeBinding } from "./native.js";
 import { executePermissionCommand, type PermissionCommandFailure } from "./permission-exec.js";
-import { safeStat, type PermissionCheck, type PermissionCheckOptions, type SafeStatResult } from "./permissions.js";
+import { safeStat, type PermissionCheck, type PermissionCheckOptions } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
@@ -77,24 +77,17 @@ const normalize = (value: string) => normalizeLowercaseStringOrEmpty(value);
 const defaultWindowsUserInfo: WindowsUserInfoProvider = () => os.userInfo();
 const defaultPermissionExec: PermissionExec = executePermissionCommand;
 
-function inspectWindowsPermissionsNative(params: {
-  targetPath: string;
-  stat: SafeStatResult;
-  effectiveIsDir: boolean;
-  effectiveMode: number | null;
-  bits: number | null;
-}): PermissionCheck | undefined {
+function inspectWindowsPermissionsNative(
+  targetPath: string,
+  unverified: Readonly<PermissionCheck>,
+): PermissionCheck | undefined {
   const native = getNativeBinding();
   if (!native) return undefined;
   try {
-    const facts = native.readOwnerAndDacl(params.targetPath);
+    const facts = native.readOwnerAndDacl(targetPath);
     if (facts.fallbackRequired) return undefined;
     return {
-      ok: true,
-      isSymlink: params.stat.isSymlink,
-      isDir: params.effectiveIsDir,
-      mode: params.effectiveMode,
-      bits: params.bits,
+      ...unverified,
       source: "windows-acl",
       worldWritable: facts.worldWritable,
       groupWritable: facts.groupWritable,
@@ -112,38 +105,23 @@ function inspectWindowsPermissionsNative(params: {
   }
 }
 
-export async function inspectWindowsPermissions(params: {
-  targetPath: string;
-  stat: SafeStatResult;
-  effectiveIsDir: boolean;
-  effectiveMode: number | null;
-  bits: number | null;
-  opts?: PermissionCheckOptions;
-}): Promise<PermissionCheck> {
-  const unverified: PermissionCheck = {
-    ok: true,
-    isSymlink: params.stat.isSymlink,
-    isDir: params.effectiveIsDir,
-    mode: params.effectiveMode,
-    bits: params.bits,
-    source: "unknown",
-    worldWritable: false,
-    groupWritable: false,
-    worldReadable: false,
-    groupReadable: false,
-  };
-  if (hasWindowsPathAlias(params.targetPath, "filesystem", "win32")) {
+export async function inspectWindowsPermissions(
+  targetPath: string,
+  unverified: Readonly<PermissionCheck>,
+  opts?: PermissionCheckOptions,
+): Promise<PermissionCheck> {
+  if (hasWindowsPathAlias(targetPath, "filesystem", "win32")) {
     return {
       ...unverified,
       error: "Path uses a Windows filesystem namespace alias",
     };
   }
-  const native = inspectWindowsPermissionsNative(params);
+  const native = inspectWindowsPermissionsNative(targetPath, unverified);
   if (native) return native;
   const owner = await inspectWindowsOwner({
-    targetPath: params.targetPath,
-    env: params.opts?.env,
-    exec: params.opts?.exec ?? defaultPermissionExec,
+    targetPath,
+    env: opts?.env,
+    exec: opts?.exec ?? defaultPermissionExec,
   });
   if (owner.error !== undefined) {
     const error = `Windows owner inspection failed: ${owner.error}`;
@@ -157,11 +135,7 @@ export async function inspectWindowsPermissions(params: {
   };
   if (!acl.ok) return { ...unverified, ...ownerFields, error: acl.error, errorDetail: acl.errorDetail, errorCause: acl.errorCause };
   return {
-    ok: true,
-    isSymlink: params.stat.isSymlink,
-    isDir: params.effectiveIsDir,
-    mode: params.effectiveMode,
-    bits: params.bits,
+    ...unverified,
     source: "windows-acl",
     worldWritable: acl.untrustedWorld.some((entry) => entry.canWrite),
     groupWritable: acl.untrustedGroup.some((entry) => entry.canWrite),

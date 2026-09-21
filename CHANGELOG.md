@@ -13,6 +13,7 @@
 
 ### Performance and maintenance
 
+- Share pathname permission-report metadata across native and command inspection while preserving independent results, ACL policy, and fallback diagnostics.
 - Keep native Unix cleanup choices at their callers, removing redundant forwarding helpers without changing identity checks or cleanup-error handling.
 - Share the native archive entry schema while preserving plan-input diagnostics and independent manifest snapshots.
 - Use the existing Windows SDK bindings for native syscall declarations and constants, preserving filesystem policy and handle ownership while checking the built addon's imports in CI.
