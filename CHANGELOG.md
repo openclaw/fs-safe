@@ -12,7 +12,10 @@
 
 - Make the in-flight archive mutation deadline regression deterministic without increasing its timeout or weakening settlement assertions.
 - Remove unused private descriptor metadata and lock-handle methods while retaining temp-workspace admission checks and shared lock cleanup ownership.
+- Share native link and rename argument admission, preserving source-before-target validation, descriptor-relative dispatch, and platform errors.
+- Remove redundant Windows native-open policy switches while preserving reparse checks, exact created-directory ownership, and hardlink access.
 - Simplify native SHA-256 worker state while preserving positioned reads, byte limits, cancellation checks, and descriptor ownership.
+- Remove unused private rename and move-cleanup options while preserving parent identity checks, mutation callbacks, and trash fallback behavior.
 - Keep temporary filename fallback selection with its public caller, removing unused private sanitizer options while preserving shared path validation and Windows device-name protection.
 - Remove unused internal policy modes from Root lock acquisition, store writes and streams, and JSON read retries while retaining public defaults and filesystem safeguards.
 
@@ -25,6 +28,7 @@
 - Keep native POSIX beneath-open descriptors owned until handoff and share cleanup metadata inspection, preserving platform containment and error behavior.
 - Close Windows process-token handles through the shared handle owner while preserving query order and security errors.
 - Send stdin in guest lifecycle tests only when the selected operation consumes it, avoiding spurious broken-pipe failures without ignoring process errors.
+- Keep Root publication-mode and ZIP-kind test fixtures and backend settings alive until timed-out filesystem work settles, preventing teardown from deleting files still in use.
 - Keep native and JavaScript write-policy callbacks on one shared type contract, with unchanged behavior.
 - Keep synchronous store directory admission and mode finalization under one receipt-chain owner, preserving exact identity checks, failure ordering, and platform fallbacks.
 - Share synchronous lock admission, retry budgets, and compromise-monitor setup across raw-path and Root locks, preserving their distinct authority and stale-recovery behavior.

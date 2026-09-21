@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { configureFsSafeNative, root } from "../src/index.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
-import { useTempDirs } from "./helpers/vitest.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
 let nativeAvailable = false;
 try {
@@ -14,13 +15,25 @@ try {
   if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
 }
 
-const { tempRoot } = useTempDirs();
+let suiteDir: string | undefined;
+const runFixture = useSuiteFixture(async () => {
+  suiteDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-root-publication-modes-"));
+  return suiteDir;
+}, async () => {
+  if (suiteDir) await fs.rm(suiteDir, { force: true, recursive: true });
+});
 const payload = "mode-zero-proof";
 
-afterEach(() => {
-  configureFsSafeNative({ mode: "auto" });
-  __resetNativeLoaderForTest();
-});
+function run(operation: (tempRoot: (prefix: string) => Promise<string>) => Promise<void>) {
+  return runFixture(async (directory) => {
+    try { await operation((prefix) => fs.mkdtemp(path.join(directory, prefix))); }
+    finally {
+      // A timeout does not settle the callback's filesystem work.
+      configureFsSafeNative({ mode: "auto" });
+      __resetNativeLoaderForTest();
+    }
+  });
+}
 
 type ModeSource = "root default" | "per-call";
 type WriteOperation = "write new" | "write replacement" | "write overwrite:false" | "create";
@@ -67,7 +80,7 @@ for (const nativeMode of ["off", "require"] as const) {
   describe.skipIf(process.platform === "win32" || (nativeMode === "require" && !nativeAvailable))(
     `Root publication modes with native ${nativeMode}`,
     () => {
-      it.skipIf(process.getuid?.() === 0)("keeps later reads and pre-existing destination access subject to OS permissions", async () => {
+      it.skipIf(process.getuid?.() === 0)("keeps later reads and pre-existing destination access subject to OS permissions", () => run(async (tempRoot) => {
         configureFsSafeNative({ mode: nativeMode });
         const directory = await tempRoot("fs-safe-root-mode-access-");
         const safe = await root(directory);
@@ -78,11 +91,11 @@ for (const nativeMode of ["off", "require"] as const) {
         await fs.chmod(path.join(directory, "target"), 0o600);
         expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe(payload);
         expect(await fs.readdir(directory)).toEqual(["target"]);
-      });
+      }));
 
       it.each(writeCases.map((entry) => ({ ...entry, octal: entry.mode.toString(8).padStart(3, "0") })))(
         "$operation honors $modeSource mode $octal",
-        async ({ operation, modeSource, mode }) => {
+        ({ operation, modeSource, mode }) => run(async (tempRoot) => {
           configureFsSafeNative({ mode: nativeMode });
           const directory = await tempRoot("fs-safe-root-write-mode-");
           if (operation === "write replacement") {
@@ -97,12 +110,12 @@ for (const nativeMode of ["off", "require"] as const) {
                 ...(operation === "write overwrite:false" ? { overwrite: false } : {}),
               });
           await expectPublished(directory, mode, pending);
-        },
+        }),
       );
 
       it.each(["create", "write overwrite:false"] as const)(
         "%s with mode 000 preserves an existing target",
-        async (operation) => {
+        (operation) => run(async (tempRoot) => {
           configureFsSafeNative({ mode: nativeMode });
           const directory = await tempRoot("fs-safe-root-mode-collision-");
           const target = path.join(directory, "target");
@@ -116,7 +129,7 @@ for (const nativeMode of ["off", "require"] as const) {
           expect((await fs.stat(target)).mode).toBe(original.mode);
           expect(await fs.readFile(target, "utf8")).toBe("existing");
           expect(await fs.readdir(directory)).toEqual(["target"]);
-        },
+        }),
       );
 
       it.each([
@@ -127,7 +140,7 @@ for (const nativeMode of ["off", "require"] as const) {
         { modeSource: "root default" as const, replacement: false, mode: 0o600 },
       ].map((entry) => ({ ...entry, octal: entry.mode.toString(8).padStart(3, "0") })))(
         "copyIn honors $modeSource mode $octal (replacement: $replacement)",
-        async ({ modeSource, replacement, mode }) => {
+        ({ modeSource, replacement, mode }) => run(async (tempRoot) => {
           configureFsSafeNative({ mode: nativeMode });
           const directory = await tempRoot("fs-safe-root-copy-mode-");
           const source = path.join(await tempRoot("fs-safe-root-copy-mode-source-"), "source");
@@ -139,17 +152,17 @@ for (const nativeMode of ["off", "require"] as const) {
           const safe = await root(directory, defaults);
           await expectPublished(directory, mode, safe.copyIn("target", source, options));
           expect(await fs.readFile(source, "utf8")).toBe(payload);
-        },
+        }),
       );
     },
   );
 }
 
 describe.skipIf(process.platform === "win32")("Root publication mode with rename compatibility", () => {
-  it.each([0o000, 0o600])("honors mode %i and releases the compatibility lock", async (mode) => {
+  it.each([0o000, 0o600])("honors mode %i and releases the compatibility lock", (mode) => run(async (tempRoot) => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-root-mode-compatibility-");
     const safe = await root(directory, { mode, renameIdentity: "verify-content-with-lock" });
     await expectPublished(directory, mode, safe.write("target", payload));
-  });
+  }));
 });
