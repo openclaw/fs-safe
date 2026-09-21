@@ -201,6 +201,10 @@ Both mode options must resolve to integers between `0o0000` and `0o7777`; invali
 
 After this operation wins directory creation, initialization uses a pinned descriptor bound to the admitted identity and effective user, with ancestor checks before chmod. It does not chmod the caller's pathname. Creation and descriptor admission are separate operations, not an atomic create-and-pin guarantee. A raced directory that has not reached its requested mode yet is rejected rather than repaired; callers may retry after its creator finishes initialization.
 
+If initial directory-descriptor admission fails, its original identity, ownership,
+or inspection error is preserved even when closing the rejected descriptor fails.
+Close failures after successful admission remain reportable.
+
 Initialization fails closed if the platform cannot safely pin a created directory. In particular, a non-root macOS process cannot pin a new `000` directory produced by `umask(0o777)`; the write fails without repairing that directory or writing a secret. Restrictive masks retaining owner search permission remain usable. Linux x64/arm64 can use the guarded `O_PATH`/procfs descriptor route where available. There is no unguarded pathname-chmod fallback, and a failure may leave a created directory for caller-managed cleanup.
 
 ### `createSecretFileAtomic(params)`

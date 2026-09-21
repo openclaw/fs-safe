@@ -94,7 +94,11 @@ export async function pinNodeDirectoryForMode(
     await owner.verify();
     return owner;
   } catch (error) {
-    await handle.close();
+    try {
+      await handle.close();
+    } catch {
+      // Preserve the initial admission failure before ownership transfers.
+    }
     throw error;
   }
 }
@@ -186,7 +190,11 @@ export function pinNodeDirectoryForModeSync(
       },
     };
   } catch (error) {
-    fsSync.closeSync(fd);
+    try {
+      fsSync.closeSync(fd);
+    } catch {
+      // Preserve the initial admission failure before ownership transfers.
+    }
     throw error;
   }
 }

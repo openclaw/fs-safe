@@ -31,6 +31,8 @@ rejects with `permission-unverified`. Existing supplied directories keep their
 permissions. Missing root components are created at `0o700` and initialized
 from their first exact security snapshot; if a restrictive umask changes that
 mode, correction uses a verified directory descriptor.
+An initial mode-descriptor admission error is preserved if closing that rejected
+descriptor also fails; close failures after successful admission remain reportable.
 
 For an already existing canonical root, discovery retains only its immutable
 exact identity. Cleanup-parent retention is provisional: after any native
