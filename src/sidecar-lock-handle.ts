@@ -1,8 +1,3 @@
-import type { Root } from "./root-impl.js";
-import {
-  sidecarLockSnapshotStillPresent,
-  type SidecarLockSnapshot,
-} from "./sidecar-lock-reclaim.js";
 import type { SidecarLockHandle } from "./sidecar-lock-types.js";
 
 export function stopSidecarLockMonitoring(held: { compromiseTimer?: NodeJS.Timeout }): void {
@@ -43,26 +38,4 @@ export function createSidecarLockHandle(params: {
     release,
     [Symbol.asyncDispose]: release,
   };
-}
-
-export function createHeldSidecarLockHandle(params: {
-  normalizedTargetPath: string;
-  held: {
-    lockPath: string;
-    snapshot: SidecarLockSnapshot;
-    lockRoot?: Root;
-    parsePayload?: (raw: string) => unknown;
-  };
-  release: (options?: { retry?: boolean }) => Promise<unknown>;
-}): SidecarLockHandle {
-  return createSidecarLockHandle({
-    lockPath: params.held.lockPath,
-    normalizedTargetPath: params.normalizedTargetPath,
-    verifyStillHeld: async () =>
-      await sidecarLockSnapshotStillPresent(params.held.lockPath, params.held.snapshot, {
-        lockRoot: params.held.lockRoot,
-        parsePayload: params.held.parsePayload,
-      }),
-    release: (options) => params.release(options),
-  });
 }

@@ -4,10 +4,11 @@ import { sameFileIdentity } from "./file-identity.js";
 import {
   removeSidecarLockIfUnchanged,
   sidecarLockSnapshotMatches,
+  sidecarLockSnapshotStillPresent,
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import { acquireSidecarLock, type HeldSidecarLock } from "./sidecar-lock-acquire.js";
-import { createHeldSidecarLockHandle, stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
+import { createSidecarLockHandle, stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { ensureSidecarLockCleanupRegistered } from "./sidecar-lock-registration.js";
 import type {
@@ -252,9 +253,14 @@ function handleForHeldLock(
   normalizedTargetPath: string,
   held: HeldSidecarLock,
 ) {
-  return createHeldSidecarLockHandle({
+  return createSidecarLockHandle({
+    lockPath: held.lockPath,
     normalizedTargetPath,
-    held,
+    verifyStillHeld: async () =>
+      await sidecarLockSnapshotStillPresent(held.lockPath, held.snapshot, {
+        lockRoot: held.lockRoot,
+        parsePayload: held.parsePayload,
+      }),
     release: async (options) =>
       await releaseHeldLock(state, normalizedTargetPath, held, { retry: options?.retry }),
   });

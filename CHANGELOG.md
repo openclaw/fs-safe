@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Construct held-lock callbacks in their existing manager owner, removing a private forwarding adapter while preserving verification, release retries, and shared cleanup ownership.
 - Consolidate archive extraction, inspection, and entry-policy ownership while preserving public helpers, lazy codec loading, cancellation, and admission order.
 - Share failure-only cause options across Root and store diagnostics while retaining caller-local error construction, metadata ownership, and underlying Error instances.
 - Validate captured Root and pinned-write path values directly, removing private payload wrappers while preserving argument ownership, traversal rejection, and error ordering.
