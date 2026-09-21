@@ -198,6 +198,11 @@ existing `durable` file/directory synchronization policy; it does not turn
 best-effort synchronization into a strict crash-durability guarantee or strengthen
 JavaScript pathname containment.
 
+Wider option objects do not enable create-only `atomic` or `private` behavior on
+`write` or `writeJson`. Buffered Root writes and creates also ignore an extra
+`maxBytes` property; that byte limit belongs to streamed creation and `copyIn`.
+File synchronization follows each method's documented `durable` option.
+
 Atomic and streamed creates settle owned cleanup and close operations before
 returning. Failed or unverifiable cleanup is reported rather than silently
 discarded. Errors after publication and incomplete-settlement errors carry the

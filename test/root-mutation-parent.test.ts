@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { validatePinnedOperationPayload } from "../src/pinned-operation.js";
+import { validatePinnedRelativePath } from "../src/pinned-operation.js";
 import { configureFsSafeNative, root } from "../src/index.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -13,12 +13,10 @@ afterEach(() => {
   Object.defineProperty(process, "platform", platform);
 });
 
-it("rejects internal Windows parent components in raw move payloads", () => {
+it("rejects internal Windows parent components in pinned paths", () => {
   Object.defineProperty(process, "platform", { value: "win32" });
   for (const value of [String.raw`link\..\value`, String.raw`link/..\value`]) {
-    expect(() => validatePinnedOperationPayload({ from: value, to: "out" }))
-      .toThrowError(expect.objectContaining({ code: "invalid-path" }));
-    expect(() => validatePinnedOperationPayload({ from: "in", to: value }))
+    expect(() => validatePinnedRelativePath(value))
       .toThrowError(expect.objectContaining({ code: "invalid-path" }));
   }
 });

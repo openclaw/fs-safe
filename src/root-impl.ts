@@ -20,7 +20,7 @@ import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-w
 import type { PinnedWriteInput, RenameIdentityPolicy } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
-import { validatePinnedOperationPayload } from "./pinned-operation.js";
+import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
   assertNoNulPathInput,
@@ -432,6 +432,9 @@ export class RootHandle implements Root {
       mode: this.defaults.mode,
       renameIdentity: this.defaults.renameIdentity,
       ...this.mutationOptions(options),
+      atomic: undefined,
+      private: undefined,
+      strictFileSync: undefined,
       relativePath,
       data,
       durable: options.durable ?? this.defaults.durable ?? true,
@@ -515,7 +518,7 @@ export class RootHandle implements Root {
 
   async stat(relativePath: string): Promise<PathStat> {
     assertValidRootRelativePath(relativePath);
-    validatePinnedOperationPayload({ relativePath });
+    validatePinnedRelativePath(relativePath);
     return await statPathFallback(this.context, relativePath);
   }
 
@@ -526,7 +529,7 @@ export class RootHandle implements Root {
     options: { withFileTypes?: boolean } = {},
   ): Promise<string[] | DirEntry[]> {
     assertValidRootRelativePath(relativePath);
-    validatePinnedOperationPayload({ relativePath });
+    validatePinnedRelativePath(relativePath);
     return await listPathFallback(this.context, relativePath, options.withFileTypes === true);
   }
 
@@ -537,7 +540,8 @@ export class RootHandle implements Root {
   ): Promise<void> {
     assertValidRootRelativePath(fromRelative);
     assertValidRootDestinationPath(toRelative);
-    validatePinnedOperationPayload({ from: fromRelative, to: toRelative });
+    validatePinnedRelativePath(fromRelative);
+    validatePinnedRelativePath(toRelative);
     const mutationOptions = this.mutationOptions(options);
     const { assertBeforeMutation } = mutationOptions;
     const { denyMutations, mutationSymlinks } = snapshotPinnedMutationPolicy(
@@ -571,7 +575,7 @@ export class RootHandle implements Root {
       rootReal: this.context.rootReal,
       stat: relative => this.stat(relative),
       list: async (relative, listingOptions) => {
-        validatePinnedOperationPayload({ relativePath: relative });
+        validatePinnedRelativePath(relative);
         const resolved = await resolvePinnedPathInRoot(this.context, { relativePath: relative, allowRoot: true });
         return await openRootDirectoryListing(this.context, resolved.resolved, listingOptions);
       },
@@ -979,7 +983,7 @@ async function removePathInRoot(
   root: RootContext,
   params: RootRemoveOptions & { relativePath: string },
 ): Promise<void> {
-  validatePinnedOperationPayload({ relativePath: params.relativePath });
+  validatePinnedRelativePath(params.relativePath);
   const removalReceipts = params.recursive ? undefined : new RemovalPathReceipts();
   const resolved = await resolvePinnedPathInRoot(root, {
     relativePath: params.relativePath,
@@ -1004,7 +1008,7 @@ async function mkdirPathInRoot(
   },
 ): Promise<void> {
   const privateMode = resolveCreationPermissions(params, true).private;
-  validatePinnedOperationPayload({ relativePath: params.relativePath });
+  validatePinnedRelativePath(params.relativePath);
   const policy = params.denyMutations === undefined && params.mutationSymlinks === undefined
     ? undefined
     : snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks);
@@ -1110,7 +1114,7 @@ async function commitPinnedWriteInRoot(
       overwrite: params.overwrite,
       rejectFinalSymlink: params.mutationSymlinks !== undefined,
       input,
-      maxBytes: params.maxBytes,
+      maxBytes: input.kind === "buffer" ? undefined : params.maxBytes,
       rootIdentity: root.rootIdentity,
       mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
@@ -1477,7 +1481,11 @@ async function writeFileFallback(
   if (params.renameIdentity !== "verify-content-with-lock") return await writeFileFallbackUnlocked(root, params);
   const policy = snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks);
   if (policy) params = { ...params, ...policy };
-  const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, params);
+  const { rootReal, resolved } = await resolveGuardedWritePathInRoot(root, {
+    relativePath: params.relativePath,
+    denyMutations: params.denyMutations,
+    mutationSymlinks: params.mutationSymlinks,
+  });
   await withRootFallbackCompatibilityLock({
     rootPath: rootReal, rootIdentity: root.rootIdentity, targetPath: resolved, assertBeforeMutation: params.assertBeforeMutation,
   }, async ({ targetPath, ...binding }) => await writeFileFallbackUnlocked(root, { ...params, ...binding }, targetPath));

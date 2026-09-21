@@ -14,7 +14,7 @@ import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { runPinnedWriteNative } from "./native-pinned-write.js";
 import { getNativeBinding } from "./native.js";
-import { validatePinnedOperationPayload } from "./pinned-operation.js";
+import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { withSidecarLock } from "./sidecar-lock.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -89,9 +89,7 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
     rootIdentity,
   };
   assertSafeBasename(normalizedParams.basename);
-  validatePinnedOperationPayload({
-    relativeParentPath: normalizedParams.relativeParentPath,
-  });
+  validatePinnedRelativePath(normalizedParams.relativeParentPath);
   assertNoWindowsPathAlias(
     normalizedParams.rootPath,
     "filesystem",

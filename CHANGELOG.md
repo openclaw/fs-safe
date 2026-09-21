@@ -4,11 +4,13 @@
 
 ### Correctness
 
+- Keep streamed-create budgets and create-only controls out of buffered Root writes, and prevent wider write options from selecting private Windows compatibility-admission controls.
 - Preserve directory permission-admission failures when closing the unadopted Node descriptor also fails, while retaining close-error reporting after successful admission.
 - Preserve failed pinned-open admission results when synchronous cleanup also fails, retaining secret-read and root-open errors without changing successful descriptor ownership.
 
 ### Performance and maintenance
 
+- Validate captured Root and pinned-write path values directly, removing private payload wrappers while preserving argument ownership, traversal rejection, and error ordering.
 - Export rooted, staged, and atomic-write types directly from their declaration owners, removing private forwarding chains without changing runtime code or public type contracts.
 - Share Windows native security export dispatch and unsupported-platform errors while preserving argument validation, return types, and diagnostic details.
 - Retry transient LLVM SDK download failures in CI while retaining pinned checksums, exclusive archive writes, and compiler verification.

@@ -1,5 +1,5 @@
 import { FsSafeError } from "./errors.js";
-import { validatePinnedOperationPayload } from "./pinned-operation.js";
+import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { resolvePathInRoot, type RootContext } from "./root-context.js";
 import { openRootDirectoryListing } from "./root-directory-list.js";
 import { readSymlinkResolution, type SymlinkPolicy } from "./root-symlink-policy.js";
@@ -26,7 +26,7 @@ export async function* entriesInRoot(
     throw new TypeError(`invalid root entries order: ${String(options.order)}`);
   }
   options.signal?.throwIfAborted();
-  validatePinnedOperationPayload({ relativePath });
+  validatePinnedRelativePath(relativePath);
   const resolved = await resolvePathInRoot(root, relativePath, {
     ...readSymlinkResolution(options.symlinks),
     resolveCanonical: true,

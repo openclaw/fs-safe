@@ -144,7 +144,7 @@ describe.skipIf(process.platform === "win32")("initial directory-mode admission 
     // The missing root is created at 0500, requiring mode initialization through
     // this helper before any ordinary workspace child is created or adopted.
     const previous = process.umask(0o200);
-    try { tempWorkspaceSync({ rootDir }); }
+    try { tempWorkspaceSync({ rootDir, prefix: "admission-" }); }
     catch (failure) { caught = true; error = failure; }
     finally { process.umask(previous); }
     try {

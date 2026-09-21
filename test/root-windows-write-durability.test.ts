@@ -115,7 +115,7 @@ it.each(["write", "replace", "create"] as const)("%s reports file sync failure a
     const original = fsSync[method].bind(fsSync);
     vi.spyOn(fsSync, method).mockImplementation((...args) => {
       const stat = original(...args);
-      if (String(args[0]) === dir && typeof stat.ino === "bigint") {
+      if (stat !== undefined && String(args[0]) === dir && typeof stat.ino === "bigint") {
         return Object.assign(Object.create(stat), { ino: 9007199254740993n });
       }
       return stat;
@@ -133,6 +133,31 @@ it.each(["write", "replace", "create"] as const)("%s reports file sync failure a
   expect(await fs.readdir(dir)).toEqual(operation === "replace" ? ["target"] : []);
   if (operation === "replace") expect(await fs.readFile(target, "utf8")).toBe("original");
 });
+
+it.each(["stage", "published"].flatMap(phase => [false, true].map(strictFileSync => ({ phase, strictFileSync }))))(
+  "Windows fallback reports $phase EPERM with extra strictFileSync=$strictFileSync",
+  async ({ phase, strictFileSync }) => {
+    // The fixture models Windows dispatch on POSIX; file handles and I/O are real.
+    const { dir, scoped, target } = await fixture();
+    await fs.writeFile(target, "original");
+    const failure = Object.assign(new Error("file sync denied"), { code: "EPERM" });
+    const open = fs.open.bind(fs);
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      const sync = handle.sync.bind(handle);
+      vi.spyOn(handle, "sync").mockImplementation(async () => {
+        if (fsSync.fstatSync(handle.fd).isFile() &&
+          (phase === "stage" || fsSync.readFileSync(target, "utf8") === "new bytes")) throw failure;
+        await sync();
+      });
+      return handle;
+    });
+    const options = { durable: true, strictFileSync };
+    await expect(scoped.write("target", "new bytes", options)).rejects.toBe(failure);
+    expect(await fs.readFile(target, "utf8")).toBe(phase === "stage" ? "original" : "new bytes");
+    expect(await fs.readdir(dir)).toEqual(["target"]);
+  },
+);
 
 it.each(["write failure", "sync failure", "successful sync"] as const)(
   "preserves a staging replacement after %s",

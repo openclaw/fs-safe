@@ -1,21 +1,7 @@
 import { FsSafeError } from "./errors.js";
 
-export function validatePinnedOperationPayload(payload: Record<string, unknown>): void {
-  if (typeof payload.relativePath === "string") {
-    validatePinnedRelativePath(payload.relativePath);
-  }
-  if (typeof payload.relativeParentPath === "string") {
-    validatePinnedRelativePath(payload.relativeParentPath);
-  }
-  if (typeof payload.from === "string") {
-    validatePinnedRelativePath(payload.from);
-  }
-  if (typeof payload.to === "string") {
-    validatePinnedRelativePath(payload.to);
-  }
-}
-
-function validatePinnedRelativePath(relativePath: string): void {
+export function validatePinnedRelativePath(relativePath: unknown): void {
+  if (typeof relativePath !== "string") return;
   if (relativePath.length === 0 || relativePath === ".") {
     return;
   }
@@ -24,7 +10,6 @@ function validatePinnedRelativePath(relativePath: string): void {
   }
   if (
     relativePath.startsWith("/") ||
-    relativePath.startsWith("//") ||
     relativePath === ".." ||
     relativePath.startsWith("../") ||
     relativePath.startsWith("..\\")
