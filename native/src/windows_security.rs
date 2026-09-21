@@ -233,6 +233,10 @@ mod windows {
     use std::path::{Path, PathBuf};
     use std::ptr::{null, null_mut};
 
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FileIsRemoteDeviceInformation as FILE_IS_REMOTE_DEVICE_INFORMATION_CLASS,
+        NtQueryInformationFile,
+    };
     use windows_sys::Win32::Foundation::{
         ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, LocalFree,
     };
@@ -297,24 +301,12 @@ mod windows {
     const FINAL_PATH_STACK_WCHARS: usize = 512;
     const MAX_FINAL_PATH_WCHARS: usize = 32 * 1024;
     const MAX_FINAL_PATH_ATTEMPTS: usize = 4;
-    const FILE_IS_REMOTE_DEVICE_INFORMATION_CLASS: i32 = 51;
 
     #[repr(C)]
     struct FileIsRemoteDeviceInformation {
         // Windows BOOLEAN is one byte. Keep the raw byte so a malformed driver
         // response cannot construct an invalid Rust bool before we fall back.
         is_remote: u8,
-    }
-
-    #[link(name = "ntdll")]
-    unsafe extern "system" {
-        fn NtQueryInformationFile(
-            file_handle: HANDLE,
-            io_status_block: *mut IO_STATUS_BLOCK,
-            file_information: *mut c_void,
-            length: u32,
-            file_information_class: i32,
-        ) -> i32;
     }
 
     fn wide(value: &str) -> NativeResult<Vec<u16>> {

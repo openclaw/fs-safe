@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, assert, describe, expect, it, type TestContext } from "vitest";
+import { afterEach, assert, describe, expect, it, vi, type TestContext } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
 import { copyTree, createCloneSource, probeTreeClone, readCloneFileMetadata } from "../src/copy.js";
 import {
@@ -105,10 +105,14 @@ describe("native directory cloning", () => {
     await fs.mkdir(source);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    let nativeSignal: AbortSignal | undefined;
+    const nativeAbort = vi.fn();
     __setNativeLoaderForTest(() => ({
       ...binding,
       probeTreeClone: () => "apfs",
-      async cloneTree(sourceFd, parentFd) {
+      async cloneTree(sourceFd, parentFd, _name, _concurrency, signal) {
+        nativeSignal = signal;
+        signal!.onabort = nativeAbort;
         entered.resolve();
         await release.promise;
         expect(sourceFd).not.toBeNull();
@@ -119,6 +123,8 @@ describe("native directory cloning", () => {
       },
     }));
     const controller = new AbortController();
+    const callerAbort = vi.fn((event: Event) => event.stopImmediatePropagation());
+    controller.signal.onabort = callerAbort;
     let settled = false;
     const pending = copyTree(source, destination, {
       clone: "always",
@@ -143,9 +149,14 @@ describe("native directory cloning", () => {
       ]);
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(nativeSignal).not.toBe(controller.signal);
+      expect(callerAbort).toHaveBeenCalledOnce();
+      expect(controller.signal.onabort).toBe(callerAbort);
+      expect(nativeAbort).toHaveBeenCalledOnce();
       expect(settled).toBe(false);
       release.resolve();
       expect(await pending).toBe(reason);
+      expect(nativeSignal!.onabort).toBeNull();
       expect(await fs.readFile(path.join(destination, "complete"), "utf8")).toBe("settled");
     } finally {
       release.resolve();
