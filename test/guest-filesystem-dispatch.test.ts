@@ -59,7 +59,8 @@ describe.skipIf(process.platform === "win32")("guest dispatch ownership and fail
           : operation === "read"
             ? [operation, root, "", "source"]
             : [operation, root, "", operation === "remove" ? "source" : "target", "0", "0"];
-      const result = runGuest(args, "payload", traceDirectoryCloses());
+      const input = operation === "write" || operation === "create" ? "payload" : undefined;
+      const result = runGuest(args, input, traceDirectoryCloses());
       expect(result.error).toBeUndefined();
       expect(result.status, result.stderr.toString()).toBe(0);
       expect(closedDirectories(result)).toEqual(dual
@@ -79,7 +80,8 @@ describe.skipIf(process.platform === "win32")("guest dispatch ownership and fail
         const args = operation === "read"
           ? [operation, root, "", "value"]
           : [operation, root, "", "value", "0"];
-        const result = runGuest(args, "payload", traceDirectoryCloses(
+        const input = operation === "create" && !operationFails ? "payload" : undefined;
+        const result = runGuest(args, input, traceDirectoryCloses(
           operation === "read" ? "FileNotFoundError" : "FileExistsError",
         ));
         expect(result.error).toBeUndefined();
@@ -100,7 +102,7 @@ describe.skipIf(process.platform === "win32")("guest dispatch ownership and fail
 
   it("does not classify a create parent failure as a destination collision", async () => {
     const root = await tempRoot("fs-safe-guest-create-parent-");
-    const result = runGuest(["create", root, "parent", "value", "0"], "payload", [
+    const result = runGuest(["create", root, "parent", "value", "0"], undefined, [
       "original_open = os.open",
       "def reject_parent(*args, **kwargs):",
       "    if args[0] == 'parent' and kwargs.get('dir_fd') is not None:",

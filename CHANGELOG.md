@@ -8,6 +8,7 @@
 - Share guest Python operand admission and descriptor cleanup across filesystem operations while preserving operation-specific exit statuses and failure behavior.
 - Keep native POSIX beneath-open descriptors owned until handoff and share cleanup metadata inspection, preserving platform containment and error behavior.
 - Close Windows process-token handles through the shared handle owner while preserving query order and security errors.
+- Send stdin in guest lifecycle tests only when the selected operation consumes it, avoiding spurious broken-pipe failures without ignoring process errors.
 - Keep native and JavaScript write-policy callbacks on one shared type contract, with unchanged behavior.
 - Share synchronous lock admission, retry budgets, and compromise-monitor setup across raw-path and Root locks, preserving their distinct authority and stale-recovery behavior.
 - Share ordered deny-policy matching between Root mutations and synchronous Root locks, retaining their different canonicalization guarantees and validation errors. Run the public mutation proof when these shared policy and path owners change.
