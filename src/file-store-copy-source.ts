@@ -6,7 +6,7 @@ import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export async function readFileStoreCopySource(params: {
   sourcePath: string;
-  maxBytes?: number;
+  maxBytes: number;
 }): Promise<Buffer> {
   assertNoWindowsPathAlias(
     params.sourcePath,
@@ -28,7 +28,7 @@ export async function readFileStoreCopySource(params: {
         cause: error instanceof Error ? error : undefined,
       });
     }
-    if (params.maxBytes !== undefined && message.includes(`exceeds ${params.maxBytes} bytes`)) {
+    if (message.includes(`exceeds ${params.maxBytes} bytes`)) {
       throw new FsSafeError("too-large", `file exceeds maximum size of ${params.maxBytes} bytes`, {
         cause: error instanceof Error ? error : undefined,
       });

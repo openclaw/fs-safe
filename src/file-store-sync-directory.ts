@@ -103,13 +103,12 @@ class StoreDirectoryChain {
   private readonly receipts: ExactDirectoryReceipt[] = [];
   private readonly rootReal: string;
 
-  constructor(rootDir: string, private messagePrefix: StoreMessagePrefix) {
-    this.observe(rootDir, messagePrefix);
+  constructor(rootDir: string, private readonly messagePrefix: StoreMessagePrefix) {
+    this.observe(rootDir);
     this.rootReal = storeDirectoryRealPath(rootDir);
   }
 
-  observe(dir: string, messagePrefix: StoreMessagePrefix): void {
-    this.messagePrefix = messagePrefix;
+  observe(dir: string): void {
     this.receipts.push({
       dir,
       stat: inspectStoreDirectory({
@@ -185,8 +184,7 @@ class StoreDirectoryChain {
     return this.assertEdge();
   }
 
-  finish(dir: string, messagePrefix: StoreMessagePrefix): SyncStoreDirectoryReceipt {
-    this.messagePrefix = messagePrefix;
+  finish(dir: string): SyncStoreDirectoryReceipt {
     const root = this.receipts[0]!;
     const target = this.receipts.at(-1)!;
     this.assertRoot();
@@ -266,8 +264,7 @@ class StoreDirectoryChain {
     }
   }
 
-  finalizeMode(mode: number, messagePrefix: StoreMessagePrefix): void {
-    this.messagePrefix = messagePrefix;
+  finalizeMode(mode: number): void {
     const receipt = this.receipts.at(-1)!;
     const requestedMode = BigInt(mode & 0o7777);
     if ((receipt.stat.mode & 0o7777n) === requestedMode || process.platform === "win32") {
@@ -343,20 +340,20 @@ export function ensureSyncStoreDirectory(params: {
 
   fs.mkdirSync(recursiveMkdirPath(pathForWindowsFilesystem(rootDir)), { recursive: true, mode: params.mode });
   const chain = new StoreDirectoryChain(rootDir, params.messagePrefix);
-  chain.finalizeMode(params.mode, params.messagePrefix);
+  chain.finalizeMode(params.mode);
   let current = rootDir;
   for (const segment of relative.split(path.sep).filter(Boolean)) {
     current = path.join(current, segment);
     try {
-      chain.observe(current, params.messagePrefix);
+      chain.observe(current);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       fs.mkdirSync(pathForWindowsFilesystem(current), { mode: params.mode });
-      chain.observe(current, params.messagePrefix);
+      chain.observe(current);
     }
-    chain.finalizeMode(params.mode, params.messagePrefix);
+    chain.finalizeMode(params.mode);
   }
-  return chain.finish(dir, params.messagePrefix);
+  return chain.finish(dir);
 }
 
 export function assertSyncStoreDirectoryReceipt(

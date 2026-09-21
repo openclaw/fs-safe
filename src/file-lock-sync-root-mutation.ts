@@ -99,11 +99,10 @@ function ensureParent(pathAuthority: FileLockSyncRootPath): DirectoryReceipt {
 
 export function createFileLockSyncRootFile(
   pathAuthority: FileLockSyncRootPath,
-  mode: number,
   options: {
-    assertBeforeOpen?: () => void;
-    onOpenFailure?: (error: unknown) => void;
-  } = {},
+    assertBeforeOpen: () => void;
+    onOpenFailure: (error: unknown) => void;
+  },
 ): { fd: number; receipt: FileLockSyncRootFileReceipt } {
   const parent = ensureParent(pathAuthority);
   if (invokeFileLockSyncRootMutationAuthority(pathAuthority.authority)) {
@@ -116,15 +115,15 @@ export function createFileLockSyncRootFile(
   let fd: number | undefined;
   let receipt: FileLockSyncRootFileReceipt | undefined;
   try {
-    options.assertBeforeOpen?.();
+    options.assertBeforeOpen();
     try {
       fd = fs.openSync(
         pathForWindowsFilesystem(pathAuthority.path),
         fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
-        mode,
+        0o600,
       );
     } catch (error) {
-      options.onOpenFailure?.(error);
+      options.onOpenFailure(error);
       throw error;
     }
     const opened = inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
@@ -227,11 +226,9 @@ export function removeFileLockSyncRootFile(
 
 export function fileLockSyncRootGuardExists(
   pathAuthority: FileLockSyncRootPath,
-  pathAlreadyCurrent = false,
 ): boolean {
-  if (!pathAlreadyCurrent) assertFileLockSyncRootResolvedPathCurrent(pathAuthority);
-  // A shared path admission may skip only duplicate resolution, never this
-  // operation-local Root identity fence before fresh directory inspection.
+  // The caller already admitted this path; every guard observation still needs
+  // an operation-local Root identity fence before fresh directory inspection.
   assertRootIdentityCurrentSync(pathAuthority.authority.context);
   let stat: BigIntStats;
   try {

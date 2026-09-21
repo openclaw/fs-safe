@@ -158,9 +158,9 @@ async function copyIntoRoot(params: {
   relativePath: string;
   sourcePath: string;
   durable: boolean;
-  dirMode?: number;
+  dirMode: number;
   maxBytes?: number;
-  mode?: number;
+  mode: number;
   tempPrefix?: string;
 }): Promise<string> {
   const relativePath = assertRelativePath(params.relativePath);
@@ -171,18 +171,17 @@ async function copyIntoRoot(params: {
     throw new FsSafeError("not-file", "source path is not a file");
   }
   assertFileStoreMaxBytes(sourceStat.size, params.maxBytes);
-  const dirMode = params.dirMode ?? 0o700;
   const scopedRoot = await openWritableStoreRoot({
     rootDir: params.rootDir,
-    dirMode,
+    dirMode: params.dirMode,
     maxBytes: params.maxBytes,
   });
-  await ensureParentInRoot(scopedRoot, relativePath, dirMode);
+  await ensureParentInRoot(scopedRoot, relativePath, params.dirMode);
   await scopedRoot.copyIn(relativePath, params.sourcePath, {
     durable: params.durable,
     maxBytes: params.maxBytes,
     mkdir: false,
-    mode: params.mode ?? 0o600,
+    mode: params.mode,
   });
   return destination;
 }

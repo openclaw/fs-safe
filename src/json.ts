@@ -17,15 +17,9 @@ import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 const READ_RETRY_MAX_ATTEMPTS = 5;
 const READ_RETRY_BASE_DELAY_MS = 50;
 
-function isRetryableReadError(
-  err: unknown,
-  options: { retryOpenRaceErrors?: boolean },
-): boolean {
+function isRetryableReadError(err: unknown): boolean {
   if (err instanceof FsSafeError && err.code === "path-mismatch") {
     return true;
-  }
-  if (options.retryOpenRaceErrors !== true) {
-    return false;
   }
   const code = getErrorCode(err);
   return code === "ENOENT" || code === "EPERM";
@@ -33,15 +27,15 @@ function isRetryableReadError(
 
 async function readRegularFileWithRetry(
   filePath: string,
-  options: { maxBytes?: number; retryOpenRaceErrors?: boolean } = {},
+  maxBytes?: number,
 ): Promise<Buffer> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < READ_RETRY_MAX_ATTEMPTS; attempt++) {
     try {
-      return (await readRegularFile({ filePath, maxBytes: options.maxBytes })).buffer;
+      return (await readRegularFile({ filePath, maxBytes })).buffer;
     } catch (err) {
       lastErr = err;
-      if (!isRetryableReadError(err, options) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
+      if (!isRetryableReadError(err) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
         throw err;
       }
       await sleep(READ_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
@@ -58,10 +52,7 @@ async function readRegularFileIfExistsWithRetry(
   if (initial.missing) {
     return null;
   }
-  return await readRegularFileWithRetry(filePath, {
-    maxBytes: options.maxBytes,
-    retryOpenRaceErrors: true,
-  });
+  return await readRegularFileWithRetry(filePath, options.maxBytes);
 }
 
 const JSON_FILE_MODE = 0o600;
@@ -338,10 +329,7 @@ export async function readJson<T>(filePath: string, options: ReadJsonOptions = {
   let raw: string;
   try {
     raw = (
-      await readRegularFileWithRetry(filePath, {
-        maxBytes: options.maxBytes,
-        retryOpenRaceErrors: true,
-      })
+      await readRegularFileWithRetry(filePath, options.maxBytes)
     ).toString("utf8");
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);

@@ -126,7 +126,7 @@ describe("synchronous Root-backed fresh inspection identity", () => {
       return actualLstat(pathname, options as never);
     });
     try {
-      expect(() => fileLockSyncRootGuardExists(rootPath, true))
+      expect(() => fileLockSyncRootGuardExists(rootPath))
         .toThrow(expect.objectContaining({ code: "path-mismatch" }));
       expect(swapped).toBe(true);
       expect(fs.statSync(guardPath).isDirectory()).toBe(true);

@@ -1,9 +1,8 @@
 import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Transform, Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import { createByteLimitTransform } from "./bounded-read-stream.js";
-import { normalizeMaxBytes } from "./byte-budget.js";
 import { pipeline } from "node:stream/promises";
 import { FsSafeError } from "./errors.js";
 import {
@@ -41,10 +40,9 @@ export async function openWritableStoreRoot(params: {
   maxBytes?: number;
 }): Promise<Root> {
   assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
-  const maxBytes = normalizeMaxBytes(params.maxBytes);
   await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
   await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
-  return await root(params.rootDir, { hardlinks: "reject", maxBytes });
+  return await root(params.rootDir, { hardlinks: "reject", maxBytes: params.maxBytes });
 }
 
 export async function openPrivateStoreLockRoot(
@@ -88,21 +86,12 @@ async function chmodDirectoryInRootBestEffort(
   }
 }
 
-function createMaxBytesTransform(maxBytes: number | undefined): Transform | undefined {
-  const limit = normalizeMaxBytes(maxBytes);
-  if (limit === undefined) {
-    return undefined;
-  }
-  return createByteLimitTransform(limit, () =>
-    new FsSafeError("too-large", `file exceeds maximum size of ${limit} bytes`));
-}
-
 export async function writeStreamToTempSource(params: {
   stream: Readable;
   maxBytes?: number;
   mode: number;
 }): Promise<{ path: string; cleanup: () => Promise<void> }> {
-  const maxBytes = normalizeMaxBytes(params.maxBytes);
+  const maxBytes = params.maxBytes;
   const tempRoot = resolveSecureTempRoot({
     fallbackPrefix: "fs-safe-file-store",
     unsafeFallbackLabel: "file store temp dir",
@@ -118,7 +107,8 @@ export async function writeStreamToTempSource(params: {
     writable.once("close", () => {
       handleClosedByStream = true;
     });
-    const limiter = createMaxBytesTransform(maxBytes);
+    const limiter = maxBytes === undefined ? undefined : createByteLimitTransform(maxBytes, () =>
+      new FsSafeError("too-large", `file exceeds maximum size of ${maxBytes} bytes`));
     if (limiter) {
       await pipeline(params.stream, limiter, writable);
     } else {

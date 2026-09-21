@@ -86,7 +86,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
     reentrantOwner: options.reentrantOwner,
   });
   if (heldLocks.has(normalizedTargetPath) && !foreignSyncHeldLock("root", normalizedTargetPath)) {
-    assertFileLockSyncRootPathsCurrent(guardedPaths, true, true);
+    assertFileLockSyncRootPathsCurrent(guardedPaths);
     const initiallyReusable = tryReuseCurrentRootSyncHeldLock(arbitration);
     if (initiallyReusable) return initiallyReusable;
   }
@@ -118,10 +118,10 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
     while (true) {
       acquisition.reserve();
       acquisition.assert();
-      assertFileLockSyncRootPathsCurrent(guardedPaths, true, true);
+      assertFileLockSyncRootPathsCurrent(guardedPaths);
       acquisition.assert();
       if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
-      if (!ownedReclaimGuard && fileLockSyncRootGuardExists(reclaimRootPath, true)) {
+      if (!ownedReclaimGuard && fileLockSyncRootGuardExists(reclaimRootPath)) {
         acquisition.waitForRetry();
         continue;
       }
@@ -145,7 +145,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       let unpublishedTimer: NodeJS.Timeout | undefined;
       let lockFileCreateOpenFailure: { error: unknown } | undefined;
       try {
-        const created = createFileLockSyncRootFile(lockRootPath, 0o600, {
+        const created = createFileLockSyncRootFile(lockRootPath, {
           assertBeforeOpen: () => {
             acquisition.assert();
             if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();

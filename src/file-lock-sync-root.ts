@@ -317,8 +317,6 @@ function assertMissingParentMutationsAllowed(pathAuthority: FileLockSyncRootPath
 
 export function assertFileLockSyncRootPathsCurrent(
   paths: readonly FileLockSyncRootPath[],
-  invokeAuthority = false,
-  pathsAlreadyCurrent = false,
 ): void {
   const authority = paths[0]?.authority;
   for (const pathAuthority of paths) {
@@ -326,15 +324,7 @@ export function assertFileLockSyncRootPathsCurrent(
       throw new FsSafeError("path-mismatch", "sidecar paths use different Root authority");
     }
   }
-  if (!pathsAlreadyCurrent) {
-    if (authority) assertRootIdentityCurrentSync(authority.context);
-    for (const pathAuthority of paths) {
-      assertFileLockSyncRootResolvedPathCurrent(pathAuthority);
-      assertMissingParentMutationsAllowed(pathAuthority);
-    }
-    if (authority) assertRootIdentityCurrentSync(authority.context);
-  }
-  if (invokeAuthority && authority && invokeFileLockSyncRootMutationAuthority(authority)) {
+  if (authority && invokeFileLockSyncRootMutationAuthority(authority)) {
     assertRootIdentityCurrentSync(authority.context);
     for (const pathAuthority of paths) {
       assertFileLockSyncRootResolvedPathCurrent(pathAuthority);

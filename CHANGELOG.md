@@ -9,6 +9,8 @@
 
 ### Performance and maintenance
 
+- Remove unused internal policy modes from Root lock acquisition, store writes and streams, and JSON read retries while retaining public defaults and filesystem safeguards.
+
 - Retain each Root's originally admitted context across operations while preserving readonly path metadata, live defaults, and root-replacement checks.
 - Reuse inspected data descriptors when formatting Windows permission failures, preserving bounded diagnostics and exact rejected values without duplicate metadata receipts.
 - Consolidate durable-queue directory and metadata ownership, reducing redundant Promise scheduling while preserving path admission, exact identities, asynchronous file I/O, and recovery synchronization.
