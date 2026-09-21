@@ -21,11 +21,6 @@ export function formatPermissionErrorDetail(value: string): string {
   return formatted.length > 400 ? `${formatted.slice(0, 399)}…` : formatted;
 }
 
-type DataProperty =
-  | { found: true; value: unknown }
-  | { found: false };
-
-const MISSING_DATA_PROPERTY = Object.freeze({ found: false } as const);
 const MAX_CAUGHT_FAILURE_PROTOTYPES = 4;
 const primitiveString = String;
 const isUint8Array = utilTypes.isUint8Array;
@@ -65,29 +60,26 @@ function isInspectableCaughtObject(value: unknown): value is object {
   }
 }
 
-function dataProperty(value: unknown, name: string): DataProperty {
-  if (!isInspectableCaughtObject(value)) return MISSING_DATA_PROPERTY;
-  let current: object | null = value;
+function dataProperty(value: unknown, name: string): { value: unknown } | undefined {
+  let current: unknown = value;
   for (let depth = 0; current !== null && depth < MAX_CAUGHT_FAILURE_PROTOTYPES; depth += 1) {
-    if (!isInspectableCaughtObject(current)) return MISSING_DATA_PROPERTY;
+    if (!isInspectableCaughtObject(current)) return undefined;
     let descriptor: PropertyDescriptor | undefined;
     try {
       descriptor = Object.getOwnPropertyDescriptor(current, name);
     } catch {
-      return MISSING_DATA_PROPERTY;
+      return undefined;
     }
     if (descriptor) {
-      return Object.hasOwn(descriptor, "value")
-        ? { found: true, value: descriptor.value }
-        : MISSING_DATA_PROPERTY;
+      return Object.hasOwn(descriptor, "value") ? descriptor as { value: unknown } : undefined;
     }
     try {
-      current = Object.getPrototypeOf(current) as object | null;
+      current = Object.getPrototypeOf(current);
     } catch {
-      return MISSING_DATA_PROPERTY;
+      return undefined;
     }
   }
-  return MISSING_DATA_PROPERTY;
+  return undefined;
 }
 
 function caughtPrimitiveDisplay(value: unknown): string | undefined {
@@ -104,9 +96,9 @@ export function formatCaughtPermissionFailure(error: unknown): string {
   }
   const message = dataProperty(error, "message");
   const name = dataProperty(error, "name");
-  const rawMessage = message.found && typeof message.value === "string"
+  const rawMessage = typeof message?.value === "string"
     ? message.value : "";
-  const rawName = name.found && typeof name.value === "string"
+  const rawName = typeof name?.value === "string"
     ? name.value : "";
   const messageText = rawMessage.slice(0, 400);
   const nameText = rawName.slice(0, 400);
@@ -151,12 +143,11 @@ function commandFailureFields(error: unknown) {
   const signal = dataProperty(error, "signal");
   const stderr = dataProperty(error, "stderr");
   return {
-    found: killed.found || code.found || signal.found || stderr.found,
-    timedOut: killed.found && killed.value === true &&
-      signal.found && signal.value === "SIGKILL",
-    exitCode: code.found && typeof code.value === "number" ? code.value : null,
-    signal: signal.found && typeof signal.value === "string" ? signal.value : null,
-    stderr: stderr.found ? safeStderr(stderr.value) : "",
+    found: !!(killed || code || signal || stderr),
+    timedOut: killed?.value === true && signal?.value === "SIGKILL",
+    exitCode: typeof code?.value === "number" ? code.value : null,
+    signal: typeof signal?.value === "string" ? signal.value : null,
+    stderr: stderr ? safeStderr(stderr.value) : "",
   };
 }
 
@@ -196,20 +187,20 @@ export function getPermissionCommandFailure(
 ): PermissionCommandFailure | undefined {
   if (isInspectableCaughtObject(error) && utilTypes.isNativeError(error)) {
     const name = dataProperty(error, "name");
-    if (name.found && name.value === "PermissionCommandError") {
+    if (name?.value === "PermissionCommandError") {
       const wrappedCommand = dataProperty(error, "command");
       const wrappedDuration = dataProperty(error, "durationMs");
       const wrappedTimedOut = dataProperty(error, "timedOut");
       const wrappedExitCode = dataProperty(error, "exitCode");
       const wrappedSignal = dataProperty(error, "signal");
       const wrappedStderr = dataProperty(error, "stderr");
-      if (wrappedCommand.found && typeof wrappedCommand.value === "string" &&
-          wrappedDuration.found && typeof wrappedDuration.value === "number" &&
+      if (typeof wrappedCommand?.value === "string" &&
+          typeof wrappedDuration?.value === "number" &&
           Number.isSafeInteger(wrappedDuration.value) && wrappedDuration.value >= 0 &&
-          wrappedTimedOut.found && typeof wrappedTimedOut.value === "boolean" &&
-          wrappedExitCode.found && (wrappedExitCode.value === null || typeof wrappedExitCode.value === "number") &&
-          wrappedSignal.found && (wrappedSignal.value === null || typeof wrappedSignal.value === "string") &&
-          wrappedStderr.found) {
+          typeof wrappedTimedOut?.value === "boolean" &&
+          wrappedExitCode && (wrappedExitCode.value === null || typeof wrappedExitCode.value === "number") &&
+          wrappedSignal && (wrappedSignal.value === null || typeof wrappedSignal.value === "string") &&
+          wrappedStderr) {
         return {
           command: wrappedCommand.value,
           durationMs: wrappedDuration.value,

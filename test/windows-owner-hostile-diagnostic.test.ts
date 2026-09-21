@@ -330,6 +330,23 @@ describe("Windows owner caught-failure diagnostics", () => {
     expect(result.errorCause).toBe(error);
   });
 
+  it.each(["code", "signal", "killed", "stderr"])("retains a present but undefined %s diagnostic field", async field => {
+    for (const inherited of [false, true]) {
+      const properties = Object.create(null);
+      Object.defineProperty(properties, field, { value: undefined });
+      const error = inherited ? Object.create(properties) : properties;
+      const result = await inspectWindowsAcl("C:\\fixture", {
+        env: ENV,
+        exec: async () => { throw error; },
+      });
+      expect(result.errorCause).toBe(error);
+      expect(result.errorDetail).toMatchObject({
+        command: expect.stringContaining("powershell.exe"),
+        timedOut: false, exitCode: null, signal: null, stderr: "",
+      });
+    }
+  });
+
   it("omits structured fields hidden behind accessors", async () => {
     const counter = trapCounter();
     const wrapped = new PermissionCommandError("powershell.exe", 4, new Error("failure"));
