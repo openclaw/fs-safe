@@ -1,4 +1,4 @@
-import { defaultSidecarLockShouldReclaim, isTransientLockFileDenial } from "./sidecar-lock-policy.js";
+import { defaultSidecarLockShouldReclaim, isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
 import {
   readSidecarLockRawSnapshot,
   removeStaleSidecarLockIfAllowed,
@@ -268,9 +268,5 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     }
     await params.releaseReclaimGuard();
   }
-  throw Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
-    code: "file_lock_stale",
-    lockPath,
-    normalizedTargetPath,
-  });
+  throw sidecarLockStale(lockPath, normalizedTargetPath);
 }

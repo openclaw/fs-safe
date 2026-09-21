@@ -253,6 +253,31 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
+  it("retains both failures when reopening and removing a created Root sidecar fail", async () => {
+    const directory = await tempRoot("fs-safe-sidecar-root-open-cleanup-failure-");
+    const lockRoot = await root(directory);
+    const targetPath = path.join(directory, "state.json");
+    const lockPath = path.join(directory, "state.lock");
+    const reopenError = Object.assign(new Error("lock open failed"), { code: "EIO" });
+    const cleanupError = Object.assign(new Error("lock cleanup failed"), { code: "EACCES" });
+    vi.spyOn(lockRoot, "open").mockRejectedValueOnce(reopenError);
+    vi.spyOn(lockRoot, "remove").mockRejectedValueOnce(cleanupError);
+    const manager = createSidecarLockManager(`root-open-cleanup-failure-${directory}`);
+
+    const error = await manager.acquire({
+      targetPath,
+      lockPath,
+      lockRoot,
+      payload: async () => ({ owner: "one" }),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ name: "SuppressedError" });
+    expect((error as SuppressedError).error).toBe(cleanupError);
+    expect((error as SuppressedError).suppressed).toBe(reopenError);
+    expect(JSON.parse(await fs.readFile(lockPath, "utf8"))).toEqual({ owner: "one" });
+    expect(manager.heldEntries()).toEqual([]);
+  });
+
   it("releases a newly-created lock if reclaim-guard cleanup cannot complete", async () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-guard-release-failure-");

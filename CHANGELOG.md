@@ -5,6 +5,7 @@
 ### Performance and maintenance
 
 - Retry transient LLVM SDK download failures in CI while retaining pinned checksums, exclusive archive writes, and compiler verification.
+- Share lock-acquisition failure cleanup and stale-error construction while preserving ownership checks, parser callbacks, and error precedence.
 
 ## 0.18.0 - 2026-09-21
 

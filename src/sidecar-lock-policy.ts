@@ -72,6 +72,14 @@ export function sidecarLockTimeout(lockPath: string, normalizedTargetPath: strin
   });
 }
 
+export function sidecarLockStale(lockPath: string, normalizedTargetPath: string): Error {
+  return Object.assign(new Error(`file lock stale for ${normalizedTargetPath}`), {
+    code: "file_lock_stale",
+    lockPath,
+    normalizedTargetPath,
+  });
+}
+
 /** Undefined means the deadline or retry count is exhausted. */
 export function sidecarLockRetryDelay(
   retry: SidecarLockRetryOptions,
