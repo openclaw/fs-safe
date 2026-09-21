@@ -125,18 +125,13 @@ export function resolveExistingAncestor(
   const normalized = resolvePathPreservingWindowsRoot(targetPath);
   assertNoWindowsPathAlias(normalized);
   let cursor = normalized;
-  const missingSuffix: string[] = [];
+  const filesystemRoot = path.parse(normalized).root;
 
   while (
-    path.parse(cursor).root !== cursor &&
+    cursor !== filesystemRoot &&
     !exists(cursor)
   ) {
-    missingSuffix.unshift(path.basename(cursor));
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      break;
-    }
-    cursor = parent;
+    cursor = path.dirname(cursor);
   }
 
   if (!exists(cursor)) {
@@ -152,9 +147,10 @@ export function resolveExistingAncestor(
   assertNoWindowsPathAlias(rawResolvedAncestor);
   const resolvedAncestor = resolvePathPreservingWindowsRoot(rawResolvedAncestor);
   assertNoWindowsPathAlias(resolvedAncestor);
-  const resolved = missingSuffix.length === 0
+  // Keep a leading suffix separator relative to the canonical ancestor.
+  const resolved = cursor === normalized
     ? resolvedAncestor
-    : path.resolve(resolvedAncestor, ...missingSuffix);
+    : path.resolve(resolvedAncestor, `.${path.sep}${normalized.slice(cursor.length)}`);
   assertNoWindowsPathAlias(resolved);
   return resolved;
 }

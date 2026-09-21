@@ -1,7 +1,6 @@
-import fsSync, { type BigIntStats, type Stats } from "node:fs";
+import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ContainmentGuarantee } from "./containment.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
@@ -9,9 +8,7 @@ import { captureNativeFdClose } from "./native-binding.js";
 
 export type NativeFileHandle = {
   readonly fd: number;
-  readonly containment: ContainmentGuarantee;
   close(): Promise<void>;
-  stat(): Promise<Stats>;
   writeFile(data: string | Buffer, encoding?: BufferEncoding): Promise<void>;
 };
 
@@ -37,21 +34,16 @@ export function writeNativeFd(fd: number, data: Buffer): void {
 
 function wrapNativeFd(
   fd: number,
-  containment: ContainmentGuarantee,
   closeFd: (fd: number) => void,
 ): NativeFileHandle {
   let open = true;
   return {
     fd,
-    containment,
     async close() {
       if (open) {
         open = false;
         closeFd(fd);
       }
-    },
-    async stat() {
-      return fsSync.fstatSync(fd);
     },
     async writeFile(data, encoding) {
       writeNativeFd(fd, Buffer.isBuffer(data) ? data : Buffer.from(data, encoding ?? "utf8"));
@@ -128,7 +120,7 @@ export async function createNativeExclusiveFile(
     fd = opened.fd;
     fsSync.fchmodSync(fd, mode);
     created = fsSync.fstatSync(fd, { bigint: true });
-    return wrapNativeFd(fd, opened.containment, closeFd);
+    return wrapNativeFd(fd, closeFd);
   } catch (error) {
     if (fd !== undefined) {
       try {

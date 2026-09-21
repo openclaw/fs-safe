@@ -273,51 +273,35 @@ pub fn mkdir_child_beneath(
     )
 }
 
-#[napi(js_name = "linkBeneath")]
-pub fn link_beneath(
-    env: Env,
-    source_root_fd: i32,
-    source_rel_path: String,
-    target_root_fd: i32,
-    target_rel_path: String,
-) -> Result<()> {
-    into_napi(
-        env,
-        validate_relative_path(&source_rel_path, false)
-            .and_then(|()| validate_relative_path(&target_rel_path, false))
-            .and_then(|()| {
-                platform::link_beneath(
-                    source_root_fd,
-                    &source_rel_path,
-                    target_root_fd,
-                    &target_rel_path,
-                )
-            }),
-    )
+macro_rules! native_path_pair_operation {
+    ($name:ident, $js_name:literal) => {
+        #[napi(js_name = $js_name)]
+        pub fn $name(
+            env: Env,
+            source_root_fd: i32,
+            source_rel_path: String,
+            target_root_fd: i32,
+            target_rel_path: String,
+        ) -> Result<()> {
+            into_napi(
+                env,
+                validate_relative_path(&source_rel_path, false)
+                    .and_then(|()| validate_relative_path(&target_rel_path, false))
+                    .and_then(|()| {
+                        platform::$name(
+                            source_root_fd,
+                            &source_rel_path,
+                            target_root_fd,
+                            &target_rel_path,
+                        )
+                    }),
+            )
+        }
+    };
 }
 
-#[napi(js_name = "renameNoReplace")]
-pub fn rename_no_replace(
-    env: Env,
-    source_root_fd: i32,
-    source_rel_path: String,
-    target_root_fd: i32,
-    target_rel_path: String,
-) -> Result<()> {
-    into_napi(
-        env,
-        validate_relative_path(&source_rel_path, false)
-            .and_then(|()| validate_relative_path(&target_rel_path, false))
-            .and_then(|()| {
-                platform::rename_no_replace(
-                    source_root_fd,
-                    &source_rel_path,
-                    target_root_fd,
-                    &target_rel_path,
-                )
-            }),
-    )
-}
+native_path_pair_operation!(link_beneath, "linkBeneath");
+native_path_pair_operation!(rename_no_replace, "renameNoReplace");
 
 #[napi(js_name = "renameNoReplaceWithIdentity")]
 pub fn rename_no_replace_with_identity(
@@ -346,28 +330,7 @@ pub fn rename_no_replace_with_identity(
     )
 }
 
-#[napi(js_name = "renameReplace")]
-pub fn rename_replace(
-    env: Env,
-    source_root_fd: i32,
-    source_rel_path: String,
-    target_root_fd: i32,
-    target_rel_path: String,
-) -> Result<()> {
-    into_napi(
-        env,
-        validate_relative_path(&source_rel_path, false)
-            .and_then(|()| validate_relative_path(&target_rel_path, false))
-            .and_then(|()| {
-                platform::rename_replace(
-                    source_root_fd,
-                    &source_rel_path,
-                    target_root_fd,
-                    &target_rel_path,
-                )
-            }),
-    )
-}
+native_path_pair_operation!(rename_replace, "renameReplace");
 
 #[napi(js_name = "fstatIdentity")]
 pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
