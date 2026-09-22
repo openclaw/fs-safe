@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.18.1 - 2026-09-22
+
 ### Fixes
 
 - **Durable queue errors:** preserve the original read, validation, callback, or migration failure when closing the read descriptor also fails.
