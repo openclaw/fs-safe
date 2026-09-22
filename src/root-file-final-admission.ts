@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { FsSafeError } from "./errors.js";
-import type { PinnedOpenSyncFinalAdmission } from "./pinned-open.js";
+import { isExpectedPathError, type PinnedOpenSyncFinalAdmission } from "./pinned-open.js";
 import { realpathSync } from "./realpath.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { hardlinkedPathNotAllowedError } from "./root-errors.js";
@@ -21,13 +21,6 @@ function rootIdentityMismatch(cause?: unknown): FsSafeError {
     "canonical root directory identity changed or could not be verified",
     cause === undefined ? {} : { cause },
   );
-}
-
-function isExpectedPathError(error: unknown): boolean {
-  const code = typeof error === "object" && error !== null && "code" in error
-    ? String(error.code)
-    : "";
-  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
 }
 
 function inspectCanonicalRoot(

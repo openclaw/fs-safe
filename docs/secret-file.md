@@ -113,6 +113,10 @@ If an already validated descriptor fails while reading, both readers throw an
 operational `FsSafeError` with `code: "read-failed"`; inspect `cause` for the
 underlying Node filesystem code such as `EIO`.
 
+Caught `null` or `undefined` inspection and read failures are reported as
+structured errors with an `Error` cause carrying `"null"` or `"undefined"`,
+instead of an internal `TypeError` while inspecting the thrown value.
+
 A synchronous reader closes its descriptor once. A close failure preserves an
 earlier read or identity-validation error; after a successful read, the close
 failure is reported before trimming or rejecting empty content.

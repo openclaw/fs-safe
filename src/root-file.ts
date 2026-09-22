@@ -8,6 +8,7 @@ import {
 import type { PathAliasPolicy } from "./path-policy.js";
 import { readSymlinkResolution, type SymlinkPolicy } from "./root-symlink-policy.js";
 import {
+  isExpectedPathError,
   openPinnedFileSync,
   type PinnedOpenSyncAllowedType,
   type PinnedOpenSyncFailureReason,
@@ -330,10 +331,7 @@ function snapshotAsyncResolution(
 
 function toRootObservationError(error: unknown): RootFileOpenResult {
   if (error instanceof FsSafeError) return toBoundaryValidationError(error);
-  const code = typeof error === "object" && error !== null && "code" in error
-    ? String(error.code)
-    : "";
-  if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") {
+  if (isExpectedPathError(error)) {
     return { ok: false, reason: "path", error };
   }
   return { ok: false, reason: "io", error };

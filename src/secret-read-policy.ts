@@ -15,7 +15,7 @@ export type SecretFileReadOptions = {
 };
 
 export function secretPathErrorCode(error: unknown): FsSafeErrorCode {
-  const code = (error as NodeJS.ErrnoException).code;
+  const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
   return code === "ENOENT" || code === "ENOTDIR" ? "not-found" : "invalid-path";
 }
 

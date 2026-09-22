@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Secret-file errors:** report caught `null` or `undefined` failures as structured errors instead of masking them with an internal `TypeError`.
+
 ### Performance
 
 - **Native errors:** reduce temporary allocations when constructing fixed filesystem error messages.

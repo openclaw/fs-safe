@@ -25,7 +25,7 @@ export type PinnedOpenSyncFs = Pick<
   "constants" | "lstatSync" | "realpathSync" | "openSync" | "fstatSync" | "closeSync"
 >;
 
-function isExpectedPathError(error: unknown): boolean {
+export function isExpectedPathError(error: unknown): boolean {
   const code =
     typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
   return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
