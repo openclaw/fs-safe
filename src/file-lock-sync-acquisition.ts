@@ -62,7 +62,7 @@ export class SyncLockAcquisition {
       this.waitForRetry();
     } catch (waitError) {
       // Exhausted backoff must preserve the filesystem denial diagnosis.
-      if ((waitError as NodeJS.ErrnoException).code === "file_lock_timeout") throw error;
+      if ((waitError as NodeJS.ErrnoException | null | undefined)?.code === "file_lock_timeout") throw error;
       throw waitError;
     }
     return true;

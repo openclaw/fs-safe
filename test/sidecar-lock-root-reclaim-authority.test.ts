@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { root } from "../src/root.js";
-import { acquireFileLockSync } from "../src/file-lock.js";
+import { acquireFileLockSync, createFileLockManager } from "../src/file-lock.js";
+import { FsSafeError } from "../src/errors.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { tryAcquireSidecarReclaimGuard } from "../src/sidecar-lock-reclaim.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -60,6 +61,73 @@ it("retains Root mutation authority after an awaited stale-removal decision", as
   expect(shouldRemoveStaleLock).toHaveBeenCalledOnce();
   expect(await fs.readFile(lockPath, "utf8")).toBe(original);
   expect((await fs.stat(`${lockPath}.reclaim`)).isFile()).toBe(true);
+  expect(manager.heldEntries()).toEqual([]);
+});
+
+it.each([
+  null,
+  undefined,
+  Object.assign(new Error("authority lookup failed"), { code: "ENOENT" }),
+  new FsSafeError("not-found", "authority lookup failed"),
+])("preserves stale-removal authority rejection %s without classifying it as absence", async rejection => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-root-stale-authority-error-");
+  const targetPath = path.join(directory, "state");
+  const lockPath = `${targetPath}.lock`;
+  const original = JSON.stringify({ owner: "stale" });
+  await fs.writeFile(lockPath, original);
+  let rejectNextMutation = false, rejectedMutations = 0;
+  const lockRoot = await root(directory, { assertBeforeMutation() {
+    if (!rejectNextMutation) return;
+    rejectNextMutation = false;
+    rejectedMutations += 1;
+    throw rejection;
+  } });
+  const manager = createFileLockManager(directory);
+  const payload = vi.fn(() => ({ owner: "new" }));
+  const shouldRemoveStaleLock = vi.fn(() => { rejectNextMutation = true; return true; });
+  await expect(manager.acquire(targetPath, {
+    lockRoot, staleMs: 0, timeoutMs: 1000,
+    retry: { retries: 1, minTimeout: 0, maxTimeout: 0 },
+    payload, shouldReclaim: () => true,
+    staleRecovery: "remove-if-unchanged", shouldRemoveStaleLock,
+  })).rejects.toBe(rejection);
+  expect(rejectedMutations).toBe(1);
+  expect(payload).toHaveBeenCalledOnce();
+  expect(shouldRemoveStaleLock).toHaveBeenCalledOnce();
+  expect(await fs.readFile(lockPath, "utf8")).toBe(original);
+  expect(await fs.readdir(directory)).toEqual(["state.lock"]);
+  expect(manager.heldEntries()).toEqual([]);
+});
+
+it.each([false, true])("preserves removal error ownership when the stale sidecar vanishes (Root: %s)", async rooted => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-root-stale-remove-missing-");
+  const targetPath = path.join(directory, "state"), lockPath = `${targetPath}.lock`;
+  await fs.writeFile(lockPath, JSON.stringify({ owner: "stale" }));
+  const lockRoot = rooted ? await root(directory) : undefined;
+  let removeOnNextParse = false, removed = 0;
+  const manager = createFileLockManager(directory);
+  const payload = vi.fn(() => ({ owner: "new" }));
+  await expect(manager.acquire(targetPath, {
+    lockRoot, staleMs: 0, timeoutMs: 1000,
+    retry: { retries: 0, minTimeout: 0, maxTimeout: 0 },
+    payload, shouldReclaim: () => true, staleRecovery: "remove-if-unchanged",
+    shouldRemoveStaleLock: () => { removeOnNextParse = true; return true; },
+    parsePayload(raw) {
+      if (removeOnNextParse) {
+        removeOnNextParse = false;
+        fsSync.unlinkSync(lockPath);
+        removed += 1;
+      }
+      return JSON.parse(raw);
+    },
+  })).rejects.toMatchObject(rooted
+    ? { name: "FsSafeError", code: "not-found", cause: { code: "ENOENT" } }
+    : { code: "file_lock_timeout" });
+  expect(removed).toBe(1);
+  expect(payload).toHaveBeenCalledOnce();
+  expect(await fs.readdir(directory)).toEqual([]);
   expect(manager.heldEntries()).toEqual([]);
 });
 

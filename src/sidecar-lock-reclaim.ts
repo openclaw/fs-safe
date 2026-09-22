@@ -445,15 +445,15 @@ export async function removeStaleSidecarLockIfAllowed(params: {
   }
   if (params.assertGuardHeld) await params.assertGuardHeld();
   params.assertAuthorized?.();
-  try {
-    if (params.lockRoot) {
-      await params.lockRoot.remove(
+  if (params.lockRoot) {
+    await params.lockRoot.remove(
       relativeSidecarLockPath(params.lockRoot, params.lockPath),
       { assertBeforeMutation: params.assertAuthorized },
     );
-    } else {
-      await fs.rm(params.lockPath);
-    }
+    return "removed";
+  }
+  try {
+    await fs.rm(params.lockPath);
     return "removed";
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {

@@ -139,7 +139,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
     try {
       await waitForRetry();
     } catch (waitError) {
-      if ((waitError as NodeJS.ErrnoException).code === "file_lock_timeout") throw denial;
+      if ((waitError as NodeJS.ErrnoException | null | undefined)?.code === "file_lock_timeout") throw denial;
       throw waitError;
     }
   };

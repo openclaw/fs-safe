@@ -267,6 +267,8 @@ Pass `lockRoot` to place sidecar create, read, verification, and removal behind
 an existing `Root` capability. `lockPath` must resolve inside that root.
 Identity-conditioned removal remains the only release and reclaim deletion
 path.
+Root mutation refusals during stale removal propagate unchanged, including
+`null`, `undefined`, and errors carrying `ENOENT`; they do not become missing-sidecar retries.
 
 Async Root-backed acquisition normalizes the target's parent without creating
 it, checking the retained Root before and after normalization. A deleted or

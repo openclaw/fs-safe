@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Lock failure reporting:** preserve Root stale-removal authority rejections and nullish retry-option failures instead of replacing them with timeouts or `TypeError`s.
 - **Secret-file errors:** report caught `null` or `undefined` failures as structured errors instead of masking them with an internal `TypeError`.
 
 ### Performance
