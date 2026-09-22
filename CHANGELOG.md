@@ -2,13 +2,11 @@
 
 ## Unreleased
 
-## 0.18.1 - 2026-09-22
-
 ### Fixes
 
-- **Secure temporary directories:** accept Node's signed device and inode values, fixing rejection of valid directories while preserving exact identity checks. Thanks @vincentkoc. ([#586](https://github.com/openclaw/fs-safe/pull/586))
+- **Secure temporary directories:** stop rejecting valid directories when Node reports negative device or inode IDs. Thanks @vincentkoc. ([#586](https://github.com/openclaw/fs-safe/pull/586))
 - **Root write hardening:** prevent extra properties in wider options objects from enabling private writer controls or applying streamed-create byte limits to buffered writes. ([#571](https://github.com/openclaw/fs-safe/pull/571))
-- **Error reporting:** preserve original directory-admission, secret-read, and Root-open errors when descriptor cleanup also fails. ([#574](https://github.com/openclaw/fs-safe/pull/574))
+- **Error reporting:** preserve original errors from directory checks, secret reads, and Root opens when descriptor cleanup also fails. ([#574](https://github.com/openclaw/fs-safe/pull/574))
 
 ## 0.18.0 - 2026-09-21
 
