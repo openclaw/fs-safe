@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { registerFilenameFallbackBenchmarks } from "./filename-fallback-profile.mjs";
 import { registerWindowsOwnerCaughtFailure } from "./windows-owner-caught-failure.mjs";
+import { ownerAndDaclBenchmark, registerNativeWindowsColon } from "./native-windows-colon.mjs";
 
 export async function registerPaths({
   api: a,
@@ -13,6 +14,8 @@ export async function registerPaths({
   exclude,
   args,
   native,
+  binding,
+  nativeLoader,
   measuredProfiles,
   PermissionCommandError,
   onCleanup,
@@ -174,15 +177,9 @@ export async function registerPaths({
   add("resolveWindowsUserPrincipal", () => a.resolveWindowsUserPrincipal(env), { sync: true, batch: 100 });
   for (const name of ["createIcaclsResetCommand", "formatIcaclsResetCommand"]) add(name, () => a[name]("C:\\fixture.json", { isDir: false, env }), { sync: true, batch: 100 });
   add("inspectWindowsAcl", () => a.inspectWindowsAcl(input), { divisor: 100, skip: process.platform !== "win32" ? "Windows live ACL inspection requires Windows." : undefined, verify: (r) => assert(r.ok) });
-  add("readOwnerAndDacl", () => a.readOwnerAndDacl(input), {
-    sync: true, skip: process.platform !== "win32" ? "Windows owner and DACL inspection requires Windows." : undefined,
-    after: result => {
-      assert.equal(result.status, "supported");
-      assert(result.isLocal && result.complete && result.daclPresent);
-      assert.deepEqual(result.unsupportedAceTypes, []);
-      for (const sid of [result.ownerSid, result.currentUserSid]) assert.match(sid, /^s-\d+-\d+(?:-\d+)+$/i);
-    },
-  });
+  const ownerAndDacl = ownerAndDaclBenchmark(a, input);
+  add("readOwnerAndDacl", ownerAndDacl.run, ownerAndDacl.options);
+  registerNativeWindowsColon({ api: a, binding, native, nativeLoader, workspace: w, args, register: add, publicCase: ownerAndDacl });
   const privateDirectory = path.join(w, "private-dir");
   add("createPrivateDirectory", () => a.createPrivateDirectory(privateDirectory), {
     skip: process.platform !== "win32" ? "Windows private-directory creation requires Windows." : undefined,

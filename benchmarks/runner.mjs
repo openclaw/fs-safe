@@ -34,6 +34,7 @@ import {
   parseMeasuredSourceArguments,
 } from "./measured-distribution.mjs";
 import { finalizeBenchmarkReport, finishBenchmarkInvocation } from "./runner-cleanup.mjs";
+import { NATIVE_WINDOWS_COLON_FILTER, qualifyNativeWindowsColon, validateNativeWindowsColonReport } from "./native-windows-colon.mjs";
 
 const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape": "mixed", "copy-files": 64, "copy-file-bytes": 4096 };
 for (let i = 2; i < process.argv.length; i++) {
@@ -53,6 +54,10 @@ for (const key of ["iterations", "samples", "warmup"]) {
   assert(Number.isSafeInteger(args[key]) && args[key] >= (key === "warmup" ? 0 : 1), `Invalid ${key}`);
 }
 assert(["off", "require", "auto"].includes(args.mode), "Invalid native mode");
+if (args.filter === NATIVE_WINDOWS_COLON_FILTER) {
+  assert.equal(process.platform, "win32", "native colon qualification requires actual Windows");
+  assert.equal(args.mode, "require", "native colon study requires native mode require");
+}
 assert(["empty", "flat", "nested", "mixed"].includes(args["copy-shape"]), "Invalid copy shape");
 assert(Number.isSafeInteger(args["copy-files"]) && args["copy-files"] >= 0 && args["copy-files"] <= 100_000, "Invalid copy file count");
 assert(Number.isSafeInteger(args["copy-file-bytes"]) && args["copy-file-bytes"] >= 0 && args["copy-file-bytes"] <= 1024 * 1024, "Invalid copy file size");
@@ -115,6 +120,18 @@ const loadedAddon = native ? Object.values(createRequire(import.meta.url).cache)
 assert(!native || loadedAddon, "Could not identify the loaded native addon");
 const nativeHash = loadedAddon
   ? createHash("sha256").update(fs.readFileSync(loadedAddon.filename)).digest("hex") : null;
+const nativeLoader = args.filter === NATIVE_WINDOWS_COLON_FILTER && loadedAddon ? {
+  mechanism: "require-cache module.exports identity",
+  loaderModule: "native.js",
+  loaderSha256: createHash("sha256").update(fs.readFileSync(path.join(dist, "native.js"))).digest("hex"),
+  bindingMethod: typeof binding.readOwnerAndDacl === "function" ? "readOwnerAndDacl" : null,
+  addonRelativePath: path.relative(path.dirname(dist), loadedAddon.filename).split(path.sep).join("/"),
+  addonBasename: path.basename(loadedAddon.filename),
+  addonBytes: fs.statSync(loadedAddon.filename).size,
+  addonSha256: nativeHash,
+  modulesAbi: process.versions.modules,
+  napiVersion: process.versions.napi,
+} : null;
 const workspace = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-methods-")));
 const workspaceFilesystem = fs.statfsSync(workspace);
 const cases = [];
@@ -138,7 +155,7 @@ const contract = (name, object) => {
 };
 const cleanups = [];
 const context = {
-  api, workspace, native, binding, measuredFeatures, measuredProfiles,
+  api, workspace, native, binding, nativeLoader, measuredFeatures, measuredProfiles,
   PermissionCommandError,
   register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn),
 };
@@ -162,6 +179,7 @@ try {
   const required = [...exportsByName.keys(), ...[...contracts].flatMap(([type, keys]) => keys.map((key) => `${type}.${key}`))];
   const missing = required.filter((name) => !covered.has(name) && !exclusions.has(name));
   assert.deepEqual(missing, [], `Unmeasured methods: ${missing.join(", ")}`);
+  const nativeWindowsColonQualification = await qualifyNativeWindowsColon({ cases, args, nativeLoader });
   const results = [];
   for (const c of cases) {
     if (args.filter && !c.name.includes(args.filter)) continue;
@@ -242,6 +260,8 @@ try {
     metadata: {
       harnessHash: harnessDigest,
       nativeHash,
+      nativeLoader,
+      nativeWindowsColonQualification,
       distHash,
       measuredDistribution,
       guest,
@@ -281,6 +301,7 @@ await finalizeBenchmarkReport({
     validateProbeTreeSuccessReport(completedReport, args.filter, args.iterations);
     validateCopyTreeSuccessReport(completedReport, args.filter, args.iterations);
     validateWindowsOwnerCaughtFailureReport(completedReport, args.filter, args.iterations);
+    validateNativeWindowsColonReport(completedReport, args.filter, args.iterations, args.samples);
   },
   cleanup,
   cleanups,

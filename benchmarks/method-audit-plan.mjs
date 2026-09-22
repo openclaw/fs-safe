@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { validateFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import { measuredSourceArguments, validateMeasuredDistribution } from "./measured-distribution.mjs";
+import { NATIVE_WINDOWS_COLON_FILTER, validateNativeWindowsColonReportSet } from "./native-windows-colon.mjs";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -112,6 +113,9 @@ export function validateDispatchInputs(raw = {}) {
     timeoutMinutes: canonicalInteger("timeout_minutes", value("timeout_minutes"), 45, 120),
     expectedHarnessSha: normalizeSha("expected_harness_sha", value("expected_harness_sha"), { optional: true }),
   };
+  if (config.filter === NATIVE_WINDOWS_COLON_FILTER && (config.platform !== "windows" || config.nativeMode !== "require")) {
+    fail("native-windows-colon/ requires platform=windows and native_mode=require");
+  }
   if (![45, 90, 120].includes(config.timeoutMinutes)) {
     fail("timeout_minutes must be one of: 45, 90, 120");
   }
@@ -420,6 +424,7 @@ export function validateCompleteReportSet(plan, reports, before, after) {
     if (!report) fail(`method-audit report set is missing ${file}`);
     validateRawReport(plan, reportPlan, report, before);
   }
+  validateNativeWindowsColonReportSet(plan, reports, before);
 }
 
 export function createReportEvidence(plan, reportPlan, report, snapshot, runner, {

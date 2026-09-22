@@ -52,6 +52,40 @@ measured on a rejected synthetic path so this command never writes to a user's
 real Trash. This is representative method coverage, not exhaustive branch or
 platform coverage; security and concurrency tests remain separate.
 
+The exact opt-in filter `native-windows-colon/` selects nine Windows native-required
+rows: the existing public `readOwnerAndDacl` success workload on `input.json`,
+plus eight private `binding.readOwnerAndDacl` admission-error workloads. The
+existing public row retains its name, callback, and owner/DACL verification;
+other filters do not opt into the new family. Private rows have no public-method
+coverage credit. They cross ordinary `C:\` and canonical `\\?\C:\` roots,
+16/4,096-byte ASCII payloads, and terminal `:stream` or an actual NUL. The
+stream branch rejects the extra colon; the NUL branch admits the drive colon
+before UTF-16 conversion rejects NUL. Exact `Error.code` and `Error.message`
+checks run after every call outside the timer. These are complete private N-API
+error calls, including string conversion and error translation/catch, not pure
+Rust-predicate timings or successful public filesystem calls. Source establishes
+rejection before filesystem work in those native calls; it is not a syscall trace
+or a claim that the whole benchmark process performs no I/O.
+
+This family fails before measurement off Windows or without native `require`.
+Dispatch planning rejects incompatible platform/mode settings before scheduling.
+After registration, every measurement process first runs all nine before/run/after
+callback sets twice without reading a timer. All 18 actual public/error outcomes
+and the qualified loader identity must validate before any selected row enters
+the timing loop; a failure aborts first. Reports retain this compact upfront
+receipt. The later stock warmup/check calls are excluded from reported samples,
+but their stock runner path still reads its clock.
+Its public fixture retains identity/content, and reports require complete
+CPU/OS/Node/filesystem observations plus the selected distribution's loader and
+staged Windows x64 addon identities. Per-dispatch checks preserve fixture and
+environment equality, bind the addon to the measured build, require complete
+dependency receipts, and compare loader identities per build. In a supported
+same-artifact control both positions use `candidate-build`; their measurement
+roles remain baseline/candidate while their measured source role is candidate.
+POSIX synthetic harness tests are not Windows qualification. The normal runner
+still performs other registration/setup work, and the workflow's unconditional
+legacy Node 22 benchmark job remains separate from this selected comparison.
+
 Each row reports microseconds per call, all sample averages, their median, and
 minimum/maximum. Defaults are 100 iterations, five samples, and five warmup calls.
 Each `samplesUs` element is explicitly the average microseconds per call across

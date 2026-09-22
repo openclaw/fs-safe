@@ -34,6 +34,24 @@ const RECEIPT = {
   mtimeNs: "1700000000000000000",
 };
 
+describe("native Windows colon dispatch admission", () => {
+  const filter = "native-windows-colon/";
+  it.each([
+    {}, { platform: "windows" }, { native_mode: "require" },
+    { platform: "linux", native_mode: "require" },
+    { platform: "macos", native_mode: "require" },
+    { platform: "windows", native_mode: "off" },
+  ])("rejects incompatible plans before scheduling: %j", inputs => {
+    expect(() => validateDispatchInputs({ filter, ...inputs }))
+      .toThrow("requires platform=windows and native_mode=require");
+  });
+  it("accepts the required platform/mode and preserves other filters", () => {
+    expect(validateDispatchInputs({ filter, platform: "windows", native_mode: "require" }))
+      .toMatchObject({ platform: "windows", nativeMode: "require" });
+    expect(() => validateDispatchInputs({ filter: "readOwnerAndDacl" })).not.toThrow();
+  });
+});
+
 function resolution(
   commit: string,
   requestedRef: string | null,

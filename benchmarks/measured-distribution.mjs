@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { validateNativeWindowsColonReport } from "./native-windows-colon.mjs";
 import {
   expectedWorkloadSemantics,
   validateFilenameFallbackProfile,
@@ -193,6 +194,7 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     plan.settings.filter,
     plan.settings.iterations,
   );
+  validateNativeWindowsColonReport(report, plan.settings.filter, plan.settings.iterations, plan.settings.samples);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(
