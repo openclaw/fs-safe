@@ -93,6 +93,12 @@ existing single-load rejection and batch-skip behavior. A caller or migration
 error with code `ENOENT` is still a failure, not a missing queue entry; only a
 claim that is absent or disappears before reading returns `null` from a single load.
 
+If closing the read descriptor also fails, the original read, validation,
+callback, or migration failure keeps precedence, including non-Error rejection
+values. A close failure without an earlier failure is reported through the same
+loader policy: direct reads and single loads reject, while batch loads skip it
+unless migration has started.
+
 On Windows, migration releases its read pin once at this publication boundary
 because an open target can block replacement. It rechecks the exact pathname
 identity after the asynchronous close while still holding the transfer lock.

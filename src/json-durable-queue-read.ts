@@ -50,6 +50,7 @@ export async function withJsonDurableQueueEntry<T, R>(
   let closePromise: Promise<void> | undefined;
   const releaseReadPin = (): Promise<void> =>
     closePromise ??= (async () => { await handle.close(); })();
+  let result: R;
   try {
     const openedStat = inspectQueueEntry(
       () => fs.fstatSync(handle.fd, { bigint: true }), maxBytes, initialStat,
@@ -66,8 +67,11 @@ export async function withJsonDurableQueueEntry<T, R>(
     );
     // The migration owner may release this pin only at the verified publication
     // boundary; until then an unlinked inode cannot be recycled into a new claim.
-    return await run(JSON.parse(bytes.toString("utf8")) as T, openedStat, releaseReadPin);
-  } finally {
-    await releaseReadPin();
+    result = await run(JSON.parse(bytes.toString("utf8")) as T, openedStat, releaseReadPin);
+  } catch (error) {
+    await releaseReadPin().catch(() => undefined);
+    throw error;
   }
+  await releaseReadPin();
+  return result;
 }

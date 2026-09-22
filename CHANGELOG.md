@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Durable queue errors:** preserve the original read, validation, callback, or migration failure when closing the read descriptor also fails.
 - **Secure temporary directories:** stop rejecting valid directories when Node reports negative device or inode IDs. Thanks @vincentkoc. ([#586](https://github.com/openclaw/fs-safe/pull/586))
 - **Root write hardening:** prevent extra properties in wider options objects from enabling private writer controls or applying streamed-create byte limits to buffered writes. ([#571](https://github.com/openclaw/fs-safe/pull/571))
 - **Error reporting:** preserve original errors from directory checks, secret reads, and Root opens when descriptor cleanup also fails. ([#574](https://github.com/openclaw/fs-safe/pull/574))
