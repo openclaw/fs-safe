@@ -9,8 +9,6 @@ import {
   assertDestinationHardlinkPolicySync,
   copyFallbackReplace,
   copyFallbackReplaceSync,
-  type ReplaceFileAtomicRestoreCleanup,
-  type ReplaceFileAtomicRestoreFailureDetails,
   type ReplaceFileCopyFallbackRestorePolicy,
   type ReplaceFileDestinationHardlinkPolicy,
 } from "./replace-file-copy-fallback.js";

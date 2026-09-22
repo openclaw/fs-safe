@@ -17,7 +17,7 @@ import { assertMutationNotDenied, mergeDenyMutationPolicies, type DenyMutationPo
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
 import { openedPathResolutionError, recordExclusiveCreateFailure, recordOpenedFileFailure } from "./opened-file-failure.js";
 import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-write.js";
-import type { PinnedWriteInput, RenameIdentityPolicy } from "./pinned-write-types.js";
+import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
@@ -729,7 +729,6 @@ async function openWritableFileInRoot(
     relativePath: params.relativePath, guardedTarget, mkdir: params.mkdir,
     assertBeforeMutation: params.assertBeforeMutation,
   }) : undefined;
-  const mutationAdmission = prepared?.mutationAdmission;
   const preparedParent = prepared?.preparedParent;
   let ioPath = prepared?.targetPath ?? (params.mkdir === false ? resolved :
     await prepareRootWriteTarget(root, resolved, params.assertBeforeMutation));

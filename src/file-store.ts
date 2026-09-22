@@ -1,6 +1,4 @@
 import syncFs from "node:fs";
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";

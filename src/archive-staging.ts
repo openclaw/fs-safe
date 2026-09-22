@@ -12,7 +12,6 @@ import {
 } from "./archive-deadline.js";
 import {
   ArchiveSecurityError,
-  type ArchiveSecurityErrorCode,
 } from "./archive-errors.js";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";

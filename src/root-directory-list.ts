@@ -10,7 +10,6 @@ import {
   createAsyncDirectoryGuard,
   extendDirectoryObservationGuard,
   type AsyncDirectoryGuard,
-  type DirectoryObservationGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import {

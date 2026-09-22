@@ -1,6 +1,5 @@
 import {
   formatCaughtPermissionFailure,
-  formatPermissionErrorDetail,
   getPermissionCommandFailure,
   type PermissionCommandFailure,
 } from "./permission-exec.js";

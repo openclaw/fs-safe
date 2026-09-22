@@ -8,7 +8,6 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryI
 import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
 import { assertOwnedDirectory } from "./directory-mode-owner.js";
 import { FsSafeError } from "./errors.js";
-import { resolveHomeRelativePath } from "./home-dir.js";
 import { openPinnedFileSync } from "./pinned-open.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
 import { ensureTrailingSep } from "./root-context.js";
