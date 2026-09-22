@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- **Native errors:** reduce temporary allocations when constructing fixed filesystem error messages.
+
 ## 0.18.1 - 2026-09-22
 
 ### Fixes

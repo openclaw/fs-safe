@@ -86,11 +86,11 @@ pub struct OpenBeneathResult {
 
 pub(crate) type NativeResult<T> = std::result::Result<T, Error<String>>;
 
-pub(crate) fn native_error(code: impl Into<String>, message: impl Into<String>) -> Error<String> {
-    Error::new(code.into(), message.into())
+pub(crate) fn native_error(code: impl Into<String>, message: impl ToString) -> Error<String> {
+    Error::new(code.into(), message)
 }
 
-fn invalid_path(message: impl Into<String>) -> Error<String> {
+fn invalid_path(message: impl ToString) -> Error<String> {
     native_error("EINVAL", message)
 }
 
