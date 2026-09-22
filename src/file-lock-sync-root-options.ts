@@ -2,23 +2,18 @@ import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
 import { validateSidecarLockCompromiseCheckIntervalMs, validateSidecarLockRetryOptions,
   validateSidecarLockStaleMs, validateSidecarLockTimeoutMs } from "./sidecar-lock-policy.js";
-import type { SidecarLockCompromisedInfo, SidecarLockRetryOptions,
-  SidecarLockStaleRecovery } from "./sidecar-lock-types.js";
+import type { SidecarLockRetryOptions } from "./sidecar-lock-types.js";
 
-type CapturedRootSyncAcquireOptions<TPayload extends Record<string, unknown>> = Readonly<{
-  compromiseCheckIntervalMs?: number;
-  lockPath?: string;
-  onCompromised?: (info: SidecarLockCompromisedInfo) => void;
+type CapturedRootSyncAcquireOptions<TPayload extends Record<string, unknown>> = Readonly<Pick<
+  FileLockSyncAcquireOptions<TPayload>,
+  "compromiseCheckIntervalMs" | "lockPath" | "onCompromised" | "parsePayload" |
+  "payload" | "reentrantOwner" | "staleRecovery" | "timeoutMs"
+> & {
   optionsReceiver: FileLockSyncAcquireOptions<TPayload>;
-  parsePayload?: (raw: string) => unknown;
-  payload: () => TPayload;
-  reentrantOwner?: string;
   retry: Readonly<SidecarLockRetryOptions>;
   shouldReclaim?: FileLockSyncAcquireOptions<TPayload>["shouldReclaim"];
   shouldRemoveStaleLock?: FileLockSyncAcquireOptions<TPayload>["shouldRemoveStaleLock"];
   staleMs: number;
-  staleRecovery?: SidecarLockStaleRecovery;
-  timeoutMs?: number;
 }>;
 
 export function captureRootSyncAcquireOptions<TPayload extends Record<string, unknown>>(
