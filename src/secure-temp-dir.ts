@@ -3,6 +3,7 @@ import { tmpdir as getOsTmpDir } from "node:os";
 import path from "node:path";
 import { directoryEntryPath } from "./directory-entry-path.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { hasNodeErrorCode } from "./path.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
 import {
@@ -13,8 +14,6 @@ import {
   type SecureTempRootDescriptorAdapter,
 } from "./secure-temp-repair.js";
 export type { SecureTempRootDescriptorAdapter } from "./secure-temp-repair.js";
-
-type MaybeNodeError = { code?: string };
 
 type SecureDirStat = {
   isDirectory(): boolean;
@@ -40,15 +39,6 @@ export type ResolveSecureTempRootOptions = {
   warn?: (message: string) => void;
   warningPrefix?: string;
 };
-
-function isNodeErrorWithCode(err: unknown, code: string): err is MaybeNodeError {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as MaybeNodeError).code === code
-  );
-}
 
 export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): string {
   const {
@@ -145,7 +135,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
     try {
       candidate = lstatSync(candidatePath);
     } catch (error) {
-      return { kind: isNodeErrorWithCode(error, "ENOENT") ? "missing" : "invalid", error };
+      return { kind: hasNodeErrorCode(error, "ENOENT") ? "missing" : "invalid", error };
     }
     let receipt: SecureTempDirectoryReceipt | undefined;
     try {
