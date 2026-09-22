@@ -1,8 +1,17 @@
 import { describe, expect } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
-import { exactTempStat, secureTempAdapterFixture, tempError } from "./helpers/secure-temp-adapter.js";
+import { exactTempStat, secureTempAdapterFixture as createFixture, tempError } from "./helpers/secure-temp-adapter.js";
 
-describe("secure-temp repair races and failures", () => {
+describe.each([
+  { label: "positive", dev: 3n, ino: 17n },
+  { label: "signed device", dev: -(1n << 63n), ino: 17n },
+  { label: "signed inode", dev: 3n, ino: -(1n << 63n) },
+])("secure-temp repair races and failures ($label)", (identity) => {
+  const secureTempAdapterFixture = () => {
+    const fixture = createFixture();
+    Object.assign(fixture.state.named, { dev: identity.dev, ino: identity.ino });
+    return fixture;
+  };
   itPosix("rejects a safe replacement between initial admission and descriptor open", () => {
     const f = secureTempAdapterFixture();
     f.lstatSync.mockImplementationOnce(() => {
@@ -34,6 +43,33 @@ describe("secure-temp repair races and failures", () => {
     expect(f.resolve).toThrow("Unsafe fallback");
     expect(f.fchmodSync).not.toHaveBeenCalled();
     expect(f.closeSync).toHaveBeenCalledTimes(1);
+  });
+
+  itPosix.each([
+    [-(1n << 63n), -(1n << 63n) + 1n],
+    [-1n, (1n << 64n) - 1n],
+    [1n << 80n, (1n << 80n) + 1n],
+  ].flatMap(([admitted, replaced]) => ["dev", "ino"].flatMap((field) =>
+    ["before-open", "open", "after-chmod"].map((stage) => ({ admitted, replaced, field, stage })),
+  )))("rejects exact $field $admitted to $replaced at $stage without normalizing", ({ admitted, replaced, field, stage }) => {
+    const f = secureTempAdapterFixture();
+    const key = field as "dev" | "ino";
+    f.state.named[key] = admitted;
+    const original = f.state.named;
+    const replacement = { ...original, [key]: replaced };
+    if (stage === "before-open") {
+      f.lstatSync.mockImplementationOnce(() => { f.state.named = replacement; return { ...original }; });
+    } else if (stage === "open") {
+      f.openSync.mockImplementation(() => { f.state.named = replacement; f.state.pinned = replacement; return 42; });
+    } else {
+      f.fchmodSync.mockImplementation(() => { f.state.pinned.mode = 0o40700n; f.state.named = replacement; });
+    }
+    expect(f.resolve).toThrow("Unsafe fallback");
+    expect(replacement.mode).toBe(0o40777n);
+    expect(original.mode).toBe(stage === "after-chmod" ? 0o40700n : 0o40777n);
+    expect(f.fchmodSync).toHaveBeenCalledTimes(stage === "after-chmod" ? 1 : 0);
+    expect(f.closeSync).toHaveBeenCalledTimes(stage === "before-open" ? 0 : 1);
+    expect(f.chmodSync).not.toHaveBeenCalled();
   });
 
   itPosix.each(["before-chmod", "chmod", "warning", "access"])("preserves a replacement introduced at %s and refuses the path", (stage) => {

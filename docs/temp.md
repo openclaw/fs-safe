@@ -647,7 +647,12 @@ recursive-`mkdir` winner is inspected as an untrusted existing directory.
 Broad-mode repair also uses a pinned descriptor; there is no pathname chmod.
 
 Repair and finalization require a known nonnegative safe-integer UID and exact
-bigint device, inode, owner, mode, and directory-type facts. They open with
+bigint device, inode, owner, mode, and directory-type facts. Device and inode
+identities accept Node's signed 64-bit stat representation, including negative
+values down to `-(1n << 63n)`; inode zero remains invalid. Previously supported
+nonnegative device and positive inode adapter values remain supported without
+an upper cap. Values are compared exactly as received: signed and unsigned
+encodings of the same bits are not treated as equal. They open with
 `O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK`, verify the descriptor and
 current directory entry against the initial receipt before `fchmod`, then
 verify identity, permissions, and write/search access again before closing.

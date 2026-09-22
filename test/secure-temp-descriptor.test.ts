@@ -44,25 +44,53 @@ describe("secure-temp descriptor authority", () => {
     expect(f.chmodSync).not.toHaveBeenCalled();
   });
 
+  const identities = [
+    -(1n << 63n), -(1n << 63n) + 1n, -1n,
+    1n << 63n, (1n << 64n) - 1n, 1n << 64n, 1n << 80n,
+  ].flatMap((value) => [
+    { dev: value, ino: 17n }, { dev: 3n, ino: value }, { dev: value, ino: value },
+  ]);
+  identities.push({ dev: 0n, ino: 17n });
+  itPosix.each(identities.flatMap((identity) =>
+    ["existing", "repair", "created"].map((phase) => ({ ...identity, phase })),
+  ))("preserves exact dev=$dev ino=$ino through $phase admission", ({ dev, ino, phase }) => {
+    const f = secureTempAdapterFixture();
+    Object.assign(f.state.named, { dev, ino, mode: phase === "existing" ? 0o40750n : 0o40777n });
+    if (phase === "created") {
+      f.state.exists = false;
+      f.mkdirSync.mockImplementation(() => {
+        f.state.exists = true;
+        f.state.named = { ...exactTempStat(ino, 0o40500n), dev };
+      });
+    }
+    expect(f.resolve()).toBe(f.candidate);
+    expect(f.state.named).toMatchObject({ dev, ino, mode: phase === "existing" ? 0o40750n : 0o40700n });
+    expect(f.openSync).toHaveBeenCalledTimes(phase === "existing" ? 0 : 1);
+    expect(f.fchmodSync).toHaveBeenCalledTimes(phase === "existing" ? 0 : 1);
+    expect(f.closeSync).toHaveBeenCalledTimes(phase === "existing" ? 0 : 1);
+    expect(f.chmodSync).not.toHaveBeenCalled();
+  });
+
   const malformed = [
-    { dev: 3 }, { dev: undefined }, { dev: -1n }, { ino: 0n }, { ino: -1n },
+    { dev: 3 }, { dev: undefined }, { dev: -(1n << 63n) - 1n }, { ino: 0n }, { ino: -(1n << 63n) - 1n },
     { ino: 9007199254740992 }, { ino: undefined }, { uid: 501 }, { uid: undefined },
     { uid: -1n }, { uid: 502n }, { mode: 0o40777 }, { mode: undefined }, { mode: -1n },
     { mode: 0x1_0000_0000n }, { mode: 0o100777n },
     { isDirectory: () => false }, { isSymbolicLink: () => true },
   ];
-  itPosix.each(malformed.map((patch, index) => ({ patch, index })))("rejects malformed admission facts $index before open", ({ patch }) => {
+  itPosix.each(malformed.flatMap((patch, index) => [false, true].map((signed) => ({ patch, index, signed }))))("rejects malformed admission facts $index (signed=$signed) before open", ({ patch, signed }) => {
     const f = secureTempAdapterFixture();
-    f.lstatSync.mockReturnValue({ ...exactTempStat(), ...patch } as never);
+    f.lstatSync.mockReturnValue({ ...exactTempStat(), ...(signed ? { dev: -1n, ino: -1n } : {}), ...patch } as never);
     expect(f.resolve).toThrow("Unsafe fallback");
     expect(f.openSync).not.toHaveBeenCalled();
     expect(f.fchmodSync).not.toHaveBeenCalled();
     expect(f.closeSync).not.toHaveBeenCalled();
   });
 
-  itPosix.each(malformed.map((patch, index) => ({ patch, index })))("rejects malformed descriptor facts $index and closes once", ({ patch }) => {
+  itPosix.each(malformed.flatMap((patch, index) => [false, true].map((signed) => ({ patch, index, signed }))))("rejects malformed descriptor facts $index (signed=$signed) and closes once", ({ patch, signed }) => {
     const f = secureTempAdapterFixture();
-    f.fstatSync.mockReturnValue({ ...exactTempStat(), ...patch } as never);
+    if (signed) Object.assign(f.state.named, { dev: -1n, ino: -1n });
+    f.fstatSync.mockReturnValue({ ...f.state.named, ...patch } as never);
     expect(f.resolve).toThrow("Unsafe fallback");
     expect(f.fchmodSync).not.toHaveBeenCalled();
     expect(f.closeSync).toHaveBeenCalledExactlyOnceWith(42);

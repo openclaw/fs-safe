@@ -33,9 +33,14 @@ export function captureSecureTempRepairAdapter(
   return { lstatSync, fstatSync, openSync, fchmodSync, closeSync, flags: O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK };
 }
 
+// Node exposes stat identity through BigInt64Array; a high OS bit can be negative.
+// Preserve raw values and existing positive adapter receipts, never normalize them.
+const MIN_NODE_STAT_IDENTITY = -(1n << 63n);
+
 export function secureTempDirectoryReceipt(stat: ExactDirectoryStat, uid: number): SecureTempDirectoryReceipt {
   const { dev, ino, uid: owner, mode } = stat;
-  if (typeof dev !== "bigint" || dev < 0n || typeof ino !== "bigint" || ino <= 0n ||
+  if (typeof dev !== "bigint" || dev < MIN_NODE_STAT_IDENTITY ||
+      typeof ino !== "bigint" || ino < MIN_NODE_STAT_IDENTITY || ino === 0n ||
       typeof owner !== "bigint" || owner !== BigInt(uid) || typeof mode !== "bigint" ||
       mode < 0n || mode > 0xffff_ffffn || (mode & 0o170000n) !== 0o040000n ||
       stat.isDirectory() !== true || stat.isSymbolicLink() !== false) {
