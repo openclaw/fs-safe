@@ -12,6 +12,7 @@
 
 ### Performance and maintenance
 
+- Share the private created-file handoff request type across async and sync creation, preserving callback contracts and runtime behavior.
 - Keep standalone publication-path admission with the existing drive-anchoring and namespace-alias helpers, preserving raw path checks and public behavior.
 - Exercise directory-replacement admission, recovery, and native rename ownership in required Bun CI while preserving canonicalization rejection and real filesystem identity checks.
 - Consolidate private FileStore path, byte-limit, and copy-source admission under the existing boundary owner without changing store methods, policy order, or publication behavior.

@@ -23,11 +23,11 @@ type HandoffParents = {
 
 type HandoffPaths = HandoffParents & { sourcePath: string; targetPath: string };
 type ProducerHandoffParams = HandoffPaths & { readWrite: boolean };
-type CreatedHandoffParams = HandoffPaths & {
-  source: FileHandle;
+export type CreatedHandoffParams<TSource = FileHandle, TVerification = Promise<void>> = HandoffPaths & {
+  source: TSource;
   identity: BigIntStats;
   assertBeforeMutation?: () => void;
-  verifyDescriptor?: (fd: number, path: string, links: number) => Promise<void>;
+  verifyDescriptor?: (fd: number, path: string, links: number) => TVerification;
   onPublished?: () => void;
 };
 
