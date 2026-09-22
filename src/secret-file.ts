@@ -247,9 +247,11 @@ type SecretFileWriteParams = {
 
 function snapshotSecretFileWriteParams(
   params: SecretFileWriteParams,
-  rootDir: string,
-  filePath: string,
 ): SecretFileWriteParams {
+  const rootDir = params.rootDir;
+  const filePath = params.filePath;
+  assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
+  assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   return {
     rootDir,
     filePath,
@@ -372,12 +374,8 @@ async function materializeSecretFileAtomic(
 }
 
 export async function writeSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
-  const rootDir = params.rootDir;
-  const filePath = params.filePath;
-  assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
-  assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
-  const ownedParams = snapshotSecretFileWriteParams(params, rootDir, filePath);
-  const canonicalPath = await secretFileWriteQueueKey(filePath);
+  const ownedParams = snapshotSecretFileWriteParams(params);
+  const canonicalPath = await secretFileWriteQueueKey(ownedParams.filePath);
   await serializePathWrite(canonicalPath, async () => {
     await materializeSecretFileAtomic(ownedParams, false);
   });
@@ -385,19 +383,15 @@ export async function writeSecretFileAtomic(params: SecretFileWriteParams): Prom
 
 export async function createSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
   try {
-    const rootDir = params.rootDir;
-    const filePath = params.filePath;
-    assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
-    assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
-    const ownedParams = snapshotSecretFileWriteParams(params, rootDir, filePath);
-    const canonicalPath = await secretFileWriteQueueKey(filePath);
+    const ownedParams = snapshotSecretFileWriteParams(params);
+    const canonicalPath = await secretFileWriteQueueKey(ownedParams.filePath);
     await serializePathWrite(canonicalPath, async () => {
       await materializeSecretFileAtomic(ownedParams, true);
     });
   } catch (error) {
     if (
       (error instanceof FsSafeError && error.code === "already-exists") ||
-      (error as NodeJS.ErrnoException).code === "EEXIST"
+      (error as NodeJS.ErrnoException | null | undefined)?.code === "EEXIST"
     ) {
       throw new FsSafeError("secret-exists", "Private secret file already exists.", { cause: error });
     }
