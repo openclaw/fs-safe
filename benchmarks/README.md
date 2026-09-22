@@ -52,6 +52,17 @@ measured on a rejected synthetic path so this command never writes to a user's
 real Trash. This is representative method coverage, not exhaustive branch or
 platform coverage; security and concurrency tests remain separate.
 
+The `ensureAbsoluteDirectory/classifier/` family covers existing and wholly
+missing generated suffixes at depths 1 and 8. Every invocation checks its exact
+initial state, retains parent and existing-directory identities, verifies the
+complete public result and final directory chain, and resets missing suffixes.
+Only the fully awaited public call is timed; admission, verification, and reset
+are outside timing, including for every measured call. Reports bind the complete
+selected row set to fixed mode/scope options, iterations, sample count, canonical
+parent depth, umask, and filesystem. A method-audit dispatch rejects layout or
+Node/OS/CPU/filesystem changes across its measurement processes. Separate
+dispatches can use different hosts and must retain that distinction in analysis.
+
 Each row reports microseconds per call, all sample averages, their median, and
 minimum/maximum. Defaults are 100 iterations, five samples, and five warmup calls.
 Each `samplesUs` element is explicitly the average microseconds per call across

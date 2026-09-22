@@ -175,6 +175,8 @@ function rawReport(plan: ReturnType<typeof planFor>, reportPlan = plan.reports[0
       platform: "win32",
       arch: "x64",
       cpu: "Synthetic CPU",
+      osRelease: "Synthetic OS",
+      workspaceFilesystem: { type: 1, blockSize: 4096 },
       mode: reportPlan.mode,
       native: false,
       samples: 5,

@@ -1,5 +1,6 @@
 import { sidecarPathSnapshotCases } from "../../benchmarks/sidecar-path-snapshot.mjs";
 import { copyFallbackSuccessDescriptors } from "../../benchmarks/copy-fallback-success.mjs";
+import { absoluteDirectoryClassifierDescriptors } from "../../benchmarks/absolute-directory-classifier.mjs";
 import { syncCopyFallbackAdmissionDescriptors } from "../../benchmarks/sync-copy-fallback-admission.mjs";
 import {
   PUBLIC_ZIP_EXTRACTION_BENCHMARK_NAME,
@@ -45,6 +46,20 @@ export function completeSyntheticBenchmarkResults(
   const syncAdmissionRows = syncCopyFallbackAdmissionDescriptors();
   return [
     measured({ name: "root" }, sampleCount, iterations),
+    ...absoluteDirectoryClassifierDescriptors().map((row) => measured({
+      name: row.name,
+      workloadSemantics: row.workloadSemantics,
+      workloadDetails: row.workloadDetails,
+      fixturePlacement: {
+        storage: "canonical child of runner workspace",
+        canonicalParentDepth: 5,
+        filesystemType: 1,
+        filesystemBlockSize: 4096,
+        generatedSuffixDepth: row.depth,
+        initialSuffixState: row.state,
+        umask: 0o022,
+      },
+    }, sampleCount, iterations)),
     measured({
       name: "probeTreeClone",
       workloadSemantics: "equivalent-output",

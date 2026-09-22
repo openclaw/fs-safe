@@ -5,6 +5,7 @@ import {
 } from "./filename-fallback-profile.mjs";
 import { validateDirectoryModeOwnerWorkloadResult } from "./directory-mode-owner.mjs";
 import { validateTempWorkspaceWorkloadResult } from "./temp-workspace-fixtures.mjs";
+import { validateAbsoluteDirectoryClassifierReport } from "./absolute-directory-classifier.mjs";
 import {
   validateSidecarPathSnapshotReport,
   validateSidecarPathSnapshotWorkloadResult,
@@ -193,6 +194,7 @@ export function validateMeasuredDistribution(plan, reportPlan, report, expectedD
     plan.settings.filter,
     plan.settings.iterations,
   );
+  validateAbsoluteDirectoryClassifierReport(report, plan.settings.filter, plan.settings.iterations, plan.settings.samples);
 }
 
 export const MEASURED_SOURCE_ARGUMENT_NAMES = Object.freeze(

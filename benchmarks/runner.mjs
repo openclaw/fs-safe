@@ -34,6 +34,7 @@ import {
   parseMeasuredSourceArguments,
 } from "./measured-distribution.mjs";
 import { finalizeBenchmarkReport, finishBenchmarkInvocation } from "./runner-cleanup.mjs";
+import { validateAbsoluteDirectoryClassifierReport } from "./absolute-directory-classifier.mjs";
 
 const args = { iterations: 100, samples: 5, warmup: 5, mode: "off", "copy-shape": "mixed", "copy-files": 64, "copy-file-bytes": 4096 };
 for (let i = 2; i < process.argv.length; i++) {
@@ -281,6 +282,7 @@ await finalizeBenchmarkReport({
     validateProbeTreeSuccessReport(completedReport, args.filter, args.iterations);
     validateCopyTreeSuccessReport(completedReport, args.filter, args.iterations);
     validateWindowsOwnerCaughtFailureReport(completedReport, args.filter, args.iterations);
+    validateAbsoluteDirectoryClassifierReport(completedReport, args.filter, args.iterations, args.samples);
   },
   cleanup,
   cleanups,

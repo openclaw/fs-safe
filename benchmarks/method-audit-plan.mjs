@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { validateFilenameFallbackProfile } from "./filename-fallback-profile.mjs";
 import { measuredSourceArguments, validateMeasuredDistribution } from "./measured-distribution.mjs";
+import { validateAbsoluteDirectoryClassifierReportSet } from "./absolute-directory-classifier.mjs";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -420,6 +421,7 @@ export function validateCompleteReportSet(plan, reports, before, after) {
     if (!report) fail(`method-audit report set is missing ${file}`);
     validateRawReport(plan, reportPlan, report, before);
   }
+  validateAbsoluteDirectoryClassifierReportSet(reports.values(), plan.settings.filter);
 }
 
 export function createReportEvidence(plan, reportPlan, report, snapshot, runner, {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { registerFilenameFallbackBenchmarks } from "./filename-fallback-profile.mjs";
 import { registerWindowsOwnerCaughtFailure } from "./windows-owner-caught-failure.mjs";
+import { registerAbsoluteDirectoryClassifier } from "./absolute-directory-classifier.mjs";
 
 export async function registerPaths({
   api: a,
@@ -102,6 +103,7 @@ export async function registerPaths({
   for (const name of ["findExistingAncestor", "canonicalPathFromExistingAncestor"]) add(name, () => a[name](input));
   for (const name of ["resolveAbsolutePathForRead", "resolveAbsolutePathForWrite"]) add(name, () => a[name](input));
   add("ensureAbsoluteDirectory", () => a.ensureAbsoluteDirectory(path.join(w, "tree")));
+  registerAbsoluteDirectoryClassifier({ api: a, workspace: w, register: add, onCleanup, args });
   add("assertCanonicalPathWithinBase", () => a.assertCanonicalPathWithinBase({ baseDir: w, candidatePath: path.join(w, "tree"), boundaryLabel: "benchmark" }));
   for (const name of ["assertNoSymlinkParents", "assertNoSymlinkParentsSync"]) add(name, () => a[name]({ rootDir: w, targetPath: input }), { sync: name.endsWith("Sync") });
   add("assertNoHardlinkedFinalPath", () => a.assertNoHardlinkedFinalPath({ filePath: input, root: w, boundaryLabel: "benchmark" }));
