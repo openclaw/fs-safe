@@ -1,6 +1,9 @@
 use super::*;
 use std::io::Cursor;
 
+#[path = "tar_pax_admission_tests.rs"]
+mod admitted_header_contract;
+
 pub(super) fn test_limits(max_meta_entry_bytes: u64) -> TarMeterLimits {
     TarMeterLimits {
         windows_paths: cfg!(windows),

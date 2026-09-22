@@ -282,7 +282,7 @@ impl<R> TarMetadataMeter<R> {
         if entry_type != b'S'
             && let Some(pax) = &self.pending_pax
         {
-            size = pax.member_size(entry_type, size, &self.block)?;
+            size = pax.member_size(entry_type, size, &self.block[..name_end])?;
         }
         let padded = Self::padded_size(size)?;
         self.state = if entry_type == b'S' {
