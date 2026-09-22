@@ -41,8 +41,11 @@ into this repository unless a repo-specific snapshot is intentionally required.
 - Keep exports, generated declarations, README examples, and docs aligned.
 - Treat exported types, error codes, option defaults, and package subpaths as
   compatibility surfaces.
-- Update `CHANGELOG.md` under `Unreleased` for public, security, compatibility,
-  package, or operational changes.
+- Update `CHANGELOG.md` under `Unreleased` for user-visible fixes, features,
+  security or compatibility changes, and measured performance or package improvements.
+- Describe the user outcome. Omit internal refactors, file/type moves, and routine
+  test or CI maintenance when public behavior is unchanged; keep implementation
+  and validation details in the PR instead.
 - Never commit generated `dist/` output.
 - Releases are tag-driven from `main` through
   `.github/workflows/release.yml`; never publish locally or add npm tokens.

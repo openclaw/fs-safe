@@ -27,9 +27,8 @@ import {
   type PublishFileExclusiveCleanup,
   type PublishFileExclusiveSyncFailurePolicy,
 } from "./publish-file-failure.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 

@@ -1,13 +1,116 @@
-import type { BigIntStats, Stats } from "node:fs";
-import { inspectDirectoryIdentitySync } from "./directory-guard.js";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
+import { inspectDirectoryIdentitySync, observeDirectoryIdentitySync } from "./directory-guard.js";
 import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
+import { recordFileObservationFailure } from "./file-observation.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
-import {
-  TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
-  type TempWorkspaceIdentityStat,
-} from "./temp-workspace-identity.js";
-import { assertTrustedTempWorkspaceDirectory } from "./temp-workspace-permissions.js";
+
+export type TempWorkspaceIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+export type TempWorkspaceNumericIdentity = Readonly<{ dev: number; ino: number }>;
+export type TempWorkspaceIdentityStat = BigIntStats | Stats;
+
+export const TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY =
+  process.platform === "linux" || process.platform === "darwin";
+
+export function projectTempWorkspaceNumericIdentity(
+  identity: TempWorkspaceIdentity,
+): TempWorkspaceNumericIdentity | undefined {
+  const dev = Number(identity.dev);
+  const ino = Number(identity.ino);
+  if (
+    !Number.isSafeInteger(dev) || dev < 0 || BigInt(dev) !== identity.dev ||
+    !Number.isSafeInteger(ino) || ino < 0 || BigInt(ino) !== identity.ino
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ dev, ino });
+}
+
+function identityMismatch(): never {
+  const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
+  recordFileObservationFailure(error, "identity");
+  throw error;
+}
+
+function inspectNumericIdentity(
+  current: Stats,
+  expected: TempWorkspaceNumericIdentity,
+): Stats {
+  if (
+    !Number.isSafeInteger(current.dev) || current.dev < 0 || current.dev !== expected.dev ||
+    !Number.isSafeInteger(current.ino) || current.ino < 0 || current.ino !== expected.ino
+  ) {
+    identityMismatch();
+  }
+  return current;
+}
+
+export function inspectTempWorkspaceDescriptorIdentitySync(
+  fd: number,
+  expected: TempWorkspaceIdentity,
+  numeric: TempWorkspaceNumericIdentity | undefined,
+): TempWorkspaceIdentityStat {
+  // A malformed or mismatched numeric observation is definite and never
+  // retried. Unsafe receipts and other platforms retain exact replay.
+  if (TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY && numeric) {
+    return inspectNumericIdentity(fsSync.fstatSync(fd), numeric);
+  }
+  return inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), expected);
+}
+
+export function inspectTempWorkspaceDirectoryIdentitySync(
+  dir: string,
+  expected: TempWorkspaceIdentity,
+  numeric: TempWorkspaceNumericIdentity | undefined,
+): TempWorkspaceIdentityStat {
+  if (TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY && numeric) {
+    return inspectNumericIdentity(observeDirectoryIdentitySync(dir), numeric);
+  }
+  return inspectFileIdentitySync(
+    () => observeDirectoryIdentitySync(dir, { bigint: true }),
+    expected,
+  );
+}
+
+export function validateTempWorkspaceDirMode(mode: number): void {
+  if (!Number.isInteger(mode) || mode < 0 || mode > 0o7777) {
+    throw new FsSafeError("insecure-permissions", "temp workspace dirMode must be permission bits");
+  }
+  if (process.platform !== "win32" && (mode & 0o022) !== 0) {
+    throw new FsSafeError("insecure-permissions", "temp workspace must not be group/world writable");
+  }
+}
+
+export function assertTrustedTempWorkspaceDirectory(
+  stat: Pick<BigIntStats, "uid" | "mode"> | Pick<Stats, "uid" | "mode">,
+  uid: number | undefined,
+  child = false,
+): void {
+  if (uid === undefined) return;
+  const ownedByUser = typeof stat.uid === "bigint" ? stat.uid === BigInt(uid) : stat.uid === uid;
+  const ownedByRoot = typeof stat.uid === "bigint" ? stat.uid === 0n : stat.uid === 0;
+  if (!ownedByUser && (child || !ownedByRoot)) {
+    throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner");
+  }
+  // A root/current-user-owned sticky directory protects children owned by us,
+  // including the usual shared system temp directory. Never chmod that parent.
+  const writable = typeof stat.mode === "bigint"
+    ? (stat.mode & 0o022n) !== 0n
+    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o022) !== 0;
+  const sticky = typeof stat.mode === "bigint"
+    ? (stat.mode & 0o1000n) !== 0n
+    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o1000) !== 0;
+  if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
+    throw new FsSafeError("insecure-permissions", "temp workspace directory permissions are invalid");
+  }
+  if (writable && (child || !sticky)) {
+    throw new FsSafeError(
+      "insecure-permissions",
+      "temp workspace directory is group/world writable without sticky protection",
+    );
+  }
+}
 
 const WINDOWS = process.platform === "win32";
 

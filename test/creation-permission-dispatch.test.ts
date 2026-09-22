@@ -3,7 +3,7 @@ import {
   inspectCreationDirectory, inspectCreationDirectorySync,
   protectCreatedFile, protectCreatedFileSync,
   verifyCreatedFile, verifyCreatedFileSync,
-} from "../src/creation-permissions.js";
+} from "../src/creation-boundary.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import * as command from "../src/windows-security-command.js";

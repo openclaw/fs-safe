@@ -28,6 +28,8 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
   function availableCleanupBinding() {
     return {
       closeOwnedFd: vi.fn(),
+      // Directories stay readable; only retained-descriptor opens inject EACCES.
+      canonicalizePath: (pathname: string) => ({ path: fsSync.realpathSync(pathname) }),
       renameNoReplace: vi.fn(),
       removeOwnedTree: vi.fn(),
       removeOwnedTreeSync: vi.fn(),
@@ -113,8 +115,12 @@ describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor a
       await expect(async () => variant === "async"
         ? await tempWorkspace({ rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" })
         : tempWorkspaceSync({ rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" }))
-        .rejects.toMatchObject({ code: "helper-unavailable" });
+        .rejects.toMatchObject({
+          code: "helper-unavailable",
+          message: "temp workspace owned-tree cleanup requires a readable child descriptor",
+        });
       expect(forced()).toBe(3);
+      expect(binding.ownedTreeRemovalAvailable).toHaveBeenCalledTimes(1);
       expect(register).not.toHaveBeenCalled();
       expect(binding.renameNoReplace).not.toHaveBeenCalled();
       expect(binding.removeOwnedTree).not.toHaveBeenCalled();

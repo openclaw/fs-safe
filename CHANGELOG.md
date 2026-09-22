@@ -4,25 +4,11 @@
 
 ## 0.18.1 - 2026-09-22
 
-### Correctness
+### Fixes
 
-- Accept Node's signed bigint device and inode observations when admitting or repairing secure temporary directories, while preserving exact identity comparisons, inode-zero refusal, and existing positive adapter values. ([#586](https://github.com/openclaw/fs-safe/pull/586))
-- Keep streamed-create budgets and create-only controls out of buffered Root writes, and prevent wider write options from selecting private Windows compatibility-admission controls.
-- Preserve directory permission-admission failures when closing the unadopted Node descriptor also fails, while retaining close-error reporting after successful admission.
-- Preserve failed pinned-open admission results when synchronous cleanup also fails, retaining secret-read and root-open errors without changing successful descriptor ownership.
-
-### Performance and maintenance
-
-- Share lock acquisition option and reclaim-request types while preserving synchronous callback requirements and public type names.
-- Share public Root type exports through one private catalog while preserving declaration owners, interface augmentation, and runtime exports.
-- Consolidate exclusive file and directory creation under one implementation owner while preserving private permissions, callbacks, publication outcomes, and descriptor cleanup.
-- Consolidate archive extraction, inspection, and entry-policy ownership while preserving public helpers, lazy codec loading, cancellation, and admission order.
-- Share failure-only cause options across Root and store diagnostics while retaining caller-local error construction, metadata ownership, and underlying Error instances.
-- Validate captured Root and pinned-write path values directly, removing private payload wrappers while preserving argument ownership, traversal rejection, and error ordering.
-- Export rooted, staged, and atomic-write types directly from their declaration owners, removing private forwarding chains without changing runtime code or public type contracts.
-- Share Windows native security export dispatch and unsupported-platform errors while preserving argument validation, return types, and diagnostic details.
-- Retry transient LLVM SDK download failures in CI while retaining pinned checksums, exclusive archive writes, and compiler verification.
-- Share lock-acquisition failure cleanup and stale-error construction while preserving ownership checks, parser callbacks, and error precedence.
+- **Secure temporary directories:** accept Node's signed device and inode values, fixing rejection of valid directories while preserving exact identity checks. Thanks @vincentkoc. ([#586](https://github.com/openclaw/fs-safe/pull/586))
+- **Root write hardening:** prevent extra properties in wider options objects from enabling private writer controls or applying streamed-create byte limits to buffered writes. ([#571](https://github.com/openclaw/fs-safe/pull/571))
+- **Error reporting:** preserve original directory-admission, secret-read, and Root-open errors when descriptor cleanup also fails. ([#574](https://github.com/openclaw/fs-safe/pull/574))
 
 ## 0.18.0 - 2026-09-21
 

@@ -1,7 +1,7 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { assertPrivateDirectory } from "./creation-permissions.js";
+import { assertPrivateDirectory } from "./creation-boundary.js";
 import {
   assertAsyncDirectoryGuard,
   assertDirectoryIdentitySync,

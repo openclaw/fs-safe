@@ -1,5 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { constants, platform } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { replaceDirectoryAtomic } from "../src/atomic.js";
@@ -389,3 +390,49 @@ describe("retained directory replacement authority", () => {
     await expect(fs.readFile(path.join(setup.staged, "value.txt"), "utf8")).resolves.toBe("new");
   });
 });
+
+describe.runIf(Boolean(process.versions.bun) && ["darwin", "linux"].includes(platform()))(
+  "directory replacement Bun canonicalization admission",
+  () => {
+    it.each(["missing", "errno"] as const)(
+      "preserves both endpoints when native canonicalization is %s",
+      async availability => {
+        const setup = await fixture();
+        const canonicalizePath = vi.fn(() => ({ errno: constants.errno.EACCES }));
+        __setNativeLoaderForTest(() => ({
+          ...setup.binding,
+          canonicalizePath: availability === "missing" ? undefined : canonicalizePath,
+        }));
+        const open = vi.spyOn(fsSync, "openSync");
+
+        // The readable parent already exists; canonicalization follows recursive mkdir.
+        await expect(replaceDirectoryAtomic({ stagedDir: setup.staged, targetDir: setup.target }))
+          .rejects.toMatchObject(availability === "missing" ? {
+            code: "helper-unavailable",
+            message: "native fs-safe canonicalization is unavailable",
+          } : {
+            code: "EACCES",
+            errno: -constants.errno.EACCES,
+            syscall: "realpath",
+            path: setup.targetParent,
+          });
+
+        if (availability === "missing") {
+          expect(canonicalizePath).not.toHaveBeenCalled();
+        } else {
+          expect(canonicalizePath).toHaveBeenCalledExactlyOnceWith(setup.targetParent, false);
+        }
+        expect(open).not.toHaveBeenCalled();
+        expect(setup.renameNoReplace).not.toHaveBeenCalled();
+        expect(setup.binding.renameNoReplace).not.toHaveBeenCalled();
+        expect(setup.binding.ownedTreeRemovalAvailable).not.toHaveBeenCalled();
+        expect(setup.removeOwnedTree).not.toHaveBeenCalled();
+        expect(await backupPaths(setup.targetParent)).toEqual([]);
+        await expect(fs.readFile(path.join(setup.staged, "value.txt"), "utf8"))
+          .resolves.toBe("new");
+        await expect(fs.readFile(path.join(setup.target, "value.txt"), "utf8"))
+          .resolves.toBe("old");
+      },
+    );
+  },
+);

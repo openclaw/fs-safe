@@ -1,5 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { platform } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -9,6 +10,7 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
+import * as nativeHelpers from "../src/native.js";
 import { tempWorkspace, tempWorkspaceSync, withTempWorkspace, withTempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
@@ -21,10 +23,17 @@ try {
   // Native CI builds the binding; fallback behavior remains testable without it.
 }
 const { tempRoot } = useRealTempDirs();
+const bunPosix = Boolean(process.versions.bun) && ["darwin", "linux"].includes(platform());
+
+// Only the readable root is canonicalized; restrictive child modes stay real.
+function canonicalizeFixtureRoot(pathname: string) {
+  return { path: fsSync.realpathSync(pathname) };
+}
 
 function unavailableCleanupBinding(result: "missing" | "false" | "throws") {
   return {
     closeOwnedFd: vi.fn(),
+    canonicalizePath: canonicalizeFixtureRoot,
     renameNoReplace: vi.fn(),
     removeOwnedTree: vi.fn(),
     removeOwnedTreeSync: vi.fn(),
@@ -72,17 +81,37 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
     }
 
     it.each(["off", "absent-auto", "missing-auto", "absent-require", "missing-require"])(
-      "keeps creation and compatible cleanup available in %s",
+      "preserves the runtime availability contract for compatible cleanup in %s",
       async (availability) => {
         const rootDir = await tempRoot("fs-safe-workspace-fallback-");
         configureFsSafeNative({
           mode: availability === "off" ? "off" : availability.endsWith("require") ? "require" : "auto",
         });
         const loader = vi.fn(() => {
-          if (availability.startsWith("missing")) return { closeOwnedFd: vi.fn() } as unknown as NativeBinding;
+          if (availability.startsWith("missing")) return {
+            closeOwnedFd: vi.fn(),
+            canonicalizePath: canonicalizeFixtureRoot,
+          } as unknown as NativeBinding;
           throw new Error("injected unavailable binding");
         });
         __setNativeLoaderForTest(loader);
+        if (bunPosix && availability === "absent-require") {
+          const run = vi.fn();
+          const mkdtemp = vi.spyOn(fs, "mkdtemp");
+          const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
+          const register = vi.spyOn(cleanup, "registerTempPathForExit");
+          await expect(create(rootDir, run)).rejects.toMatchObject({
+            name: "FsSafeError", code: "helper-unavailable",
+            message: "native fs-safe helper is unavailable",
+          });
+          expect(run).not.toHaveBeenCalled();
+          expect(mkdtemp).not.toHaveBeenCalled();
+          expect(mkdtempSync).not.toHaveBeenCalled();
+          expect(register).not.toHaveBeenCalled();
+          expect(loader).toHaveBeenCalledTimes(1);
+          expect(await fs.readdir(rootDir)).toEqual([]);
+          return;
+        }
         let callbackDir = "";
         const created = await create(rootDir, (dir) => { callbackDir = dir; });
         const workspace = typeof created === "object" ? created : undefined;
@@ -99,6 +128,40 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
         expect(loader).toHaveBeenCalledTimes(availability === "off" ? 0 : 1);
       },
     );
+
+    it("preserves required-mode behavior when the binding lacks canonicalization", async () => {
+      const rootDir = await tempRoot("fs-safe-workspace-missing-canonicalizer-");
+      configureFsSafeNative({ mode: "require" });
+      const loader = vi.fn(() => ({ closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
+      __setNativeLoaderForTest(loader);
+      const run = vi.fn();
+      const mkdtemp = vi.spyOn(fs, "mkdtemp");
+      const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
+      const register = vi.spyOn(cleanup, "registerTempPathForExit");
+      const pending = create(rootDir, run);
+      if (bunPosix) {
+        await expect(pending).rejects.toMatchObject({
+          name: "FsSafeError", code: "helper-unavailable",
+          message: "native fs-safe canonicalization is unavailable",
+        });
+        expect(run).not.toHaveBeenCalled();
+        expect(mkdtemp).not.toHaveBeenCalled();
+        expect(mkdtempSync).not.toHaveBeenCalled();
+        expect(register).not.toHaveBeenCalled();
+      } else {
+        const created = await pending;
+        if (typeof created === "object") {
+          expect(await created.cleanup()).toBe("removed");
+          expect(await created.cleanup()).toBe("missing");
+        } else {
+          expect(created).toBe("done");
+        }
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(register).toHaveBeenCalledTimes(1);
+      }
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(await fs.readdir(rootDir)).toEqual([]);
+    });
 
     for (const mode of ["auto", "require"] as const) {
       it.each(["missing", "false", "throws"] as const)(
@@ -144,6 +207,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
           const run = vi.fn();
           await expect(create(rootDir, run, "require-bounded")).rejects.toMatchObject({
             name: "FsSafeError", code: "helper-unavailable",
+            message: "temp workspace owned-tree cleanup is unavailable",
           });
           expect(run).not.toHaveBeenCalled();
           expect(mkdtemp).not.toHaveBeenCalled();
@@ -187,14 +251,17 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
       "rejects require-bounded dirMode %o before creating or registering a child", async (dirMode) => {
         const rootDir = await tempRoot("fs-safe-workspace-mode-required-");
         configureFsSafeNative({ mode: "auto" });
-        const loader = vi.fn(() => ({
+        const binding = {
           closeOwnedFd: vi.fn(),
+          canonicalizePath: vi.fn(canonicalizeFixtureRoot),
           renameNoReplace: vi.fn(),
           removeOwnedTree: vi.fn(),
           removeOwnedTreeSync: vi.fn(),
           ownedTreeRemovalAvailable: vi.fn(() => true),
-        }) as unknown as NativeBinding);
+        };
+        const loader = vi.fn(() => binding as unknown as NativeBinding);
         __setNativeLoaderForTest(loader);
+        const lookup = vi.spyOn(nativeHelpers, "getNativeBinding");
         const mkdtemp = vi.spyOn(fs, "mkdtemp");
         const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
@@ -208,7 +275,20 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
         expect(mkdtempSync).not.toHaveBeenCalled();
         expect(register).not.toHaveBeenCalled();
         expect(run).not.toHaveBeenCalled();
-        expect(loader).not.toHaveBeenCalled();
+        if (bunPosix) {
+          expect(loader).toHaveBeenCalledTimes(1);
+          // Count lookups too: caching must not hide cleanup selection before the gate.
+          expect(lookup).toHaveBeenCalledTimes(1);
+          expect(binding.canonicalizePath).toHaveBeenCalledExactlyOnceWith(rootDir, false);
+        } else {
+          expect(loader).not.toHaveBeenCalled();
+          expect(lookup).not.toHaveBeenCalled();
+          expect(binding.canonicalizePath).not.toHaveBeenCalled();
+        }
+        expect(binding.ownedTreeRemovalAvailable).not.toHaveBeenCalled();
+        expect(binding.renameNoReplace).not.toHaveBeenCalled();
+        expect(binding.removeOwnedTree).not.toHaveBeenCalled();
+        expect(binding.removeOwnedTreeSync).not.toHaveBeenCalled();
         expect(await fs.readdir(rootDir)).toEqual([]);
       },
     );
@@ -248,6 +328,7 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
       configureFsSafeNative({ mode: "auto" });
       __setNativeLoaderForTest(() => ({
         closeOwnedFd: vi.fn(),
+        canonicalizePath: canonicalizeFixtureRoot,
         renameNoReplace: vi.fn(),
         removeOwnedTree: vi.fn(),
         removeOwnedTreeSync: vi.fn(),
@@ -279,6 +360,7 @@ for (const variant of ["async", "sync"] as const) {
     function availableCleanupBinding() {
       return {
         closeOwnedFd: vi.fn(),
+        canonicalizePath: canonicalizeFixtureRoot,
         renameNoReplace: vi.fn(),
         removeOwnedTree: vi.fn(),
         removeOwnedTreeSync: vi.fn(),

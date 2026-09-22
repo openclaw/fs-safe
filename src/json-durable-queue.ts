@@ -15,8 +15,8 @@ import { withJsonDurableQueueEntry } from "./json-durable-queue-read.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { replaceFileAtomicWithDirectorySync } from "./replace-file.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
 import {
+  admitStandalonePublicationPath,
   assertNoWindowsPathAlias,
   hasWindowsPathAlias,
 } from "./windows-path-alias.js";

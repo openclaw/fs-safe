@@ -10,13 +10,15 @@ import {
   ensureSyncStoreDirectory,
   type SyncStoreDirectoryReceipt,
 } from "./file-store-sync-directory.js";
-import { isPathInside } from "./path.js";
+import { isPathInside, splitSafeRelativePath } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
 import { ensureTrailingSep } from "./root-context.js";
 import { RootHandle } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { readRegularFile } from "./regular-file.js";
+import { errorCauseOptions } from "./root-errors.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type SyncParentGuard = SyncStoreDirectoryReceipt;
@@ -157,4 +159,75 @@ export function ensureStoreDirectorySync(params: {
   const guard = ensureSyncStoreDirectory(params);
   assertSyncStoreDirectoryReceipt(guard);
   return guard;
+}
+
+export function assertRelativePath(relativePath: string): string {
+  const raw = relativePath.trim();
+  if (!raw || raw !== relativePath) {
+    throw new FsSafeError("invalid-path", "store key must be non-empty and unpadded");
+  }
+  const segments = splitSafeRelativePath(raw);
+  if (
+    segments.length === 0 ||
+    segments.join("/") !== raw ||
+    raw.normalize("NFC") !== raw ||
+    segments.some((segment) => /[ .]$/u.test(segment))
+  ) {
+    throw new FsSafeError("invalid-path", "store key must use one canonical relative spelling");
+  }
+  return raw;
+}
+
+export function resolveStorePath(rootDir: string, relativePath: string): string {
+  const key = assertRelativePath(relativePath);
+  // FileStore constructors snapshot an absolute root before this helper runs.
+  // Do not re-resolve it: Node drops the trailing separator from an exact
+  // Windows namespace drive root such as `\\?\C:\`.
+  const root = path.isAbsolute(rootDir) ? rootDir : path.resolve(rootDir);
+  // The immutable key already passed segment validation; keep the containment check.
+  const target = path.resolve(root, key);
+  if (!isPathInside(root, target)) {
+    throw new FsSafeError("outside-workspace", "relative path escapes root");
+  }
+  return target;
+}
+
+// Store operation boundaries admit the primitive limit before reaching this helper.
+export function assertFileStoreMaxBytes(size: number, limit: number | undefined): void {
+  if (limit !== undefined && size > limit) {
+    throw new FsSafeError("too-large", `file exceeds maximum size of ${limit} bytes`);
+  }
+}
+
+export async function readFileStoreCopySource(params: {
+  sourcePath: string;
+  maxBytes: number;
+}): Promise<Buffer> {
+  assertNoWindowsPathAlias(
+    params.sourcePath,
+    "filesystem",
+    "source path uses a Windows filesystem namespace alias",
+  );
+  const sourceStat = syncFs.lstatSync(params.sourcePath);
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    throw new FsSafeError("not-file", "source path is not a file");
+  }
+  assertFileStoreMaxBytes(sourceStat.size, params.maxBytes);
+  try {
+    return (await readRegularFile({ filePath: params.sourcePath, maxBytes: params.maxBytes }))
+      .buffer;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("regular file") || message.includes("not a regular file")) {
+      throw new FsSafeError("not-file", "source path is not a file", errorCauseOptions(error));
+    }
+    if (message.includes(`exceeds ${params.maxBytes} bytes`)) {
+      throw new FsSafeError(
+        "too-large",
+        `file exceeds maximum size of ${params.maxBytes} bytes`,
+        errorCauseOptions(error),
+      );
+    }
+    throw error;
+  }
 }

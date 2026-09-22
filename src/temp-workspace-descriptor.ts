@@ -15,15 +15,13 @@ import {
   assertTempWorkspaceChildState,
   childHasRequestedMode,
   validateAdmittedTempWorkspaceChild,
-} from "./temp-workspace-child-admission.js";
-import {
   inspectTempWorkspaceDescriptorIdentitySync,
   inspectTempWorkspaceDirectoryIdentitySync,
   projectTempWorkspaceNumericIdentity,
   TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
   type TempWorkspaceNumericIdentity,
   type TempWorkspaceIdentityStat,
-} from "./temp-workspace-identity.js";
+} from "./temp-workspace-child-admission.js";
 
 type DirectoryDescriptorAccess = "read" | "search";
 type OpenedDirectory = {

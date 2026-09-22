@@ -7,7 +7,7 @@ import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertCopySourceCurrent, resolveFileCopyCloneMode } from "./copy-file-input.js";
 import type { ContainmentGuarantee } from "./containment.js";
-import { assertPrivateFileCreationAvailable, resolveCreationPermissions } from "./creation-permissions.js";
+import { assertPrivateFileCreationAvailable, resolveCreationPermissions } from "./creation-boundary.js";
 import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";

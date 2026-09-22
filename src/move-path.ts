@@ -22,8 +22,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { createMoveStageOwner } from "./move-path-stage.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type MovePathPublicationReceipt = Readonly<{
   path: string;

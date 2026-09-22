@@ -1,24 +1,17 @@
-import fs, { type BigIntStats } from "node:fs";
+import fs from "node:fs";
 import { ownFileDescriptorSync, type OwnedFileDescriptorSync } from "./create-owned-file.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import {
   assertInitialSource,
   FileHandoff,
   inspectLinkedFile,
+  type CreatedHandoffParams,
 } from "./private-producer-handoff.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 
-export function handoffCreatedFileSync(params: {
-  source: OwnedFileDescriptorSync;
-  sourcePath: string;
-  targetPath: string;
-  identity: BigIntStats;
-  assertSourceParent: () => void;
-  assertTargetParent: () => void;
-  assertBeforeMutation?: () => void;
-  verifyDescriptor?: (fd: number, path: string, links: number) => void;
-  onPublished?: () => void;
-}): OwnedFileDescriptorSync {
+export function handoffCreatedFileSync(
+  params: CreatedHandoffParams<OwnedFileDescriptorSync, void>,
+): OwnedFileDescriptorSync {
   let retained = params.source;
   const owners = new Set([retained]);
   const failures: unknown[] = [];

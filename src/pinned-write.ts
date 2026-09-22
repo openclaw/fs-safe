@@ -3,7 +3,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createFileHandle } from "./create.js";
-import { creationAdmissionFromParent } from "./creation-path.js";
+import { creationAdmissionFromParent } from "./creation-boundary.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";

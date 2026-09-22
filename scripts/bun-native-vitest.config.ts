@@ -10,6 +10,9 @@ export default {
     include: [
       "test/realpath.test.ts",
       "test/relative-publication.test.ts",
+      "test/replace-directory-authority.test.ts",
+      "test/replace-directory-retained-admission.test.ts",
+      "test/native-rename-authority.test.ts",
       "test/native-integration.test.ts",
       "test/windows-native-fd-bridge.test.ts",
       "test/darwin-acl-native.test.ts",
@@ -25,6 +28,8 @@ export default {
       "test/native-mutation-policy-integration.test.ts",
       "test/pinned-mutation-fast-path.test.ts",
       "test/root-shared-js-bun-deoptimization.test.ts",
+      "test/temp-workspace-cleanup-capability.test.ts",
+      "test/temp-workspace-cleanup-descriptor-access.test.ts",
       "test/file-lock*.test.ts",
       "test/clone.test.ts",
       "test/copy-tree.test.ts",

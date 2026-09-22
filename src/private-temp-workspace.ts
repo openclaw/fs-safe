@@ -29,13 +29,12 @@ import {
   hasWindowsPathAlias,
 } from "./windows-path-alias.js";
 import { TempWorkspaceRetainedChild } from "./temp-workspace-descriptor.js";
-import { validateInitialTempWorkspaceChild } from "./temp-workspace-child-admission.js";
+import { validateInitialTempWorkspaceChild, validateTempWorkspaceDirMode } from "./temp-workspace-child-admission.js";
 import {
   admitTempWorkspaceRoot,
   admitTempWorkspaceRootSync,
   type TempWorkspaceRootAdmission,
 } from "./temp-workspace-admission.js";
-import { validateTempWorkspaceDirMode } from "./temp-workspace-permissions.js";
 import type { TempWorkspaceOptions, TempWorkspace, TempWorkspaceSync } from "./temp-workspace-types.js";
 
 export type {

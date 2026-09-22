@@ -1,5 +1,5 @@
 import { replaceFileAtomic } from "./replace-file.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { admitStandalonePublicationPath } from "./windows-path-alias.js";
 
 export type WriteTextAtomicOptions = {
   mode?: number;

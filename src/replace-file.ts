@@ -32,7 +32,7 @@ import {
 } from "./replace-file-rename-policy.js";
 import { AsyncAtomicTempOwner, SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { admitStandalonePublicationPath } from "./windows-path-alias.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 import { hasErrorCode, readErrorCode } from "./file-cleanup.js";

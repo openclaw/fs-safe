@@ -30,6 +30,9 @@ it("rejects and closes a replacement opened in place of an admitted parent", asy
   const renameNoReplaceWithIdentity = vi.fn();
   __setNativeLoaderForTest(() => ({
     closeOwnedFd: vi.fn(),
+    canonicalizePath: (pathname: string, ordinary: boolean) => ({
+      path: ordinary ? fsSync.realpathSync(pathname) : fsSync.realpathSync.native(pathname),
+    }),
     renameNoReplace: vi.fn(),
     renameNoReplaceWithIdentity,
   }) as unknown as NativeBinding);
@@ -78,6 +81,9 @@ it("opens and stats a shared retained parent once with no-follow directory flags
   const renameNoReplace = vi.fn();
   __setNativeLoaderForTest(() => ({
     closeOwnedFd: vi.fn(),
+    canonicalizePath: (pathname: string, ordinary: boolean) => ({
+      path: ordinary ? fsSync.realpathSync(pathname) : fsSync.realpathSync.native(pathname),
+    }),
     renameNoReplace,
     renameNoReplaceWithIdentity,
   }) as unknown as NativeBinding);

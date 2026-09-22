@@ -8,6 +8,10 @@ import {
 import {
   admitTempWorkspaceChild,
   admitTempWorkspaceChildSync,
+  assertTrustedTempWorkspaceDirectory,
+  inspectTempWorkspaceDescriptorIdentitySync,
+  projectTempWorkspaceNumericIdentity,
+  TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
 } from "./temp-workspace-child-admission.js";
 import { FsSafeError } from "./errors.js";
 import { recordFileObservationFailure } from "./file-observation.js";
@@ -18,12 +22,6 @@ import {
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
-import {
-  inspectTempWorkspaceDescriptorIdentitySync,
-  projectTempWorkspaceNumericIdentity,
-  TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
-} from "./temp-workspace-identity.js";
-import { assertTrustedTempWorkspaceDirectory } from "./temp-workspace-permissions.js";
 
 const WINDOWS = process.platform === "win32";
 
