@@ -151,14 +151,8 @@ impl FileCopyTask {
                 Err(error) => return Err(error),
             }
         };
-        let mut created = if let Some(target) = cloned {
-            CreatedCopy {
-                parent,
-                name: self.name.clone(),
-                target: Some(target),
-                method: "clone",
-                error: None,
-            }
+        let (target, method) = if let Some(target) = cloned {
+            (target, "clone")
         } else {
             self.check_cancelled()?;
             let target = rustix::fs::openat(
@@ -168,13 +162,14 @@ impl FileCopyTask {
                 Mode::from_bits_retain(0o600),
             )
             .map_err(|error| os_error(error, "create copy stage"))?;
-            CreatedCopy {
-                parent,
-                name: self.name.clone(),
-                target: Some(target),
-                method: "copy",
-                error: None,
-            }
+            (target, "copy")
+        };
+        let mut created = CreatedCopy {
+            parent,
+            name: self.name.clone(),
+            target: Some(target),
+            method,
+            error: None,
         };
         created.error = (|| {
             if created.method != "clone" {
