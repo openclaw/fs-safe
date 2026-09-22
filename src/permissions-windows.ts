@@ -1,6 +1,6 @@
 import os from "node:os";
 import { getNativeBinding } from "./native.js";
-import { executePermissionCommand, type PermissionCommandFailure } from "./permission-exec.js";
+import { executePermissionCommand, type PermissionFailureFields } from "./permission-exec.js";
 import { safeStat, type PermissionCheck, type PermissionCheckOptions } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
@@ -22,16 +22,13 @@ export type WindowsAclEntry = {
   canWrite: boolean;
 };
 
-export type WindowsAclSummary = {
+export type WindowsAclSummary = Omit<PermissionFailureFields & {
   ok: boolean;
   entries: WindowsAclEntry[];
   untrustedWorld: WindowsAclEntry[];
   untrustedGroup: WindowsAclEntry[];
   trusted: WindowsAclEntry[];
-  error?: string;
-  errorDetail?: PermissionCommandFailure;
-  errorCause?: unknown;
-};
+}, never>;
 
 export type WindowsUserInfoProvider = () => { username?: string | null };
 

@@ -16,6 +16,14 @@ export type PermissionCommandFailure = {
   stderr: string;
 };
 
+// Report aliases flatten these fields with Omit<..., never> to preserve consumer type queries.
+export type PermissionFailureFields = {
+  error?: string;
+  errorDetail?: PermissionCommandFailure;
+  /** Original inspection failure, retained separately from serializable diagnostics. */
+  errorCause?: unknown;
+};
+
 export function formatPermissionErrorDetail(value: string): string {
   const formatted = formatErrorDetail(value);
   return formatted.length > 400 ? `${formatted.slice(0, 399)}…` : formatted;

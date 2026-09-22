@@ -1,7 +1,7 @@
 import {
   formatCaughtPermissionFailure,
   getPermissionCommandFailure,
-  type PermissionCommandFailure,
+  type PermissionFailureFields,
 } from "./permission-exec.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
@@ -11,7 +11,7 @@ export type WindowsOwnerExec = (
   args: string[],
 ) => Promise<{ stdout: string; stderr: string }>;
 
-export type WindowsOwnerSummary = {
+export type WindowsOwnerSummary = Omit<PermissionFailureFields & {
   sid?: string;
   currentUserSid?: string;
   daclPresent?: boolean;
@@ -19,10 +19,7 @@ export type WindowsOwnerSummary = {
   aclError?: string;
   remote?: boolean;
   trusted?: boolean;
-  error?: string;
-  errorDetail?: PermissionCommandFailure;
-  errorCause?: unknown;
-};
+}, never>;
 
 export type WindowsOwnerAce = {
   sid: string;

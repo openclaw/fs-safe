@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import type { PermissionCommandFailure } from "./permission-exec.js";
+import type { PermissionFailureFields } from "./permission-exec.js";
 import {
   formatIcaclsResetCommand,
   inspectWindowsPermissions,
@@ -27,7 +27,7 @@ export type {
   WindowsUserInfoProvider,
 } from "./permissions-windows.js";
 
-export type PermissionCheck = {
+export type PermissionCheck = Omit<PermissionFailureFields & {
   ok: boolean;
   isSymlink: boolean;
   isDir: boolean;
@@ -45,11 +45,7 @@ export type PermissionCheck = {
   /** Owner-query failure detail when Windows ownership could not be verified. */
   ownerError?: string;
   aclSummary?: string;
-  error?: string;
-  errorDetail?: PermissionCommandFailure;
-  /** Original inspection failure, retained separately from serializable diagnostics. */
-  errorCause?: unknown;
-};
+}, never>;
 
 export type PermissionCheckOptions = {
   platform?: NodeJS.Platform;
