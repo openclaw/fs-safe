@@ -112,7 +112,7 @@ fn parse_format(value: &str) -> NativeResult<ArchiveFormat> {
 }
 
 fn io_error(operation: &str, error: impl std::fmt::Display) -> Error {
-    Error::new(Status::GenericFailure, format!("{operation}: {error}"))
+    Error::from_reason(format!("{operation}: {error}"))
 }
 
 fn open_tar_reader(
@@ -262,7 +262,7 @@ fn inspect_zip_entries<R: Read + Seek>(
             .map_err(|error| io_error("read zip entry", error))?;
         manifest_bytes = manifest_bytes.checked_add(file.name().len() as u64)
             .filter(|total| *total <= max_path_bytes)
-            .ok_or_else(|| limit_error("archive-manifest-size-exceeds-limit"))?;
+            .ok_or_else(|| Error::from_reason("archive-manifest-size-exceeds-limit"))?;
         result.push(ArchiveEntryData {
             index: u32::try_from(index)
                 .map_err(|_| Error::new(Status::InvalidArg, "too many archive entries"))?,
@@ -287,11 +287,6 @@ fn inspect(
         _ => inspect_tar(path, format, limits, cancelled),
     }
 }
-
-fn limit_error(code: &'static str) -> Error {
-    Error::new(Status::GenericFailure, code)
-}
-
 
 fn zip_entry_count(path: &str, max_entries: usize) -> Result<u64> {
     let mut file = File::open(path).map_err(|error| io_error("open zip archive", error))?;
@@ -343,7 +338,7 @@ fn zip_reader_entry_count<R: Read + Seek>(file: &mut R, max_entries: usize) -> R
             expected_directory_end = record_offset;
         }
         if count > max_entries as u64 {
-            return Err(limit_error("archive-entry-count-exceeds-limit"));
+            return Err(Error::from_reason("archive-entry-count-exceeds-limit"));
         }
         if directory_offset.checked_add(directory_size) != Some(expected_directory_end) {
             continue;
@@ -400,7 +395,7 @@ fn count_central_directory_entries<R: Read + Seek>(
             .map_err(|error| io_error("skip zip directory entry", error))?;
         count += 1;
         if count > max_entries as u64 {
-            return Err(limit_error("archive-entry-count-exceeds-limit"));
+            return Err(Error::from_reason("archive-entry-count-exceeds-limit"));
         }
     }
     Ok(count)
@@ -499,7 +494,7 @@ fn plan_map(plan: Vec<NativeArchivePlanEntry>) -> Result<HashMap<usize, NativeAr
 fn ensure_parent(root_fd: i32, path: &str) -> Result<()> {
     if let Some((parent, _)) = path.rsplit_once('/') {
         platform::mkdir_beneath(root_fd, parent, 0o700)
-            .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+            .map_err(|error| Error::from_reason(error.reason))?;
     }
     Ok(())
 }
@@ -525,13 +520,13 @@ fn extract_tar(
         skip_tar_to(&mut reader, &mut position, entry.offset)?;
         if item.kind == "directory" {
             platform::mkdir_beneath(root_fd, &item.path, 0o700)
-                .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+                .map_err(|error| Error::from_reason(error.reason))?;
             directories.push((item.path, item.mode));
         } else {
             ensure_parent(root_fd, &item.path)?;
             let mut payload = (&mut reader).take(entry.size);
             platform::write_archive_file(root_fd, &item.path, &mut payload, entry.size, item.mode)
-                .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+                .map_err(|error| Error::from_reason(error.reason))?;
             if payload.limit() != 0 { return Err(Error::new(Status::InvalidArg, "truncated TAR payload")); }
             position += entry.size;
         }
@@ -580,7 +575,7 @@ fn extract_zip(
         }
         if item.kind == "directory" {
             platform::mkdir_beneath(root_fd, &item.path, 0o700)
-                .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+                .map_err(|error| Error::from_reason(error.reason))?;
             directories.push((item.path, item.mode));
         } else {
             ensure_parent(root_fd, &item.path)?;
@@ -590,7 +585,7 @@ fn extract_zip(
                 cancelled: Arc::clone(&cancelled),
             };
             platform::write_archive_file(root_fd, &item.path, &mut reader, size, item.mode)
-                .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+                .map_err(|error| Error::from_reason(error.reason))?;
         }
     }
     finish_directories(root_fd, directories)?;
@@ -607,7 +602,7 @@ fn finish_directories(root_fd: i32, mut directories: Vec<(String, u32)>) -> Resu
     directories.sort_by_key(|(path, _)| std::cmp::Reverse(path.matches('/').count()));
     for (path, mode) in directories {
         platform::chmod_beneath(root_fd, &path, mode)
-            .map_err(|error| Error::new(Status::GenericFailure, error.reason))?;
+            .map_err(|error| Error::from_reason(error.reason))?;
     }
     Ok(())
 }
@@ -689,7 +684,7 @@ fn read_tar_entry(
     if member.kind != "file" {
         return Err(Error::new(Status::InvalidArg, format!("archive entry is not a file: {requested}")));
     }
-    if member.size > max_bytes { return Err(limit_error("archive-entry-extracted-size-exceeds-limit")); }
+    if member.size > max_bytes { return Err(Error::from_reason("archive-entry-extracted-size-exceeds-limit")); }
     let mut reader = open_tar_reader(path, format, Arc::clone(&cancelled), limits)?;
     skip_tar_to(&mut reader, &mut 0, member.offset)?;
     let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, member.size, cancelled)?;
@@ -752,8 +747,7 @@ fn read_bounded(
     .read_to_end(&mut output)
     .map_err(|error| io_error("read archive entry", error))?;
     if output.len() as u64 > max_bytes {
-        return Err(Error::new(
-            Status::GenericFailure,
+        return Err(Error::from_reason(
             "archive-entry-extracted-size-exceeds-limit",
         ));
     }
@@ -798,7 +792,7 @@ impl Task for OpenZipBufferTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         check_cancelled(&self.cancelled)?;
-        let buffer = self.buffer.take().ok_or_else(|| Error::new(Status::GenericFailure, "ZIP buffer already consumed"))?;
+        let buffer = self.buffer.take().ok_or_else(|| Error::from_reason("ZIP buffer already consumed"))?;
         let max_path_bytes = (buffer.len() as u64).saturating_mul(3);
         let mut cursor = Cursor::new(buffer);
         zip_reader_entry_count(&mut cursor, self.max_entries)?;
@@ -840,7 +834,7 @@ impl Task for ReadZipBufferTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         check_cancelled(&self.cancelled)?;
-        let mut archive = self.archive.lock().map_err(|_| Error::new(Status::GenericFailure, "ZIP reader unavailable"))?;
+        let mut archive = self.archive.lock().map_err(|_| Error::from_reason("ZIP reader unavailable"))?;
         check_cancelled(&self.cancelled)?;
         let mut entry = archive.by_index(self.index).map_err(|error| io_error("read zip entry", error))?;
         if zip_kind(&entry) != "file" {
@@ -906,7 +900,7 @@ impl Task for OpenTarBufferTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         check_cancelled(&self.cancelled)?;
-        let input = self.buffer.take().ok_or_else(|| Error::new(Status::GenericFailure, "TAR buffer already consumed"))?;
+        let input = self.buffer.take().ok_or_else(|| Error::from_reason("TAR buffer already consumed"))?;
         let reader = open_tar_source(Cursor::new(input.as_ref()), self.format, Arc::clone(&self.cancelled), self.limits, false)?;
         let members = inspect_tar_reader(reader)?;
         Ok(NativeTarBufferReader { data: Arc::new(TarBufferData { input, format: self.format, limits: self.limits, members }) })
@@ -948,7 +942,7 @@ impl Task for ReadTarBufferTask {
         if member.kind != "file" {
             return Err(Error::new(Status::InvalidArg, "archive entry is not a file"));
         }
-        if member.size > self.max_bytes { return Err(limit_error("archive-entry-extracted-size-exceeds-limit")); }
+        if member.size > self.max_bytes { return Err(Error::from_reason("archive-entry-extracted-size-exceeds-limit")); }
         let input = self.data.input.as_ref();
         if matches!(self.data.format, ArchiveFormat::Tar) && !input.starts_with(&[0x1f, 0x8b]) {
             // Complete admission already checked this immutable raw TAR, including
