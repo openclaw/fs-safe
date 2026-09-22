@@ -1,7 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
-import { assertOwnedDirectory } from "./directory-mode-owner.js";
+import { nodeDirectorySearchOnlyFlags, assertOwnedDirectory } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
 import {
   assertNoWindowsPathAlias,

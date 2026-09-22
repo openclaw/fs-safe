@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ownDirectoryMode } from "../src/directory-mode-owner.js";
+import { ownDirectoryMode } from "../src/directory-mode-node.js";
 
 const falsyThrownValues: { name: string; value: unknown }[] = [
   { name: "undefined", value: undefined },

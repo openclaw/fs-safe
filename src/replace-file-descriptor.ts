@@ -3,7 +3,7 @@ import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
-import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-owner.js";
+import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-node.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open" | "writeFile">;
 type SyncTempFileSystem = Pick<

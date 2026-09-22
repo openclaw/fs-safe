@@ -3,11 +3,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mergeExtractedTreeIntoDestination } from "../src/archive.js";
 import type { ExtractionDeadline } from "../src/archive-deadline.js";
-import { pinNodeDirectoryForMode } from "../src/directory-mode-node.js";
 import {
+  pinNodeDirectoryForMode,
   ownDirectoryMode,
   type DirectoryModeChecks,
-} from "../src/directory-mode-owner.js";
+} from "../src/directory-mode-node.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { itWin32, useRealTempDirs } from "./helpers/vitest.js";
 

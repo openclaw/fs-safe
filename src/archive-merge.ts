@@ -8,8 +8,7 @@ import {
   preparePrivateArchiveOutputPath, withStagedArchiveDestination,
   type ArchiveDirectoryGuard,
 } from "./archive-staging.js";
-import { type DirectoryModeOwner } from "./directory-mode-owner.js";
-import { pinNodeDirectoryForMode } from "./directory-mode-node.js";
+import { pinNodeDirectoryForMode, type DirectoryModeOwner } from "./directory-mode-node.js";
 import { assertSyncDirectoryGuard, inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
