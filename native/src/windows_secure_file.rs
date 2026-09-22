@@ -4,7 +4,7 @@ use napi_derive::napi;
 use crate::into_napi;
 #[cfg(not(windows))]
 use crate::native_error;
-use crate::windows_security::WindowsSecurityFacts;
+use crate::windows_security::{windows_security_export, WindowsSecurityFacts};
 
 #[napi(object)]
 pub struct WindowsDescriptorSecurityFacts {
@@ -14,25 +14,13 @@ pub struct WindowsDescriptorSecurityFacts {
     pub security: WindowsSecurityFacts,
 }
 
-#[napi(js_name = "inspectWindowsSecureFileHandle")]
-pub fn inspect_windows_secure_file_handle(
-    env: Env,
-    fd: i32,
-) -> Result<WindowsDescriptorSecurityFacts> {
-    #[cfg(windows)]
-    return into_napi(env, windows::inspect(fd));
-    #[cfg(not(windows))]
-    {
-        let _ = fd;
-        into_napi(
-            env,
-            Err(native_error(
-                "ENOTSUP",
-                "Windows descriptor security inspection is only available on Windows",
-            )),
-        )
-    }
-}
+windows_security_export!(
+    "inspectWindowsSecureFileHandle",
+    fn inspect_windows_secure_file_handle(env: Env, fd: i32) -> WindowsDescriptorSecurityFacts,
+    windows::inspect(fd),
+    fd,
+    "Windows descriptor security inspection is only available on Windows"
+);
 
 #[cfg(windows)]
 mod windows {

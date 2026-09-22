@@ -96,6 +96,8 @@ macro_rules! windows_security_export {
     };
 }
 
+pub(crate) use windows_security_export;
+
 windows_security_export!(
     "createPrivateDirectory",
     fn create_private_directory(env: Env, path: String) -> (),
