@@ -111,46 +111,26 @@ fn exact_file_identity(dev: &BigInt, ino: &BigInt) -> NativeResult<ExactFileIden
     })
 }
 
-#[inline]
-fn is_windows_path_separator(byte: u8) -> bool {
-    byte == b'\\' || byte == b'/'
-}
-
-#[inline]
-fn is_ascii_drive_letter(byte: u8) -> bool {
-    byte.is_ascii_alphabetic()
-}
-
 fn windows_filesystem_path_has_forbidden_colon(path: &str) -> bool {
-    let bytes = path.as_bytes();
     // A rooted ASCII drive designator is the only colon-bearing Windows
     // filesystem syntax that is not an alternate stream or namespace alias.
     // Keep device-path policy separate: recognizing \\.\C:\ here does not
     // authorize device paths at any call site that already rejects them.
-    let allowed_drive_colon = if bytes.len() >= 3
-        && is_ascii_drive_letter(bytes[0])
-        && bytes[1] == b':'
-        && is_windows_path_separator(bytes[2])
-    {
-        Some(1)
-    } else if bytes.len() >= 7
-        && is_windows_path_separator(bytes[0])
-        && is_windows_path_separator(bytes[1])
-        && (bytes[2] == b'?' || bytes[2] == b'.')
-        && is_windows_path_separator(bytes[3])
-        && is_ascii_drive_letter(bytes[4])
-        && bytes[5] == b':'
-        && is_windows_path_separator(bytes[6])
-    {
-        Some(5)
-    } else {
-        None
+    let bytes = match path.as_bytes() {
+        [
+            b'\\' | b'/',
+            b'\\' | b'/',
+            b'?' | b'.',
+            b'\\' | b'/',
+            rest @ ..,
+        ] => rest,
+        bytes => bytes,
     };
-
-    bytes
-        .iter()
-        .enumerate()
-        .any(|(index, byte)| *byte == b':' && Some(index) != allowed_drive_colon)
+    let remaining = match bytes {
+        [drive, b':', b'\\' | b'/', rest @ ..] if drive.is_ascii_alphabetic() => rest,
+        bytes => bytes,
+    };
+    remaining.contains(&b':')
 }
 
 pub(crate) fn validate_windows_filesystem_path(path: &str) -> NativeResult<()> {
@@ -465,6 +445,118 @@ mod tests {
     }
 
     #[test]
+    fn windows_colon_policy_preserves_opaque_suffixes_and_namespace_boundaries() {
+        for (path, forbidden) in [
+            ("", false),
+            (":", true),
+            ("C:", true),
+            ("C:/", false),
+            (r"\\?\", false),
+            (r"\\?\C", false),
+            (r"\\?\C:", true),
+            (r"\\?\C:/", false),
+            (r"\\?\\\?\C:/payload", true),
+            (r"\\?\\\?\payload", false),
+            (r"\\.\C:/payload", false),
+            (r"\\server\share\payload", false),
+            (r"\\?\UNC\server\share:stream", true),
+            (r"\\?\Volume{example}\payload", false),
+            ("C:/part:stream/../payload", true),
+            ("C:/part/../payload", false),
+            ("C:/payload:", true),
+            ("C:/payload::$INDEX_ALLOCATION", true),
+            ("é:/payload", true),
+            ("K:/payload", true),
+            ("ſ:/payload", true),
+            ("ı:/payload", true),
+            ("🦀:/payload", true),
+            ("Ｃ:/payload", true),
+            ("C:／payload", true),
+            ("C：/payload", false),
+            ("C:/é-🦀", false),
+            (r"\\?\C:/é-🦀", false),
+            ("\0", false),
+            ("C:/\0payload", false),
+            ("C:/\0payload:stream", true),
+            ("C:\0payload", true),
+        ] {
+            assert_eq!(
+                windows_filesystem_path_has_forbidden_colon(path),
+                forbidden,
+                "{path:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn windows_colon_policy_matches_original_offset_reference() {
+        fn reference(path: &str) -> bool {
+            let bytes = path.as_bytes();
+            let mut colons = bytes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, byte)| (*byte == b':').then_some(index));
+            let Some(colon) = colons.next() else {
+                return false;
+            };
+            if colons.next().is_some() {
+                return true;
+            }
+            let separator = |byte: u8| byte == b'/' || byte == b'\\';
+            let drive_start = match colon {
+                1 => 0,
+                5 if separator(bytes[0])
+                    && separator(bytes[1])
+                    && (bytes[2] == b'?' || bytes[2] == b'.')
+                    && separator(bytes[3]) =>
+                {
+                    4
+                }
+                _ => return true,
+            };
+            !(matches!(bytes[drive_start], b'A'..=b'Z' | b'a'..=b'z')
+                && bytes.get(colon + 1).is_some_and(|byte| separator(*byte)))
+        }
+
+        let check = |path: &str| {
+            assert_eq!(
+                windows_filesystem_path_has_forbidden_colon(path),
+                reference(path),
+                "{path:?}",
+            );
+        };
+        let mut prefixes = vec![String::new()];
+        for first in ['/', '\\'] {
+            for second in ['/', '\\'] {
+                for marker in ['?', '.'] {
+                    for fourth in ['/', '\\'] {
+                        prefixes.push(format!("{first}{second}{marker}{fourth}"));
+                    }
+                }
+            }
+        }
+        for prefix in &prefixes {
+            for root in ['/', '\\'] {
+                let path = format!("{prefix}C:{root}payload");
+                for end in 0..=path.len() {
+                    check(&path[..end]);
+                    check(&format!("{}:{}", &path[..end], &path[end..]));
+                }
+                for position in 0..path.len() {
+                    for byte in 0..=127 {
+                        let mut mutated = path.as_bytes().to_vec();
+                        mutated[position] = byte;
+                        check(std::str::from_utf8(&mutated).unwrap());
+                    }
+                }
+                for repeated in &prefixes {
+                    check(&format!("{repeated}{path}"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn host_relative_paths_apply_windows_colon_rules() {
         if cfg!(windows) {
             assert!(validate_relative_path("payload:hidden", false).is_err());
@@ -476,6 +568,20 @@ mod tests {
             assert!(validate_portable_relative_path("payload:hidden", false).is_ok());
             assert!(validate_windows_filesystem_path("payload:hidden").is_ok());
         }
+        let path = "C:/\0payload:stream";
+        if cfg!(windows) {
+            let error = validate_windows_filesystem_path(path).unwrap_err();
+            assert_eq!(error.status, "EINVAL");
+            assert_eq!(
+                error.reason,
+                "Windows filesystem path contains alternate stream syntax",
+            );
+        } else {
+            assert!(validate_windows_filesystem_path(path).is_ok());
+        }
+        let error = validate_relative_path(path, false).unwrap_err();
+        assert_eq!(error.status, "EINVAL");
+        assert_eq!(error.reason, "relative path contains a NUL byte");
     }
 }
 
