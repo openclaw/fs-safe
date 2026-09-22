@@ -329,7 +329,6 @@ mod windows {
         dacl_present: bool,
         is_local: bool,
         ace_list_complete: bool,
-        unsupported_ace_seen: bool,
         untrusted_readable: bool,
         untrusted_writable: bool,
         untrusted_child_access: bool,
@@ -841,7 +840,6 @@ mod windows {
                 dacl_present: control & SE_DACL_PRESENT != 0 && !dacl.is_null(),
                 is_local: local,
                 ace_list_complete: true,
-                unsupported_ace_seen: false,
                 // An absent or null DACL grants unrestricted access.
                 untrusted_readable: dacl.is_null(),
                 untrusted_writable: dacl.is_null(),
@@ -884,7 +882,6 @@ mod windows {
                     let header = unsafe { &*(raw.cast::<ACE_HEADER>()) };
                     let Some(entry) = parse_basic_ace(raw, header)? else {
                         inspection.ace_list_complete = false;
-                        inspection.unsupported_ace_seen = true;
                         if let Some(facts) = report.as_mut() {
                             facts.fallback_required = true;
                             facts.ace_list_complete = false;
@@ -943,21 +940,13 @@ mod windows {
             .map(|(inspection, _)| inspection)
     }
 
-    fn read_owner_and_dacl_report_handle(
-        handle: HANDLE,
-        current: &TokenSid,
-        local: bool,
-    ) -> NativeResult<WindowsSecurityFacts> {
-        let (_, report) = inspect_owner_and_dacl_handle(handle, current, true, local)?;
-        report.ok_or_else(|| native_error("EIO", "Windows security report was not constructed"))
-    }
-
     pub(super) fn security_facts(
         handle: HANDLE,
         local: bool,
     ) -> NativeResult<WindowsSecurityFacts> {
         let current = current_user_sid()?;
-        read_owner_and_dacl_report_handle(handle, &current, local)
+        let (_, report) = inspect_owner_and_dacl_handle(handle, &current, true, local)?;
+        report.ok_or_else(|| native_error("EIO", "Windows security report was not constructed"))
     }
 
     pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
@@ -1293,7 +1282,6 @@ mod windows {
             || !inspection.dacl_present
             || !inspection.is_local
             || !inspection.ace_list_complete
-            || inspection.unsupported_ace_seen
             || inspection.untrusted_readable
             || inspection.untrusted_writable
         {
@@ -1554,7 +1542,6 @@ mod windows {
                 dacl_present: true,
                 is_local: true,
                 ace_list_complete: true,
-                unsupported_ace_seen: false,
                 untrusted_readable: false,
                 untrusted_writable: false,
                 untrusted_child_access: false,
@@ -1795,10 +1782,6 @@ mod windows {
                     ..valid
                 },
                 HandleSecurityInspection {
-                    unsupported_ace_seen: true,
-                    ..valid
-                },
-                HandleSecurityInspection {
                     untrusted_readable: true,
                     ..valid
                 },
@@ -1844,10 +1827,7 @@ mod windows {
             assert_eq!(inspection.dacl_present, facts.dacl_present);
             assert_eq!(inspection.is_local, facts.is_local);
             assert_eq!(inspection.ace_list_complete, facts.ace_list_complete);
-            assert_eq!(
-                inspection.unsupported_ace_seen,
-                !facts.unsupported_ace_types.is_empty()
-            );
+            assert!(facts.unsupported_ace_types.is_empty());
             assert_eq!(
                 inspection.untrusted_readable,
                 facts.world_readable || facts.group_readable
