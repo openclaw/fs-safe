@@ -16,11 +16,7 @@ export type DurableQueueEntryPathsLike = {
   processingPath?: string;
 };
 
-export type ValidatedDurableQueueEntryPaths = Readonly<{
-  jsonPath: string;
-  deliveredPath: string;
-  processingPath: string;
-}>;
+export type ValidatedDurableQueueEntryPaths = Readonly<Required<DurableQueueEntryPathsLike>>;
 
 const validatedDurableQueueEntryPaths = new WeakSet<object>();
 
