@@ -2,7 +2,7 @@ import fs from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
-import { assertPrivateCreationFile } from "./creation-file-state.js";
+import { assertPrivateCreationFile } from "./creation-boundary.js";
 
 export function assertPinnedWriteMode(fd: number, mode: number, privateCreation = false): void {
   if (process.platform === "win32") return;

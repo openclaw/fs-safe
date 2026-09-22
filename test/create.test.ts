@@ -3,7 +3,7 @@ import fsAsync from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDirectory, createDirectorySync, createDirectoryWithAdmission, createFileHandle, createFileSync } from "../src/create.js";
-import { assertPrivateDirectory, assertPrivateDirectorySync } from "../src/creation-permissions.js";
+import { assertPrivateDirectory, assertPrivateDirectorySync } from "../src/creation-boundary.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest } from "../src/native.js";
 import { readWindowsSecurityFactsCommand } from "../src/windows-security-command.js";

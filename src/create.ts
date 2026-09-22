@@ -18,8 +18,6 @@ import {
   type CreationPermissions,
   protectCreatedFile,
   verifyCreatedFile,
-} from "./creation-permissions.js";
-import {
   assertBeforeCreation,
   creationCollision,
   prepareCreationPath,
@@ -27,10 +25,6 @@ import {
   type CreationPath,
   type CreationParentIdentity,
   removeCreationDirectoryAsync,
-} from "./creation-path.js";
-import { handoffCreatedFileSync } from "./private-producer-handoff-sync.js";
-import { resolveReadOpenFlags } from "./read-open-flags.js";
-import {
   assertCreationFile,
   assertPrivateCreationFile,
   creationPublicationAfterFailure,
@@ -39,7 +33,9 @@ import {
   removeRecordedCreationFileSync,
   type CreationPublicationStatus,
   removeRecordedCreationFile,
-} from "./creation-file-state.js";
+} from "./creation-boundary.js";
+import { handoffCreatedFileSync } from "./private-producer-handoff-sync.js";
+import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { getNativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import {

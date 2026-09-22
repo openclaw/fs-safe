@@ -1,6 +1,5 @@
 import type { DirectoryReceipt } from "./directory-durability.js";
-import { assertDarwinCreationAcl } from "./creation-darwin.js";
-import { assertPrivateCreationFile } from "./creation-file-state.js";
+import { assertDarwinCreationAcl, assertPrivateCreationFile } from "./creation-boundary.js";
 import { requireNativeBinding } from "./native.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { randomUUID } from "node:crypto";

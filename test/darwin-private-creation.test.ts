@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDirectory, createDirectorySync, createFileHandle, createFileSync } from "../src/create.js";
-import { assertPrivateDirectorySync } from "../src/creation-permissions.js";
+import { assertPrivateDirectorySync } from "../src/creation-boundary.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { root } from "../src/root.js";

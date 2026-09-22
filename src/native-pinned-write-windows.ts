@@ -4,7 +4,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import { createFileHandle } from "./create.js";
-import { hasPreservedCreationArtifacts } from "./creation-file-state.js";
+import { hasPreservedCreationArtifacts } from "./creation-boundary.js";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
