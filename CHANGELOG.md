@@ -10,6 +10,7 @@
 
 ### Performance and maintenance
 
+- Share lock acquisition option and reclaim-request types while preserving synchronous callback requirements and public type names.
 - Share public Root type exports through one private catalog while preserving declaration owners, interface augmentation, and runtime exports.
 - Consolidate exclusive file and directory creation under one implementation owner while preserving private permissions, callbacks, publication outcomes, and descriptor cleanup.
 - Consolidate archive extraction, inspection, and entry-policy ownership while preserving public helpers, lazy codec loading, cancellation, and admission order.

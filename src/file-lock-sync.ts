@@ -2,7 +2,6 @@ import fs from "node:fs";
 import { acquireFileLockSyncWithRoot } from "./file-lock-sync-root-acquire.js";
 import { withSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
 import path from "node:path";
-import type { Root } from "./root-impl.js";
 import {
   readSidecarLockRawSnapshotSync,
   readSidecarLockSnapshotSync,
@@ -21,8 +20,9 @@ import {
   validateSidecarLockTimeoutMs,
 } from "./sidecar-lock-policy.js";
 import type {
-  SidecarLockCompromisedInfo,
-  SidecarLockRetryOptions,
+  SidecarLockCommonAcquireOptions,
+  SidecarLockOptionFields,
+  SidecarLockReclaimParams,
   SidecarLockStaleRecovery,
 } from "./sidecar-lock-types.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
@@ -44,28 +44,13 @@ import {
   type SyncStaleOptionsState,
 } from "./file-lock-sync-stale-admission.js";
 
-export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> = {
-  lockPath?: string;
-  staleMs?: number;
-  timeoutMs?: number;
-  retry?: SidecarLockRetryOptions;
-  staleRecovery?: SidecarLockStaleRecovery;
-  reentrantOwner?: string;
-  payload: () => TPayload;
-  shouldReclaim?: (params: {
-    lockPath: string;
-    normalizedTargetPath: string;
-    payload: unknown;
-    staleMs: number;
-    nowMs: number;
-    heldByThisProcess: false;
-  }) => boolean;
-  shouldRemoveStaleLock?: (snapshot: SidecarLockStaleSnapshot) => boolean;
-  parsePayload?: (raw: string) => unknown;
-  lockRoot?: Root;
-  onCompromised?: (info: SidecarLockCompromisedInfo) => void;
-  compromiseCheckIntervalMs?: number;
-};
+export type FileLockSyncAcquireOptions<TPayload extends Record<string, unknown>> =
+  SidecarLockOptionFields<SidecarLockCommonAcquireOptions & {
+    staleMs?: number;
+    payload: () => TPayload;
+    shouldReclaim?: (params: SidecarLockReclaimParams<false>) => boolean;
+    shouldRemoveStaleLock?: (snapshot: SidecarLockStaleSnapshot) => boolean;
+  }>;
 
 export type FileLockSyncHandle = {
   lockPath: string;
