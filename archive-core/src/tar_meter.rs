@@ -38,7 +38,6 @@ enum MeterState {
         padding: u64,
     },
     SparseHeader {
-        data_remaining: u64,
         meta_bytes: u64,
     },
 }
@@ -289,7 +288,6 @@ impl<R> TarMetadataMeter<R> {
             match self.block[482] {
                 0 => return Err(Self::invalid("GNU sparse entries are not supported")),
                 1 => MeterState::SparseHeader {
-                    data_remaining: padded,
                     meta_bytes: 0,
                 },
                 _ => return Err(Self::invalid("GNU sparse extension flag is not 0 or 1")),
@@ -326,7 +324,7 @@ impl<R> TarMetadataMeter<R> {
         Ok(())
     }
 
-    fn finish_sparse_header(&mut self, data_remaining: u64, meta_bytes: u64) -> io::Result<()> {
+    fn finish_sparse_header(&mut self, meta_bytes: u64) -> io::Result<()> {
         let metered = meta_bytes.checked_add(512).ok_or_else(Self::meta_limit)?;
         if metered > self.limits.max_meta_entry_bytes {
             return Err(Self::meta_limit());
@@ -334,7 +332,6 @@ impl<R> TarMetadataMeter<R> {
         self.state = match self.block[504] {
             0 => return Err(Self::invalid("GNU sparse entries are not supported")),
             1 => MeterState::SparseHeader {
-                data_remaining,
                 meta_bytes: metered,
             },
             _ => return Err(Self::invalid("GNU sparse extension flag is not 0 or 1")),
@@ -344,72 +341,57 @@ impl<R> TarMetadataMeter<R> {
     }
 
     fn meter(&mut self, bytes: &[u8]) -> io::Result<()> {
-        let mut offset = 0;
-        while offset < bytes.len() {
-            match self.state {
-                MeterState::Eof => {
-                    if bytes[offset..].iter().any(|byte| *byte != 0) {
-                        return Err(Self::invalid("nonzero data after TAR EOF"));
-                    }
-                    return Ok(());
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        match self.state {
+            MeterState::Eof => {
+                if bytes.iter().any(|byte| *byte != 0) {
+                    return Err(Self::invalid("nonzero data after TAR EOF"));
                 }
-                MeterState::Metadata {
-                    kind,
-                    ref mut body,
-                    ref mut used,
-                    padding,
-                } => {
-                    let take = (body.len() - *used).min(bytes.len() - offset);
-                    body[*used..*used + take].copy_from_slice(&bytes[offset..offset + take]);
-                    *used += take;
-                    offset += take;
-                    if *used == body.len() {
-                        if kind == b'x' {
-                            self.pending_pax = Some(parse_local_pax(body)?);
-                        } else {
-                            let name = Self::validate_gnu_body(body, kind, self.limits.windows_paths)?;
-                            if kind == b'L' { self.pending_gnu_path = Some(name.to_owned()); }
+            }
+            MeterState::Metadata {
+                kind,
+                ref mut body,
+                ref mut used,
+                padding,
+            } => {
+                body[*used..*used + bytes.len()].copy_from_slice(bytes);
+                *used += bytes.len();
+                if *used == body.len() {
+                    if kind == b'x' {
+                        self.pending_pax = Some(parse_local_pax(body)?);
+                    } else {
+                        let name = Self::validate_gnu_body(body, kind, self.limits.windows_paths)?;
+                        if kind == b'L' {
+                            self.pending_gnu_path = Some(name.to_owned());
                         }
-                        self.state = if padding == 0 {
-                            MeterState::Header
-                        } else {
-                            MeterState::Data { remaining: padding }
-                        };
                     }
+                    self.state = if padding == 0 {
+                        MeterState::Header
+                    } else {
+                        MeterState::Data { remaining: padding }
+                    };
                 }
-                MeterState::Header => {
-                    let take = (512 - self.block_len).min(bytes.len() - offset);
-                    self.block[self.block_len..self.block_len + take]
-                        .copy_from_slice(&bytes[offset..offset + take]);
-                    self.block_len += take;
-                    offset += take;
-                    if self.block_len == 512 {
+            }
+            MeterState::Header | MeterState::SparseHeader { .. } => {
+                self.block[self.block_len..self.block_len + bytes.len()].copy_from_slice(bytes);
+                self.block_len += bytes.len();
+                if self.block_len == 512 {
+                    if let MeterState::SparseHeader { meta_bytes } = self.state {
+                        self.finish_sparse_header(meta_bytes)?;
+                    } else {
                         self.finish_header()?;
                     }
                 }
-                MeterState::Data { remaining } => {
-                    let take = remaining.min((bytes.len() - offset) as u64);
-                    offset += take as usize;
-                    let remaining = remaining - take;
-                    self.state = if remaining == 0 {
-                        MeterState::Header
-                    } else {
-                        MeterState::Data { remaining }
-                    };
-                }
-                MeterState::SparseHeader {
-                    data_remaining,
-                    meta_bytes,
-                } => {
-                    let take = (512 - self.block_len).min(bytes.len() - offset);
-                    self.block[self.block_len..self.block_len + take]
-                        .copy_from_slice(&bytes[offset..offset + take]);
-                    self.block_len += take;
-                    offset += take;
-                    if self.block_len == 512 {
-                        self.finish_sparse_header(data_remaining, meta_bytes)?;
-                    }
-                }
+            }
+            MeterState::Data { remaining } => {
+                let remaining = remaining - bytes.len() as u64;
+                self.state = if remaining == 0 {
+                    MeterState::Header
+                } else {
+                    MeterState::Data { remaining }
+                };
             }
         }
         Ok(())
@@ -476,6 +458,10 @@ impl<R: Read> Read for TarMetadataMeter<R> {
 #[cfg(test)]
 #[path = "tar_meter_tests.rs"]
 mod pax_tests;
+
+#[cfg(test)]
+#[path = "tar_meter_boundary_tests.rs"]
+mod boundary_tests;
 
 #[cfg(test)]
 mod tests {
