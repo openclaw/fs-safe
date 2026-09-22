@@ -20,7 +20,7 @@ afterEach(() => {
 
 for (const mode of ["async", "Root async", "sync", "Root sync"] as const) {
   describe(`${mode} independent lock budgets`, () => {
-    async function fixture(releaseAfterWaits: number) {
+    async function fixture(releaseAfterWaits: number, wallClockStep = 0) {
       const directory = await tempRoot("fs-safe-lock-budget-");
       const lockRoot = mode.startsWith("Root") ? await root(directory) : undefined;
       const target = path.join(directory, "state");
@@ -33,8 +33,9 @@ for (const mode of ["async", "Root async", "sync", "Root sync"] as const) {
       const waits: number[] = [];
       const startedAt = Date.now();
       let elapsed = 0;
-      vi.spyOn(Date, "now").mockImplementation(() => startedAt + elapsed);
-      // Control only sleeps; use real exclusive creation and owner-authorized release.
+      vi.spyOn(Date, "now").mockImplementation(() => startedAt + elapsed + (waits.length ? wallClockStep : 0));
+      vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+      // Control clocks and sleeps; use real exclusive creation and owner-authorized release.
       // Releasing at the first excess wait also bounds a broken retry loop without a sentinel.
       const sleep = (ms: number) => {
         waits.push(ms);
@@ -138,6 +139,23 @@ for (const mode of ["async", "Root async", "sync", "Root sync"] as const) {
         expect(payload).toHaveBeenCalledTimes(3);
         expect(waits).toEqual([10, 5]);
         expect(holder.verifyStillHeld()).toBe(true);
+      } finally {
+        await cleanup();
+      }
+    });
+
+    it.each([-60_000, 60_000])("keeps the finite retry deadline when wall time steps by %s ms", async (wallClockStep) => {
+      const { holder, original, lockPath, manager, payload, waits, acquire, cleanup } = await fixture(3, wallClockStep);
+      try {
+        await expect(acquire({ minTimeout: 10, maxTimeout: 10 }, 15))
+          .rejects.toMatchObject({
+            code: "file_lock_timeout", lockPath, normalizedTargetPath: holder.normalizedTargetPath,
+          });
+        expect(waits).toEqual([10, 5]);
+        expect(payload).toHaveBeenCalledTimes(3);
+        expect(holder.verifyStillHeld()).toBe(true);
+        expect(fs.readFileSync(lockPath, "utf8")).toBe(original);
+        expect(manager.heldEntries()).toEqual([]);
       } finally {
         await cleanup();
       }

@@ -106,7 +106,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
   if (activeDescendant) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
 
   const admission = createSidecarAdmissionController(admissionAncestry, context.admissions, normalizedTargetPath);
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   const reclaimGuardPath = `${lockPath}.reclaim`;
   let reclaimGuard: SidecarReclaimGuard | undefined;
   const releaseReclaimGuard = async (): Promise<void> => {
@@ -128,7 +128,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
     admission.release();
     const delay = sidecarLockRetryDelay(
       retry, timeoutMs === Number.POSITIVE_INFINITY ? undefined : timeoutMs,
-      Date.now() - startedAt, attempt,
+      performance.now() - startedAt, attempt,
     );
     if (delay === undefined) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
     attempt += 1;

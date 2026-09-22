@@ -14,7 +14,7 @@ export class SyncLockAcquisition {
   readonly #admissions = getSyncLockAdmissions();
   readonly #token = {};
   #owns = false;
-  readonly #startedAt = Date.now();
+  readonly #startedAt = performance.now();
   #attempt = 0;
   #transientDenials = 0;
 
@@ -50,7 +50,7 @@ export class SyncLockAcquisition {
   }
   waitForRetry(): void {
     this.release();
-    const delay = sidecarLockRetryDelay(this.retry, this.timeoutMs, Date.now() - this.#startedAt, this.#attempt);
+    const delay = sidecarLockRetryDelay(this.retry, this.timeoutMs, performance.now() - this.#startedAt, this.#attempt);
     if (delay === undefined) throw sidecarLockTimeout(this.lockPath, this.normalizedTargetPath);
     sleepSync(delay);
     this.#attempt += 1;

@@ -8,6 +8,7 @@
 - **Secure temporary directories:** stop rejecting valid directories when Node reports negative device or inode IDs. Thanks @vincentkoc. ([#586](https://github.com/openclaw/fs-safe/pull/586))
 - **Root write hardening:** prevent extra properties in wider options objects from enabling private writer controls or applying streamed-create byte limits to buffered writes. ([#571](https://github.com/openclaw/fs-safe/pull/571))
 - **Error reporting:** preserve original errors from directory checks, secret reads, and Root opens when descriptor cleanup also fails. ([#574](https://github.com/openclaw/fs-safe/pull/574))
+- **Lock timeouts:** keep async and sync retry deadlines stable when the system clock changes. Preserve wall-clock lock timestamps and stale-age checks.
 
 ## 0.18.0 - 2026-09-21
 

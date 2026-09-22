@@ -199,6 +199,10 @@ explicit `retry.retries` still applies with `timeoutMs: Infinity`, and zero allo
 only the initial attempt. After process defaults are applied, an omitted retry
 count means unlimited retries, and an omitted or infinite timeout means no
 deadline. With neither budget bounded, contention can wait indefinitely.
+Finite deadlines use monotonic elapsed time, so system clock corrections do not
+extend or shorten the retry budget. Payload timestamps, `heldEntries().acquiredAt`,
+and stale-policy `nowMs` remain wall-clock based. Deadlines are checked at retry
+boundaries; they do not interrupt callbacks or filesystem operations.
 `parsePayload` replaces JSON parsing for legacy or custom sidecars. Its `unknown`
 result is passed to `shouldReclaim` and `shouldRemoveStaleLock`, allowing PID,
 process-start, argv, or role schemas to remain application-owned.

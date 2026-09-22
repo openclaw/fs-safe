@@ -24,6 +24,7 @@ beforeEach(() => {
   elapsed = 0;
   delays = [];
   vi.spyOn(Date, "now").mockImplementation(() => now + elapsed);
+  vi.spyOn(performance, "now").mockImplementation(() => elapsed);
   vi.spyOn(timing, "sleepSync").mockImplementation((ms) => {
     // A synchronous regression cannot be interrupted by Vitest's test timeout.
     if (delays.length >= 12) throw new Error("synchronous retry escape reached");

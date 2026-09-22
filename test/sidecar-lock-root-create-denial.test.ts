@@ -79,8 +79,8 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
   it("preserves the denial when the finite deadline expires", async () => {
     const { directory, target, lockPath, manager, options } = await fixture();
     const error = denial(lockPath);
-    const now = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const now = performance.now();
+    const clock = vi.spyOn(performance, "now").mockReturnValue(now);
     const realOpen = fsp.open.bind(fsp);
     let attempts = 0;
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {

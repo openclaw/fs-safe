@@ -19,6 +19,7 @@ it.each(["missing", "unlinked", "replacement"])("charges every discarded %s snap
     const descriptors: FileHandle[] = [];
     let now = 1_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(capability, "open").mockImplementation(async (...args) => {
       if (kind === "missing") {
         await fs.unlink(lockPath);

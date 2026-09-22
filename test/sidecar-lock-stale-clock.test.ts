@@ -39,6 +39,7 @@ it.each([false, true].flatMap(rooted => [false, true].map(custom => ({ rooted, c
     });
     try {
       expect(JSON.parse(await fs.readFile(lockPath, "utf8"))).toEqual({ owner: "new" });
+      expect(manager.heldEntries()[0]?.acquiredAt).toBe(epoch + 10);
       if (custom) expect(seen).toEqual([epoch + 10]);
     } finally {
       await held.release();
