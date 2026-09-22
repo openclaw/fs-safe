@@ -14,7 +14,7 @@ import {
   writeJsonDurableQueueEntry,
 } from "../src/json-durable-queue.js";
 import { resolveSafeRelativePath } from "../src/path.js";
-import { summarizeWindowsAcl } from "../src/permissions.js";
+import { summarizeWindowsAcl } from "../src/permissions-windows.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { resolveExistingPathsWithinRoot, resolvePathWithinRoot } from "../src/root-paths.js";
 import { readSecureFile } from "../src/secure-file.js";

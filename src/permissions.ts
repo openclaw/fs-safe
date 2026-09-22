@@ -9,23 +9,6 @@ import {
   hasWindowsPathAlias,
   pathForWindowsFilesystem,
 } from "./windows-path-alias.js";
-export type { PermissionCommandFailure } from "./permission-exec.js";
-export {
-  createIcaclsResetCommand,
-  formatIcaclsResetCommand,
-  formatWindowsAclSummary,
-  inspectWindowsAcl,
-  parseIcaclsOutput,
-  resolveWindowsUserPrincipal,
-  summarizeWindowsAcl,
-} from "./permissions-windows.js";
-export type {
-  IcaclsResetCommandOptions,
-  PermissionExec,
-  WindowsAclEntry,
-  WindowsAclSummary,
-  WindowsUserInfoProvider,
-} from "./permissions-windows.js";
 
 export type PermissionCheck = Omit<PermissionFailureFields & {
   ok: boolean;

@@ -24,11 +24,11 @@ import {
 } from "../src/native-config.js";
 import { __loadBundledNativeForTest } from "../src/native.js";
 import { PermissionCommandError } from "../src/permission-exec.js";
+import { inspectPathPermissions } from "../src/permissions.js";
 import {
   createIcaclsResetCommand,
-  inspectPathPermissions,
   inspectWindowsAcl,
-} from "../src/permissions.js";
+} from "../src/permissions-windows.js";
 
 let realNative: NativeBinding | undefined;
 if (process.platform === "win32") {

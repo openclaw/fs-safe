@@ -14,7 +14,8 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
-import { inspectPathPermissions, inspectWindowsAcl, safeStat } from "../src/permissions.js";
+import { inspectPathPermissions, safeStat } from "../src/permissions.js";
+import { inspectWindowsAcl } from "../src/permissions-windows.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
 import { movePathToTrash } from "../src/trash.js";
 import { assertNoHardlinkedFinalPath } from "../src/path-policy.js";

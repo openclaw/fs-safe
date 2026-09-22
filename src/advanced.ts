@@ -172,8 +172,8 @@ export {
   resolveWindowsUserPrincipal,
   summarizeWindowsAcl,
   type IcaclsResetCommandOptions,
-  type PermissionCommandFailure,
   type PermissionExec,
   type WindowsAclEntry,
   type WindowsAclSummary,
-} from "./permissions.js";
+} from "./permissions-windows.js";
+export type { PermissionCommandFailure } from "./permission-exec.js";

@@ -7,7 +7,7 @@ import type { NativeWindowsSecurityFacts } from "../src/native-binding.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { executePermissionCommand } from "../src/permission-exec.js";
-import { inspectWindowsAcl } from "../src/permissions.js";
+import { inspectWindowsAcl } from "../src/permissions-windows.js";
 
 vi.mock("../src/permission-exec.js", async importOriginal => ({
   ...await importOriginal<typeof import("../src/permission-exec.js")>(),

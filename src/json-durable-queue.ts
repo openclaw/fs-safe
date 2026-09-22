@@ -21,8 +21,6 @@ import {
   hasWindowsPathAlias,
 } from "./windows-path-alias.js";
 
-export { DEFAULT_JSON_DURABLE_QUEUE_ENTRY_MAX_BYTES } from "./json-durable-queue-read.js";
-
 export type JsonDurableQueueEntryPaths = {
   jsonPath: string;
   deliveredPath: string;

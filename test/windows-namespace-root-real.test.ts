@@ -10,9 +10,9 @@ import {
 import { executePermissionCommand } from "../src/permission-exec.js";
 import {
   inspectPathPermissions,
-  inspectWindowsAcl,
   safeStat,
 } from "../src/permissions.js";
+import { inspectWindowsAcl } from "../src/permissions-windows.js";
 import { root } from "../src/root.js";
 import { resolveRootContext } from "../src/root-context.js";
 import { resolveRootPath, resolveRootPathSync } from "../src/root-path.js";

@@ -10,7 +10,8 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, executePermissionCommand } from "../src/permission-exec.js";
-import { inspectPathPermissions, inspectWindowsAcl } from "../src/permissions.js";
+import { inspectPathPermissions } from "../src/permissions.js";
+import { inspectWindowsAcl } from "../src/permissions-windows.js";
 import { createPrivateDirectory } from "../src/permissions-public.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix } from "./helpers/vitest.js";

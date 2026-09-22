@@ -5,10 +5,8 @@ import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
 } from "../src/native-config.js";
-import {
-  inspectPathPermissions,
-  inspectWindowsAcl,
-} from "../src/permissions.js";
+import { inspectPathPermissions } from "../src/permissions.js";
+import { inspectWindowsAcl } from "../src/permissions-windows.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 

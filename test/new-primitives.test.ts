@@ -37,18 +37,20 @@ import {
   configureFsSafeNative,
 } from "../src/native-config.js";
 import {
-  createIcaclsResetCommand,
-  formatIcaclsResetCommand,
   formatPermissionDetail,
   formatPermissionRemediation,
-  formatWindowsAclSummary,
   inspectPathPermissions,
-  inspectWindowsAcl,
   modeBits,
+} from "../src/permissions.js";
+import {
+  createIcaclsResetCommand,
+  formatIcaclsResetCommand,
+  formatWindowsAclSummary,
+  inspectWindowsAcl,
   parseIcaclsOutput,
   resolveWindowsUserPrincipal,
   summarizeWindowsAcl,
-} from "../src/permissions.js";
+} from "../src/permissions-windows.js";
 import { readSecureFile } from "../src/secure-file.js";
 import {
   walkDirectory,

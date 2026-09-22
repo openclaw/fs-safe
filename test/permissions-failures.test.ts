@@ -7,11 +7,13 @@ import {
   formatPermissionDetail,
   formatPermissionRemediation,
   inspectPathPermissions,
+  type PermissionCheck,
+} from "../src/permissions.js";
+import {
   inspectWindowsAcl,
   parseIcaclsOutput,
   summarizeWindowsAcl,
-  type PermissionCheck,
-} from "../src/permissions.js";
+} from "../src/permissions-windows.js";
 import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
