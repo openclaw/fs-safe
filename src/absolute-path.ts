@@ -190,10 +190,7 @@ async function resolveTrustedDirectoryPrefix(
   // this helper gets a chance to reject that parent.
   const segments = path.relative(root, targetPath).split(path.sep).filter(Boolean);
   for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index];
-    if (!segment) {
-      continue;
-    }
+    const segment = segments[index]!;
     const next = path.join(current, segment);
     try {
       const nextStat = fsSync.lstatSync(pathForWindowsFilesystem(next));
@@ -202,7 +199,6 @@ async function resolveTrustedDirectoryPrefix(
         return segmentFailure;
       }
       current = next;
-      currentStat = nextStat;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
@@ -295,17 +291,9 @@ export async function ensureAbsoluteDirectory(
       }
       try {
         const stat = fsSync.lstatSync(current);
-        if (stat.isSymbolicLink()) {
-          return ensureDirectoryFailure(
-            "symlink",
-            `directory path traverses a symlink within ${scopeLabel}`,
-          );
-        }
-        if (!stat.isDirectory()) {
-          return ensureDirectoryFailure(
-            "not-file",
-            `path must be a real directory within ${scopeLabel}`,
-          );
+        const segmentFailure = classifyExistingDirectorySegment(stat, scopeLabel);
+        if (segmentFailure) {
+          return segmentFailure;
         }
         break;
       } catch (err) {

@@ -12,6 +12,7 @@
 
 ### Performance and maintenance
 
+- Reuse absolute-directory segment admission while preserving forward lookup, identity guards, creation-race handling, and policy errors.
 - Consolidate temp directory identity and permission checks under existing admission support while preserving lazy bounded-cleanup loading and descriptor ownership.
 - Exercise temp-workspace cleanup capability and descriptor ownership checks in required Bun CI, preserving runtime-specific canonicalization rejection and real filesystem admission.
 - Share lock acquisition option and reclaim-request types while preserving synchronous callback requirements and public type names.

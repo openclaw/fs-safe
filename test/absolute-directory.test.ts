@@ -86,6 +86,51 @@ describe("ensureAbsoluteDirectory", () => {
     ).resolves.toMatchObject({ ok: false, code: "not-file" });
   });
 
+  for (const kind of ["file", "symlink"] as const) {
+    it.skipIf(kind === "symlink" && process.platform === "win32")(
+      `preserves a ${kind} that wins an EEXIST race during missing-directory creation`,
+      async () => {
+        const directory = await fs.realpath(await tempRoot("fs-safe-absolute-dir-eexist-"));
+        const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-eexist-outside-"));
+        const racedPath = path.join(directory, "appeared");
+        const target = path.join(racedPath, "child");
+        const realMkdir = fs.mkdir.bind(fs);
+        let collided = false;
+        vi.spyOn(fs, "mkdir").mockImplementation(async (...args) => {
+          if (String(args[0]) === racedPath && !collided) {
+            if (kind === "file") await fs.writeFile(racedPath, "foreign");
+            else await fs.symlink(outside, racedPath, "dir");
+            try {
+              return await realMkdir(...args);
+            } catch (error) {
+              expect(error).toMatchObject({ code: "EEXIST" });
+              collided = true;
+              throw error;
+            }
+          }
+          return await realMkdir(...args);
+        });
+
+        const result = await ensureAbsoluteDirectory(target, { scopeLabel: "race scope" });
+        const code = kind === "symlink" ? "symlink" : "not-file";
+        const message = kind === "symlink"
+          ? "directory path traverses a symlink within race scope"
+          : "path must be a real directory within race scope";
+        expect(collided).toBe(true);
+        expect(result).toMatchObject({ ok: false, code, error: { name: "FsSafeError", code, message, category: "policy" } });
+        if (result.ok) throw new Error("raced directory unexpectedly admitted");
+        expect(Object.getOwnPropertyDescriptor(result.error, "cause")).toEqual({
+          value: undefined, writable: true, enumerable: false, configurable: true,
+        });
+        expect(Object.hasOwn(result.error, "details")).toBe(true);
+        expect(result.error.details).toBeUndefined();
+        if (kind === "file") expect(await fs.readFile(racedPath, "utf8")).toBe("foreign");
+        else expect((await fs.lstat(racedPath)).isSymbolicLink()).toBe(true);
+        expect(await fs.readdir(outside)).toEqual([]);
+      },
+    );
+  }
+
   itPosix("rejects absolute directory creation when an existing parent is swapped before mkdir", async () => {
     const root = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-"));
     const outside = await fs.realpath(await tempRoot("fs-safe-absolute-dir-race-outside-"));
