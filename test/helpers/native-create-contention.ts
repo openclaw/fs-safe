@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { configureFsSafeNative } from "../../src/native-config.js";
 import { __setNativeLoaderForTest, type NativeBinding } from "../../src/native.js";
-import { runPinnedWriteHelper } from "../../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../../src/pinned-write.js";
 import { useSuiteFixture } from "./suite-fixture.js";
 
 export function registerNativeCreateContentionTests(
@@ -31,7 +31,7 @@ export function registerNativeCreateContentionTests(
       if (mode === "require") __setNativeLoaderForTest(() => native);
       configureFsSafeNative({ mode });
       const attempts = Array.from({ length: 32 }, (_, index) =>
-        runPinnedWriteHelper({
+        runOwnedPinnedWrite({
           rootPath: directory,
           relativeParentPath: "",
           basename: "winner",

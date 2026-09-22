@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "../src/secret.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -158,7 +158,7 @@ for (const backend of ["off", "require"] as const) {
         const { writes, opened } = observeFiles(backend, rootPath, "ignored-mode");
         const next = vi.fn(async () => ({ done: true as const, value: undefined }));
         const iterator = vi.fn(() => ({ next }));
-        await expect(runPinnedWriteHelper({
+        await expect(runOwnedPinnedWrite({
           rootPath, relativeParentPath: "", basename: "token", mkdir: false,
           mode: 0o600, verifyPosixMode: true, sync: false, overwrite,
           input: { kind: "stream", stream: { [Symbol.asyncIterator]: iterator } },
@@ -182,7 +182,7 @@ for (const backend of ["off", "require"] as const) {
             yield "must stay unwritten";
           } finally { settled(); }
         }
-        await expect(runPinnedWriteHelper({
+        await expect(runOwnedPinnedWrite({
           rootPath, relativeParentPath: "", basename: "token", mkdir: false,
           mode: 0o600, verifyPosixMode: true, sync: false, overwrite,
           input: { kind: "stream", stream: payload() },

@@ -162,21 +162,34 @@ describe("owned caller pathname snapshots", () => {
     const decoyPath = path.join(outside, "decoy.txt");
     let rootCalls = 0;
     let filePathCalls = 0;
+    let contentCalls = 0;
+    const receivers: unknown[] = [];
 
-    await write({
+    const params = {
       get rootDir() {
+        receivers.push(this);
         rootCalls += 1;
         return rootCalls === 1 ? root : outside;
       },
       get filePath() {
+        receivers.push(this);
         filePathCalls += 1;
         return filePathCalls === 1 ? filePath : decoyPath;
       },
-      content: "secret-first",
-    });
+      get content() {
+        receivers.push(this);
+        contentCalls += 1;
+        if (contentCalls > 1) throw new Error("secret content must be captured at the public boundary");
+        return "secret-first";
+      },
+    };
+    await write(params);
 
     expect(rootCalls).toBe(1);
     expect(filePathCalls).toBe(1);
+    expect(contentCalls).toBe(1);
+    expect(receivers).toHaveLength(3);
+    expect(receivers.every(receiver => receiver === params)).toBe(true);
     await expect(fs.readFile(filePath, "utf8")).resolves.toBe("secret-first");
     await expect(fs.stat(decoyPath)).rejects.toMatchObject({ code: "ENOENT" });
   });

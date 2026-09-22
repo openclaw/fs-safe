@@ -39,11 +39,11 @@ afterEach(async () => {
 describe("pinned write fallback coverage", () => {
   itPosix("writes buffers, creates only when missing, streams, and enforces limits when native mode is off", async () => {
     const { configureFsSafeNative } = await import("../src/native-config.js");
-    const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+    const { runOwnedPinnedWrite } = await import("../src/pinned-write.js");
     configureFsSafeNative({ mode: "off" });
     const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
-    const created = await runPinnedWriteHelper({
+    const created = await runOwnedPinnedWrite({
       rootPath: root,
       relativeParentPath: "nested",
       basename: "created.txt",
@@ -57,7 +57,7 @@ describe("pinned write fallback coverage", () => {
       "created",
     );
     await expect(
-      runPinnedWriteHelper({
+      runOwnedPinnedWrite({
         rootPath: root,
         relativeParentPath: "nested",
         basename: "created.txt",
@@ -89,7 +89,7 @@ describe("pinned write fallback coverage", () => {
       return handle;
     });
 
-    const streamed = await runPinnedWriteHelper({
+    const streamed = await runOwnedPinnedWrite({
       rootPath: root,
       relativeParentPath: "nested",
       basename: "streamed.txt",
@@ -105,7 +105,7 @@ describe("pinned write fallback coverage", () => {
       "streamed",
     );
 
-    await expectFsSafeError(runPinnedWriteHelper({
+    await expectFsSafeError(runOwnedPinnedWrite({
         rootPath: root,
         relativeParentPath: "nested",
         basename: "too-large.txt",
@@ -122,12 +122,12 @@ describe("pinned write fallback coverage", () => {
 
   itPosix("uses the guarded fallback when native mode is off", async () => {
     const { configureFsSafeNative } = await import("../src/native-config.js");
-    const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+    const { runOwnedPinnedWrite } = await import("../src/pinned-write.js");
     configureFsSafeNative({ mode: "off" });
     const root = await tempRoot("fs-safe-pinned-write-fallback-");
 
     await expect(
-      runPinnedWriteHelper({
+      runOwnedPinnedWrite({
         rootPath: root,
         relativeParentPath: "",
         basename: "created.txt",
@@ -143,9 +143,9 @@ describe("pinned write fallback coverage", () => {
   });
 
   itWin32("falls back on windows", async () => {
-    const { runPinnedWriteHelper } = await import("../src/pinned-write.js");
+    const { runOwnedPinnedWrite } = await import("../src/pinned-write.js");
     const root = await tempRoot("fs-safe-pinned-write-fallback-");
-    await expect(runPinnedWriteHelper({
+    await expect(runOwnedPinnedWrite({
       rootPath: root,
       relativeParentPath: "nested",
       basename: "created.txt",

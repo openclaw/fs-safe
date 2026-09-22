@@ -16,7 +16,7 @@ import {
   resolveJsonDurableQueueEntryPaths,
 } from "../src/json-durable-queue.js";
 import { movePathWithCopyFallback } from "../src/move-path.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { replaceFileAtomic } from "../src/replace-file.js";
 import { writeViaSiblingTempPath } from "../src/sibling-temp.js";
 import { sanitizeTempFileName, tempFile } from "../src/temp-target.js";
@@ -161,7 +161,7 @@ describe("security finding regressions", () => {
     await fsp.writeFile(outsideFile, "outside");
     await fsp.symlink(outsideFile, path.join(base, ".victim.txt.fallback.tmp"), "file");
 
-    await runPinnedWriteHelper({
+    await runOwnedPinnedWrite({
       rootPath: base,
       relativeParentPath: "",
       basename: "victim.txt",
@@ -181,7 +181,7 @@ describe("security finding regressions", () => {
     const base = path.join(parent, "root");
     await fsp.mkdir(base);
     await expect(
-      runPinnedWriteHelper({
+      runOwnedPinnedWrite({
         rootPath: base,
         relativeParentPath: "../escape",
         basename: "victim.txt",

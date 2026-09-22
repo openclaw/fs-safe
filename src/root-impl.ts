@@ -16,7 +16,7 @@ import { openLocalFileDescriptor } from "./local-file-descriptor.js";
 import { assertMutationNotDenied, mergeDenyMutationPolicies, type DenyMutationPolicy } from "./deny-mutations.js";
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
 import { openedPathResolutionError, recordExclusiveCreateFailure, recordOpenedFileFailure } from "./opened-file-failure.js";
-import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-write.js";
+import { runOwnedPinnedWrite, runOwnedPinnedWriteWithRenamePolicy } from "./pinned-write.js";
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
@@ -1100,12 +1100,10 @@ async function commitPinnedWriteInRoot(
         throw new FsSafeError("path-mismatch", "private creation parent changed during admission");
       }
     }
-    await runPinnedWriteWithRenamePolicy({
+    await runOwnedPinnedWriteWithRenamePolicy({
       rootPath: pinned.rootReal,
       relativeParentPath: pinned.relativeParentPath,
       basename: pinned.basename,
-      targetPath: pinned.targetPath,
-      renameIdentity: params.renameIdentity,
       mkdir: !params.private && params.mkdir !== false,
       private: params.private,
       mode: params.mode ?? pinned.mode,
@@ -1133,7 +1131,7 @@ async function commitPinnedWriteInRoot(
           throw error;
         }
       },
-    });
+    }, pinned.targetPath, params.renameIdentity);
   } catch (error) {
     if (verifyingPublication) throw error;
     const errorCode = (error as { code?: unknown })?.code;
@@ -1208,7 +1206,7 @@ async function copyFileInRoot(
         };
         const observer = createCopyPublicationObserver(pinned.targetPath, params.onDestinationPublished);
         try {
-          await runPinnedWriteHelper({
+          await runOwnedPinnedWrite({
             rootPath: pinned.rootReal,
             relativeParentPath: pinned.relativeParentPath,
             basename: pinned.basename,

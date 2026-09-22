@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -59,7 +59,7 @@ describe("guarded fallback write cleanup", () => {
     });
 
     await expect(
-      runPinnedWriteHelper({
+      runOwnedPinnedWrite({
         rootPath: base,
         relativeParentPath: "nested",
         basename: "created.txt",

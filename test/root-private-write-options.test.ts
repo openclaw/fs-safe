@@ -2,11 +2,12 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { root, type Root } from "../src/root.js";
+import { root, type Root, type RootCreateOptions } from "../src/root.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
 import * as compatibility from "../src/root-write-compatibility.js";
 import * as rootContext from "../src/root-context.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -18,6 +19,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
+  __setFsSafeTestHooksForTest();
 });
 
 const bufferedMethods = ["write", "writeJson", "create", "createJson"] as const;
@@ -135,6 +137,31 @@ for (const mode of modes) {
       await expect(scoped.write("target", "payload", options)).rejects.toBe(failure);
       expect(read).toHaveBeenCalledOnce();
       expect(await fs.readdir(directory)).toEqual([]);
+    });
+
+    it("captures public creation options before pinned admission awaits", async () => {
+      const { directory, scoped } = await fixture();
+      const receivers: unknown[] = [];
+      const options: RootCreateOptions = {
+        atomic: true,
+        durable: false,
+        denyMutations: { paths: [path.join(directory, "blocked")] },
+        get mode() { receivers.push(this); return 0o600; },
+      };
+      const admitted = vi.fn(() => {
+        Object.defineProperty(options, "mode", {
+          get() { throw new Error("public options must not be reread during pinned admission"); },
+        });
+      });
+      __setFsSafeTestHooksForTest({ beforePinnedWriteParentAdmission: admitted });
+
+      await scoped.create("target", "payload", options);
+
+      expect(admitted).toHaveBeenCalled();
+      expect(receivers).toHaveLength(1);
+      expect(receivers[0]).toBe(options);
+      await expect(fs.readFile(path.join(directory, "target"), "utf8")).resolves.toBe("payload");
+      expect(await fs.readdir(directory)).toEqual(["target"]);
     });
   });
 }

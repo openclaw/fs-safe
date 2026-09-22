@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root, type RootWriteOptions } from "../src/index.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import * as verification from "../src/root-write-verification.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -255,7 +255,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
     Object.defineProperty(process, "platform", { value: "win32" });
     const directory = await tempRoot("fs-safe-durable-win-native-");
     const { events } = await observeSyncs(directory);
-    await runPinnedWriteHelper({
+    await runOwnedPinnedWrite({
       rootPath: directory, relativeParentPath: "", basename: "target", mkdir: false,
       mode: 0o400, sync, input: { kind: "buffer", data: "payload" },
     });

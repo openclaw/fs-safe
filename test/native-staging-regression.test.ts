@@ -9,7 +9,7 @@ import {
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
 } from "../src/native.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { root } from "../src/root.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
@@ -66,7 +66,7 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
       const capability = await root(directory);
       await capability.write("final", "private until publication", { mode });
     } else if (surface === "native-writer") {
-      await runPinnedWriteHelper({
+      await runOwnedPinnedWrite({
         rootPath: directory,
         relativeParentPath: "",
         basename: "final",
@@ -113,7 +113,7 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-stage-literal-");
     for (const basename of ["colon:name", "back\\slash", "control\nname"]) {
-      await runPinnedWriteHelper({
+      await runOwnedPinnedWrite({
         rootPath: directory,
         relativeParentPath: "",
         basename,
@@ -149,7 +149,7 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
       }
       throw abort;
     })();
-    await expect(runPinnedWriteHelper({
+    await expect(runOwnedPinnedWrite({
       rootPath: parent,
       relativeParentPath: "",
       basename: "final",

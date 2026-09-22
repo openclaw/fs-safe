@@ -10,7 +10,7 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { createNativeStage, type NativeStagingBinding } from "../src/native-staged-file.js";
 import { openStagedDirectory } from "../src/staged-directory.js";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -272,7 +272,7 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
       },
     }));
     const publication = { status: fault === "close" ? "published" : "not-published" };
-    await expect(runPinnedWriteHelper({
+    await expect(runOwnedPinnedWrite({
       rootPath: directory, relativeParentPath: "", basename: "final", mkdir: false,
       mode: 0o666, overwrite: true, input: { kind: "buffer", data: "retained" },
     })).rejects.toMatchObject({

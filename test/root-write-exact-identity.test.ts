@@ -7,7 +7,7 @@ import { configureFsSafeNative, root } from "../src/index.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "../src/opened-realpath.js";
 import { realpathSync } from "../src/realpath.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { resolveRootContext } from "../src/root-context.js";
 import * as verification from "../src/root-write-verification.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -210,7 +210,7 @@ for (const route of routes) {
           vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(check);
           pending = operation === "create" ? capability.create("target", "payload") : capability.write("target", "payload");
         } else {
-          pending = runPinnedWriteHelper({
+          pending = runOwnedPinnedWrite({
             rootPath: directory, relativeParentPath: "", basename: "target", mkdir: false,
             mode: 0o600, overwrite: operation === "write", input: { kind: "buffer", data: "payload" },
             verifyPublished: async (fd, expectedIdentity, parentGuard) =>

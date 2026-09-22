@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { cleanupPinnedFilePath } from "../src/file-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -72,7 +72,7 @@ describe.each([false, true])("pinned write cleanup with mkdir=%s", (mkdir) => {
       return stat;
     });
     configureFsSafeNative({ mode: "off" });
-    await expect(runPinnedWriteHelper({
+    await expect(runOwnedPinnedWrite({
       rootPath: directory,
       relativeParentPath: "",
       basename: "value",

@@ -15,7 +15,7 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 
 let native: NativeBinding | undefined;
@@ -203,7 +203,7 @@ describe.runIf(native)("native filesystem primitives", () => {
     }));
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-native-write-");
-    await runPinnedWriteHelper({
+    await runOwnedPinnedWrite({
       rootPath: directory,
       relativeParentPath: "nested",
       basename: "value",
@@ -215,7 +215,7 @@ describe.runIf(native)("native filesystem primitives", () => {
     expect(renameCalls).toBe(1);
     await expect(fs.readFile(path.join(directory, "nested/value"), "utf8")).resolves.toBe("native");
     await expect(
-      runPinnedWriteHelper({
+      runOwnedPinnedWrite({
         rootPath: directory,
         relativeParentPath: "nested",
         basename: "value",
@@ -239,7 +239,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       })());
 
       await expect(
-        runPinnedWriteHelper({
+        runOwnedPinnedWrite({
           rootPath: directory,
           relativeParentPath: "",
           basename: "value",
@@ -261,7 +261,7 @@ describe.runIf(native)("native filesystem primitives", () => {
     async (mode) => {
       const directory = await pinnedWriteRoot(mode, "zero-mode");
 
-      await runPinnedWriteHelper({
+      await runOwnedPinnedWrite({
         rootPath: directory,
         relativeParentPath: "",
         basename: "value",
@@ -282,7 +282,7 @@ describe.runIf(native)("native filesystem primitives", () => {
       const stream = Readable.from([Buffer.from("12"), Buffer.from("34")]);
 
       await expect(
-        runPinnedWriteHelper({
+        runOwnedPinnedWrite({
           rootPath: directory,
           relativeParentPath: "",
           basename: "value",
@@ -305,7 +305,7 @@ describe.runIf(native)("native filesystem primitives", () => {
     __setNativeLoaderForTest(() => native!);
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-native-root-write-");
-    await runPinnedWriteHelper({
+    await runOwnedPinnedWrite({
       rootPath: directory,
       relativeParentPath: "",
       basename: "value",
@@ -332,7 +332,7 @@ describe.runIf(native)("native filesystem primitives", () => {
     const directory = await tempRoot("fs-safe-native-overwrite-");
     await fs.mkdir(path.join(directory, "nested"));
     await fs.writeFile(path.join(directory, "nested/value"), "old");
-    await runPinnedWriteHelper({
+    await runOwnedPinnedWrite({
       rootPath: directory,
       relativeParentPath: "nested",
       basename: "value",
@@ -350,7 +350,7 @@ describe.runIf(native)("native filesystem primitives", () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-native-identity-");
     const identity = await fs.lstat(directory);
-    await expectFsSafeError(runPinnedWriteHelper({
+    await expectFsSafeError(runOwnedPinnedWrite({
       rootPath: directory,
       relativeParentPath: "",
       basename: "value",

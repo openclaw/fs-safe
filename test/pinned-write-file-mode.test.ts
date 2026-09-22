@@ -3,7 +3,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -43,7 +43,7 @@ describe.skipIf(process.platform === "win32")("fallback final file mode", () => 
         return handle;
       });
 
-      await runPinnedWriteHelper({
+      await runOwnedPinnedWrite({
         rootPath, relativeParentPath: "", basename: "target", mkdir: false, overwrite,
         mode: 0o4600,
         input: kind === "buffer" ? { kind: "buffer", data: "synthetic mode" }

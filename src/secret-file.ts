@@ -8,7 +8,7 @@ import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryI
 import { pinNodeDirectoryForMode, assertOwnedDirectory } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
 import { openPinnedFileSync } from "./pinned-open.js";
-import { runPinnedWriteHelper } from "./pinned-write.js";
+import { runOwnedPinnedWrite } from "./pinned-write.js";
 import { ensureTrailingSep } from "./root-context.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import {
@@ -340,7 +340,7 @@ async function materializeSecretFileAtomic(
 
   await assertAsyncDirectoryGuard(rootGuard);
   await assertAsyncDirectoryGuard(parentGuard);
-  await runPinnedWriteHelper({
+  await runOwnedPinnedWrite({
     rootPath: parentGuard.realPath,
     relativeParentPath: "",
     basename: fileName,

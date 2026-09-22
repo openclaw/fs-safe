@@ -6,7 +6,7 @@ import { configureFsSafeNative, root } from "../src/index.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import * as verification from "../src/root-write-verification.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 let nativeAvailable = false;
@@ -334,7 +334,7 @@ describe.skipIf(process.platform === "win32" || !nativeAvailable)("private nativ
       const target = path.join(directory, "target");
       const failure = Object.assign(new Error("Windows verification failed"), { code: outcome });
       let retainedFd: number | undefined;
-      const pending = runPinnedWriteHelper({
+      const pending = runOwnedPinnedWrite({
         rootPath: directory, relativeParentPath: "", basename: "target", mkdir: false,
         mode: 0, input: { kind: "buffer", data: "payload" },
         verifyPublished: async (fd, identity, parentGuard) => {

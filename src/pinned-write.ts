@@ -44,42 +44,10 @@ function fastParentGuardDeopt(error: unknown): error is FsSafeError {
     (error.code === "path-mismatch" || error.code === "not-file");
 }
 
-const PINNED_WRITE_SNAPSHOT_KEYS: readonly PropertyKey[] = [
-  "rootPath", "relativeParentPath", "basename", "maxBytes", "rootIdentity",
-];
-const RENAME_POLICY_SNAPSHOT_KEYS: readonly PropertyKey[] = ["targetPath", "renameIdentity"];
-type OwnedPinnedWriteParams = Omit<
-  PinnedWriteParams,
-  "rootPath" | "relativeParentPath" | "basename" | "maxBytes" | "rootIdentity"
->;
-
-function copyOwnEnumerableExcept(
-  source: object,
-  excluded: readonly PropertyKey[],
-): Record<PropertyKey, unknown> {
-  const owned: Record<PropertyKey, unknown> = {};
-  for (const key of Reflect.ownKeys(source)) {
-    // Node 22's object-rest fast path can read excluded accessors eagerly.
-    // Exclude before even inspecting the descriptor so named authority and
-    // pathname fields remain single-read snapshots on every supported Node.
-    if (excluded.includes(key)) continue;
-    if (!Object.getOwnPropertyDescriptor(source, key)?.enumerable) continue;
-    Object.defineProperty(owned, key, {
-      value: Reflect.get(source, key),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-  }
-  return owned;
-}
-
-export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<FileIdentityStat> {
-  const { rootPath, relativeParentPath, basename, maxBytes, rootIdentity } = params;
-  const ownedParams = copyOwnEnumerableExcept(
-    params,
-    PINNED_WRITE_SNAPSHOT_KEYS,
-  ) as OwnedPinnedWriteParams;
+// Internal producers own these ordinary data records before this boundary.
+// Public options are captured by Root/archive/secret owners, not passed through.
+export async function runOwnedPinnedWrite(params: PinnedWriteParams): Promise<FileIdentityStat> {
+  const { rootPath, relativeParentPath, basename, maxBytes, rootIdentity, ...ownedParams } = params;
   const normalizedParams: PinnedWriteParams = {
     ...ownedParams,
     rootPath,
@@ -128,27 +96,21 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   return await runPinnedWriteFallback(normalizedParams);
 }
 
-export async function runPinnedWriteWithRenamePolicy(
-  params: PinnedWriteParams & {
-    targetPath: string;
-    renameIdentity?: RenameIdentityPolicy;
-  },
+export async function runOwnedPinnedWriteWithRenamePolicy(
+  params: PinnedWriteParams,
+  targetPath: string,
+  renameIdentity?: RenameIdentityPolicy,
 ): Promise<FileIdentityStat> {
-  const { targetPath, renameIdentity } = params;
-  const writeParams = copyOwnEnumerableExcept(
-    params,
-    RENAME_POLICY_SNAPSHOT_KEYS,
-  ) as PinnedWriteParams;
   if (renameIdentity !== "verify-content-with-lock") {
-    return await runPinnedWriteHelper(writeParams);
+    return await runOwnedPinnedWrite(params);
   }
-  const relativeTargetPath = writeParams.relativeParentPath
-    ? `${writeParams.relativeParentPath}/${writeParams.basename}`
-    : writeParams.basename;
+  const relativeTargetPath = params.relativeParentPath
+    ? `${params.relativeParentPath}/${params.basename}`
+    : params.basename;
   return await withPinnedWriteRenameIdentityLock({
-    rootPath: writeParams.rootPath, targetPath, relativeTargetPath,
-  }, async () => await runPinnedWriteHelper({
-    ...writeParams,
+    rootPath: params.rootPath, targetPath, relativeTargetPath,
+  }, async () => await runOwnedPinnedWrite({
+    ...params,
     onRenameIdentityMismatch: "verify-content",
   }));
 }

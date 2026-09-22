@@ -6,7 +6,7 @@ import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { openPrivateStoreLockRoot } from "../src/file-store-boundary.js";
 import { configureFsSafeNative } from "../src/index.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { createSecretFileAtomic, prepareSecretFileWrite, writeSecretFileAtomic } from "../src/secret-file.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -120,7 +120,7 @@ for (const route of ["fallback", "Windows fallback", "native", "Windows native"]
         const original = identities.get(parent)!;
         expect(Number(original + 2n)).toBe(Number(original));
         identities.set(parent, original + 2n);
-        await expect(runPinnedWriteHelper({
+        await expect(runOwnedPinnedWrite({
           rootPath: parent, relativeParentPath: "", basename: "state.json", mkdir: false,
           mode: 0o600, input: { kind: "buffer", data: "must not be published" },
           rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },

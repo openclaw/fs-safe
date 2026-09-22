@@ -8,7 +8,7 @@ import { root } from "../src/root.js";
 import { stageFileInDirectory } from "../src/advanced.js";
 import { assertNativeStaging, createNativeStage } from "../src/native-staged-file.js";
 import { openStagedDirectory } from "../src/staged-directory.js";
-import { runPinnedWriteHelper } from "../src/pinned-write.js";
+import { runOwnedPinnedWrite } from "../src/pinned-write.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -439,7 +439,7 @@ describe.runIf(native)("native private creation permission verification", () => 
     await using source = await fsAsync.open(sourcePath, "r");
     const changed = new Error("admitted source changed");
     const verify = vi.fn(async () => { throw changed; });
-    await expect(runPinnedWriteHelper({
+    await expect(runOwnedPinnedWrite({
       rootPath: directory, relativeParentPath: "", basename: "target", mkdir: false,
       mode: 0o600, private: true, overwrite: false,
       input: { kind: "file", handle: source, size: 14, clone: "auto", verifySource: verify },

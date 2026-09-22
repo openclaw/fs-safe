@@ -13,11 +13,12 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 import {
-  runPinnedWriteHelper,
-  runPinnedWriteWithRenamePolicy,
+  runOwnedPinnedWrite,
+  runOwnedPinnedWriteWithRenamePolicy,
 } from "../src/pinned-write.js";
-import type { PinnedWriteParams, RenameIdentityPolicy } from "../src/pinned-write-types.js";
+import type { PinnedWriteParams } from "../src/pinned-write-types.js";
 import { realpathSync } from "../src/realpath.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -37,6 +38,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
+  __setFsSafeTestHooksForTest();
 });
 
 function baseParams(overrides: Partial<PinnedWriteParams> = {}): PinnedWriteParams {
@@ -91,7 +93,7 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
     __setNativeLoaderForTest(loader);
     configureFsSafeNative({ mode: "require" });
 
-    await expect(runPinnedWriteHelper(baseParams({
+    await expect(runOwnedPinnedWrite(baseParams({
       rootPath: root,
       input: { kind: "stream", stream },
       assertBeforeMutation,
@@ -115,18 +117,18 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
     __setNativeLoaderForTest(loader);
     configureFsSafeNative({ mode: "require" });
 
-    await expect(runPinnedWriteHelper(baseParams({
+    await expect(runOwnedPinnedWrite(baseParams({
       rootPath: "C:\\root:hidden",
       relativeParentPath: "../outside:stream",
       basename: "bad/name:stream",
       maxBytes: -1,
     }))).rejects.toBeInstanceOf(RangeError);
-    await expect(runPinnedWriteHelper(baseParams({
+    await expect(runOwnedPinnedWrite(baseParams({
       rootPath: "C:\\root:hidden",
       relativeParentPath: "../outside:stream",
       basename: "bad/name:stream",
     }))).rejects.toMatchObject({ code: "invalid-path", message: "invalid target path" });
-    await expect(runPinnedWriteHelper(baseParams({
+    await expect(runOwnedPinnedWrite(baseParams({
       rootPath: "C:\\root:hidden",
       relativeParentPath: "../outside:stream",
       basename: "value:stream",
@@ -134,7 +136,7 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
       code: "invalid-path",
       message: "relative path must not escape root",
     });
-    await expect(runPinnedWriteHelper(baseParams({
+    await expect(runOwnedPinnedWrite(baseParams({
       rootPath: "C:\\root:hidden",
       relativeParentPath: "parent:stream",
       basename: "value:stream",
@@ -142,7 +144,7 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
       ...aliasError,
       message: "pinned write root uses a Windows filesystem namespace alias",
     });
-    await expect(runPinnedWriteHelper(baseParams({
+    await expect(runOwnedPinnedWrite(baseParams({
       rootPath: "C:\\root",
       relativeParentPath: "parent:stream",
       basename: "value:stream",
@@ -190,7 +192,7 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
         `${nativeRealpath(candidate)}:stream`);
       const lstat = vi.spyOn(fsSync, "lstatSync");
 
-      await expect(runPinnedWriteHelper(baseParams({ rootPath: root })))
+      await expect(runOwnedPinnedWrite(baseParams({ rootPath: root })))
         .rejects.toMatchObject(aliasError);
 
       expect(openBeneath).toHaveBeenCalledTimes(1);
@@ -217,7 +219,7 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
       __setNativeLoaderForTest(() => bundledNative!);
       configureFsSafeNative({ mode: "require" });
 
-      await runPinnedWriteHelper(baseParams({
+      await runOwnedPinnedWrite(baseParams({
         rootPath: namespaceRoot,
         relativeParentPath,
         basename,
@@ -228,8 +230,8 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
   );
 });
 
-describe("pinned write parameter snapshots", () => {
-  it("reads attacker-controlled path and identity accessors once", async () => {
+describe("owned pinned write parameter snapshots", () => {
+  it("captures nested identity after validation and retains it across the admission wait", async () => {
     const rootPath = await tempRoot("fs-safe-pinned-snapshot-");
     const identity = await fs.lstat(rootPath, { bigint: true });
     const reads = new Map<string, number>();
@@ -239,36 +241,41 @@ describe("pinned write parameter snapshots", () => {
       if (count > 1) throw new Error(`${name} read more than once`);
       return value;
     };
-    const rootIdentity = Object.defineProperties({}, {
-      dev: { enumerable: true, get: once("dev", identity.dev) },
-      ino: { enumerable: true, get: once("ino", identity.ino) },
+    const onceDev = once("dev", identity.dev);
+    const onceIno = once("ino", identity.ino);
+    const rootIdentity = { get dev() { return onceDev(); }, get ino() { return onceIno(); } };
+    const params = baseParams({
+      rootPath,
+      maxBytes: 1024,
+      rootIdentity,
+      sync: false,
+      mutationAdmission: { rejectParentSymlinks: false, authorize: async () => undefined },
     });
-    const params = Object.defineProperties({
-      mkdir: false,
-      mode: 0o600,
-      overwrite: false,
-      input: { kind: "buffer", data: "payload" },
-    }, {
-      rootPath: { enumerable: true, get: once("rootPath", rootPath) },
-      relativeParentPath: { enumerable: true, get: once("relativeParentPath", "") },
-      basename: { enumerable: true, get: once("basename", "value") },
-      maxBytes: { enumerable: true, get: once("maxBytes", 1024) },
-      rootIdentity: { enumerable: true, get: once("rootIdentity", rootIdentity) },
-    }) as PinnedWriteParams;
     configureFsSafeNative({ mode: "off" });
-
-    await runPinnedWriteHelper(params);
-
-    expect(Object.fromEntries(reads)).toEqual({
-      rootPath: 1,
-      relativeParentPath: 1,
-      basename: 1,
-      maxBytes: 1,
-      rootIdentity: 1,
-      dev: 1,
-      ino: 1,
+    const admission = vi.fn(async () => {
+      expect(Object.fromEntries(reads)).toEqual({ dev: 1, ino: 1 });
+      await Promise.resolve();
+      Object.defineProperties(rootIdentity, {
+        dev: { value: identity.dev + 1n }, ino: { value: identity.ino + 1n },
+      });
+      params.basename = "decoy";
+      params.maxBytes = 0;
     });
+    __setFsSafeTestHooksForTest({ beforePinnedWriteParentAdmission: admission });
+
+    await expect(runOwnedPinnedWrite({ ...params, basename: "..", maxBytes: -1 }))
+      .rejects.toBeInstanceOf(RangeError);
+    await expect(runOwnedPinnedWrite({ ...params, basename: ".." }))
+      .rejects.toMatchObject({ code: "invalid-path" });
+    expect(reads.size).toBe(0);
+    expect(admission).not.toHaveBeenCalled();
+
+    await runOwnedPinnedWrite(params);
+
+    expect(Object.fromEntries(reads)).toEqual({ dev: 1, ino: 1 });
+    expect(admission).toHaveBeenCalledOnce();
     await expect(fs.readFile(path.join(rootPath, "value"), "utf8")).resolves.toBe("payload");
+    expect(await fs.readdir(rootPath)).toEqual(["value"]);
   });
 
   it("retains inherited and non-enumerable named snapshots", async () => {
@@ -292,7 +299,7 @@ describe("pinned write parameter snapshots", () => {
     });
     configureFsSafeNative({ mode: "off" });
 
-    await runPinnedWriteHelper(params as PinnedWriteParams);
+    await runOwnedPinnedWrite(params as PinnedWriteParams);
 
     await expect(fs.readFile(path.join(rootPath, "value"), "utf8")).resolves.toBe("payload");
   });
@@ -331,34 +338,32 @@ describe("pinned write parameter snapshots", () => {
     });
     configureFsSafeNative({ mode: "off" });
 
-    await runPinnedWriteHelper(params);
+    await runOwnedPinnedWrite(params);
 
     expect(getterReceiver).toBe(params);
     expect(hiddenReads).toBe(0);
+    expect(callbackReceiver).not.toBe(params);
     expect(callbackReceiver?.callbackState).toBe("state");
     expect(callbackReceiver?.[stateSymbol]).toBe("symbol-state");
     expect(Object.getPrototypeOf(callbackReceiver)).toBe(Object.prototype);
     expect(Object.hasOwn(callbackReceiver ?? {}, "__proto__")).toBe(true);
     expect(callbackReceiver?.__proto__).toBe("proto-state");
+    expect(Reflect.ownKeys(callbackReceiver!)).toEqual([
+      "mkdir", "mode", "overwrite", "input", "sync", "onPublished", "callbackState", "__proto__",
+      "rootPath", "relativeParentPath", "basename", "maxBytes", "rootIdentity", stateSymbol,
+    ]);
   });
 
   it.each([
     { label: "default", renameIdentity: undefined },
     { label: "strict", renameIdentity: "strict" as const },
     { label: "verify-content", renameIdentity: "verify-content-with-lock" as const },
-  ])("reads rename-wrapper exclusions once for $label policy", async ({ label, renameIdentity }) => {
+  ])("keeps the separate $label rename policy out of the writer receiver", async ({ label, renameIdentity }) => {
     const rootPath = await tempRoot(`fs-safe-pinned-wrapper-${label}-`);
     const basename = "value";
     const targetPath = path.join(rootPath, basename);
-    const reads = new Map<string, number>();
     let callbackReceiver: Record<PropertyKey, unknown> | undefined;
-    const once = <T>(name: string, value: T): (() => T) => () => {
-      const count = (reads.get(name) ?? 0) + 1;
-      reads.set(name, count);
-      if (count > 1) throw new Error(`${name} read more than once`);
-      return value;
-    };
-    const coreParams = {
+    const params: PinnedWriteParams = {
       rootPath,
       relativeParentPath: "",
       basename,
@@ -371,23 +376,11 @@ describe("pinned write parameter snapshots", () => {
         callbackReceiver = this;
       },
     };
-    const namedDescriptors = {
-      targetPath: { enumerable: label === "default", get: once("targetPath", targetPath) },
-      renameIdentity: {
-        enumerable: label === "default",
-        get: once("renameIdentity", renameIdentity as RenameIdentityPolicy | undefined),
-      },
-    };
-    const params = (
-      label === "verify-content"
-        ? Object.assign(Object.create(Object.defineProperties({}, namedDescriptors)), coreParams)
-        : Object.defineProperties(coreParams, namedDescriptors)
-    ) as PinnedWriteParams & { targetPath: string; renameIdentity?: RenameIdentityPolicy };
     configureFsSafeNative({ mode: "off" });
 
-    await runPinnedWriteWithRenamePolicy(params);
+    await runOwnedPinnedWriteWithRenamePolicy(params, targetPath, renameIdentity);
 
-    expect(Object.fromEntries(reads)).toEqual({ targetPath: 1, renameIdentity: 1 });
+    expect(callbackReceiver).not.toBe(params);
     expect(Object.hasOwn(callbackReceiver ?? {}, "targetPath")).toBe(false);
     expect(Object.hasOwn(callbackReceiver ?? {}, "renameIdentity")).toBe(false);
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("payload");

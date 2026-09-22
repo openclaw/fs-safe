@@ -9,7 +9,7 @@ import {
 } from "./archive-plan.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
-import { runPinnedWriteHelper } from "./pinned-write.js";
+import { runOwnedPinnedWrite } from "./pinned-write.js";
 import { constants as fsConstants } from "node:fs";
 import fs, {
   type FileHandle,
@@ -296,7 +296,7 @@ async function extractWasmTar(params: StagedArchiveExtractOptions & {
           relPath: member.path, outPath: path.join(stagingDir, member.path), originalPath: member.path,
           isDirectory: member.kind === "directory", deadline });
         if (member.kind === "file") {
-          await runPinnedWriteHelper({ rootPath: stagingDir, relativeParentPath: path.posix.dirname(member.path),
+          await runOwnedPinnedWrite({ rootPath: stagingDir, relativeParentPath: path.posix.dirname(member.path),
             basename: path.posix.basename(member.path), mkdir: false, mode: 0o600, overwrite: false,
             sync: false,
             maxBytes: member.size, input: { kind: "stream", stream: Readable.from(payload) } });
