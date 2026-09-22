@@ -9,7 +9,6 @@ import {
   type AnyAsyncDirectoryGuard,
   createAsyncDirectoryGuard,
   createNearestExistingDirectoryGuard,
-  createNearestExistingSyncDirectoryGuard,
   createSyncDirectoryGuard,
   inspectDirectoryIdentity,
   inspectDirectoryIdentitySync,
@@ -191,9 +190,11 @@ describe("directory guard Windows pathname admission", () => {
       .rejects.toMatchObject(aliasError);
     await expect(createNearestExistingDirectoryGuard(directory, erasedAlias))
       .rejects.toMatchObject(aliasError);
-    expect(() => createNearestExistingSyncDirectoryGuard(erasedAlias, missing))
-      .toThrow(expect.objectContaining(aliasError));
-    expect(() => createNearestExistingSyncDirectoryGuard(directory, erasedAlias))
+    await expect(createNearestExistingDirectoryGuard(erasedAlias, missing, { bigint: true }))
+      .rejects.toMatchObject(aliasError);
+    await expect(createNearestExistingDirectoryGuard(directory, erasedAlias, { bigint: true }))
+      .rejects.toMatchObject(aliasError);
+    expect(() => createSyncDirectoryGuard(erasedAlias))
       .toThrow(expect.objectContaining(aliasError));
     await expect(inspectDirectoryIdentity(erasedAlias)).rejects.toMatchObject(aliasError);
     await expect(inspectDirectoryIdentity(erasedAlias, exact.stat))
@@ -362,18 +363,20 @@ describe("directory guard Windows pathname admission", () => {
     },
   );
 
-  it("captures the nearest existing directory through both wrapper contracts", async () => {
+  it("captures nearest guards and a direct sync guard for the existing ancestor", async () => {
     const directory = await tempRoot("fs-safe-directory-guard-ancestor-");
     const parent = path.join(directory, "existing");
     fsSync.mkdirSync(parent);
     const missing = path.join(parent, "missing", "leaf");
     const numeric = await createNearestExistingDirectoryGuard(directory, missing);
     const exact = await createNearestExistingDirectoryGuard(directory, missing, { bigint: true });
-    const sync = createNearestExistingSyncDirectoryGuard(directory, missing);
+    const sync = createSyncDirectoryGuard(parent);
 
-    expect([numeric.dir, exact.dir, sync.dir]).toEqual([parent, parent, parent]);
+    expect([numeric.dir, exact.dir]).toEqual([parent, parent]);
+    expect(sync.dir).toBe(parent);
     expect(typeof numeric.stat.ino).toBe("number");
     expect(typeof exact.stat.ino).toBe("bigint");
+    expect(typeof sync.stat.ino).toBe("number");
     expect(sync.realPath).toBe(realpath.realpathSync(parent));
     expect(numeric.realPath).toBe(realpath.realpathSync.native(parent));
     expect(exact.realPath).toBe(numeric.realPath);
@@ -386,7 +389,8 @@ describe("directory guard Windows pathname admission", () => {
     const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(() => { throw failure; });
 
     await expect(createNearestExistingDirectoryGuard(directory, missing)).rejects.toBe(failure);
-    expect(() => createNearestExistingSyncDirectoryGuard(directory, missing)).toThrow(failure);
+    await expect(createNearestExistingDirectoryGuard(directory, missing, { bigint: true }))
+      .rejects.toBe(failure);
     expect(lstat).toHaveBeenCalledTimes(2);
   });
 });

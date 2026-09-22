@@ -136,19 +136,10 @@ export async function createNearestExistingDirectoryGuard(
   return nearestExistingDirectoryGuard(rootReal, targetPath, "native", options);
 }
 
-export function createNearestExistingSyncDirectoryGuard(
-  rootReal: string,
-  targetPath: string,
-): SyncDirectoryGuard {
-  return nearestExistingDirectoryGuard(rootReal, targetPath, "normalized");
-}
-
-function nearestExistingDirectoryGuard(rootReal: string, targetPath: string, mode: "normalized"): SyncDirectoryGuard;
-function nearestExistingDirectoryGuard(rootReal: string, targetPath: string, mode: "native", options: DirectoryGuardOptions): AnyAsyncDirectoryGuard;
 function nearestExistingDirectoryGuard(
   rootReal: string,
   targetPath: string,
-  mode: DirectoryGuardMode,
+  mode: "native",
   options?: DirectoryGuardOptions,
 ): AnyAsyncDirectoryGuard {
   assertNoWindowsPathAlias(rootReal, "filesystem");

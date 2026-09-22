@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createNearestExistingDirectoryGuard,
-  createNearestExistingSyncDirectoryGuard,
+  createSyncDirectoryGuard,
   inspectDirectoryIdentity,
 } from "../src/directory-guard.js";
 import { executePermissionCommand } from "../src/permission-exec.js";
@@ -41,8 +41,10 @@ describe.skipIf(process.platform !== "win32")("real Windows namespace drive root
       });
       await expect(createNearestExistingDirectoryGuard(namespaceRoot, namespaceMissing))
         .resolves.toMatchObject({ dir: namespaceRoot });
-      expect(createNearestExistingSyncDirectoryGuard(namespaceRoot, namespaceMissing))
-        .toMatchObject({ dir: namespaceRoot });
+      const syncGuard = createSyncDirectoryGuard(namespaceRoot);
+      expect(syncGuard.dir).toBe(namespaceRoot);
+      expect(syncGuard.stat.isDirectory()).toBe(true);
+      expectSameRealPath(syncGuard.realPath, driveRoot);
       await expect(safeStat(namespaceRoot)).resolves.toMatchObject({
         ok: true,
         isDir: true,

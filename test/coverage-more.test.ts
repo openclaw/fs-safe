@@ -12,7 +12,6 @@ import {
   assertSyncDirectoryGuard,
   createAsyncDirectoryGuard,
   createNearestExistingDirectoryGuard,
-  createNearestExistingSyncDirectoryGuard,
   createSyncDirectoryGuard,
 } from "../src/directory-guard.js";
 import { drainFileLockManagerForTest, resetFileLockManagerForTest } from "../src/file-lock.js";
@@ -203,8 +202,12 @@ describe("bounded streams and directory guard coverage", () => {
 
     const nearest = await createNearestExistingDirectoryGuard(root, path.join(root, "missing", "x"));
     expect(nearest.dir).toBe(root);
-    expect(createNearestExistingSyncDirectoryGuard(root, path.join(root, "missing", "x")).dir)
-      .toBe(root);
+    const nearestExact = await createNearestExistingDirectoryGuard(
+      root, path.join(root, "missing", "x"), { bigint: true },
+    );
+    expect(nearestExact.dir).toBe(root);
+    expect(typeof nearestExact.stat.ino).toBe("bigint");
+    await expect(assertAsyncDirectoryGuard(nearestExact)).resolves.toBeUndefined();
   });
 });
 
