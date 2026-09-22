@@ -8,7 +8,7 @@ import {
   inspectTempWorkspaceDescriptorIdentitySync,
   projectTempWorkspaceNumericIdentity,
   type TempWorkspaceIdentity,
-} from "../src/temp-workspace-identity.js";
+} from "../src/temp-workspace-child-admission.js";
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
