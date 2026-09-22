@@ -12,6 +12,8 @@
 
 ### Performance and maintenance
 
+- Keep standalone publication-path admission with the existing drive-anchoring and namespace-alias helpers, preserving raw path checks and public behavior.
+- Exercise directory-replacement admission, recovery, and native rename ownership in required Bun CI while preserving canonicalization rejection and real filesystem identity checks.
 - Consolidate private FileStore path, byte-limit, and copy-source admission under the existing boundary owner without changing store methods, policy order, or publication behavior.
 - Consolidate shared creation boundary checks while preserving path admission, private permissions, file identity, publication outcomes, and evidence-preserving cleanup.
 - Consolidate temp directory identity and permission checks under existing admission support while preserving lazy bounded-cleanup loading and descriptor ownership.

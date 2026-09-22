@@ -5,8 +5,7 @@ import {
   type JsonStore,
   type JsonStoreLockOptions,
 } from "./json-document-store.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type JsonStoreOptions<T> = JsonFileStoreOptions & {
   filePath: string;

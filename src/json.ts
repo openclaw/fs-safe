@@ -9,10 +9,9 @@ import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { writeTempFileSync } from "./replace-file-descriptor.js";
 import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 const READ_RETRY_MAX_ATTEMPTS = 5;
 const READ_RETRY_BASE_DELAY_MS = 50;

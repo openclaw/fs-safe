@@ -10,6 +10,9 @@ export default {
     include: [
       "test/realpath.test.ts",
       "test/relative-publication.test.ts",
+      "test/replace-directory-authority.test.ts",
+      "test/replace-directory-retained-admission.test.ts",
+      "test/native-rename-authority.test.ts",
       "test/native-integration.test.ts",
       "test/windows-native-fd-bridge.test.ts",
       "test/darwin-acl-native.test.ts",

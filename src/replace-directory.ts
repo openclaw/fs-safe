@@ -17,9 +17,8 @@ import {
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { RetainedDirectoryReplacement } from "./retained-directory-replacement.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
-import { admitStandalonePublicationPath } from "./standalone-publication-path.js";
+import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { serializePathWrite } from "./write-queue.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type ReplaceDirectoryAtomicOptions = {
   stagedDir: string;

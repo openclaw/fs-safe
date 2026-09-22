@@ -101,6 +101,9 @@ function replacementAdapter(
   const ownedTreeRemovalAvailable = vi.fn(() => true);
   const binding = {
     closeOwnedFd: vi.fn(),
+    canonicalizePath: (pathname: string, ordinary: boolean) => ({
+      path: ordinary ? fsSync.realpathSync(pathname) : fsSync.realpathSync.native(pathname),
+    }),
     renameNoReplace: vi.fn(),
     renameNoReplaceWithIdentity: renameNoReplace,
     removeOwnedTree,

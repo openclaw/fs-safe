@@ -156,3 +156,9 @@ export function assertNoWindowsPathAlias(
 export function isWindowsPathAliasError(error: unknown): error is FsSafeError {
   return error instanceof FsSafeError && error.details?.reason === "windows-path-alias";
 }
+
+export function admitStandalonePublicationPath(value: string, message?: string): string {
+  const admittedPath = anchorWindowsDriveRelativePath(value);
+  assertNoWindowsPathAlias(admittedPath, "filesystem", message);
+  return admittedPath;
+}
