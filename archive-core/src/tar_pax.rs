@@ -146,3 +146,7 @@ impl LocalPax {
         Ok(size)
     }
 }
+
+#[cfg(test)]
+#[path = "tar_pax_decimal_tests.rs"]
+mod decimal_tests;
