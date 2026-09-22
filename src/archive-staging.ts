@@ -35,8 +35,6 @@ function checkExtractionDeadline(deadline?: ExtractionDeadline): void {
   deadline?.check();
 }
 
-export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-errors.js";
-
 function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return new ArchiveSecurityError(
     "destination-symlink-traversal",
@@ -377,8 +375,6 @@ export async function withStagedArchiveDestination<T>(params: {
     }
   }
 }
-
-export { mergeExtractedTreeIntoDestination } from "./archive-merge.js";
 
 export function createArchiveSymlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return symlinkTraversalError(originalPath);

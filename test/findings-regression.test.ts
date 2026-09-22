@@ -7,7 +7,8 @@ import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { extractArchive } from "../src/archive.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
-import { prepareArchiveDestinationDir, prepareArchiveOutputPath, mergeExtractedTreeIntoDestination } from "../src/archive-staging.js";
+import { prepareArchiveDestinationDir, prepareArchiveOutputPath } from "../src/archive-staging.js";
+import { mergeExtractedTreeIntoDestination } from "../src/archive-merge.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { writeJsonSync } from "../src/json.js";
 import {

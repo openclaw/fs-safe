@@ -97,20 +97,18 @@ export {
   type ArchiveLimitErrorCode,
 } from "./archive-limits.js";
 export { ArchiveFormatError, type ArchiveFormatErrorCode } from "./archive-errors.js";
-export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-staging.js";
+export { ArchiveSecurityError, type ArchiveSecurityErrorCode } from "./archive-errors.js";
 export {
   createArchiveSymlinkTraversalError,
-  mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationDir,
   prepareArchiveOutputPath,
   withStagedArchiveDestination,
 } from "./archive-staging.js";
+export { mergeExtractedTreeIntoDestination } from "./archive-merge.js";
 export { createTarEntryPreflightChecker, type TarEntryInfo } from "./archive-plan.js";
-export {
-  loadZipArchiveWithPreflight,
-  readZipCentralDirectoryEntryCount,
-  type ZipArchiveWithFiles,
-} from "./archive-zip-preflight.js";
+export { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
+export { readZipCentralDirectoryEntryCount } from "./archive-zip-count.js";
+export type { ZipArchiveWithFiles } from "./archive-zip-loader.js";
 const SUPPORTS_NOFOLLOW = process.platform !== "win32" && "O_NOFOLLOW" in fsConstants;
 const OPEN_WRITE_CREATE_FLAGS =
   fsConstants.O_WRONLY |

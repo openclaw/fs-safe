@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
+import { readZipCentralDirectoryEntryCount } from "../src/archive-zip-count.js";
 import { zipRecords } from "./helpers/zip-records.js";
 
 const signature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);

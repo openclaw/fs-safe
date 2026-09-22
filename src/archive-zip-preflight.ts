@@ -7,8 +7,6 @@ import {
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import { loadAdmittedZipArchive, type ZipArchiveWithFiles } from "./archive-zip-loader.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
-export { readZipCentralDirectoryEntryCount } from "./archive-zip-count.js";
-export type { ZipArchiveWithFiles } from "./archive-zip-loader.js";
 
 export async function loadZipArchiveWithPreflight(
   buffer: Buffer | Uint8Array,

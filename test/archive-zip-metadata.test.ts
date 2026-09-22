@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { admitZipBuffer } from "../src/archive-zip-admission.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
-import { loadZipArchiveWithPreflight, readZipCentralDirectoryEntryCount } from "../src/archive-zip-preflight.js";
+import { loadZipArchiveWithPreflight } from "../src/archive-zip-preflight.js";
+import { readZipCentralDirectoryEntryCount } from "../src/archive-zip-count.js";
 import { zipRecords, unicodePath, zipExtra } from "./helpers/zip-records.js";
 
 const limits = resolveExtractLimits();

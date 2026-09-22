@@ -4,15 +4,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import {
-  ArchiveSecurityError,
   assertDirectoryIdentityGuard,
   createArchiveSymlinkTraversalError,
-  mergeExtractedTreeIntoDestination,
   prepareArchiveDestinationGuard,
   prepareArchiveDestinationDir,
   prepareArchiveOutputPath,
   withStagedArchiveDestination,
 } from "../src/archive-staging.js";
+import { mergeExtractedTreeIntoDestination } from "../src/archive-merge.js";
+import { ArchiveSecurityError } from "../src/archive-errors.js";
 import { isPathInside } from "../src/path.js";
 import { rootFromDirectoryGuard } from "../src/root-impl.js";
 
