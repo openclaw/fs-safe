@@ -5,14 +5,16 @@ import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { FsSafeError } from "./errors.js";
-import { assertFileStoreMaxBytes } from "./file-store-limit.js";
-import { assertRelativePath, resolveStorePath } from "./file-store-path.js";
 import { pruneExpiredStoreEntries, type FileStorePruneOptions } from "./file-store-prune.js";
 export type { FileStorePruneOptions } from "./file-store-prune.js";
 import {
+  assertFileStoreMaxBytes,
+  assertRelativePath,
   ensureParentInRoot,
   openPrivateStoreLockRoot,
   openWritableStoreRoot,
+  readFileStoreCopySource,
+  resolveStorePath,
   writeStreamToTempSource,
 } from "./file-store-boundary.js";
 import { writeFileSyncAtomic } from "./file-store-sync-write.js";
@@ -28,7 +30,6 @@ import {
   assertNoWindowsPathAlias,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
-import { readFileStoreCopySource } from "./file-store-copy-source.js";
 
 export type FileStoreOptions = {
   rootDir: string;

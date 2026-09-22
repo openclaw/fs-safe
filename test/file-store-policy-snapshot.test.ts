@@ -4,7 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileStore, fileStoreSync, type FileStoreWriteOptions } from "../src/file-store.js";
-import * as copySource from "../src/file-store-copy-source.js";
+import * as copySource from "../src/file-store-boundary.js";
 import * as boundary from "../src/file-store-boundary.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 

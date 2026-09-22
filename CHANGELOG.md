@@ -12,6 +12,7 @@
 
 ### Performance and maintenance
 
+- Consolidate private FileStore path, byte-limit, and copy-source admission under the existing boundary owner without changing store methods, policy order, or publication behavior.
 - Consolidate shared creation boundary checks while preserving path admission, private permissions, file identity, publication outcomes, and evidence-preserving cleanup.
 - Consolidate temp directory identity and permission checks under existing admission support while preserving lazy bounded-cleanup loading and descriptor ownership.
 - Exercise temp-workspace cleanup capability and descriptor ownership checks in required Bun CI, preserving runtime-specific canonicalization rejection and real filesystem admission.
