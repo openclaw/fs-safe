@@ -121,7 +121,9 @@ it("retains rejection of an absolute outside path in the public output helper", 
   const { destDir, home } = await destination();
   await expect(prepareArchiveOutputPath({ destinationDir: destDir, destinationRealDir: destDir,
     relPath: home, outPath: home, originalPath: home, isDirectory: true }))
-    .rejects.toMatchObject({ code: "destination-symlink-traversal" });
+    .rejects.toMatchObject({
+      code: process.platform === "win32" ? "invalid-path" : "destination-symlink-traversal",
+    });
   expect(await fs.readdir(destDir)).toEqual([]);
   await unchangedHome(home);
 });
