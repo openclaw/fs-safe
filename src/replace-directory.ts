@@ -15,7 +15,7 @@ import {
   NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH,
 } from "./native-rename-outcome.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
-import { RetainedDirectoryReplacement } from "./retained-directory-replacement.js";
+import { copyOperationalCode, RetainedDirectoryReplacement } from "./retained-directory-replacement.js";
 import { assertSafePathPrefix } from "./safe-path-segment.js";
 import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -49,22 +49,16 @@ type DirectoryReplacementDetails = Readonly<{
 
 type RenameTransition = "not-renamed" | "renamed" | "indeterminate";
 
-function copyOperationalCode(target: Error, source: unknown): void {
-  const code = (source as { code?: unknown } | null)?.code;
-  if (typeof code === "string") {
-    Object.defineProperty(target, "code", { configurable: true, value: code });
-  }
-}
-
 function replacementFailure(
   error: unknown,
   message: string,
   details: DirectoryReplacementDetails,
+  cause: unknown = error,
 ): Error {
   if (error instanceof FsSafeError) {
-    return new FsSafeError(error.code, message, { cause: error, details });
+    return new FsSafeError(error.code, message, { cause, details });
   }
-  const failure = new Error(message, { cause: error });
+  const failure = new Error(message, { cause });
   copyOperationalCode(failure, error);
   Object.defineProperty(failure, "details", { configurable: true, value: details });
   return failure;
@@ -80,13 +74,7 @@ function replacementAggregate(
     [error, recoveryError],
     "directory replacement operation and recovery both failed",
   );
-  if (error instanceof FsSafeError) {
-    return new FsSafeError(error.code, message, { cause: combined, details });
-  }
-  const failure = new Error(message, { cause: combined });
-  copyOperationalCode(failure, error);
-  Object.defineProperty(failure, "details", { configurable: true, value: details });
-  return failure;
+  return replacementFailure(error, message, details, combined);
 }
 
 function isMissingDirectoryEntry(error: unknown): boolean {

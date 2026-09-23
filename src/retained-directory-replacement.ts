@@ -22,7 +22,7 @@ function helperUnavailable(message: string, cause?: unknown): FsSafeError {
   });
 }
 
-function copyOperationalCode(target: Error, source: unknown): void {
+export function copyOperationalCode(target: Error, source: unknown): void {
   const code = (source as NodeJS.ErrnoException | null)?.code;
   if (typeof code === "string") {
     Object.defineProperty(target, "code", { configurable: true, value: code });

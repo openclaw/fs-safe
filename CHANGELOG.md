@@ -14,6 +14,7 @@
 
 ### Maintenance
 
+- Share directory-replacement error wrapping while preserving primary errors, ordered recovery causes, and publication details.
 - Share file-identity error construction across metadata, temp workspace, and Windows secure-file checks while preserving per-operation error provenance.
 
 ## 0.18.1 - 2026-09-22
