@@ -13,7 +13,12 @@ import {
 import { itWin32, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  Object.defineProperty(process, "platform", platform);
+});
 
 function reference(rootDir: string, requestedPath: string, defaultFileName?: string) {
   const invalid = { ok: false as const, error: "Invalid path: must stay within fixture" };
@@ -52,6 +57,27 @@ describe("lexical path-scope containment", () => {
         .toEqual(reference(rootDir, requestedPath, "default"));
     },
   );
+
+  it.each([" fallback.txt ", "   "])("does not trim the selected default %j", defaultName => {
+    const rootDir = path.resolve("scope");
+    expect(pathScope(rootDir, { label: "fixture" }).resolve(" \n", { defaultName })).toEqual({
+      ok: true, path: path.join(rootDir, defaultName),
+    });
+  });
+
+  it.each([".", "child/.."])("excludes the root when default %j resolves to it", defaultName => {
+    expect(pathScope(path.resolve("scope"), { label: "fixture" }).resolve(" ", { defaultName })).toEqual({
+      ok: false, error: "Invalid path: must stay within fixture",
+    });
+  });
+
+  it("validates an unused Windows default alias before selecting the requested path", () => {
+    const rootDir = path.resolve("scope");
+    // This exercises lexical Windows admission without performing filesystem I/O.
+    Object.defineProperty(process, "platform", { value: "win32" });
+    expect(pathScope(rootDir, { label: "fixture" }).resolve("valid.txt", { defaultName: "unused:stream" }))
+      .toEqual({ ok: false, error: "Invalid path: must stay within fixture" });
+  });
 
   it("preserves bulk order and fails at the first invalid path", () => {
     const rootDir = path.resolve("scope"), scope = pathScope(rootDir, { label: "fixture" });

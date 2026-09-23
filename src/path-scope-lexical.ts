@@ -33,17 +33,10 @@ export function resolvePathWithinNormalizedRoot(
     return { ok: false, error: `Invalid path: must stay within ${scopeLabel}` };
   }
   const raw = requestedPath.trim();
-  if (!raw) {
-    if (!defaultFileName) {
-      return { ok: false, error: "path is required" };
-    }
-    const defaultPath = resolvePathFromBasePreservingWindowsRoot(root, defaultFileName);
-    if (hasWindowsPathAlias(defaultPath, "filesystem") || !pathStaysWithinRoot(root, defaultPath)) {
-      return { ok: false, error: `Invalid path: must stay within ${scopeLabel}` };
-    }
-    return { ok: true, path: defaultPath };
+  if (!raw && !defaultFileName) {
+    return { ok: false, error: "path is required" };
   }
-  const resolved = resolvePathFromBasePreservingWindowsRoot(root, raw);
+  const resolved = resolvePathFromBasePreservingWindowsRoot(root, raw || defaultFileName!);
   if (hasWindowsPathAlias(resolved, "filesystem") || !pathStaysWithinRoot(root, resolved)) {
     return { ok: false, error: `Invalid path: must stay within ${scopeLabel}` };
   }
