@@ -54,7 +54,7 @@ export type SharedRootWriteTarget = Readonly<{
   preparedParent?: PreparedRootWriteParent;
 }>;
 
-function writeSelectionChanged(cause?: unknown): FsSafeError {
+export function writeSelectionChanged(cause?: unknown): FsSafeError {
   return new FsSafeError("path-mismatch", "write target changed during operation", errorCauseOptions(cause));
 }
 

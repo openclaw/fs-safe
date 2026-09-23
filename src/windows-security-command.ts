@@ -4,7 +4,7 @@ import { FsSafeError } from "./errors.js";
 import type { NativeWindowsDescriptorSecurityFacts, NativeWindowsSecurityFacts } from "./native-binding.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, PermissionCommandError } from "./permission-exec.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
-import { parseWindowsSecurityCommandFacts } from "./windows-security-facts.js";
+import { parseWindowsSecurityCommandFacts, unverified } from "./windows-security-facts.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const TERMINATION_GRACE_MS = 1_000;
@@ -62,10 +62,6 @@ function command(operation: CommandOperation, params: CommandParams) {
       FS_SAFE_WINDOWS_SECURITY_EXPECTED_LINKS: String(params.expectedLinks ?? 1),
     },
   };
-}
-
-function unverified(message: string, cause?: unknown): never {
-  throw new FsSafeError("permission-unverified", message, cause === undefined ? {} : { cause });
 }
 
 function record(value: unknown): value is Record<string, unknown> {

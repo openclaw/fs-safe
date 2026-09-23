@@ -13,8 +13,8 @@ type DescriptorFacts = Pick<NativeWindowsSecurityFacts,
   "ownerSid" | "currentUserSid" | "daclPresent" | "isLocal" |
   "aceListComplete" | "unsupportedAceTypes" | "aces">;
 
-function unverified(message: string): never {
-  throw new FsSafeError("permission-unverified", message);
+export function unverified(message: string, cause?: unknown): never {
+  throw new FsSafeError("permission-unverified", message, cause === undefined ? {} : { cause });
 }
 
 function record(value: unknown): value is Record<string, unknown> {

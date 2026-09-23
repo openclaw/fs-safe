@@ -67,6 +67,23 @@ afterEach(() => {
 });
 
 describe("Windows security command facts", () => {
+  it.each([
+    { stdout: "null", message: "Windows security command returned an incomplete response", hasCause: false },
+    { stdout: "{", message: "Windows security command returned invalid data", hasCause: true },
+  ])("preserves cause presence for malformed reply $stdout", ({ stdout, message, hasCause }) => {
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, signal: null, stdout, stderr: "" } as ReturnType<typeof spawnSync>);
+    let failure: unknown;
+    try { readWindowsSecurityFactsCommand("C:\\private"); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({
+      name: "FsSafeError", code: "permission-unverified", category: "operational", message, details: undefined,
+    });
+    expect(Object.hasOwn(failure as object, "details")).toBe(true);
+    expect(Object.hasOwn(failure as object, "cause")).toBe(hasCause);
+    const cause = Object.getOwnPropertyDescriptor(failure, "cause")?.value;
+    if (hasCause) expect(cause).toBeInstanceOf(SyntaxError);
+    else expect(cause).toBeUndefined();
+  });
+
   it("executes only the packaged script and keeps caller paths out of command arguments", async () => {
     const targetPath = String.raw`C:\private\';Get-Process;#`;
     const script = fileURLToPath(new URL("../src/windows-security-bridge.ps1", import.meta.url));

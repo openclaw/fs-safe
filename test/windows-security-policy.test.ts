@@ -60,6 +60,42 @@ afterEach(() => {
 });
 
 describe("Windows security native policy", () => {
+  it.each([
+    { name: "undefined", cause: undefined }, { name: "null", cause: null },
+    { name: "string", cause: "denied" }, { name: "number", cause: 0 },
+    { name: "symbol", cause: Symbol("denied") }, { name: "object", cause: { reason: "denied" } },
+    { name: "Error", cause: new Error("descriptor query failed") },
+    { name: "hostile object", cause: Object.defineProperty({}, "code", { get() { throw new Error("cause code inspected"); } }) },
+  ])("preserves the $name native rejection cause without inspecting it", async ({ cause }) => {
+    binding({ inspectWindowsSecureFileHandle() { throw cause; } });
+    const failure = await inspectSecureWindowsFile(params).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      name: "FsSafeError", code: "permission-unverified", category: "operational",
+      message: "Windows descriptor ACL verification failed", details: undefined,
+    });
+    expect(Object.hasOwn(failure as object, "details")).toBe(true);
+    const descriptor = Object.getOwnPropertyDescriptor(failure, "cause");
+    expect(descriptor?.value).toBe(cause);
+    expect(descriptor === undefined).toBe(cause === undefined);
+    noFallback();
+  });
+
+  it.each([
+    { name: "missing result", result: null, message: "Windows descriptor ACL facts were malformed" },
+    {
+      name: "incomplete ACL",
+      result: { identity: "00000001:0000000000000002", security: security({ aceListComplete: false }) },
+      message: "Windows descriptor ACL facts were incomplete or unsupported",
+    },
+  ])("omits cause when rejecting $name", async ({ result, message }) => {
+    binding({ inspectWindowsSecureFileHandle: () => result });
+    const failure = await inspectSecureWindowsFile(params).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "permission-unverified", category: "operational", message, details: undefined });
+    expect(Object.hasOwn(failure as object, "cause")).toBe(false);
+    expect(Object.hasOwn(failure as object, "details")).toBe(true);
+    noFallback();
+  });
+
   it.each([undefined, null, true, "stale"])("requires each native capability to be callable (%j)", async missing => {
     binding({
       readOwnerAndDacl: missing,
@@ -68,7 +104,12 @@ describe("Windows security native policy", () => {
     });
     expect(() => readOwnerAndDacl(privatePath)).toThrow(expect.objectContaining({ code: "helper-unavailable" }));
     await expect(createPrivateDirectory(privatePath)).rejects.toMatchObject({ code: "helper-unavailable" });
-    await expect(inspectSecureWindowsFile(params)).rejects.toMatchObject({ code: "permission-unverified" });
+    const failure = await inspectSecureWindowsFile(params).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "permission-unverified", category: "operational",
+      message: "Windows descriptor ACL verification requires an up-to-date native helper", details: undefined,
+    });
+    expect(Object.hasOwn(failure as object, "cause")).toBe(false);
     noFallback();
   });
 

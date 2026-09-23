@@ -1,22 +1,17 @@
 import type { BigIntStats, Stats } from "node:fs";
 
-import { FsSafeError } from "./errors.js";
 import { fileIdentityMismatchError } from "./strict-file-identity.js";
 import { getNativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import { warnNativeFallback } from "./native-fallback-warning.js";
 import type { PermissionCheck } from "./permissions.js";
 import { inspectWindowsDescriptorCommand } from "./windows-security-command.js";
-import { validateSecureWindowsSecurityFacts } from "./windows-security-facts.js";
+import { unverified as permissionUnverified, validateSecureWindowsSecurityFacts } from "./windows-security-facts.js";
 
 const IDENTITY_RE = /^([0-9a-f]{8}):([0-9a-f]{16})$/;
 const TRUSTED_OWNER_CLASSES = new Set(["current-user", "system", "administrators"]);
 
 type ExactIdentity = Pick<BigIntStats, "dev" | "ino">;
-
-function permissionUnverified(message: string, cause?: unknown): never {
-  throw new FsSafeError("permission-unverified", message, cause === undefined ? {} : { cause });
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
