@@ -2278,7 +2278,7 @@ mod tests {
         let root = temp_root("copy-invalid-source");
         let parent = std::fs::File::open(&root).unwrap();
         assert_eq!(
-            copy_file_range_exclusive(i32::MAX, parent.as_raw_fd(), "target")
+            copy_file_range_exclusive(-1, parent.as_raw_fd(), "target")
                 .err()
                 .unwrap()
                 .status,

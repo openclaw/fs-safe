@@ -709,7 +709,7 @@ mod tests {
             assert_eq!(task.copy().err().unwrap().status, "too-large");
             assert!(!fixture.path.join("stage").exists());
             let mut task = fixture.task(clone_mode, u64::MAX);
-            task.source_fd = i32::MAX;
+            task.source_fd = -1;
             assert_eq!(task.copy().err().unwrap().status, "EBADF");
             assert!(!fixture.path.join("stage").exists());
         }
