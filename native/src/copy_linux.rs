@@ -3,15 +3,17 @@ use std::sync::atomic::AtomicBool;
 
 use crate::copy_contents::check_cancelled;
 
-use crate::unix::{borrowed, os_error};
+use crate::unix::{borrowed, nonnegative_fd, os_error};
 use crate::{NativeResult, native_error};
 
 pub(crate) fn copy_contents(source_fd: i32, target_fd: i32, cancelled: &AtomicBool) -> NativeResult<()> {
     check_cancelled(cancelled)?;
+    let source_fd = nonnegative_fd(source_fd, "inspect copy source")?;
     let source = borrowed(source_fd);
-    let target = borrowed(target_fd);
     let source_stat =
         rustix::fs::fstat(source).map_err(|error| os_error(error, "inspect copy source"))?;
+    let target_fd = nonnegative_fd(target_fd, "inspect copy target")?;
+    let target = borrowed(target_fd);
     let target_stat =
         rustix::fs::fstat(target).map_err(|error| os_error(error, "inspect copy target"))?;
     if !FileType::from_raw_mode(source_stat.st_mode).is_file()
@@ -85,6 +87,13 @@ mod tests {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::MetadataExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn copy_cancellation_precedes_descriptor_admission() {
+        let error = copy_contents(-1, -1, &AtomicBool::new(true)).unwrap_err();
+        assert_eq!(error.status, "ABORT_ERR");
+        assert_eq!(error.reason, "file copy aborted");
+    }
 
     #[test]
     fn sparse_transfer_preserves_bytes_length_and_borrowed_offsets() {

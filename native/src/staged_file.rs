@@ -5,13 +5,14 @@ use napi_derive::napi;
 use rustix::fs::{Mode, OFlags};
 
 use crate::unix::{
-    borrowed, file_matches_child as matches, os_error, remove_matching_child as remove,
-    validate_child_basename,
+    borrowed, file_matches_child as matches, nonnegative_fd, os_error,
+    remove_matching_child as remove, validate_child_basename,
 };
 use crate::{NativeResult, into_napi};
 
 fn create(parent_fd: i32, name: &str) -> NativeResult<i32> {
     validate_child_basename(name)?;
+    let parent_fd = nonnegative_fd(parent_fd, "create staged child")?;
     // Direct children need no F_GETPATH post-open traversal check. Hand off the
     // fd immediately: the TS owner records cleanup authority before any fstat,
     // chmod, write, or pathname verification can fail.

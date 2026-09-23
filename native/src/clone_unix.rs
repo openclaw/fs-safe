@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::unix::{borrowed, os_error, validate_child_basename};
+use crate::unix::{borrowed, nonnegative_fd, os_error, validate_child_basename};
 use crate::{NativeResult, native_error};
 
 pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
+    let parent_fd = nonnegative_fd(parent_fd, "inspect clone filesystem")?;
     let stats = rustix::fs::fstatfs(borrowed(parent_fd))
         .map_err(|error| os_error(error, "inspect clone filesystem"))?;
     #[cfg(target_os = "linux")]
@@ -284,4 +285,18 @@ pub fn clone_tree(
     // These bulk operations cannot be interrupted once dispatched. Report
     // cancellation only after their writes settle; recovery may then proceed.
     check_cancelled(cancelled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_cancellation_precedes_descriptor_admission() {
+        let error = clone_tree(-1, -1, "child", &AtomicBool::new(true), 1).unwrap_err();
+        assert_eq!(error.status, "Cancelled");
+        assert_eq!(error.reason, "directory cloning aborted");
+        let error = clone_tree(-1, -1, "../child", &AtomicBool::new(true), 1).unwrap_err();
+        assert_eq!(error.status, "EINVAL");
+    }
 }

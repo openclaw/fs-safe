@@ -111,6 +111,8 @@ Linux root lookups reject negative descriptor sentinels before borrowing a handl
 
 On Linux and macOS, native asynchronous file-copy admission rejects negative source and parent descriptors before creating a stage, preserving source-before-parent error ordering. Callers must keep nonnegative source and parent descriptors open until the operation settles.
 
+Low-level Unix query, hash, copy, clone, staging, and owned-tree cleanup calls also reject negative descriptors before using them, preserving each operation's path-validation, cancellation, and cleanup order. Descriptor-relative mutations never accept a working-directory sentinel as a retained capability. On modern macOS, beneath opens reject negative roots with `EBADF` before calling `openat`, rather than returning `EIO` after an OS failure or working-directory operation. This check does not establish the validity of arbitrary nonnegative integers: callers must supply live descriptors and retain them until synchronous calls return or asynchronous operations settle.
+
 `replaceDirectoryAtomic()` requires `renameNoReplaceWithIdentity` before it
 creates a missing target parent. On POSIX the dedicated entry point keeps the
 existing pre-dispatch exact receipt fence but dispatches direct-child names
