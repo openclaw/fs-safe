@@ -6,7 +6,7 @@ import { expandHomePrefix, resolveRequiredHomeDir } from "./home-dir.js";
 import { isFileUrl, safeFileURLToPath } from "./local-file-access.js";
 import { realpathSync } from "./realpath.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPathSync } from "./root-path.js";
-import { root, type HardlinkPolicy, type ReadResult, type SymlinkPolicy } from "./root.js";
+import { root, type ReadResult, type RootReadOptions } from "./root.js";
 import {
   assertNoWindowsPathAlias,
   isWindowsPathAliasError,
@@ -34,12 +34,7 @@ export type ResolveLocalPathFromRootsSyncOptions = LocalRootsInputOptions & {
   requireFile?: boolean;
 };
 
-export type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {
-  hardlinks?: HardlinkPolicy;
-  maxBytes?: number;
-  nonBlockingRead?: boolean;
-  symlinks?: SymlinkPolicy;
-};
+export type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & RootReadOptions;
 
 function resolveLocalPathInput(input: string, label: string): string {
   if (isFileUrl(input)) {
