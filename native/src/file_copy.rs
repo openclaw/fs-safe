@@ -126,8 +126,14 @@ impl FileCopyTask {
         clone: impl FnOnce(i32, i32, &str, bool) -> NativeResult<i32>,
     ) -> NativeResult<CreatedCopy> {
         self.check_cancelled()?;
+        if self.source_fd < 0 {
+            return Err(os_error(rustix::io::Errno::BADF, "retain copy source"));
+        }
         let source = rustix::io::fcntl_dupfd_cloexec(borrowed(self.source_fd), 0)
             .map_err(|error| os_error(error, "retain copy source"))?;
+        if self.parent_fd < 0 {
+            return Err(os_error(rustix::io::Errno::BADF, "retain copy parent"));
+        }
         let parent = rustix::io::fcntl_dupfd_cloexec(borrowed(self.parent_fd), 0)
             .map_err(|error| os_error(error, "retain copy parent"))?;
         self.check_size(&source)?;
@@ -407,6 +413,145 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.path).unwrap();
         }
+    }
+
+    fn isolated_admission_test(name: &str, check: impl FnOnce()) {
+        const CHILD_TEST: &str = "FS_SAFE_COPY_ADMISSION_TEST";
+        if std::env::var(CHILD_TEST).as_deref() == Ok(name) {
+            let limits = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            // A baseline regression can panic before syscall validation.
+            assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limits) }, 0);
+            check();
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([name, "--exact", "--test-threads=1"])
+            .env(CHILD_TEST, name)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated admission check failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    fn assert_admission_failure(task: &FileCopyTask, fixture: &Fixture, operation: &str) {
+        let available = || {
+            rustix::io::fcntl_dupfd_cloexec(&fixture.source, 0)
+                .unwrap()
+                .as_raw_fd()
+        };
+        let next_fd = available();
+        let error = task
+            .copy_with_clone(|_, _, _, _| panic!("clone ran before descriptor admission"))
+            .err()
+            .expect("invalid descriptor must reject before creating a stage");
+        assert_eq!(error.status, "EBADF");
+        assert_eq!(error.reason, os_error(rustix::io::Errno::BADF, operation).reason);
+        assert_eq!(available(), next_fd, "failed admission leaked a descriptor");
+        assert!(!fixture.path.join("stage").exists());
+        assert!(fixture.source.metadata().unwrap().is_file());
+        assert!(fixture.parent.metadata().unwrap().is_dir());
+    }
+
+    #[test]
+    fn copy_admission_rejects_invalid_sources_before_retaining_parent() {
+        isolated_admission_test(
+            "file_copy::tests::copy_admission_rejects_invalid_sources_before_retaining_parent",
+            || {
+                let fixture = Fixture::new();
+                for invalid in [libc::AT_FDCWD, i32::MIN, i32::MAX, -1] {
+                    let mut task = fixture.task(CloneMode::Auto, u64::MAX);
+                    task.source_fd = invalid;
+                    task.parent_fd = -1;
+                    assert_admission_failure(&task, &fixture, "retain copy source");
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn copy_admission_rejects_invalid_parents_and_releases_retained_source() {
+        isolated_admission_test(
+            "file_copy::tests::copy_admission_rejects_invalid_parents_and_releases_retained_source",
+            || {
+                let fixture = Fixture::new();
+                for invalid in [libc::AT_FDCWD, i32::MIN, i32::MAX, -1] {
+                    let mut task = fixture.task(CloneMode::Auto, u64::MAX);
+                    task.parent_fd = invalid;
+                    for _ in 0..8 {
+                        assert_admission_failure(&task, &fixture, "retain copy parent");
+                    }
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn copy_admission_preserves_cancellation_and_size_check_order() {
+        isolated_admission_test(
+            "file_copy::tests::copy_admission_preserves_cancellation_and_size_check_order",
+            || {
+                let fixture = Fixture::new();
+                let mut task = fixture.task(CloneMode::Auto, 0);
+                task.source_fd = -1;
+                task.parent_fd = -1;
+                task.cancelled.store(true, Ordering::Relaxed);
+                let error = task.copy().err().unwrap();
+                assert_eq!(error.status, "Cancelled");
+                assert_eq!(error.reason, "file copy aborted");
+                assert!(!fixture.path.join("stage").exists());
+
+                task.cancelled.store(false, Ordering::Relaxed);
+                assert_admission_failure(&task, &fixture, "retain copy source");
+                task.source_fd = fixture.source.as_raw_fd();
+                assert_admission_failure(&task, &fixture, "retain copy parent");
+                task.parent_fd = fixture.parent.as_raw_fd();
+                let error = task.copy().err().unwrap();
+                assert_eq!(error.status, "too-large");
+                assert_eq!(error.reason, "copy input exceeds maxBytes");
+                assert!(!fixture.path.join("stage").exists());
+                assert!(fixture.source.metadata().unwrap().is_file());
+                assert!(fixture.parent.metadata().unwrap().is_dir());
+            },
+        );
+    }
+
+    #[test]
+    fn copy_admission_retains_cloexec_descriptors_and_closes_failed_clones() {
+        isolated_admission_test(
+            "file_copy::tests::copy_admission_retains_cloexec_descriptors_and_closes_failed_clones",
+            || {
+                let fixture = Fixture::new();
+                let task = fixture.task(CloneMode::Always, u64::MAX);
+                let mut retained = None;
+                let error = task.copy_with_clone(|source, parent, _, _| {
+                    assert_ne!(source, fixture.source.as_raw_fd());
+                    assert_ne!(parent, fixture.parent.as_raw_fd());
+                    for fd in [source, parent] {
+                        assert!(
+                            rustix::io::fcntl_getfd(borrowed(fd))
+                                .unwrap()
+                                .contains(rustix::io::FdFlags::CLOEXEC)
+                        );
+                    }
+                    retained = Some((source, parent));
+                    Err(native_error("ENOTSUP", "test clone admission failure"))
+                }).err().unwrap();
+                assert_eq!(error.status, "ENOTSUP");
+                let (source, parent) = retained.unwrap();
+                for fd in [source, parent] {
+                    // Raw fcntl can inspect the now-closed duplicate safely.
+                    assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, -1);
+                    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+                }
+                assert!(!fixture.path.join("stage").exists());
+                assert!(fixture.source.metadata().unwrap().is_file());
+                assert!(fixture.parent.metadata().unwrap().is_dir());
+            },
+        );
     }
 
     #[test]

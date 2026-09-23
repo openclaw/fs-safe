@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Native Unix file-copy admission:** reject negative source and parent descriptors without panicking in invalid low-level addon calls.
 - **Native Linux root admission:** reject negative root descriptors before guarded traversal, avoiding Rust panics and working-directory resolution in invalid low-level addon calls.
 - **Guest directory moves:** preserve mode `000` across devices without changing other directory modes or their umask behavior; restore permissions through the retained directory descriptor and preserve published entries on failure. Thanks @SebTardif. ([#616](https://github.com/openclaw/fs-safe/pull/616))
 - **Literal entry names:** preserve `~` files and directories during Root walks and ZIP/TAR extraction, including followed in-root symlinks and durable publication.
