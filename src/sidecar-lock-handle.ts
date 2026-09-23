@@ -1,7 +1,6 @@
-import type { Root } from "./root-impl.js";
+import type { HeldSidecarLock } from "./sidecar-lock-admission.js";
 import {
   sidecarLockSnapshotStillPresent,
-  type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockHandle } from "./sidecar-lock-types.js";
 
@@ -47,12 +46,7 @@ export function createSidecarLockHandle(params: {
 
 export function createHeldSidecarLockHandle(params: {
   normalizedTargetPath: string;
-  held: {
-    lockPath: string;
-    snapshot: SidecarLockSnapshot;
-    lockRoot?: Root;
-    parsePayload?: (raw: string) => unknown;
-  };
+  held: Pick<HeldSidecarLock, "lockPath" | "snapshot" | "lockRoot" | "parsePayload">;
   release: (options?: { retry?: boolean }) => Promise<unknown>;
 }): SidecarLockHandle {
   return createSidecarLockHandle({

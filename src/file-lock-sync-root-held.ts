@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { getSyncLockAdmissions } from "./file-lock-sync-admission.js";
+import { getSyncLockAdmissions, type SyncHeldLock } from "./file-lock-sync-admission.js";
+import type { SidecarLockOptionFields } from "./sidecar-lock-types.js";
 import { FsSafeError } from "./errors.js";
 import type {
   FileLockSyncHandle,
@@ -7,7 +8,6 @@ import type {
 import {
   parseSidecarLockPayload,
   sidecarLockSnapshotMatches,
-  type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import {
@@ -40,22 +40,14 @@ const rootSyncHandleDispositions = new WeakMap<
   RootSyncHeldLockHandleDisposition
 >();
 
-export type RootSyncHeldLock = {
+export type RootSyncHeldLock = SidecarLockOptionFields<SyncHeldLock & {
   deferredExitReleases?: Set<RootSyncHeldLockHandleDisposition>;
-  fd: number | undefined;
-  lockPath: string;
-  normalizedTargetPath: string;
-  parsePayload?: (raw: string) => unknown;
-  refCount: number;
-  reentrantOwner?: string;
   releaseState: RootSyncHeldLockReleaseState;
   revision: number;
   rootAuthority: FileLockSyncRootAuthority;
   rootPath: FileLockSyncRootPath;
   rootReceipt: FileLockSyncRootFileReceipt;
-  snapshot: SidecarLockSnapshot;
-  timer?: NodeJS.Timeout;
-};
+}>;
 
 function readRootSyncHeldReleaseState(
   held: RootSyncHeldLock,

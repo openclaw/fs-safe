@@ -35,10 +35,7 @@ export type FileLockSyncRootFileReceipt = Readonly<{
   parent: DirectoryReceipt;
 }>;
 
-export type FileLockSyncRootDirectoryReceipt = Readonly<{
-  identity: ExactIdentity;
-  parent: DirectoryReceipt;
-}>;
+export type FileLockSyncRootDirectoryReceipt = FileLockSyncRootFileReceipt;
 
 export type FileLockSyncRootDiskSnapshot = {
   ownershipToken?: never;

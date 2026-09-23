@@ -6,7 +6,7 @@ import {
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 
-type SidecarAdmissionRunner = {
+export type SidecarAdmissionRunner = {
   hasToken(): boolean;
   run<T>(callback: () => T): T;
 };

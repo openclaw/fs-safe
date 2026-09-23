@@ -11,14 +11,10 @@ import {
   parseSidecarLockSnapshotUnderAdmission,
   scopedSidecarLockParser,
   type SidecarLockParserState,
+  type SidecarAdmissionRunner,
 } from "./sidecar-lock-admission-parser.js";
 import type { Root } from "./root-impl.js";
 import type { SidecarLockAcquireOptions } from "./sidecar-lock-types.js";
-
-type SidecarAdmissionRunner = {
-  hasToken(): boolean;
-  run<T>(callback: () => T): T;
-};
 
 type StaleOptions = Pick<
   SidecarLockAcquireOptions<Record<string, unknown>>,
