@@ -106,11 +106,8 @@ export async function pinDirectoryForMode(params: {
   }
 }
 
-export async function applyDirectoryMode(params: {
-  fsModule: AsyncTempFileSystem;
-  dirPath: string;
+export async function applyDirectoryMode(params: Parameters<typeof pinDirectoryForMode>[0] & {
   mode: number;
-  ignoreChmodError?: boolean;
 }): Promise<void> {
   const owner = await pinDirectoryForMode(params);
   try {
@@ -173,14 +170,12 @@ export async function writeTempFile(params: {
   }
 }
 
-export function writeTempFileSync(params: {
+export function writeTempFileSync(params: Omit<
+  Parameters<typeof writeTempFile>[0],
+  "fsModule"
+> & {
   fsModule: SyncTempFileSystem;
-  tempPath: string;
-  content: string | Uint8Array;
-  mode: number;
   fchmodSync?: SyncFchmod;
-  sync: boolean;
-  onIdentity?: (identity: BigIntStats) => void;
 }): { fd: number; identity: BigIntStats } {
   const fd = params.fsModule.openSync(params.tempPath, "wx", params.mode);
   try {
