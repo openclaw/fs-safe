@@ -198,7 +198,8 @@ mod windows {
         NtQueryInformationFile,
     };
     use windows_sys::Win32::Foundation::{
-        ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, LocalFree,
+        ERROR_INSUFFICIENT_BUFFER, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE,
+        LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetSecurityInfo, SE_FILE_OBJECT,
@@ -216,11 +217,12 @@ mod windows {
         WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED, FILE_READ_ATTRIBUTES, FILE_TRAVERSE,
-        FILE_TYPE_DISK, GetFileInformationByHandle, GetFileType, GetFinalPathNameByHandleW,
-        VOLUME_NAME_GUID,
+        BY_HANDLE_FILE_INFORMATION, DELETE as DELETE_ACCESS, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
+        FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED,
+        FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE, FILE_TYPE_DISK,
+        FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, GetFileInformationByHandle,
+        GetFileType, GetFinalPathNameByHandleW, READ_CONTROL, VOLUME_NAME_GUID, WRITE_DAC, WRITE_OWNER,
     };
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -237,20 +239,6 @@ mod windows {
         },
     };
 
-    const GENERIC_READ: u32 = 0x8000_0000;
-    const GENERIC_WRITE: u32 = 0x4000_0000;
-    const GENERIC_ALL: u32 = 0x1000_0000;
-    const DELETE_ACCESS: u32 = 0x0001_0000;
-    const WRITE_DAC: u32 = 0x0004_0000;
-    const WRITE_OWNER: u32 = 0x0008_0000;
-    const READ_CONTROL: u32 = 0x0002_0000;
-    const FILE_READ_DATA: u32 = 0x0000_0001;
-    const FILE_WRITE_DATA: u32 = 0x0000_0002;
-    const FILE_APPEND_DATA: u32 = 0x0000_0004;
-    const FILE_READ_EA: u32 = 0x0000_0008;
-    const FILE_WRITE_EA: u32 = 0x0000_0010;
-    const FILE_DELETE_CHILD: u32 = 0x0000_0040;
-    const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
     const PRIVATE_PARENT_CREATE_ACCESS: u32 =
         FILE_READ_ATTRIBUTES | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE;
     const PRIVATE_PARENT_METADATA_ACCESS: u32 = FILE_READ_ATTRIBUTES;

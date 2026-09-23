@@ -8,8 +8,8 @@ use std::sync::OnceLock;
 
 use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
-    FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF,
-    FILE_OPEN_REPARSE_POINT, FILE_OVERWRITE, FILE_OVERWRITE_IF,
+    FILE_CREATE, FILE_DIRECTORY_FILE, FILE_LINK_INFORMATION, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+    FILE_OPEN_IF, FILE_OPEN_REPARSE_POINT, FILE_OVERWRITE, FILE_OVERWRITE_IF, FILE_RENAME_INFORMATION,
     FILE_RENAME_POSIX_SEMANTICS as FILE_RENAME_FLAG_POSIX_SEMANTICS,
     FILE_RENAME_REPLACE_IF_EXISTS as FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
     FILE_SYNCHRONOUS_IO_NONALERT, FileLinkInformation as FILE_LINK_INFORMATION_CLASS,
@@ -628,20 +628,6 @@ pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, _mode: u32) -> Native
     mkdir_child_at_handle(root_handle(parent_fd)?, basename)
 }
 
-#[repr(C)]
-struct FileNameInfoHeader {
-    flags: u32,
-    root_directory: HANDLE,
-    file_name_length: u32,
-}
-
-#[repr(C)]
-struct FileLinkInfoHeader {
-    replace_if_exists: u8,
-    root_directory: HANDLE,
-    file_name_length: u32,
-}
-
 const FILE_NAME_OFFSET: usize = 20;
 
 fn aligned_name_buffer(byte_len: usize) -> Vec<usize> {
@@ -658,21 +644,21 @@ fn set_rename_information(
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
     let name_bytes = std::mem::size_of_val(name.as_slice());
-    let byte_len = (FILE_NAME_OFFSET + name_bytes).max(size_of::<FileNameInfoHeader>());
+    let byte_len = (FILE_NAME_OFFSET + name_bytes).max(size_of::<FILE_RENAME_INFORMATION>());
     let mut buffer = aligned_name_buffer(byte_len);
     // SAFETY: the zeroed usize storage is suitably aligned, the fixed fields
     // end at offset 20 on the supported Windows x64 ABI, and the allocation is
     // large enough for the trailing UTF-16 filename.
     unsafe {
-        let header = buffer.as_mut_ptr().cast::<FileNameInfoHeader>();
-        (*header).flags = FILE_RENAME_FLAG_POSIX_SEMANTICS
+        let header = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+        (*header).Anonymous.Flags = FILE_RENAME_FLAG_POSIX_SEMANTICS
             | if replace {
                 FILE_RENAME_FLAG_REPLACE_IF_EXISTS
             } else {
                 0
             };
-        (*header).root_directory = target_root;
-        (*header).file_name_length = name_bytes as u32;
+        (*header).RootDirectory = target_root;
+        (*header).FileNameLength = name_bytes as u32;
         std::ptr::copy_nonoverlapping(
             name.as_ptr().cast::<u8>(),
             buffer.as_mut_ptr().cast::<u8>().add(FILE_NAME_OFFSET),
@@ -708,14 +694,14 @@ fn set_link_information(
 ) -> NativeResult<()> {
     let name = wide_relative(target_path)?;
     let name_bytes = std::mem::size_of_val(name.as_slice());
-    let byte_len = (FILE_NAME_OFFSET + name_bytes).max(size_of::<FileLinkInfoHeader>());
+    let byte_len = (FILE_NAME_OFFSET + name_bytes).max(size_of::<FILE_LINK_INFORMATION>());
     let mut buffer = aligned_name_buffer(byte_len);
     // SAFETY: FILE_LINK_INFORMATION uses the same x64 filename offset.
     unsafe {
-        let header = buffer.as_mut_ptr().cast::<FileLinkInfoHeader>();
-        (*header).replace_if_exists = 0;
-        (*header).root_directory = target_root;
-        (*header).file_name_length = name_bytes as u32;
+        let header = buffer.as_mut_ptr().cast::<FILE_LINK_INFORMATION>();
+        (*header).Anonymous.ReplaceIfExists = false;
+        (*header).RootDirectory = target_root;
+        (*header).FileNameLength = name_bytes as u32;
         std::ptr::copy_nonoverlapping(
             name.as_ptr().cast::<u8>(),
             buffer.as_mut_ptr().cast::<u8>().add(FILE_NAME_OFFSET),
@@ -1314,6 +1300,45 @@ mod tests {
             ],
             [48, 8, 0, 8, 16, 24, 32, 40],
         );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn publication_information_layouts_match_windows_x64_abi() {
+        use std::mem::{align_of, offset_of};
+        use windows_sys::Wdk::Storage::FileSystem::{
+            FILE_LINK_INFORMATION_0, FILE_RENAME_INFORMATION_0,
+        };
+
+        assert_eq!(FILE_NAME_OFFSET, 20);
+        for layout in [
+            [
+                size_of::<FILE_RENAME_INFORMATION>(),
+                align_of::<FILE_RENAME_INFORMATION>(),
+                offset_of!(FILE_RENAME_INFORMATION, Anonymous),
+                offset_of!(FILE_RENAME_INFORMATION, RootDirectory),
+                offset_of!(FILE_RENAME_INFORMATION, FileNameLength),
+                offset_of!(FILE_RENAME_INFORMATION, FileName),
+                size_of::<FILE_RENAME_INFORMATION_0>(),
+                align_of::<FILE_RENAME_INFORMATION_0>(),
+                offset_of!(FILE_RENAME_INFORMATION_0, Flags),
+                offset_of!(FILE_RENAME_INFORMATION_0, ReplaceIfExists),
+            ],
+            [
+                size_of::<FILE_LINK_INFORMATION>(),
+                align_of::<FILE_LINK_INFORMATION>(),
+                offset_of!(FILE_LINK_INFORMATION, Anonymous),
+                offset_of!(FILE_LINK_INFORMATION, RootDirectory),
+                offset_of!(FILE_LINK_INFORMATION, FileNameLength),
+                offset_of!(FILE_LINK_INFORMATION, FileName),
+                size_of::<FILE_LINK_INFORMATION_0>(),
+                align_of::<FILE_LINK_INFORMATION_0>(),
+                offset_of!(FILE_LINK_INFORMATION_0, Flags),
+                offset_of!(FILE_LINK_INFORMATION_0, ReplaceIfExists),
+            ],
+        ] {
+            assert_eq!(layout, [24, 8, 0, 8, 16, FILE_NAME_OFFSET, 4, 4, 0, 0]);
+        }
     }
 
     #[test]

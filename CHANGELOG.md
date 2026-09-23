@@ -14,6 +14,7 @@
 
 ### Maintenance
 
+- Use SDK-owned Windows publication records and access flags, with explicit x64 wire-layout coverage.
 - Share directory-replacement error wrapping while preserving primary errors, ordered recovery causes, and publication details.
 - Share file-identity error construction across metadata, temp workspace, and Windows secure-file checks while preserving per-operation error provenance.
 

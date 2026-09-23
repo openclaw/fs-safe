@@ -4,15 +4,18 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
+use windows_sys::Wdk::Storage::FileSystem::{
+    FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NO_INTERMEDIATE_BUFFERING, FILE_OPEN,
+};
 use windows_sys::Win32::Foundation::{
     ERROR_HANDLE_EOF, ERROR_MORE_DATA, GetLastError, HANDLE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_END_OF_FILE_INFO, FILE_GENERIC_READ,
-    FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_STREAM_INFO, FileBasicInfo,
-    FileEndOfFileInfo, FileStreamInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
-    GetVolumeInformationByHandleW, SetFileInformationByHandle,
+    BY_HANDLE_FILE_INFORMATION, DELETE as DELETE_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
+    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_END_OF_FILE_INFO,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_STREAM_INFO,
+    FileBasicInfo, FileEndOfFileInfo, FileStreamInfo, GetFileInformationByHandle,
+    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
@@ -29,11 +32,6 @@ use crate::windows::{
 };
 use crate::{NativeResult, native_error};
 
-const DELETE_ACCESS: u32 = 0x0001_0000;
-const FILE_OPEN: u32 = 1;
-const FILE_CREATE: u32 = 2;
-const FILE_DIRECTORY_FILE: u32 = 1;
-const FILE_NO_INTERMEDIATE_BUFFERING: u32 = 8;
 const FILE_SUPPORTS_BLOCK_REFCOUNTING: u32 = 0x0800_0000;
 const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa000_0003;
 const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000_000c;
