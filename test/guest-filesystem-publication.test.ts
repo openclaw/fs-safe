@@ -62,14 +62,14 @@ describe.skipIf(process.platform === "win32")("guest exclusive publication", () 
     },
   );
 
-  it.each(["missing", "unsupported"])("publishes through the Linux %s renameat2 fallback", async (scenario) => {
+  it.each(["missing", "ENOSYS", "EINVAL", "ENOTSUP", "EOPNOTSUPP"])("publishes through the Linux %s renameat2 fallback", async (scenario) => {
     const root = await tempRoot("fs-safe-guest-link-fallback-");
     const setup = [
       "import ctypes",
       "sys.platform = 'linux'",
       "class UnsupportedRename:",
       "    def __call__(self, *args):",
-      "        ctypes.set_errno(errno.ENOSYS)",
+      `        ctypes.set_errno(errno.${scenario === "missing" ? "ENOSYS" : scenario})`,
       "        return -1",
       "class Libc:",
       ...(scenario === "missing" ? ["    pass"] : ["    renameat2 = UnsupportedRename()"]),
@@ -81,6 +81,41 @@ describe.skipIf(process.platform === "win32")("guest exclusive publication", () 
     expect(await fs.readFile(path.join(root, "value"), "utf8")).toBe("payload");
     expect((await fs.stat(path.join(root, "value"))).nlink).toBe(1);
     expect(await fs.readdir(root)).toEqual(["value"]);
+  });
+
+  it.each([
+    ["linux", "EACCES"],
+    ["linux", "EIO"],
+    ["darwin", "ENOSYS"],
+    ["darwin", "missing"],
+  ])("does not fall back after %s rename reports %s", async (platform, failure) => {
+    const root = await tempRoot("fs-safe-guest-rename-failure-");
+    const setup = [
+      "import ctypes, json",
+      "sys.excepthook = lambda kind, error, trace: print(json.dumps({'code': errno.errorcode.get(getattr(error, 'errno', None)), 'message': str(error)}), file=sys.stderr)",
+      `sys.platform = '${platform}'`,
+      "class FailedRename:",
+      "    def __call__(self, *args):",
+      `        ctypes.set_errno(errno.${failure === "missing" ? "ENOSYS" : failure})`,
+      "        return -1",
+      "class Libc:",
+      ...(failure === "missing" ? ["    pass"] : [
+        `    ${platform === "linux" ? "renameat2" : "renameatx_np"} = FailedRename()`,
+      ]),
+      "ctypes.CDLL = lambda *args, **kwargs: Libc()",
+      "def unexpected_link(*args, **kwargs):",
+      "    raise AssertionError('unexpected hardlink fallback')",
+      "os.link = unexpected_link",
+    ].join("\n");
+
+    const result = runGuest(["create", root, "", "value", "0"], "payload", setup);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    const error = JSON.parse(result.stderr.toString());
+    expect(error.code).toBe(failure === "missing" ? "ENOSYS" : failure);
+    if (failure === "missing") expect(error.message).toContain("atomic no-replace rename is unavailable");
+    expect(await fs.readdir(root)).toEqual([]);
   });
 
   it.each(["write", "create"])("cleans %s staging after a prepublication failure", async (operation) => {
