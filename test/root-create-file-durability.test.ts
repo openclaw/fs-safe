@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root } from "../src/index.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
+import { createSecretFileAtomic } from "../src/secret.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -24,13 +25,19 @@ async function* content() {
   yield Buffer.from("complete");
 }
 
-type Input = "buffer" | "stream" | "json" | "atomic-buffer" | "atomic-json";
+type Input = "buffer" | "stream" | "json" | "atomic-buffer" | "atomic-json" | "secret";
 
 function create(
   scoped: Awaited<ReturnType<typeof root>>,
   input: Input,
   options: { durable: boolean | "file"; mode?: number },
 ) {
+  if (input === "secret") return createSecretFileAtomic({
+    rootDir: scoped.rootReal,
+    filePath: path.join(scoped.rootReal, "target"),
+    content: "complete",
+    ...options,
+  });
   if (input === "stream") return scoped.create("target", content(), options);
   const createOptions = { ...options, ...(input.startsWith("atomic-") ? { atomic: true } : {}) };
   return input.endsWith("json")
@@ -70,7 +77,7 @@ function failSync(kind: "file" | "directory", failure: Error, beforeFailure?: ()
 
 for (const native of [false, true]) {
   describe.skipIf(native && !nativeAvailable)(`create file durability (native=${native})`, () => {
-    it.each(["buffer", "stream", "json", "atomic-buffer", "atomic-json"] as const)(
+    it.each(["buffer", "stream", "json", "atomic-buffer", "atomic-json", "secret"] as const)(
       "%s rejects a required file flush without leaving an owned creation",
       async input => {
         configureFsSafeNative({ mode: native ? "require" : "off" });
@@ -86,7 +93,7 @@ for (const native of [false, true]) {
       },
     );
 
-    it.each(["stream", "atomic-buffer", "atomic-json"] as const)("%s preserves boolean durability's EPERM compatibility", async input => {
+    it.each(["stream", "atomic-buffer", "atomic-json", "secret"] as const)("%s preserves boolean durability's EPERM compatibility", async input => {
       configureFsSafeNative({ mode: native ? "require" : "off" });
       const directory = await tempRoot("fs-safe-create-compatible-sync-");
       const scoped = await root(directory);
@@ -95,7 +102,7 @@ for (const native of [false, true]) {
       await expectCompleteTarget(directory, input);
     });
 
-    it.each(["atomic-buffer", "atomic-json"] as const)("%s skips file synchronization with durable false", async input => {
+    it.each(["atomic-buffer", "atomic-json", "secret"] as const)("%s skips file synchronization with durable false", async input => {
       configureFsSafeNative({ mode: native ? "require" : "off" });
       const directory = await tempRoot("fs-safe-create-disabled-sync-");
       const scoped = await root(directory);
@@ -104,7 +111,7 @@ for (const native of [false, true]) {
       await expectCompleteTarget(directory, input);
     });
 
-    it.each(["stream", "atomic-buffer", "atomic-json"] as const)("%s keeps directory synchronization best effort when the file flush is required", async input => {
+    it.each(["stream", "atomic-buffer", "atomic-json", "secret"] as const)("%s keeps directory synchronization best effort when the file flush is required", async input => {
       configureFsSafeNative({ mode: native ? "require" : "off" });
       const directory = await tempRoot("fs-safe-create-directory-sync-");
       const scoped = await root(directory);

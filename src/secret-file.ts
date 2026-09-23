@@ -245,9 +245,14 @@ type SecretFileWriteParams = {
   durable?: boolean;
 };
 
+type SecretFileCreateParams = Omit<SecretFileWriteParams, "durable"> & {
+  /** "file" requires file synchronization; directory synchronization remains best effort. */
+  durable?: boolean | "file";
+};
+
 function snapshotSecretFileWriteParams(
-  params: SecretFileWriteParams,
-): SecretFileWriteParams {
+  params: SecretFileCreateParams,
+): SecretFileCreateParams {
   const rootDir = params.rootDir;
   const filePath = params.filePath;
   assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
@@ -277,7 +282,7 @@ async function secretFileWriteQueueKey(filePath: string): Promise<string> {
 
 // Internal preparation for private writers and their pre-write locks; not lasting authorization.
 export async function prepareSecretFileWrite(
-  params: Omit<SecretFileWriteParams, "content">,
+  params: Pick<SecretFileWriteParams, "rootDir" | "filePath" | "mode" | "dirMode">,
 ): Promise<{
   mode: number;
   rootGuard: AsyncDirectoryGuard<BigIntStats>;
@@ -319,7 +324,7 @@ export async function prepareSecretFileWrite(
 }
 
 async function materializeSecretFileAtomic(
-  params: SecretFileWriteParams,
+  params: SecretFileCreateParams,
   createOnly: boolean,
 ): Promise<void> {
   const { mode, rootGuard, parentGuard, fileName, finalFilePath } = await prepareSecretFileWrite(params);
@@ -350,6 +355,7 @@ async function materializeSecretFileAtomic(
     mode,
     verifyPosixMode: true,
     sync: params.durable !== false,
+    strictFileSync: createOnly && params.durable === "file",
     overwrite: !createOnly,
     input: { kind: "buffer", data: typeof params.content === "string" ? params.content : Buffer.from(params.content) },
     rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },
@@ -381,7 +387,7 @@ export async function writeSecretFileAtomic(params: SecretFileWriteParams): Prom
   });
 }
 
-export async function createSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
+export async function createSecretFileAtomic(params: SecretFileCreateParams): Promise<void> {
   try {
     const ownedParams = snapshotSecretFileWriteParams(params);
     const canonicalPath = await secretFileWriteQueueKey(ownedParams.filePath);

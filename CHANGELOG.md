@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Secret-file creation:** add `durable: "file"` to require successful file synchronization, including on `EPERM`, while preserving best-effort directory synchronization and existing boolean durability behavior.
+
 ### Fixes
 
 - **Native Linux root admission:** reject negative root descriptors before guarded traversal, avoiding Rust panics and working-directory resolution in invalid low-level addon calls.
