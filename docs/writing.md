@@ -301,6 +301,12 @@ type RootWriteJsonOptions = RootWriteOptions & {
 
 Open in append mode, write, sync the file handle, and close. Honors `mkdir` for the parent directory and syncs the parent directory when the append creates the file. `durable: false` skips both syncs. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
 
+`mode` selects the creation mode, defaulting to `0o600` when neither the call nor
+the Root supplies it. On POSIX, the process umask can further restrict that mode;
+for example, `mode: 0o640` with umask `0o077` creates a `0o600` file. Existing
+files are not chmodded, even when an explicit `mode` is supplied. Empty appends
+use the same creation rules.
+
 ```ts
 await fs.append("logs/today.log", `[${ts}] ${line}\n`);
 await fs.append("notes/scratch.md", "* new bullet", { prependNewlineIfNeeded: true });
@@ -521,6 +527,11 @@ files; `update` keeps existing contents. Streaming writes go directly to the
 destination — there is no atomic-rename step. For exclusive publication of a
 complete stream, use [`create()`](#streamed-creation). For streamed replacement,
 the [`atomic`](atomic.md) helpers provide a staged writer.
+
+For all three write modes, `mode` only selects new-file creation permissions,
+defaulting to `0o600` when neither the call nor the Root supplies it. POSIX
+permissions remain subject to the process umask; existing files are not chmodded.
+The returned numeric `stat` records the admitted descriptor before caller writes.
 
 On POSIX, existing-target opens use `O_NONBLOCK` as an admission safeguard so
 a no-reader FIFO cannot stall regular-file validation. This does not change

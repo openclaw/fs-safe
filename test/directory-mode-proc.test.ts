@@ -165,6 +165,7 @@ describe.skipIf(process.platform === "win32")("mocked Linux directory proc-fd au
       expect(candidate).toBe(fixture.procPath);
       await fs.rename(fixture.target, moved);
       await fs.mkdir(fixture.target, { mode: 0o750 });
+      fsSync.chmodSync(fixture.target, 0o750);
       await fixture.handle.chmod(mode);
     });
     try {

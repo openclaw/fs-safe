@@ -193,6 +193,7 @@ for (const variant of ["async", "sync"] as const) {
           const outside = path.join(base, "outside");
           await fs.mkdir(rootDir, { mode: 0o700 });
           await fs.mkdir(outside, { mode: 0o711 });
+          await fs.chmod(outside, 0o711);
           await fs.writeFile(path.join(outside, "keep"), "outside");
           let child = "";
           const observe = variant === "sync" &&

@@ -24,7 +24,7 @@ type RootDefaults = {
   denyMutations?: DenyMutationPolicy; // absolute paths/prefixes mutation methods may not change
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append; default true
-  mode?: number;                   // file mode applied to new writes; per-call override available
+  mode?: number;                   // requested file mode; per-call override available
   nonBlockingRead?: boolean;       // compatibility hint; safe opens are already nonblocking where supported
   renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
   symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root"; // read policy
@@ -156,6 +156,11 @@ await fs.create("private-data/credential", "synthetic credential", { private: tr
 ```
 
 `write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
+
+For `append` and `openWritable`, `mode` only affects new-file creation: POSIX
+permissions remain subject to the process umask. These methods do not chmod
+existing files. Replacement and create-only writes apply their final mode
+through the retained descriptor; see [Writing](writing.md#write-options).
 
 Buffered `create` and `createJson` also accept `atomic?: boolean`. With `true`,
 complete content is staged before exclusive publication even in native-off mode;

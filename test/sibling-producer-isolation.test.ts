@@ -426,6 +426,7 @@ for (const api of ["temp", "output"] as const) {
 
     itPosix.each([undefined, 0, 0o600])("publishes with mode %s through the synchronized descriptor", async (mode) => {
       const f = await fixture();
+      await fs.chmod(f.dir, 0o755);
       const operations: string[] = [];
       let produced = "";
       let identity: fsSync.BigIntStats;

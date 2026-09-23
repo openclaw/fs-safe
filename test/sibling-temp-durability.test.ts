@@ -241,6 +241,7 @@ itPosix("detects a published replacement during parent fsync without chmod or ro
     if (args[0] === f.dir) vi.spyOn(handle, "sync").mockImplementation(async () => {
       await fs.rename(f.final, path.join(f.dir, "moved"));
       await fs.writeFile(f.final, "replacement", { mode: 0o644 });
+      await fs.chmod(f.final, 0o644);
     });
     return handle;
   });

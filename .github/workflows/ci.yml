@@ -1050,6 +1050,21 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Test creation modes under restrictive umask
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          umask 077
+          pnpm test --maxWorkers=1 \
+            test/directory-mode-proc.test.ts \
+            test/root-durable-option.test.ts \
+            test/sibling-producer-isolation.test.ts \
+            test/sibling-temp-durability.test.ts \
+            test/sibling-temp-publication.test.ts \
+            test/temp-workspace-creation-admission.test.ts
+
       - name: Prove retained directory replacement authority
         env:
           FS_SAFE_NATIVE_MODE: require

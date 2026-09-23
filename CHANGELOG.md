@@ -9,6 +9,10 @@
 - **FileStore keys:** keep `~` and `~/name` literal across reads, writes, removal, and pruning, preventing operations from selecting a different in-root home path.
 - **Absolute reads:** keep literal `~` path components in `Root.readAbsolute()` and `reader()` while preserving home expansion for relative `~/name` inputs.
 
+### Documentation
+
+- **Creation permissions:** clarify that `Root.append()` and `openWritable()` creation modes remain subject to the process umask and do not chmod existing files.
+
 ## 0.18.2 - 2026-09-22
 
 ### Fixes

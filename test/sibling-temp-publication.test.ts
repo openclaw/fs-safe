@@ -86,6 +86,7 @@ for (const api of ["temp", "output"] as const) {
           const replace = async () => {
             await fs.rename(f.temp(), f.moved);
             await fs.writeFile(f.temp(), "replacement", { mode: 0o644 });
+            if (process.platform !== "win32") await fs.chmod(f.temp(), 0o644);
           };
           if (timing === "before-open") await replace();
           const handle = await open(candidate, flags, mode);
@@ -123,6 +124,7 @@ for (const api of ["temp", "output"] as const) {
 
     itPosix("rejects a symlink swapped in at open without touching its referent", async () => {
       const f = await fixture();
+      await fs.chmod(f.outside, 0o644);
       const open = fs.open.bind(fs);
       vi.spyOn(fs, "open").mockImplementation(async (candidate, flags, mode) => {
         if (candidate === f.temp()) {
@@ -173,6 +175,7 @@ for (const api of ["temp", "output"] as const) {
           vi.spyOn(handle, "sync").mockImplementation(async () => {
             await fs.rename(f.temp(), f.moved);
             await fs.writeFile(f.temp(), "replacement", { mode: 0o644 });
+            if (process.platform !== "win32") await fs.chmod(f.temp(), 0o644);
           });
         }
         return handle;
@@ -209,6 +212,7 @@ for (const api of ["temp", "output"] as const) {
         if (from === f.temp()) {
           await rename(f.final, f.moved);
           await fs.writeFile(f.final, "published replacement", { mode: 0o644 });
+          if (process.platform !== "win32") await fs.chmod(f.final, 0o644);
           await fs.writeFile(f.temp(), "new temp occupant", { mode: 0o644 });
         }
       });

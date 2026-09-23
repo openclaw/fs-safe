@@ -91,7 +91,10 @@ for (const backend of ["auto", "off"] as const) {
             expect(backend === "auto" && method !== "append" ? syncSpy : asyncSpy).toHaveBeenCalled();
           }
           const target = path.join(directory, "target");
-          if (process.platform !== "win32") expect((await fs.stat(target)).mode & 0o777).toBe(mode);
+          if (process.platform !== "win32") {
+            const expectedMode = method === "append" ? mode & ~process.umask() : mode;
+            expect((await fs.stat(target)).mode & 0o777).toBe(expectedMode);
+          }
           await fs.chmod(target, 0o600);
           expect(await fs.readFile(target, "utf8")).toBe(isJson ? '{"value":"payload"}\n' : "payload");
           expect(await fs.readdir(directory)).toEqual(["target"]);
