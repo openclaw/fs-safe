@@ -111,12 +111,11 @@ async function cleanupOwnedPath(params: {
   }
 }
 
-function cleanupOwnedPathSync(params: {
+function cleanupOwnedPathSync(params: Omit<
+  Parameters<typeof cleanupOwnedPath>[0],
+  "fsModule"
+> & {
   fsModule: SyncOwnerFileSystem;
-  pathname: string;
-  identity?: BigIntStats;
-  originalFailure?: AtomicTempFailure;
-  throwOnCleanupError: boolean;
 }): boolean {
   if (!params.identity) return true;
   try {

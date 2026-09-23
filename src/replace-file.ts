@@ -158,20 +158,13 @@ async function renameWithRetry(params: {
   throw new Error("Atomic rename retry loop exhausted.");
 }
 
-function renameWithRetrySync(params: {
+function renameWithRetrySync(params: Omit<
+  Parameters<typeof renameWithRetry>[0],
+  "fsModule" | "assertSourceCurrent"
+> & {
   fsModule: ReplaceFileAtomicSyncFileSystem;
-  src: string;
-  dest: string;
-  maxRetries: number;
-  baseDelayMs: number;
-  copyFallbackOnPermissionError: boolean;
-  copyFallbackRestore: ReplaceFileCopyFallbackRestorePolicy;
-  maxRestoreBytes?: number;
-  destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
-  sourceIdentity: BigIntStats;
   assertSourceCurrent: () => void;
   fchmodSync?: SyncFchmod;
-  syncFallback: boolean;
 }): ReplaceFileAtomicResult {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     if (attempt > 0) params.assertSourceCurrent();

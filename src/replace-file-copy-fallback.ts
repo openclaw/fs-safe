@@ -386,16 +386,12 @@ export async function copyFallbackReplace(params: {
   }
 }
 
-export function copyFallbackReplaceSync(params: {
+export function copyFallbackReplaceSync(params: Omit<
+  Parameters<typeof copyFallbackReplace>[0],
+  "fsModule"
+> & {
   fsModule: SyncFallbackFs;
-  src: string;
-  dest: string;
-  destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
-  restore: ReplaceFileCopyFallbackRestorePolicy;
-  maxRestoreBytes?: number;
-  expectedSourceIdentity?: BigIntStats;
   fchmodSync?: (fd: number, mode: number) => void;
-  sync: boolean;
 }): void {
   const source = readOwnedCopySourceSync({
     fsModule: params.fsModule,
