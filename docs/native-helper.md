@@ -109,7 +109,7 @@ normalization, and the decision to fall back.
 
 Linux root lookups reject negative descriptor sentinels before borrowing a handle or resolving a relative path; they never substitute the process working directory for an admitted root. Public Root operations already supply retained, admitted handles.
 
-On Linux and macOS, native asynchronous file-copy admission rejects negative source and parent descriptors before creating a stage, preserving source-before-parent error ordering.
+On Linux and macOS, native asynchronous file-copy admission rejects negative source and parent descriptors before creating a stage, preserving source-before-parent error ordering. Callers must keep nonnegative source and parent descriptors open until the operation settles.
 
 `replaceDirectoryAtomic()` requires `renameNoReplaceWithIdentity` before it
 creates a missing target parent. On POSIX the dedicated entry point keeps the

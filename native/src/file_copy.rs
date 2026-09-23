@@ -462,7 +462,7 @@ mod tests {
             "file_copy::tests::copy_admission_rejects_invalid_sources_before_retaining_parent",
             || {
                 let fixture = Fixture::new();
-                for invalid in [libc::AT_FDCWD, i32::MIN, i32::MAX, -1] {
+                for invalid in [libc::AT_FDCWD, i32::MIN, -1] {
                     let mut task = fixture.task(CloneMode::Auto, u64::MAX);
                     task.source_fd = invalid;
                     task.parent_fd = -1;
@@ -478,7 +478,7 @@ mod tests {
             "file_copy::tests::copy_admission_rejects_invalid_parents_and_releases_retained_source",
             || {
                 let fixture = Fixture::new();
-                for invalid in [libc::AT_FDCWD, i32::MIN, i32::MAX, -1] {
+                for invalid in [libc::AT_FDCWD, i32::MIN, -1] {
                     let mut task = fixture.task(CloneMode::Auto, u64::MAX);
                     task.parent_fd = invalid;
                     for _ in 0..8 {
