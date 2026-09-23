@@ -3,7 +3,7 @@ import { FsSafeError } from "./errors.js";
 import { getNativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { requirePathInsideRoot } from "./root-boundary.js";
 import { assertRootPathObservationReceiptCurrent } from "./root-directory-list.js";
 import {
   RootPathObservationError,
@@ -98,12 +98,9 @@ export async function resolvePinnedObservedPathInRoot(
   if (firstSegment === ".." || path.isAbsolute(relativeResolved)) {
     throw outsideWorkspaceError();
   }
-  const admittedCanonicalPath = admitPathInsideRoot({
-    rootPath: resolved.rootCanonicalPath,
-    candidatePath: resolved.canonicalPath,
-    rootIdentity: root.rootIdentity,
-  });
-  if (!admittedCanonicalPath) throw outsideWorkspaceError();
+  const admittedCanonicalPath = requirePathInsideRoot(
+    resolved.rootCanonicalPath, resolved.canonicalPath, root.rootIdentity,
+  );
   return {
     rootReal: resolved.rootCanonicalPath,
     resolved: admittedCanonicalPath.path,

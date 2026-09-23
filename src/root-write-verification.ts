@@ -8,8 +8,8 @@ import { assertNoUnsafeDeviceReadPath, hasNodeErrorCode, isNotFoundPathError, is
 import type { PublishedWriteIdentity } from "./pinned-write-types.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
-import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { fileNotFoundError, hardlinkedPathNotAllowedError } from "./root-errors.js";
+import { requirePathInsideRoot } from "./root-boundary.js";
 
 export async function verifyAtomicWriteResult(params: {
   root: RootContext;
@@ -67,13 +67,9 @@ export async function verifyAtomicWriteResult(params: {
         // Consume the resolver's observation only in this pass; the checks after
         // the directory guards must still sample the current path and descriptor.
         assertPath(resolvedStat);
-        if (!admitPathInsideRoot({
-          rootPath: params.root.rootReal,
-          candidatePath: realPath,
-          rootIdentity: params.root.rootIdentity,
-        })) {
-          throw outsideWorkspaceError();
-        }
+        requirePathInsideRoot(
+          params.root.rootReal, realPath, params.root.rootIdentity,
+        );
         await assertAsyncDirectoryGuard(params.parentGuard);
         await assertRootIdentityCurrent(params.root);
         // Recheck after canonical resolution and directory checks, including late links.

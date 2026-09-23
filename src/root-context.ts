@@ -18,7 +18,7 @@ import {
   isPathInside,
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { admitPathInsideRoot, requirePathInsideRoot } from "./root-boundary.js";
 import { errorCauseOptions, outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { realpathSync } from "./realpath.js";
@@ -265,12 +265,9 @@ export async function resolvePathInRoot(
       // public receipt. Re-admit the exact normalized spelling before it is
       // reused for Root I/O: on a case-sensitive Windows directory it may
       // otherwise name a distinct case-folded sibling after raw traversal.
-      const admitted = admitPathInsideRoot({
-        rootPath: root.rootReal,
-        candidatePath: checked.absolutePath,
-        rootIdentity: root.rootIdentity,
-      });
-      if (!admitted) throw outsideWorkspaceError();
+      const admitted = requirePathInsideRoot(
+        root.rootReal, checked.absolutePath, root.rootIdentity,
+      );
       resolved = admitted.path;
     }
   } catch (error) {

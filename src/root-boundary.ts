@@ -2,6 +2,7 @@ import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { isPathRelativeEscape } from "./path.js";
 import { realpathSync } from "./realpath.js";
+import { outsideWorkspaceError } from "./root-errors.js";
 
 export function sameNormalizedPathSpelling(left: string, right: string): boolean {
   // Preserve case on Windows, where individual directories can be case-sensitive.
@@ -220,4 +221,14 @@ export function admitPathInsideRoot(params: {
     params.identityCache?.set(match.candidateRootPath, false);
     return undefined;
   }
+}
+
+export function requirePathInsideRoot(
+  rootPath: string,
+  candidatePath: string,
+  rootIdentity?: RootBoundaryIdentity,
+): AdmittedRootPath {
+  const admitted = admitPathInsideRoot({ rootPath, candidatePath, rootIdentity });
+  if (!admitted) throw outsideWorkspaceError();
+  return admitted;
 }

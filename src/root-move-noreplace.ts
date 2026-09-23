@@ -12,7 +12,7 @@ import { getNativeBinding } from "./native.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
 import { resolveRootPathSync } from "./root-path.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { requirePathInsideRoot } from "./root-boundary.js";
 import {
   errorCauseOptions,
   fileNotFoundError,
@@ -40,12 +40,9 @@ function nativeParentRelativePath(rootReal: string, parentPath: string): string 
 }
 
 function admitMovePath(root: RootContext, parent: NativeParentAdmission, basename: string): string {
-  const admitted = admitPathInsideRoot({
-    rootPath: root.rootReal,
-    candidatePath: path.join(parent.guard.realPath, basename),
-    rootIdentity: root.rootIdentity,
-  });
-  if (!admitted) throw outsideWorkspaceError();
+  const admitted = requirePathInsideRoot(
+    root.rootReal, path.join(parent.guard.realPath, basename), root.rootIdentity,
+  );
   return admitted.path;
 }
 

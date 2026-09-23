@@ -37,7 +37,7 @@ import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath, resolveRootPathSync, resolveRootPathForRemoval } from "./root-path.js";
 import { RemovalPathReceipts } from "./root-remove-receipt.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { requirePathInsideRoot } from "./root-boundary.js";
 import { listDirectoryPath, openRootDirectoryListing } from "./root-directory-list.js";
 import { statResolvedPathInRoot } from "./root-path-stat.js";
 import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
@@ -736,14 +736,9 @@ async function openWritableFileInRoot(
   try {
     assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
     const resolvedRealPath = params.mutationSymlinks === undefined ? realpathSync.native(ioPath) : ioPath;
-    const admittedRealPath = admitPathInsideRoot({
-      rootPath: root.rootReal,
-      candidatePath: resolvedRealPath,
-      rootIdentity: root.rootIdentity,
-    });
-    if (!admittedRealPath) {
-      throw outsideWorkspaceError();
-    }
+    const admittedRealPath = requirePathInsideRoot(
+      root.rootReal, resolvedRealPath, root.rootIdentity,
+    );
     ioPath = admittedRealPath.path;
   } catch (err) {
     if (err instanceof FsSafeError) {
@@ -785,9 +780,9 @@ async function openWritableFileInRoot(
         const parentGuard = writePathSelection?.parentGuard ??
           await createAsyncDirectoryGuard(path.dirname(ioPath), { bigint: true });
         assertRootIdentityCurrentSync(root);
-        if (!admitPathInsideRoot({
-          rootPath: root.rootReal, candidatePath: parentGuard.realPath, rootIdentity: root.rootIdentity,
-        })) throw outsideWorkspaceError();
+        requirePathInsideRoot(
+          root.rootReal, parentGuard.realPath, root.rootIdentity,
+        );
         assertSyncDirectoryGuard(parentGuard);
         return { missing: true, targetPath: ioPath, parentGuard, writeSelection: writePathSelection };
       }
@@ -866,14 +861,9 @@ async function openWritableFileInRoot(
       }
       throw err;
     }
-    const admittedRealPath = admitPathInsideRoot({
-      rootPath: root.rootReal,
-      candidatePath: realPath,
-      rootIdentity: root.rootIdentity,
-    });
-    if (!admittedRealPath) {
-      throw outsideWorkspaceError();
-    }
+    const admittedRealPath = requirePathInsideRoot(
+      root.rootReal, realPath, root.rootIdentity,
+    );
     realPath = admittedRealPath.path;
     realPathForCleanup = realPath;
     assertRootFallbackWritePath(params.expectedWritePath, realPath);
@@ -1276,14 +1266,9 @@ async function resolvePinnedPathInRoot(
     throw outsideWorkspaceError();
   }
   const relativePosix = relativeResolved.split(path.sep).join(path.posix.sep);
-  const admittedCanonicalPath = admitPathInsideRoot({
-    rootPath: resolved.rootReal,
-    candidatePath: resolved.canonicalPath,
-    rootIdentity: root.rootIdentity,
-  });
-  if (!admittedCanonicalPath) {
-    throw outsideWorkspaceError();
-  }
+  const admittedCanonicalPath = requirePathInsideRoot(
+    resolved.rootReal, resolved.canonicalPath, root.rootIdentity,
+  );
   resolved.canonicalPath = admittedCanonicalPath.path;
   await assertMutationNotDenied(resolved.canonicalPath, params.denyMutations, {
     protectAncestors: params.remove === true,

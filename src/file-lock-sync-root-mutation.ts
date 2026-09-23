@@ -3,11 +3,10 @@ import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
-import { admitPathInsideRoot } from "./root-boundary.js";
+import { requirePathInsideRoot } from "./root-boundary.js";
 import { assertRootIdentityCurrentSync } from "./root-context.js";
 import {
   directoryComponentNotDirectoryError,
-  outsideWorkspaceError,
 } from "./root-errors.js";
 import {
   sidecarLockSnapshotMatches,
@@ -42,12 +41,9 @@ function ensureParent(pathAuthority: FileLockSyncRootPath): DirectoryReceipt {
   const context = authority.context;
   assertFileLockSyncRootResolvedPathCurrent(pathAuthority);
   const targetParent = path.dirname(pathAuthority.path);
-  const admitted = admitPathInsideRoot({
-    rootPath: context.rootReal,
-    candidatePath: targetParent,
-    rootIdentity: context.rootIdentity,
-  });
-  if (!admitted) throw outsideWorkspaceError();
+  const admitted = requirePathInsideRoot(
+    context.rootReal, targetParent, context.rootIdentity,
+  );
   const relative = admitted.relativePath;
   let current = context.rootReal;
   let currentReceipt = observeDirectory(current);

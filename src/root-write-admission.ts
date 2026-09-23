@@ -16,7 +16,7 @@ import {
   snapshotPinnedMutationPolicy,
 } from "./pinned-mutation-admission.js";
 import type { PinnedWriteMutationAdmission } from "./pinned-write-types.js";
-import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
+import { requirePathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { resolvePathInRoot } from "./root-context.js";
 import { errorCauseOptions, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
@@ -119,12 +119,9 @@ function inspectSelectionBindingSync(
     } catch (error) {
       throw writeSelectionChanged(error);
     }
-    const admitted = admitPathInsideRoot({
-      rootPath: root.rootReal,
-      candidatePath: operationRealPath,
-      rootIdentity: root.rootIdentity,
-    });
-    if (!admitted) throw outsideWorkspaceError();
+    const admitted = requirePathInsideRoot(
+      root.rootReal, operationRealPath, root.rootIdentity,
+    );
     inspectRegularSelectionPath(admitted.path, selection.identity, true);
   }
   if (fd !== undefined) {
@@ -148,12 +145,9 @@ export function assertRootWritePathSelectionSync(
     } catch (error) {
       throw writeSelectionChanged(error);
     }
-    const admitted = admitPathInsideRoot({
-      rootPath: root.rootReal,
-      candidatePath: operationRealPath,
-      rootIdentity: root.rootIdentity,
-    });
-    if (!admitted) throw outsideWorkspaceError();
+    const admitted = requirePathInsideRoot(
+      root.rootReal, operationRealPath, root.rootIdentity,
+    );
     const selected = inspectRegularSelectionPath(selection.selectedPath, undefined, false);
     inspectRegularSelectionPath(admitted.path, selected, true);
   }
@@ -346,12 +340,9 @@ export async function resolveGuardedWriteTargetInRoot(
   });
   const selectedTargetAdmission: SelectedRootWriteTargetAdmission = Object.freeze({
     async authorize(selectedTargetPath) {
-      const admitted = admitPathInsideRoot({
-        rootPath: root.rootReal,
-        candidatePath: selectedTargetPath,
-        rootIdentity: root.rootIdentity,
-      });
-      if (!admitted) throw outsideWorkspaceError();
+      const admitted = requirePathInsideRoot(
+        root.rootReal, selectedTargetPath, root.rootIdentity,
+      );
       await resolveGuardedWritePathInRoot(root, {
         relativePath: admitted.relativePath,
         denyMutations: policy.denyMutations,

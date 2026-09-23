@@ -2,7 +2,7 @@ import path from "node:path";
 import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
-import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
+import { requirePathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 import type {
   PinnedCreatedDirectoryReceipt,
   PinnedMutationAdmissionReceipt,
@@ -16,7 +16,6 @@ import {
 } from "./pinned-mutation-shared-route.js";
 import type { ExactRootIdentity } from "./pinned-mutation-shared-route.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
-import { outsideWorkspaceError } from "./root-errors.js";
 import type { MutationSymlinkPolicy } from "./root-symlink-policy.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import {
@@ -248,12 +247,9 @@ export async function preparePinnedWriteMutationAdmission(params: {
   let epoch: Epoch | undefined;
   let pending: CreateReceipt | undefined;
   const observedCanonicalParent = await resolvePathViaExistingAncestor(path.dirname(params.resolvedTargetPath));
-  const admittedCanonicalParent = admitPathInsideRoot({
-    rootPath: params.rootReal,
-    candidatePath: observedCanonicalParent,
-    rootIdentity: params.rootIdentity,
-  });
-  if (!admittedCanonicalParent) throw outsideWorkspaceError();
+  const admittedCanonicalParent = requirePathInsideRoot(
+    params.rootReal, observedCanonicalParent, params.rootIdentity,
+  );
   const relativeCanonicalParent = admittedCanonicalParent.relativePath;
   const authorizeFully = async (request: AdmissionRequest): Promise<{ resolved: string }> => {
     // Preserve the original route's symlink/deny error ordering, then apply
