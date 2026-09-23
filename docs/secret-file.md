@@ -228,6 +228,15 @@ if anything already occupies the target path it throws
 `FsSafeError("secret-exists")` without modifying that entry. Use the distinct
 name when first-writer-wins is part of the credential protocol.
 
+Its `durable` option also accepts `"file"`, matching `Root.create()`. This
+requires every file `fsync` to succeed, including on `EPERM`, while parent-directory
+synchronization remains best effort. The default and boolean options retain their
+existing behavior. `writeSecretFileAtomic()` continues to accept boolean durability.
+
+Strict file synchronization preserves the existing publication strategy and
+identity-checked cleanup. A failed file flush before staged publication prevents
+publication; a failure after publication can leave the complete file present.
+
 Distinct leaves can share missing-parent creation without a `secret-exists`
 error. Concurrent creates at the same leaf still have exactly one winner;
 the loser receives `secret-exists` and leaves the winner's bytes intact.
@@ -244,6 +253,7 @@ try {
     rootDir: "/var/lib/app/credentials",
     filePath: "/var/lib/app/credentials/provider.refresh-token",
     content: refreshToken,
+    durable: "file",
   });
 } catch (error) {
   if (!(error instanceof FsSafeError) || error.code !== "secret-exists") throw error;

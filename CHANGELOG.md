@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Secret-file creation:** add `durable: "file"` to require successful file synchronization, including on `EPERM`, while preserving best-effort directory synchronization and existing boolean durability behavior.
+
 ### Fixes
 
 - **Native Unix file-copy admission:** reject negative source and parent descriptors without panicking in invalid low-level addon calls.
