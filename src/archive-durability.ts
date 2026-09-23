@@ -51,7 +51,7 @@ export async function finalizeArchivePublication(params: {
         check();
         const results = await Promise.allSettled(params.files.slice(offset, offset + 8).map(async (file) => {
           await assertGuards(file.guards);
-          await using opened = await params.targetRoot.open(file.relativePath, { hardlinks: "reject", symlinks: "reject" })
+          await using opened = await params.targetRoot.open(`./${file.relativePath}`, { hardlinks: "reject", symlinks: "reject" })
             .catch((error: unknown) => {
               if (error instanceof FsSafeError && (error.code === "hardlink" || error.code === "path-alias")) {
                 throw createArchiveSymlinkTraversalError(file.relativePath);

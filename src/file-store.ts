@@ -9,6 +9,7 @@ import {
   assertFileStoreMaxBytes,
   assertRelativePath,
   ensureParentInRoot,
+  literalStoreRootPath,
   openPrivateStoreLockRoot,
   openWritableStoreRoot,
   readFileStoreCopySource,
@@ -162,7 +163,7 @@ async function copyIntoRoot(params: {
   mode: number;
   tempPrefix?: string;
 }): Promise<string> {
-  const relativePath = assertRelativePath(params.relativePath);
+  const relativePath = params.relativePath;
   const destination = resolveStorePath(params.rootDir, relativePath);
   assertNoWindowsPathAlias(params.sourcePath, "filesystem", "source path uses a Windows filesystem namespace alias");
   const sourceStat = syncFs.lstatSync(params.sourcePath);
@@ -176,7 +177,7 @@ async function copyIntoRoot(params: {
     maxBytes: params.maxBytes,
   });
   await ensureParentInRoot(scopedRoot, relativePath, params.dirMode);
-  await scopedRoot.copyIn(relativePath, params.sourcePath, {
+  await scopedRoot.copyIn(literalStoreRootPath(relativePath), params.sourcePath, {
     durable: params.durable,
     maxBytes: params.maxBytes,
     mkdir: false,
@@ -205,8 +206,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
     data: string | Uint8Array,
     writeOptions?: FileStoreWriteOptions,
   ): Promise<string> {
-    const safeRelativePath = assertRelativePath(relativePath);
-    const destination = resolveStorePath(rootDir, safeRelativePath);
+    const destination = resolveStorePath(rootDir, relativePath);
     const content = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const writeMaxBytes = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
     assertFileStoreMaxBytes(content.byteLength, writeMaxBytes);
@@ -229,8 +229,8 @@ export function fileStore(options: FileStoreOptions): FileStore {
       dirMode: writeDirMode,
       maxBytes: writeMaxBytes,
     });
-    await ensureParentInRoot(scopedRoot, safeRelativePath, writeDirMode);
-    await scopedRoot.write(safeRelativePath, content, {
+    await ensureParentInRoot(scopedRoot, relativePath, writeDirMode);
+    await scopedRoot.write(literalStoreRootPath(relativePath), content, {
       mkdir: false,
       mode: writeMode,
       durable: writeDurable,
@@ -244,8 +244,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
     root: openRoot,
     write,
     writeStream: async (relativePath, stream, writeOptions) => {
-      const safeRelativePath = assertRelativePath(relativePath);
-      const destination = resolveStorePath(rootDir, safeRelativePath);
+      const destination = resolveStorePath(rootDir, relativePath);
       const configuredLimit = normalizeMaxBytes(writeOptions?.maxBytes, { defaultValue: maxBytes });
       const limit = configuredLimit ?? (privateMode ? DEFAULT_ROOT_MAX_BYTES : undefined);
       if (privateMode) {
@@ -282,7 +281,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
       try {
         await copyIntoRoot({
           rootDir,
-          relativePath: safeRelativePath,
+          relativePath,
           sourcePath: staged.path,
           durable: writeDurable,
           maxBytes: limit,
@@ -324,19 +323,19 @@ export function fileStore(options: FileStoreOptions): FileStore {
       });
     },
     open: async (relativePath, readOptions) =>
-      await (await openRoot()).open(assertRelativePath(relativePath), readOptions),
+      await (await openRoot()).open(literalStoreRootPath(assertRelativePath(relativePath)), readOptions),
     read: async (relativePath, readOptions) =>
-      await (await openRoot()).read(assertRelativePath(relativePath), readOptions),
+      await (await openRoot()).read(literalStoreRootPath(assertRelativePath(relativePath)), readOptions),
     readBytes: async (relativePath, readOptions) =>
-      await (await openRoot()).readBytes(assertRelativePath(relativePath), readOptions),
+      await (await openRoot()).readBytes(literalStoreRootPath(assertRelativePath(relativePath)), readOptions),
     readText: async (relativePath, readOptions) => {
       const { encoding = "utf8", ...options } = readOptions ?? {};
-      return (await (await openRoot()).read(assertRelativePath(relativePath), options)).buffer
+      return (await (await openRoot()).read(literalStoreRootPath(assertRelativePath(relativePath)), options)).buffer
         .toString(encoding);
     },
     readTextIfExists: async (relativePath, readOptions) => {
       try {
-        return await (await openRoot()).readText(assertRelativePath(relativePath), readOptions);
+        return await (await openRoot()).readText(literalStoreRootPath(assertRelativePath(relativePath)), readOptions);
       } catch (error) {
         if (isNotFound(error)) {
           return null;
@@ -347,7 +346,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
     readJson: async <T = unknown>(relativePath: string, readOptions?: FileStoreReadOptions) => {
       const { encoding = "utf8", ...options } = readOptions ?? {};
       return JSON.parse(
-        (await (await openRoot()).read(assertRelativePath(relativePath), options)).buffer
+        (await (await openRoot()).read(literalStoreRootPath(assertRelativePath(relativePath)), options)).buffer
           .toString(encoding),
       ) as T;
     },
@@ -356,7 +355,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
       readOptions?: FileStoreReadOptions,
     ) => {
       try {
-        return await (await openRoot()).readJson<T>(assertRelativePath(relativePath), readOptions);
+        return await (await openRoot()).readJson<T>(literalStoreRootPath(assertRelativePath(relativePath)), readOptions);
       } catch (error) {
         if (isNotFound(error)) {
           return null;
@@ -365,9 +364,9 @@ export function fileStore(options: FileStoreOptions): FileStore {
       }
     },
     remove: async (relativePath) => {
-      await (await openRoot()).remove(assertRelativePath(relativePath));
+      await (await openRoot()).remove(literalStoreRootPath(assertRelativePath(relativePath)));
     },
-    exists: async (relativePath) => await (await openRoot()).exists(assertRelativePath(relativePath)),
+    exists: async (relativePath) => await (await openRoot()).exists(literalStoreRootPath(assertRelativePath(relativePath))),
     writeText: async (relativePath, data, writeOptions) => await write(relativePath, data, writeOptions),
     writeJson: async (relativePath, data, writeOptions) => {
       const trailingNewline = writeOptions?.trailingNewline;
@@ -389,7 +388,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
           } : {}),
           readIfExists: async () => {
             try {
-              return await (await openRoot()).readJson<T>(assertRelativePath(relativePath));
+              return await (await openRoot()).readJson<T>(literalStoreRootPath(relativePath));
             } catch (error) {
               if (isNotFound(error)) {
                 return undefined;
@@ -398,7 +397,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
             }
           },
           readRequired: async () =>
-            await (await openRoot()).readJson<T>(assertRelativePath(relativePath)),
+            await (await openRoot()).readJson<T>(literalStoreRootPath(relativePath)),
           write: async (value, options) => {
             const json = stringifyJsonDocument(value, null, 2);
             await write(

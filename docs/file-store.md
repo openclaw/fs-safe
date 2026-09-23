@@ -101,6 +101,11 @@ such as `internal space/a b.txt` are accepted. On POSIX, colons elsewhere, such
 as the timestamp in `logs/2026-08-02T10:30:00Z.log`, remain lexically valid;
 Windows rejects that spelling as stream syntax.
 
+Keys such as `~` and `~/state.json` name literal entries inside the store; they
+do not expand the user's home directory. Reads, writes, removal, and pruning
+all use that literal identity. The `Root` returned by `root()` retains its own
+home-expansion behavior.
+
 Validation retains each method's operation order. Async reads, `exists`, and
 `remove` open the root first: if the root is missing, strict methods report
 `not-found` and `readTextIfExists` / `readJsonIfExists` return `null`, even for an

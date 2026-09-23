@@ -117,6 +117,10 @@ created through a directory symlink or Windows junction. An absolute path
 outside the root is still rejected. On Windows, alternate casing is accepted
 only when the differently cased Root prefix has the Root's exact directory
 identity; the operation then continues under the trusted Root spelling.
+Absolute paths keep literal `~` components: `readAbsolute("/srv/root/~/file")`
+reads that entry under the root, without expanding the user's home directory.
+Relative `~/file` inputs still expand the home directory and must remain inside
+the Root; use `./~/file` for a literal relative `~` directory.
 
 ### Writes
 

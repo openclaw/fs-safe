@@ -113,6 +113,18 @@ typed `FsSafeError("too-large")` instead.
 
 For followed symlinks, both `kind` and `size` describe the resolved target.
 
+The caller's starting path retains Root home shorthand: `~` and `~/dir` expand
+the home directory when iteration starts and must resolve inside the Root.
+Home-started walks report actual Root-relative paths, such as `home/dir/file`,
+rather than `~/dir/file`. Use `./~/dir` to start at a literal `~` directory.
+An alias within a home-started path is reported under its admitted canonical
+target; ordinary non-home starting aliases retain their caller-supplied spelling.
+
+Entry names remain literal filesystem data, including a directory named `~`
+and its descendants. To reuse an entry path in another Root method without
+home-directory expansion, prefix it with `./`, as in
+`capability.open("./" + entry.relativePath)`.
+
 The default `order: "sorted"` visits each directory's names in lexicographic
 order before descending depth first. It reads and sorts all names in each
 visited directory. With `maxEntries`, it prepares small metadata batches capped

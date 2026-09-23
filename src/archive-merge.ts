@@ -258,7 +258,7 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
                 }
               };
             }
-            await targetRoot.copyIn(relPath, sourcePath, options);
+            await targetRoot.copyIn(`./${relPath}`, sourcePath, options);
             check();
             await assertGuards();
             await assertResolvedInsideDestination({

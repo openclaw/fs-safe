@@ -142,7 +142,7 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
         rootIdentity: root.rootIdentity,
         resolveCandidateRoot: base === root.rootDir && root.rootDir !== root.rootReal,
       });
-      if (admitted) return admitted.relativePath;
+      if (admitted) return `.${path.sep}${admitted.relativePath}`;
       continue;
     }
     const prefix = ensureTrailingSep(base);
@@ -150,7 +150,8 @@ export function rootRelativeReadPath(root: RootContext, filePath: string): strin
     if (matches) {
       let start = prefix.length;
       while (raw[start] === path.sep) start += 1;
-      return raw.slice(start);
+      // An admitted absolute tail stays literal, including a leading home marker.
+      return `.${path.sep}${raw.slice(start)}`;
     }
   }
   return raw;

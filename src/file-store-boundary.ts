@@ -28,7 +28,7 @@ export async function ensureParentInRoot(
   relativePath: string,
   mode: number,
 ): Promise<void> {
-  const parent = path.posix.dirname(relativePath);
+  const parent = literalStoreRootPath(path.posix.dirname(relativePath));
   if (parent === ".") {
     return;
   }
@@ -159,6 +159,11 @@ export function ensureStoreDirectorySync(params: {
   const guard = ensureSyncStoreDirectory(params);
   assertSyncStoreDirectoryReceipt(guard);
   return guard;
+}
+
+// Store keys and directory-entry names are literal, unlike Root's home syntax.
+export function literalStoreRootPath(relativePath: string): string {
+  return relativePath === "~" || relativePath.startsWith("~/") ? `./${relativePath}` : relativePath;
 }
 
 export function assertRelativePath(relativePath: string): string {

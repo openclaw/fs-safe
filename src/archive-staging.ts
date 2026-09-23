@@ -174,7 +174,9 @@ async function mkdirArchiveOutput(params: {
   originalPath: string;
 }): Promise<void> {
   try {
-    await params.targetRoot.mkdir(params.relativePath);
+    const relativePath = params.relativePath;
+    // Archive names are literal; retain Root.mkdir's admission without home expansion.
+    await params.targetRoot.mkdir(relativePath === "~" || relativePath.startsWith("~/") ? `./${relativePath}` : relativePath);
   } catch (error) {
     if (error instanceof FsSafeError) {
       throw symlinkTraversalError(params.originalPath);

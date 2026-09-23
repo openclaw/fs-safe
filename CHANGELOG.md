@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Literal entry names:** preserve `~` files and directories during Root walks and ZIP/TAR extraction, including followed in-root symlinks and durable publication.
+- **Home-directory walks:** expand caller `~` and `~/dir` paths when iteration starts, without requiring a literal `~` directory; report the admitted canonical path relative to the Root while keeping `./~` literal.
+- **FileStore keys:** keep `~` and `~/name` literal across reads, writes, removal, and pruning, preventing operations from selecting a different in-root home path.
+- **Absolute reads:** keep literal `~` path components in `Root.readAbsolute()` and `reader()` while preserving home expansion for relative `~/name` inputs.
+
 ## 0.18.2 - 2026-09-22
 
 ### Fixes
