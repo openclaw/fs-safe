@@ -102,7 +102,7 @@ describe("integrated guarded mutation walk", () => {
     await fs.mkdir(parent);
     const context = await resolveRootContext(directory);
     const policy = snapshotPinnedMutationPolicy(undefined, "reject")!;
-    const admission = vi.spyOn(rootBoundary, "admitPathInsideRoot");
+    const admission = vi.spyOn(rootBoundary, "requirePathInsideRoot");
 
     const prepared = await preparePinnedWriteMutationAdmission({
       ...context,
@@ -114,11 +114,12 @@ describe("integrated guarded mutation walk", () => {
     });
 
     expect(prepared.relativeParentPath).toBe("existing");
-    expect(admission).toHaveBeenCalledWith({
-      rootPath: context.rootReal,
-      candidatePath: await fs.realpath(parent),
-      rootIdentity: context.rootIdentity,
-    });
+    expect(admission).toHaveBeenCalledOnce();
+    expect(admission).toHaveBeenCalledWith(
+      context.rootReal,
+      await fs.realpath(parent),
+      context.rootIdentity,
+    );
   });
 });
 
