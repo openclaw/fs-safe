@@ -14,6 +14,7 @@ import { registerLifecycle } from "./lifecycle.mjs";
 import { registerDarwinClone } from "./darwin-clone.mjs";
 import { registerArchives } from "./archives.mjs";
 import { registerBroad } from "./broad.mjs";
+import { registerPrivateLockedJson } from "./private-locked-json.mjs";
 import { registerLockOwnershipParsing, validateLockOwnershipParsingReport } from "./lock-ownership-parsing.mjs";
 import { registerScaling } from "./scaling.mjs";
 import { registerCollections } from "./collections.mjs";
@@ -153,6 +154,7 @@ try {
   await registerDarwinClone(context);
   await registerArchives(context);
   await registerBroad(context);
+  registerPrivateLockedJson(context);
   registerLockOwnershipParsing(context);
   await registerScaling(context);
   await registerCollections(context);

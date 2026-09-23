@@ -12,8 +12,7 @@ import {
 } from "./file-store-sync-directory.js";
 import { isPathInside, splitSafeRelativePath } from "./path.js";
 import { resolveOpenedFileRealPathForHandle, root, type Root } from "./root.js";
-import { ensureTrailingSep } from "./root-context.js";
-import { RootHandle } from "./root-impl.js";
+import { rootFromDirectoryGuard } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
@@ -52,13 +51,7 @@ export async function openPrivateStoreLockRoot(
 ): Promise<Root> {
   const { parentGuard } = await prepareSecretFileWrite(params);
   // Bind to the admitted parent, never resolve a replacement into a fresh capability.
-  return new RootHandle({
-    rootDir: parentGuard.dir,
-    rootGuard: { dir: parentGuard.realPath, realPath: parentGuard.realPath, stat: parentGuard.stat },
-    rootReal: parentGuard.realPath,
-    rootWithSep: ensureTrailingSep(parentGuard.realPath),
-    rootIdentity: { dev: parentGuard.stat.dev, ino: parentGuard.stat.ino },
-  }, { hardlinks: "reject" });
+  return rootFromDirectoryGuard(parentGuard, { hardlinks: "reject" });
 }
 
 async function chmodDirectoryInRootBestEffort(

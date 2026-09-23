@@ -104,6 +104,52 @@ describe("private JSON directory admission before locking", () => {
     expect(await fs.readdir(rootDir)).toEqual([]);
   });
 
+  it.each(["current", "replaced", "deleted"] as const)("retains a %s private parent through an ancestor alias", async (state) => {
+    const sandbox = await tempRoot("fs-safe-private-json-ancestor-alias-");
+    const actual = path.join(sandbox, "actual");
+    const alias = path.join(sandbox, "alias");
+    await fs.mkdir(actual, { mode: 0o700 });
+    await fs.symlink(actual, alias, process.platform === "win32" ? "junction" : "dir");
+    const rootDir = path.join(alias, "store");
+    const parent = path.join(actual, "store", "parent");
+    const moved = path.join(actual, "store", "admitted");
+    const prepare = privateBoundary.openPrivateStoreLockRoot;
+    const prepared = vi.spyOn(privateBoundary, "openPrivateStoreLockRoot").mockImplementation(async (params) => {
+      const admitted = await prepare(params);
+      expect(admitted.rootDir).toBe(path.join(rootDir, "parent"));
+      expect(admitted.rootReal).toBe(parent);
+      expect(admitted.rootWithSep).toBe(`${parent}${path.sep}`);
+      expect(admitted.defaults).toEqual({ hardlinks: "reject" });
+      if (state === "replaced") {
+        await fs.rename(parent, moved);
+        await fs.mkdir(parent, { mode: 0o700 });
+      } else if (state === "deleted") {
+        await fs.rmdir(parent);
+      }
+      return admitted;
+    });
+    const document = fileStore({ rootDir, private: true }).json<{ count: number }>("parent/state.json", { lock: true });
+    const update = vi.fn((value: { count: number }) => ({ count: value.count + 1 }));
+
+    if (state === "current") {
+      await expect(document.updateOr({ count: 0 }, update)).resolves.toEqual({ count: 1 });
+      expect(update).toHaveBeenCalledOnce();
+      expect(await document.readRequired()).toEqual({ count: 1 });
+      expect(await fs.readdir(parent)).toEqual(["state.json"]);
+    } else {
+      await expect(document.updateOr({ count: 0 }, update)).rejects.toMatchObject({ code: "path-mismatch" });
+      expect(update).not.toHaveBeenCalled();
+      if (state === "replaced") {
+        expect(await fs.readdir(parent)).toEqual([]);
+        expect(await fs.readdir(moved)).toEqual([]);
+      } else {
+        await expect(fs.lstat(parent)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await fs.readdir(path.dirname(parent))).toEqual([]);
+      }
+    }
+    expect(prepared).toHaveBeenCalledOnce();
+  });
+
   it("does not prepare directories on reads", async () => {
     const sandbox = await tempRoot("fs-safe-private-json-read-");
     const state = fileStore({ rootDir: path.join(sandbox, "missing"), private: true })
