@@ -1,7 +1,5 @@
 import type { BigIntStats, Stats } from "node:fs";
-import { FsSafeError } from "./errors.js";
-import { recordFileObservationFailure } from "./file-observation.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { fileIdentityMismatchError, inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export type ExactStatIdentity = Pick<BigIntStats, "dev" | "ino">;
 export type StatObservationReceipt = {
@@ -12,12 +10,6 @@ export type StatObservationReceipt = {
 type StatObservationResult<CaptureIdentity extends boolean> = CaptureIdentity extends true
   ? StatObservationReceipt
   : Stats | BigIntStats;
-
-function identityMismatch(): never {
-  const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
-  recordFileObservationFailure(error, "identity");
-  throw error;
-}
 
 function safeNumber(value: number | bigint): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -56,7 +48,7 @@ function observeStatSync<CaptureIdentity extends boolean>(
   const dev = numericDev ? BigInt(rawDev) : typeof rawDev === "bigint" ? rawDev : undefined;
   const ino = numericIno ? BigInt(rawIno) : typeof rawIno === "bigint" ? rawIno : undefined;
   if (expected && ((dev !== undefined && dev !== expected.dev) ||
-    (ino !== undefined && ino !== expected.ino))) identityMismatch();
+    (ino !== undefined && ino !== expected.ino))) throw fileIdentityMismatchError();
   if (numericDev && numericIno) {
     return (captureIdentity
       ? { stat, identity: expected ?? { dev: dev!, ino: ino! } }
@@ -68,7 +60,7 @@ function observeStatSync<CaptureIdentity extends boolean>(
   const exact = inspectFileIdentitySync(() => {
     const current = inspect(true) as BigIntStats;
     if ((dev !== undefined && current.dev !== dev) ||
-      (ino !== undefined && current.ino !== ino)) identityMismatch();
+      (ino !== undefined && current.ino !== ino)) throw fileIdentityMismatchError();
     return current;
   }, expected, platform);
   return (captureIdentity
