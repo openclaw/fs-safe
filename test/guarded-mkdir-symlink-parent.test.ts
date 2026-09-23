@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import { mkdirPathComponentsWithGuards } from "../src/guarded-mkdir.js";
 import { configureFsSafeNative } from "../src/native-config.js";
+import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
 
@@ -13,6 +15,7 @@ const { tempRoot } = useTempDirs();
 
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
 });
 
@@ -148,6 +151,56 @@ it("treats an in-root symlinked directory component as valid instead of rejectin
   expect(stat.isDirectory()).toBe(true);
   const realNested = await fs.lstat(path.join(realDir, "nested"));
   expect(realNested.isDirectory()).toBe(true);
+});
+
+itPosix("clears retained spelling after following a contained symlink", async () => {
+  const rootDir = await fs.realpath(await tempRoot("fs-safe-mkdir-retained-alias-"));
+  const realDir = path.join(rootDir, "real");
+  const alias = path.join(rootDir, "alias");
+  await fs.mkdir(realDir);
+  await fs.symlink(realDir, alias, "dir");
+  const targetPath = path.join(alias, "nested");
+  const retainedTargetPath = path.join(targetPath, "file");
+  const uses: unknown[] = [];
+  await expect(mkdirPathComponentsWithGuards({
+    rootReal: rootDir, targetPath, retainedTargetPath,
+    beforeUseComponent(component, prospective, retained) { uses.push([component, prospective, retained]); },
+  })).resolves.toBe(path.join(realDir, "nested"));
+  expect(uses).toEqual([
+    [alias, targetPath, retainedTargetPath],
+    [path.join(realDir, "nested"), path.join(realDir, "nested"), undefined],
+  ]);
+});
+
+itPosix("renews the lexical parent after observing a followed symlink's target guard", async () => {
+  const base = await fs.realpath(await tempRoot("fs-safe-mkdir-alias-fence-"));
+  const rootDir = path.join(base, "workspace");
+  const displaced = path.join(base, "displaced");
+  const realDir = path.join(rootDir, "real");
+  const alias = path.join(rootDir, "alias");
+  await fs.mkdir(realDir, { recursive: true });
+  await fs.symlink(realDir, alias, "dir");
+  const canonicalize = realpathSync.native;
+  let swapped = false;
+  vi.spyOn(realpathSync, "native").mockImplementation((target) => {
+    const canonical = canonicalize(target);
+    if (!swapped && target === realDir) {
+      fsSync.renameSync(rootDir, displaced);
+      fsSync.mkdirSync(rootDir);
+      swapped = true;
+    }
+    return canonical;
+  });
+  const components: string[] = [];
+  await expect(mkdirPathComponentsWithGuards({
+    rootReal: rootDir, targetPath: path.join(alias, "nested"),
+    retainedTargetPath: path.join(alias, "nested", "file"),
+    beforeComponent(component) { components.push(component); },
+  })).rejects.toMatchObject({ code: "path-mismatch" });
+  expect(swapped).toBe(true);
+  expect(components).toEqual([alias]);
+  await expect(fs.lstat(path.join(displaced, "real", "nested"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await fs.readdir(rootDir)).toEqual([]);
 });
 
 it("still rejects a symlinked directory component that escapes the root", async () => {

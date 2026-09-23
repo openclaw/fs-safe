@@ -325,7 +325,8 @@ export async function mkdirPathComponentsWithGuards(params: {
       throw new FsSafeError("outside-workspace", "directory escaped workspace root");
     }
     const admittedNextPath = admittedNextReal.path;
-    if (stat?.isSymbolicLink()) {
+    const followedSymlink = stat?.isSymbolicLink();
+    if (followedSymlink) {
       // An existing path component may legitimately be a symlink to a real
       // directory inside the root (e.g. a skill-bank layout). We already
       // verified above that it resolves inside the root, so treat the
@@ -339,17 +340,6 @@ export async function mkdirPathComponentsWithGuards(params: {
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
-      currentGuard = await createAsyncDirectoryGuard(admittedNextPath, { bigint: true });
-      assertNoWindowsPathAlias(
-        currentGuard.realPath,
-        "filesystem",
-        "canonical directory uses a Windows filesystem namespace alias",
-      );
-      await assertAsyncDirectoryGuard(parentGuard);
-      retainedTargetPath = undefined;
-      retainedParentPath = undefined;
-      current = admittedNextPath;
-      continue;
     }
     if (createdAuthorization && createdEvidence) {
       currentGuard = createdEvidence.guard;
@@ -363,6 +353,10 @@ export async function mkdirPathComponentsWithGuards(params: {
     );
     if (!createdAuthorization || !createdEvidence) {
       await assertAsyncDirectoryGuard(parentGuard);
+    }
+    if (followedSymlink) {
+      retainedTargetPath = undefined;
+      retainedParentPath = undefined;
     }
     current = admittedNextPath;
   }

@@ -88,17 +88,9 @@ async function resolveOpenedFileRealPathFromParent(
   statOptions?: { bigint: true },
 ): Promise<{ realPath: string; stat: Stats | BigIntStats } | null> {
   let parentReal: string;
-  try {
-    parentReal = realpathSync.native(path.dirname(ioPath));
-  } catch (err) {
-    if (isNotFoundPathError(err)) {
-      return null;
-    }
-    throw err;
-  }
-
   let entries: string[];
   try {
+    parentReal = realpathSync.native(path.dirname(ioPath));
     entries = await fs.readdir(parentReal);
   } catch (err) {
     if (isNotFoundPathError(err)) {

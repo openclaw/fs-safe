@@ -15,22 +15,19 @@ export function isCwdIndependentAbsolutePath(filePath: string): boolean {
 export async function resolveSidecarTargetPath(resolved: string, lockRoot?: Root): Promise<string> {
   assertNoWindowsPathAlias(resolved);
   const dir = path.dirname(resolved);
+  let parent: string;
   if (lockRoot) {
     // The target is an arbitration key, not necessarily inside the lock Root.
     await lockRoot.resolve(".");
-    const parent = await canonicalPathFromExistingAncestor(dir);
+    parent = await canonicalPathFromExistingAncestor(dir);
     await lockRoot.resolve(".");
-    assertNoWindowsPathAlias(parent);
-    const normalized = path.join(parent, path.basename(resolved));
-    assertNoWindowsPathAlias(normalized);
-    return normalized;
-  }
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true });
-  let parent: string;
-  try {
-    parent = realpathSync.native(dir);
-  } catch {
-    return resolved;
+  } else {
+    await fs.mkdir(recursiveMkdirPath(dir), { recursive: true });
+    try {
+      parent = realpathSync.native(dir);
+    } catch {
+      return resolved;
+    }
   }
   assertNoWindowsPathAlias(parent);
   const normalized = path.join(parent, path.basename(resolved));

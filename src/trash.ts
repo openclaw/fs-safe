@@ -213,21 +213,17 @@ function movePathToDestination(target: TrashTargetGuard, dest: string): boolean 
     guardedRenameSync({ from: target.path, to: dest });
     return true;
   } catch (error) {
-    if (getFsErrorCode(error) !== "EXDEV") {
-      if (isTrashDestinationCollision(error)) {
-        return false;
+    if (getFsErrorCode(error) === "EXDEV") {
+      try {
+        assertTrashTargetGuard(target);
+        copyTrashTargetSync(target, dest);
+        assertTrashTargetGuard(target);
+        guardedRmSync({ target: target.path, recursive: true, force: false, verifyAfter: false });
+        return true;
+      } catch (copyError) {
+        error = copyError;
       }
-      throw error;
     }
-  }
-
-  try {
-    assertTrashTargetGuard(target);
-    copyTrashTargetSync(target, dest);
-    assertTrashTargetGuard(target);
-    guardedRmSync({ target: target.path, recursive: true, force: false, verifyAfter: false });
-    return true;
-  } catch (error) {
     if (isTrashDestinationCollision(error)) {
       return false;
     }

@@ -107,4 +107,38 @@ describe("opened file realpath resolution", () => {
       });
     });
   });
+
+  it.each(["realpath", "readdir"] as const)("preserves parent %s failure identity and missing-path policy", async (operation) => {
+    await withOpenedFile("fs-safe-opened-parent-error-", "file.txt", async ({ directory, filePath, handle }) => {
+      const parentRealpath = realpathSync.native;
+      const unavailable = new Set([filePath, `/proc/self/fd/${handle.fd}`, `/dev/fd/${handle.fd}`]);
+      let failure: unknown;
+      vi.spyOn(realpathSync, "native").mockImplementation((target) => {
+        if (unavailable.has(String(target))) {
+          throw Object.assign(new Error("direct path unavailable"), { code: "ENOENT" });
+        }
+        if (operation === "realpath" && String(target) === directory) throw failure;
+        return parentRealpath(target);
+      });
+      const readdir = vi.spyOn(fs, "readdir");
+      if (operation === "readdir") readdir.mockImplementation(async () => { throw failure; });
+
+      for (const code of ["ENOENT", "ENOTDIR", "EACCES"]) {
+        readdir.mockClear();
+        failure = Object.assign(new Error("parent lookup failed"), { code });
+        const result = resolveOpenedFileRealPathForHandle(handle, filePath);
+        if (code === "EACCES") await expect(result).rejects.toBe(failure);
+        else await expect(result).rejects.toMatchObject({ code: "path-mismatch" });
+        expect(readdir).toHaveBeenCalledTimes(operation === "readdir" ? 1 : 0);
+      }
+
+      const classifierFailure = new Error("parent error code getter failed");
+      failure = { get code() { throw classifierFailure; } };
+      await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).rejects.toBe(classifierFailure);
+      failure = new Proxy({}, { has() { throw classifierFailure; } });
+      await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).rejects.toBe(classifierFailure);
+      failure = undefined;
+      await expect(resolveOpenedFileRealPathForHandle(handle, filePath)).rejects.toBeUndefined();
+    });
+  });
 });
