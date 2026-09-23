@@ -49,6 +49,38 @@ const { buffer, containment, realPath, stat } = await fs.read("notes/today.txt")
 console.log(`${stat.size} bytes at ${realPath}`);
 ```
 
+For a whole-file read that must reject observed changes during consumption:
+
+```ts
+const { buffer, stat } = await fs.read("notes/today.txt", {
+  maxBytes: 64 * 1024,
+  verifyUnchanged: true,
+});
+```
+
+`verifyUnchanged` compares the admitted descriptor's metadata before and after
+reading: regular-file type, safe non-negative size, device, inode, size,
+modification time, change time, and link count. The returned byte count must
+also equal that size. A mismatch throws `FsSafeError("read-changed")` with
+category `operational`; exceeding `maxBytes` still throws `too-large`.
+The final descriptor check uses asynchronous `stat`. Verified reads return
+that final `stat`. Ordinary reads keep returning the admission `stat` and
+perform no additional final check. Access time is not
+compared because the read itself can update it.
+
+This detects observable metadata and length changes; it is **not an atomic
+snapshot**. It does not lock, retry, or re-admit the pathname after reading.
+Changes below filesystem timestamp precision, or changes that restore the
+observed metadata, can go undetected. Another writer can change the file again
+after the final observation. Keep locking or application-specific snapshot
+protocols when those guarantees are required.
+
+The option is per call, not a `RootDefaults` field, and works with `readBytes`,
+`readText`, `readJson`, `readAbsolute`, and `reader`. `open` and `openWritable`
+do not accept it: their callers own subsequent I/O. The standalone
+`readLocalFileSafely({ filePath, maxBytes, verifyUnchanged: true })` supports the
+same check without adding Root confinement to that absolute-file helper.
+
 ### `fs.readText(rel, options?)`
 
 `buffer.toString(encoding)`. Defaults to `"utf8"`; encoding is a per-call text
@@ -101,6 +133,7 @@ type RootReadOptions = {
   maxBytes?: number;                // refuse reads larger than this many bytes
   nonBlockingRead?: boolean;        // compatibility hint; safe opens are already nonblocking where supported
   symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root"; // override defaults.symlinks
+  verifyUnchanged?: boolean;        // reject observed metadata or byte-count changes; default false
 };
 ```
 
@@ -186,6 +219,7 @@ try {
 - **`path-mismatch`** — opened fd identity did not match the resolved path. Almost always a TOCTOU swap by something else.
 - **`hardlink`** — `hardlinks: "reject"` saw `nlink > 1`.
 - **`too-large`** — read exceeded `maxBytes`.
+- **`read-changed`** — an opted-in read could not verify unchanged metadata and byte count.
 
 See [Errors](errors.md) for the full list.
 

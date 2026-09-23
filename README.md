@@ -205,6 +205,7 @@ await fs.readJson("config.json"); // parsed value; validate it at your boundary
 await fs.readText("notes/today.txt");
 await fs.readBytes("image.png");
 await fs.read("notes/today.txt"); // { buffer, realPath, stat }
+await fs.read("notes/today.txt", { verifyUnchanged: true }); // detect observed metadata and byte-count changes
 const opened = await fs.open("large.log"); // FileHandle for streaming
 ```
 

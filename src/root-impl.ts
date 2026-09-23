@@ -643,7 +643,7 @@ async function readFileInRoot(
 ): Promise<ReadResult> {
   const opened = await openFileInRoot(root, params);
   try {
-    return await readOpenedFileSafely({ opened, maxBytes: params.maxBytes });
+    return await readOpenedFileSafely({ opened, maxBytes: params.maxBytes, verifyUnchanged: params.verifyUnchanged });
   } finally {
     await opened.handle.close().catch(() => {});
   }
@@ -652,11 +652,13 @@ async function readFileInRoot(
 export async function readLocalFileSafely(params: {
   filePath: string;
   maxBytes?: number;
+  verifyUnchanged?: boolean;
 }): Promise<ReadResult> {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
+  const verifyUnchanged = params.verifyUnchanged;
   const opened = await openLocalFileSafely({ filePath: params.filePath });
   try {
-    return await readOpenedFileSafely({ opened, maxBytes });
+    return await readOpenedFileSafely({ opened, maxBytes, verifyUnchanged });
   } finally {
     await opened.handle.close().catch(() => {});
   }

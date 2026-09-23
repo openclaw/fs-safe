@@ -92,6 +92,7 @@ type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {
   maxBytes?: number;
   nonBlockingRead?: boolean;
   symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root";
+  verifyUnchanged?: boolean;
 };
 
 type LocalRootsReadResult = ReadResult & {
@@ -113,6 +114,8 @@ The helper returns `null` when no configured root can be opened or no safe read
 succeeds. This intentionally collapses missing, outside-root, and per-root read
 failures; use a single `Root` directly when the caller must distinguish those
 outcomes. Omitting `maxBytes` preserves `Root`'s 16 MiB default.
+`verifyUnchanged: true` forwards Root's [metadata and byte-count check](reading.md);
+a changed read remains a per-root failure and returns `null` if no candidate succeeds.
 
 ## File URL and Windows-path companions
 

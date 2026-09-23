@@ -75,6 +75,10 @@ type FileStore = {
 
 `path()` returns the absolute path the store would use, after asserting it stays inside `rootDir`. Useful for logging or for handing to other libraries.
 
+Async `read*` methods accept Root's per-call `verifyUnchanged` option with the
+[same metadata and byte-count checks](reading.md). `open()` and synchronous
+store reads do not provide this option.
+
 Every `relativePath` is a portable store key. The same lexical policy applies
 to every keyed async and sync method, including reads, `exists`, `remove`,
 `path()`, and `json()` construction, with either `private: false` or `true`.

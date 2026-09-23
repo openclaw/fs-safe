@@ -186,6 +186,7 @@ describe("documentation contract", () => {
       "not-found",
       "not-removable",
       "permission-unverified",
+      "read-changed",
       "read-failed",
       "timeout",
       "unsupported-platform",

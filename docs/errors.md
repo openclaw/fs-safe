@@ -79,7 +79,7 @@ filesystem boundary violation. Branch on the specific code when the distinction
 between those operational outcomes matters.
 
 The operational set is exactly `helper-failed`, `helper-unavailable`,
-`not-empty`, `not-found`, `not-removable`, `permission-unverified`, `read-failed`,
+`not-empty`, `not-found`, `not-removable`, `permission-unverified`, `read-changed`, `read-failed`,
 `timeout`, and `unsupported-platform`. Every other current `FsSafeErrorCode`, including
 `store-reentrant-update`, is categorized as `policy`.
 
@@ -104,6 +104,7 @@ type FsSafeErrorCode =
   | "path-alias"
   | "path-mismatch"
   | "permission-unverified"
+  | "read-changed"
   | "read-failed"
   | "secret-exists"
   | "store-reentrant-update"
@@ -134,6 +135,7 @@ type FsSafeErrorCode =
 | `path-alias` | A path alias check failed (e.g. canonical-real-path moved out of the root). | Symlink resolution lands outside the root. |
 | `path-mismatch` | Post-open identity check failed: the opened fd does not match the resolved path. | TOCTOU — something else swapped the path between resolve and open. |
 | `permission-unverified` | A secure file check could not verify required permissions. | Windows ACL inspection failed; POSIX ownership/mode was unavailable. |
+| `read-changed` | A read with `verifyUnchanged: true` could not verify unchanged regular-file metadata and byte count. | The file grew, shrank, or its observed metadata changed while reading; see [reading](reading.md) for the detection limits. |
 | `read-failed` | A validated file could not be read because of an operational filesystem or device failure. | I/O error, media failure, or another runtime read failure; inspect `cause`. |
 | `secret-exists` | `createSecretFileAtomic()` found an existing final path. | First-writer-wins secret creation lost a race or the credential was already initialized. |
 | `store-reentrant-update` | A `JsonStore.update()` callback called `update()` or `updateOr()` for the same canonical store before returning. | Reentrant mutation would deadlock or lose an update; return the complete next value from the outer callback. |

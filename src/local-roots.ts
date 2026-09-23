@@ -163,6 +163,7 @@ export async function readLocalFileFromRoots(
   const readOptions: Parameters<Awaited<ReturnType<typeof root>>["read"]>[1] = {
     hardlinks: options.hardlinks,
     symlinks: options.symlinks,
+    verifyUnchanged: options.verifyUnchanged,
   };
   // Omission keeps Root's default cap; one policy snapshot serves every root.
   if (maxBytes !== undefined) readOptions.maxBytes = maxBytes;

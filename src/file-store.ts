@@ -80,7 +80,7 @@ export type FileStore = {
   ): Promise<string>;
   writeStream(relativePath: string, stream: Readable, options?: FileStoreWriteOptions): Promise<string>;
   copyIn(relativePath: string, sourcePath: string, options?: FileStoreWriteOptions): Promise<string>;
-  open(relativePath: string, options?: RootReadOptions): Promise<OpenResult>;
+  open(relativePath: string, options?: Omit<RootReadOptions, "verifyUnchanged">): Promise<OpenResult>;
   read(relativePath: string, options?: RootReadOptions): Promise<ReadResult>;
   readBytes(relativePath: string, options?: RootReadOptions): Promise<Buffer>;
   readText(relativePath: string, options?: FileStoreReadOptions): Promise<string>;

@@ -93,6 +93,10 @@ type ReadResult = {
 
 `realPath` is the canonical real path the read or open landed on, after symlink resolution; `stat` is the verified `fstat` result. Public root results currently report `containment: "best-effort"`; the union also describes direct native `openBeneath()` results, which report `"kernel-atomic"` on Linux. See the [security model](security-model.md#containment-guarantees-by-platform).
 
+Reads with `verifyUnchanged: true` return the final descriptor `stat`; ordinary
+reads and opens return the admission `stat`. See [reading](reading.md) for the
+metadata check and its snapshot limitations.
+
 ## `RootDefaults` / `RootOptions`
 
 ```ts
@@ -130,7 +134,9 @@ type RootOptions = {
 ```ts
 import type { CopyCloneMode, RootCopyPublicationReceipt } from "@openclaw/fs-safe";
 
-type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
+type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks"> & {
+  verifyUnchanged?: boolean;
+};
 type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity" | "mutationSymlinks"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;

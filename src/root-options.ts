@@ -33,9 +33,12 @@ export type RootDefaults = {
 export type RootReadOptions = Pick<
   RootDefaults,
   "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks"
->;
+> & {
+  /** Reject observed metadata or byte-count changes; this is not an atomic snapshot. */
+  verifyUnchanged?: boolean;
+};
 
-export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
+export type RootOpenOptions = Omit<RootReadOptions, "maxBytes" | "verifyUnchanged">;
 
 export type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
   encoding?: BufferEncoding;
@@ -111,5 +114,6 @@ export function mergeReadOptions(defaults: RootDefaults, options: RootReadOption
   if (options.hardlinks !== undefined) merged.hardlinks = options.hardlinks;
   merged.maxBytes = normalizeMaxBytes(options.maxBytes, { defaultValue: merged.maxBytes });
   if (options.symlinks !== undefined) merged.symlinks = options.symlinks;
+  merged.verifyUnchanged = options.verifyUnchanged;
   return merged;
 }

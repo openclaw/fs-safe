@@ -4,6 +4,7 @@
 
 ### Features
 
+- **Verified reads:** add opt-in `verifyUnchanged` to Root and standalone local-file reads, rejecting observed metadata or byte-count changes and returning the final stat without changing ordinary reads.
 - **Secret-file creation:** add `durable: "file"` to require successful file synchronization, including on `EPERM`, while preserving best-effort directory synchronization and existing boolean durability behavior.
 
 ### Fixes
