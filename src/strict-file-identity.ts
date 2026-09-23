@@ -4,7 +4,7 @@ import { recordFileObservationFailure } from "./file-observation.js";
 
 type ExactFileIdentity = Pick<BigIntStats, "dev" | "ino">;
 
-function identityMismatch(): FsSafeError {
+export function fileIdentityMismatchError(): FsSafeError {
   const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
   recordFileObservationFailure(error, "identity");
   return error;
@@ -17,17 +17,17 @@ function identityCheck(expected: ExactFileIdentity | undefined, platform: NodeJS
     for (const field of ["dev", "ino"] as const) {
       const value = stat[field];
       // Numeric receipts cannot recover identity bits already lost to rounding.
-      if (typeof value !== "bigint") throw identityMismatch();
+      if (typeof value !== "bigint") throw fileIdentityMismatchError();
       if (platform === "win32" && value === 0n) {
         complete = false;
       } else {
-        if (known[field] !== undefined && known[field] !== value) throw identityMismatch();
+        if (known[field] !== undefined && known[field] !== value) throw fileIdentityMismatchError();
         known[field] = value;
       }
     }
     return complete;
   };
-  if (expected && !check(expected)) throw identityMismatch();
+  if (expected && !check(expected)) throw fileIdentityMismatchError();
   return check;
 }
 
@@ -43,14 +43,14 @@ export async function inspectFileIdentity<T extends ExactFileIdentity>(
     const stat = await inspect();
     if (check(stat)) return stat;
   }
-  throw identityMismatch();
+  throw fileIdentityMismatchError();
 }
 
 export function inspectFileIdentitySync<T extends ExactFileIdentity>(
   inspect: () => T,
   expected?: ExactFileIdentity,
   platform: NodeJS.Platform = process.platform,
-  mismatch: () => Error = identityMismatch,
+  mismatch: () => Error = fileIdentityMismatchError,
 ): T {
   let knownDev: bigint | undefined;
   let knownIno: bigint | undefined;

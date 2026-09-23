@@ -14,14 +14,13 @@ import {
   TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY,
 } from "./temp-workspace-child-admission.js";
 import { FsSafeError } from "./errors.js";
-import { recordFileObservationFailure } from "./file-observation.js";
 import { realpathSync } from "./realpath.js";
 import {
   assertNoWindowsPathAlias,
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { fileIdentityMismatchError, inspectFileIdentitySync } from "./strict-file-identity.js";
 
 const WINDOWS = process.platform === "win32";
 
@@ -132,12 +131,6 @@ function assertCanonicalRoot(entry: DirectorySnapshot): void {
   }
 }
 
-function identityMismatch(): never {
-  const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
-  recordFileObservationFailure(error, "identity");
-  throw error;
-}
-
 function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats {
   const expected = entry.numericIdentity;
   if (!expected) {
@@ -147,14 +140,14 @@ function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats 
   let requiresExactRetry = false;
   const devKnown = Number.isSafeInteger(stat.dev) && stat.dev >= 0 && (!WINDOWS || stat.dev !== 0);
   if (devKnown) {
-    if (stat.dev !== expected.dev) identityMismatch();
+    if (stat.dev !== expected.dev) throw fileIdentityMismatchError();
   } else if (WINDOWS) requiresExactRetry = true;
-  else identityMismatch();
+  else throw fileIdentityMismatchError();
   const inoKnown = Number.isSafeInteger(stat.ino) && stat.ino >= 0 && (!WINDOWS || stat.ino !== 0);
   if (inoKnown) {
-    if (stat.ino !== expected.ino) identityMismatch();
+    if (stat.ino !== expected.ino) throw fileIdentityMismatchError();
   } else if (WINDOWS) requiresExactRetry = true;
-  else identityMismatch();
+  else throw fileIdentityMismatchError();
   if (!requiresExactRetry) return stat;
   // Read exact identity only once. The strict helper may re-check this constant
   // receipt in memory when Windows still reports an unknown component.
@@ -218,7 +211,7 @@ function exactIdentityMatches(
   current: Pick<ExactIdentity, "dev" | "ino">,
   expected: ExactIdentity,
 ): void {
-  if (current.dev !== expected.dev || current.ino !== expected.ino) identityMismatch();
+  if (current.dev !== expected.dev || current.ino !== expected.ino) throw fileIdentityMismatchError();
 }
 
 function associateTempWorkspaceRoot(

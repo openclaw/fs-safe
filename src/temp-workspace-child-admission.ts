@@ -2,8 +2,7 @@ import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import { inspectDirectoryIdentitySync, observeDirectoryIdentitySync } from "./directory-guard.js";
 import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
-import { recordFileObservationFailure } from "./file-observation.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { fileIdentityMismatchError, inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
 
 export type TempWorkspaceIdentity = Readonly<{ dev: bigint; ino: bigint }>;
@@ -27,12 +26,6 @@ export function projectTempWorkspaceNumericIdentity(
   return Object.freeze({ dev, ino });
 }
 
-function identityMismatch(): never {
-  const error = new FsSafeError("path-mismatch", "file identity changed or could not be verified");
-  recordFileObservationFailure(error, "identity");
-  throw error;
-}
-
 function inspectNumericIdentity(
   current: Stats,
   expected: TempWorkspaceNumericIdentity,
@@ -41,7 +34,7 @@ function inspectNumericIdentity(
     !Number.isSafeInteger(current.dev) || current.dev < 0 || current.dev !== expected.dev ||
     !Number.isSafeInteger(current.ino) || current.ino < 0 || current.ino !== expected.ino
   ) {
-    identityMismatch();
+    throw fileIdentityMismatchError();
   }
   return current;
 }
