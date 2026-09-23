@@ -2,21 +2,13 @@
 
 ## Unreleased
 
+## 0.18.2 - 2026-09-22
+
 ### Fixes
 
-- **Lock failure reporting:** preserve Root stale-removal authority rejections and nullish retry-option failures instead of replacing them with timeouts or `TypeError`s.
-- **Secret-file errors:** report caught `null` or `undefined` failures as structured errors instead of masking them with an internal `TypeError`.
-- **Secret-file creation:** preserve `null` and `undefined` thrown by parameter getters instead of masking them with an internal `TypeError`.
-
-### Performance
-
-- **Native errors:** reduce temporary allocations when constructing fixed filesystem error messages.
-
-### Maintenance
-
-- Use SDK-owned Windows publication records and access flags, with explicit x64 wire-layout coverage.
-- Share directory-replacement error wrapping while preserving primary errors, ordered recovery causes, and publication details.
-- Share file-identity error construction across metadata, temp workspace, and Windows secure-file checks while preserving per-operation error provenance.
+- **Lock errors:** preserve Root stale-removal rejections and `null` or `undefined` retry failures instead of masking them with timeouts or `TypeError`s. ([#624](https://github.com/openclaw/fs-safe/pull/624))
+- **Secret-file reads:** report caught `null` or `undefined` inspection and read failures as structured errors instead of internal `TypeError`s. ([#623](https://github.com/openclaw/fs-safe/pull/623))
+- **Secret-file creation:** preserve `null` or `undefined` thrown by parameter getters instead of masking them with an internal `TypeError`. ([#625](https://github.com/openclaw/fs-safe/pull/625))
 
 ## 0.18.1 - 2026-09-22
 
