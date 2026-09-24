@@ -11,3 +11,11 @@ export function normalizeMaxBytes(
   }
   return selected;
 }
+
+export function normalizeTraversalBudget(name: string, value: number | undefined): number {
+  if (value === undefined) return Number.POSITIVE_INFINITY;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}

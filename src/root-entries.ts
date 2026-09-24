@@ -1,3 +1,4 @@
+import { normalizeTraversalBudget } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { resolvePathInRoot, type RootContext } from "./root-context.js";
@@ -19,9 +20,7 @@ export async function* entriesInRoot(
   options: RootEntriesOptions,
 ): AsyncGenerator<DirEntry> {
   const maxEntries = options.maxEntries;
-  if (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || maxEntries < 0)) {
-    throw new RangeError("maxEntries must be a non-negative safe integer");
-  }
+  normalizeTraversalBudget("maxEntries", maxEntries);
   if (options.order !== undefined && options.order !== "filesystem" && options.order !== "sorted") {
     throw new TypeError(`invalid root entries order: ${String(options.order)}`);
   }

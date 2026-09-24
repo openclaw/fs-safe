@@ -1,6 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { normalizeTraversalBudget } from "./byte-budget.js";
 import { realpathSync } from "./realpath.js";
 import {
   pathForWindowsFilesystem,
@@ -52,15 +53,9 @@ type WalkDirectoryResultWithFailures = WalkDirectoryResult & {
   failedDirs: WalkDirectoryFailure[];
 };
 
-function validateWalkBudget(name: string, value: number | undefined): void {
-  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
-    throw new RangeError(`${name} must be a non-negative safe integer`);
-  }
-}
-
 function validateWalkOptions(options: Pick<WalkDirectoryOptions, "maxDepth" | "maxEntries" | "symlinks">): void {
-  validateWalkBudget("maxDepth", options.maxDepth);
-  validateWalkBudget("maxEntries", options.maxEntries);
+  normalizeTraversalBudget("maxDepth", options.maxDepth);
+  normalizeTraversalBudget("maxEntries", options.maxEntries);
   if (
     options.symlinks !== undefined &&
     !(["skip", "follow", "include"] as const).includes(options.symlinks)

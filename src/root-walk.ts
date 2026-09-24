@@ -1,4 +1,5 @@
 import path from "node:path";
+import { normalizeTraversalBudget } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { expandRelativePathWithHome } from "./root-context.js";
 import { resolveRootPath, ROOT_PATH_ALIAS_POLICIES } from "./root-path.js";
@@ -48,14 +49,6 @@ type RootWalkCapability = {
   ): Promise<RootDirectoryListing>;
 };
 
-function validateBudget(name: string, value: number | undefined): number {
-  if (value === undefined) return Number.POSITIVE_INFINITY;
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RangeError(`${name} must be a non-negative safe integer`);
-  }
-  return value;
-}
-
 function entryKind(entry: DirEntry): RootWalkDataEntryKind | "symlink" {
   if (entry.isSymbolicLink) return "symlink";
   if (entry.isDirectory) return "directory";
@@ -92,8 +85,8 @@ export async function* walkRoot(
       `invalid root walk directory error behavior: ${String(options.onDirectoryError)}`,
     );
   }
-  const maxDepth = validateBudget("maxDepth", options.maxDepth);
-  const maxEntries = validateBudget("maxEntries", options.maxEntries);
+  const maxDepth = normalizeTraversalBudget("maxDepth", options.maxDepth);
+  const maxEntries = normalizeTraversalBudget("maxEntries", options.maxEntries);
   const visitedDirectories = new Set<string>();
   let examined = 0;
   let truncated = false;
