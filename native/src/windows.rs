@@ -1010,12 +1010,12 @@ pub(crate) fn list_directory_entries(directory: HANDLE) -> NativeResult<Vec<(Str
     Ok(entries)
 }
 
-pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
-    let info = FILE_DISPOSITION_INFO_EX {
-        Flags: FILE_DISPOSITION_FLAG_DELETE
-            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
-            | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
-    };
+const OWNED_DELETE_FLAGS: u32 = FILE_DISPOSITION_FLAG_DELETE
+    | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+    | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
+
+fn set_delete_disposition(handle: HANDLE, flags: u32) -> std::result::Result<(), u32> {
+    let info = FILE_DISPOSITION_INFO_EX { Flags: flags };
     let ok = unsafe {
         SetFileInformationByHandle(
             handle,
@@ -1025,17 +1025,36 @@ pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
         )
     };
     if ok == 0 {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "remove owned tree handle",
-        ));
+        return Err(unsafe { GetLastError() });
     }
     Ok(())
+}
+
+pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
+    set_delete_disposition(handle, OWNED_DELETE_FLAGS)
+        .map_err(|code| win_error(code, "remove owned tree handle"))
+}
+
+pub(crate) fn mark_clone_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
+    clone_delete_disposition(|flags| set_delete_disposition(handle, flags))
+        .map_err(|code| win_error(code, "remove owned tree handle"))
+}
+
+fn clone_delete_disposition(
+    mut set: impl FnMut(u32) -> std::result::Result<(), u32>,
+) -> std::result::Result<(), u32> {
+    match set(OWNED_DELETE_FLAGS) {
+        // Some ReFS versions reject IGNORE_READONLY even on writable objects.
+        // Never repair attributes: a target may have acquired an outside hardlink.
+        Err(ERROR_NOT_SUPPORTED) => set(FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS),
+        result => result,
+    }
 }
 
 fn remove_directory_handle_with_hook(
     directory: HANDLE,
     before_child_open: &mut impl FnMut(&str),
+    mark: fn(HANDLE) -> NativeResult<()>,
 ) -> NativeResult<()> {
     let parent_volume = handle_identity(directory)?.0;
     for (name, attributes, file_id) in list_directory_entries(directory)? {
@@ -1065,15 +1084,18 @@ fn remove_directory_handle_with_hook(
             ));
         }
         if traverse {
-            remove_directory_handle_with_hook(child.0, before_child_open)?;
+            remove_directory_handle_with_hook(child.0, before_child_open, mark)?;
         }
-        mark_handle_for_deletion(child.0)?;
+        mark(child.0)?;
     }
     Ok(())
 }
 
-pub(crate) fn remove_directory_handle(directory: HANDLE) -> NativeResult<()> {
-    remove_directory_handle_with_hook(directory, &mut |_| {})
+pub(crate) fn remove_directory_handle(
+    directory: HANDLE,
+    mark: fn(HANDLE) -> NativeResult<()>,
+) -> NativeResult<()> {
+    remove_directory_handle_with_hook(directory, &mut |_| {}, mark)
 }
 
 fn remove_owned_tree_handles_with_hook(
@@ -1098,7 +1120,7 @@ fn remove_owned_tree_handles_with_hook(
     if handle_is_reparse(owned.0)? || !same_handle_identity(expected, owned.0)? {
         return Ok("preserved".to_owned());
     }
-    remove_directory_handle(owned.0)?;
+    remove_directory_handle(owned.0, mark_handle_for_deletion)?;
     before_root_delete();
     mark_handle_for_deletion(owned.0)?;
     Ok("removed".to_owned())
@@ -1728,6 +1750,28 @@ mod tests {
     }
 
     #[test]
+    fn clone_deletion_retries_only_unsupported_readonly_flags() {
+        for first in [Ok(()), Err(5), Err(32), Err(87)] {
+            let mut flags = Vec::new();
+            let result = clone_delete_disposition(|value| {
+                flags.push(value);
+                first
+            });
+            assert_eq!(result, first);
+            assert_eq!(flags, [0x13]);
+        }
+        for second in [Ok(()), Err(5), Err(32)] {
+            let mut flags = Vec::new();
+            let result = clone_delete_disposition(|value| {
+                flags.push(value);
+                if flags.len() == 1 { Err(50) } else { second }
+            });
+            assert_eq!(result, second);
+            assert_eq!(flags, [0x13, 0x03]);
+        }
+    }
+
+    #[test]
     fn reparse_leaf_open_requires_a_direct_child() {
         for name in ["", ".", "..", "nested/child", "nested\\child"] {
             let result = nt_open_relative_with_policy(
@@ -1762,6 +1806,7 @@ mod tests {
                 fs::rename(root.join("nested"), root.join("original")).unwrap();
                 fs::write(root.join("nested"), b"replacement").unwrap();
             },
+            mark_handle_for_deletion,
         )
         .unwrap_err();
         assert_eq!(error.status, "path-mismatch");
@@ -1801,6 +1846,7 @@ mod tests {
                     fs::write(workspace.join("nested/keep"), b"replacement").unwrap();
                 }
             },
+            mark_handle_for_deletion,
         )
         .unwrap_err();
         assert_eq!(error.status, "path-mismatch");

@@ -8,6 +8,7 @@
 
 ### Fixes
 
+- **ReFS clone cleanup:** remove ordinary partial output when Windows rejects the ignore-readonly deletion flag. Preserve readonly attributes and report cleanup failures instead of changing files that may have outside hardlinks.
 - **Native Unix descriptor admission:** reject invalid negative descriptors in low-level query, hash, clone, staging, and cleanup calls without Rust panics or working-directory operations; modern macOS beneath opens now report `EBADF` for negative roots instead of `EIO`.
 - **Native Unix file-copy admission:** reject negative source and parent descriptors without panicking in invalid low-level addon calls.
 - **Native Linux root admission:** reject negative root descriptors before guarded traversal, avoiding Rust panics and working-directory resolution in invalid low-level addon calls.
