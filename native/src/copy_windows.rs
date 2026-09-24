@@ -14,8 +14,8 @@ use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
 
 use crate::windows::{
-    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_independent_reader_handle,
-    read_at, root_handle, win_error,
+    OwnedHandle, check_win32_bool, handle_identity_and_size, handle_is_reparse,
+    open_independent_reader_handle, read_at, root_handle, win_error,
 };
 use crate::{NativeResult, native_error};
 
@@ -94,12 +94,8 @@ fn copy_contents_handles(
             if sparse_enabled {
                 // Skipping a trailing zero range moves the private cursor but not EOF.
                 // SAFETY: writer is synchronous and its cursor belongs to this copy.
-                if unsafe { SetEndOfFile(writer.0) } == 0 {
-                    return Err(win_error(
-                        unsafe { GetLastError() },
-                        "finish sparse copy target",
-                    ));
-                }
+                let result = unsafe { SetEndOfFile(writer.0) };
+                check_win32_bool(result, "finish sparse copy target")?;
                 check_cancelled(cancelled)?;
             }
             return Ok(());
@@ -117,13 +113,10 @@ fn copy_contents_handles(
             }
             if sparse_enabled {
                 // SAFETY: read fits the bounded buffer and only the private cursor moves.
-                if unsafe { SetFilePointerEx(writer.0, read as i64, null_mut(), FILE_CURRENT) } == 0
-                {
-                    return Err(win_error(
-                        unsafe { GetLastError() },
-                        "skip copied zero range",
-                    ));
-                }
+                let result = unsafe {
+                    SetFilePointerEx(writer.0, read as i64, null_mut(), FILE_CURRENT)
+                };
+                check_win32_bool(result, "skip copied zero range")?;
                 offset += read as u64;
                 continue;
             }
@@ -134,7 +127,7 @@ fn copy_contents_handles(
             let mut length = 0;
             // SAFETY: writer is synchronous and privately owned; the buffer and
             // byte count remain live until WriteFile completes every admitted I/O.
-            if unsafe {
+            let result = unsafe {
                 WriteFile(
                     writer.0,
                     buffer[written..read].as_ptr(),
@@ -142,10 +135,8 @@ fn copy_contents_handles(
                     &mut length,
                     null_mut(),
                 )
-            } == 0
-            {
-                return Err(win_error(unsafe { GetLastError() }, "write copied file"));
-            }
+            };
+            check_win32_bool(result, "write copied file")?;
             if length == 0 {
                 return Err(native_error("EIO", "file copy write made no progress"));
             }

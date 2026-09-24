@@ -85,7 +85,7 @@ pub(crate) fn duplicate_handle(handle: HANDLE, operation: &str) -> NativeResult<
     let process = unsafe { GetCurrentProcess() };
     let mut duplicate = null_mut();
     // SAFETY: the process pseudo-handle and output pointer remain valid through duplication.
-    if unsafe {
+    let result = unsafe {
         DuplicateHandle(
             process,
             handle,
@@ -95,10 +95,8 @@ pub(crate) fn duplicate_handle(handle: HANDLE, operation: &str) -> NativeResult<
             0,
             DUPLICATE_SAME_ACCESS,
         )
-    } == 0
-    {
-        return Err(win_error(unsafe { GetLastError() }, operation));
-    }
+    };
+    check_win32_bool(result, operation)?;
     Ok(OwnedHandle(duplicate))
 }
 
@@ -313,6 +311,23 @@ fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
     Ok(wide)
 }
 
+// Call immediately after the BOOL-returning API, before formatting or cleanup.
+pub(crate) fn win32_bool_result(result: windows_sys::core::BOOL) -> Result<(), u32> {
+    if result == 0 {
+        // SAFETY: GetLastError has no memory safety preconditions.
+        Err(unsafe { GetLastError() })
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn check_win32_bool(
+    result: windows_sys::core::BOOL,
+    operation: &str,
+) -> NativeResult<()> {
+    win32_bool_result(result).map_err(|code| win_error(code, operation))
+}
+
 pub(crate) fn win_error(code: u32, operation: &str) -> napi::Error<String> {
     let typed = match code {
         ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => "EEXIST",
@@ -367,10 +382,7 @@ fn handle_attribute_tag_information(
             size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
         )
     };
-    if ok == 0 {
-        // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(unsafe { GetLastError() }, operation));
-    }
+    check_win32_bool(ok, operation)?;
     Ok(info)
 }
 
@@ -866,17 +878,15 @@ pub(crate) fn handle_file_identity(handle: HANDLE) -> NativeResult<HandleFileIde
     // FILE_ID_INFO is available in the supported SDK; filesystems that cannot
     // supply it fail closed rather than falling back to a narrower identity.
     let mut info: FILE_ID_INFO = unsafe { zeroed() };
-    if unsafe {
+    let result = unsafe {
         GetFileInformationByHandleEx(
             handle,
             FileIdInfo,
             (&mut info as *mut FILE_ID_INFO).cast(),
             size_of::<FILE_ID_INFO>() as u32,
         )
-    } == 0
-    {
-        return Err(file_identity_error(unsafe { GetLastError() }));
-    }
+    };
+    win32_bool_result(result).map_err(file_identity_error)?;
     Ok(HandleFileIdentity {
         volume_serial_number: info.VolumeSerialNumber,
         file_id: info.FileId.Identifier,
@@ -886,12 +896,8 @@ pub(crate) fn handle_file_identity(handle: HANDLE) -> NativeResult<HandleFileIde
 fn guarded_handle_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "inspect owned directory identity",
-        ));
-    }
+    let result = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    check_win32_bool(result, "inspect owned directory identity")?;
     Ok(info)
 }
 
@@ -1024,13 +1030,7 @@ pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
             size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
         )
     };
-    if ok == 0 {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "remove owned tree handle",
-        ));
-    }
-    Ok(())
+    check_win32_bool(ok, "remove owned tree handle")
 }
 
 fn remove_directory_handle_with_hook(
@@ -1131,13 +1131,8 @@ pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     assert_not_reparse(handle)?;
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "inspect file identity",
-        ));
-    }
+    let result = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    check_win32_bool(result, "inspect file identity")?;
     let is_directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
     let size = ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64;
     let ino = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
@@ -1269,6 +1264,7 @@ mod tests {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::{AsRawHandle, IntoRawHandle};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use windows_sys::Win32::Foundation::{ERROR_INVALID_HANDLE, SetLastError};
 
     use super::*;
 
@@ -1644,6 +1640,64 @@ mod tests {
     }
 
     #[test]
+    fn bool_failure_captures_last_error_before_mapping_work() {
+        unsafe { SetLastError(ERROR_ACCESS_DENIED) };
+        let captured = win32_bool_result(0);
+        let error = captured
+            .map_err(|code| {
+                unsafe { SetLastError(ERROR_DISK_FULL) };
+                let operation = format!("inspect file {}", 7);
+                win_error(code, &operation)
+            })
+            .unwrap_err();
+        assert_eq!(error.status, "EPERM");
+        assert_eq!(error.reason, "inspect file 7 failed with Windows error 5");
+    }
+
+    #[test]
+    fn bool_success_accepts_nonzero_values_without_mapping() {
+        for value in [1, 2, -1, i32::MIN, i32::MAX] {
+            unsafe { SetLastError(ERROR_ACCESS_DENIED) };
+            let result: Result<(), u32> =
+                win32_bool_result(value).map_err(|_| panic!("success must not map"));
+            let last_error = unsafe { GetLastError() };
+            assert_eq!(result, Ok(()));
+            assert_eq!(last_error, ERROR_ACCESS_DENIED);
+            assert!(check_win32_bool(value, "successful query").is_ok());
+        }
+    }
+
+    #[test]
+    fn bool_query_failures_retain_their_operation_labels() {
+        let failures = [
+            (
+                handle_attribute_tag_information(INVALID_HANDLE_VALUE, "inspect opened path")
+                    .err().unwrap(),
+                "inspect opened path",
+            ),
+            (
+                guarded_handle_information(INVALID_HANDLE_VALUE).err().unwrap(),
+                "inspect owned directory identity",
+            ),
+            (
+                handle_file_identity(INVALID_HANDLE_VALUE).err().unwrap(),
+                "inspect stable 128-bit Windows file identity",
+            ),
+            (
+                mark_handle_for_deletion(INVALID_HANDLE_VALUE).unwrap_err(),
+                "remove owned tree handle",
+            ),
+        ];
+        for (error, operation) in failures {
+            assert_eq!(error.status, "EIO");
+            assert_eq!(
+                error.reason,
+                format!("{operation} failed with Windows error {ERROR_INVALID_HANDLE}"),
+            );
+        }
+    }
+
+    #[test]
     fn stable_file_identity_uses_volume_and_all_128_file_id_bits() {
         let identity = HandleFileIdentity {
             volume_serial_number: 7,
@@ -1673,24 +1727,37 @@ mod tests {
             ERROR_NOT_SUPPORTED,
             ERROR_INVALID_PARAMETER,
         ] {
-            let error = file_identity_error(code);
+            unsafe { SetLastError(code) };
+            let error = win32_bool_result(0).map_err(file_identity_error).unwrap_err();
             assert_eq!(error.status, "ENOTSUP");
-            assert!(error.reason.contains("128-bit Windows file identity"));
+            assert_eq!(
+                error.reason,
+                format!("stable 128-bit Windows file identity is unavailable (Windows error {code})"),
+            );
         }
     }
 
     #[test]
-    fn maps_disk_full_and_sharing_failures_to_node_filesystem_errors() {
+    fn bool_failures_retain_node_filesystem_error_codes_and_reasons() {
         for (code, expected) in [
+            (ERROR_ACCESS_DENIED, "EPERM"),
             (ERROR_DISK_FULL, "ENOSPC"),
             (ERROR_HANDLE_DISK_FULL, "ENOSPC"),
             (ERROR_SHARING_VIOLATION, "EBUSY"),
             (ERROR_LOCK_VIOLATION, "EBUSY"),
+            (ERROR_FILE_EXISTS, "EEXIST"),
+            (ERROR_ALREADY_EXISTS, "EEXIST"),
+            (ERROR_FILE_NOT_FOUND, "ENOENT"),
+            (ERROR_PATH_NOT_FOUND, "ENOENT"),
+            (ERROR_INVALID_HANDLE, "EIO"),
+            (0, "EIO"),
         ] {
+            unsafe { SetLastError(code) };
+            let error = check_win32_bool(0, "copy file").unwrap_err();
+            assert_eq!(error.status, expected, "Windows error {code}");
             assert_eq!(
-                win_error(code, "copy file").status,
-                expected,
-                "Windows error {code}"
+                error.reason,
+                format!("copy file failed with Windows error {code}"),
             );
         }
     }

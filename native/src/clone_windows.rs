@@ -26,9 +26,10 @@ use windows_sys::Win32::System::Ioctl::{
 };
 
 use crate::windows::{
-    OwnedHandle, ReparsePolicy, duplicate_handle, handle_identity, handle_is_reparse, list_directory_entries,
-    mark_handle_for_deletion, nt_open_relative_with_policy, nt_open_relative_with_sharing,
-    remove_directory_handle, root_handle, win_error,
+    OwnedHandle, ReparsePolicy, check_win32_bool, duplicate_handle, handle_identity,
+    handle_is_reparse, list_directory_entries, mark_handle_for_deletion,
+    nt_open_relative_with_policy, nt_open_relative_with_sharing, remove_directory_handle,
+    root_handle, win32_bool_result, win_error,
 };
 use crate::{NativeResult, native_error};
 
@@ -70,7 +71,7 @@ fn validate_basename(name: &str) -> NativeResult<()> {
 fn is_refs(handle: HANDLE) -> NativeResult<bool> {
     let mut filesystem = [0_u16; 32];
     let mut flags = 0;
-    if unsafe {
+    let result = unsafe {
         GetVolumeInformationByHandleW(
             handle,
             null_mut(),
@@ -81,10 +82,8 @@ fn is_refs(handle: HANDLE) -> NativeResult<bool> {
             filesystem.as_mut_ptr(),
             filesystem.len() as u32,
         )
-    } == 0
-    {
-        return Err(win_error(unsafe { GetLastError() }, "inspect clone volume"));
-    }
+    };
+    check_win32_bool(result, "inspect clone volume")?;
     let end = filesystem
         .iter()
         .position(|unit| *unit == 0)
@@ -130,25 +129,22 @@ fn create_source_handle(parent: HANDLE, basename: &str) -> NativeResult<()> {
 
 fn file_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(unsafe { GetLastError() }, "inspect clone source"));
-    }
+    let result = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    check_win32_bool(result, "inspect clone source")?;
     Ok(info)
 }
 
 fn metadata(handle: HANDLE) -> NativeResult<FILE_BASIC_INFO> {
     let mut info = FILE_BASIC_INFO::default();
-    if unsafe {
+    let result = unsafe {
         GetFileInformationByHandleEx(
             handle,
             FileBasicInfo,
             (&mut info as *mut FILE_BASIC_INFO).cast(),
             size_of::<FILE_BASIC_INFO>() as u32,
         )
-    } == 0
-    {
-        return Err(win_error(unsafe { GetLastError() }, "read clone metadata"));
-    }
+    };
+    check_win32_bool(result, "read clone metadata")?;
     Ok(info)
 }
 
@@ -219,21 +215,15 @@ fn set_metadata(handle: HANDLE, mut info: FILE_BASIC_INFO) -> NativeResult<()> {
         info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
     }
     info.ChangeTime = 0;
-    if unsafe {
+    let result = unsafe {
         SetFileInformationByHandle(
             handle,
             FileBasicInfo,
             (&info as *const FILE_BASIC_INFO).cast(),
             size_of::<FILE_BASIC_INFO>() as u32,
         )
-    } == 0
-    {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "preserve clone metadata",
-        ));
-    }
-    Ok(())
+    };
+    check_win32_bool(result, "preserve clone metadata")
 }
 
 fn control(
@@ -246,7 +236,7 @@ fn control(
 ) -> NativeResult<u32> {
     let mut returned = 0;
     // All callers pass initialized buffers whose lifetimes cover this synchronous call.
-    if unsafe {
+    let result = unsafe {
         DeviceIoControl(
             handle,
             code,
@@ -257,13 +247,9 @@ fn control(
             &mut returned,
             null_mut(),
         )
-    } == 0
-    {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            &format!("clone control {code:#x}"),
-        ));
-    }
+    };
+    win32_bool_result(result)
+        .map_err(|error| win_error(error, &format!("clone control {code:#x}")))?;
     Ok(returned)
 }
 
@@ -390,20 +376,15 @@ fn clone_file(job: FileJob, cancelled: &AtomicBool) -> NativeResult<()> {
         let eof = FILE_END_OF_FILE_INFO {
             EndOfFile: size as i64,
         };
-        if unsafe {
+        let result = unsafe {
             SetFileInformationByHandle(
                 target.0,
                 FileEndOfFileInfo,
                 (&eof as *const FILE_END_OF_FILE_INFO).cast(),
                 size_of::<FILE_END_OF_FILE_INFO>() as u32,
             )
-        } == 0
-        {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "set clone file length",
-            ));
-        }
+        };
+        check_win32_bool(result, "set clone file length")?;
         // ReFS permits the final partial cluster beyond EOF while retaining the exact
         // logical file size. Each request remains below the API's 4 GiB limit.
         let mut offset = 0;
@@ -624,8 +605,26 @@ mod tests {
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use windows_sys::Win32::Foundation::{ERROR_INVALID_HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_WRITE};
     use windows_sys::Win32::System::Ioctl::FSCTL_GET_RETRIEVAL_POINTERS;
+
+    #[test]
+    fn control_failure_retains_the_captured_error_and_dynamic_label() {
+        let error = control(
+            INVALID_HANDLE_VALUE,
+            FSCTL_SET_SPARSE,
+            null(),
+            0,
+            null_mut(),
+            0,
+        ).unwrap_err();
+        assert_eq!(error.status, "EIO");
+        assert_eq!(
+            error.reason,
+            format!("clone control {FSCTL_SET_SPARSE:#x} failed with Windows error {ERROR_INVALID_HANDLE}"),
+        );
+    }
 
     fn directory(path: &Path) -> File {
         OpenOptions::new()

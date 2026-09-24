@@ -267,6 +267,10 @@ mod windows {
             .collect())
     }
 
+    fn check_win32_bool(result: windows_sys::core::BOOL, operation: &str) -> NativeResult<()> {
+        crate::windows::win32_bool_result(result).map_err(|code| win_error(code, operation))
+    }
+
     fn win_error(code: u32, operation: &str) -> napi::Error<String> {
         let typed = match code {
             5 => "EACCES",
@@ -326,9 +330,8 @@ mod windows {
 
     fn current_user_sid() -> NativeResult<TokenSid> {
         let mut token: HANDLE = null_mut();
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-            return Err(win_error(unsafe { GetLastError() }, "open process token"));
-        }
+        let result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+        check_win32_bool(result, "open process token")?;
         let token = OwnedHandle(token);
         let mut needed = 0_u32;
         unsafe { GetTokenInformation(token.0, TokenUser, null_mut(), 0, &mut needed) };
@@ -336,7 +339,7 @@ mod windows {
             return Err(win_error(unsafe { GetLastError() }, "size token user"));
         }
         let mut buffer = vec![0_u8; needed as usize];
-        if unsafe {
+        let result = unsafe {
             GetTokenInformation(
                 token.0,
                 TokenUser,
@@ -344,10 +347,8 @@ mod windows {
                 needed,
                 &mut needed,
             )
-        } == 0
-        {
-            return Err(win_error(unsafe { GetLastError() }, "read token user"));
-        }
+        };
+        check_win32_bool(result, "read token user")?;
         let sid = unsafe { (*(buffer.as_ptr().cast::<TOKEN_USER>())).User.Sid };
         Ok(TokenSid {
             _buffer: buffer,
@@ -358,23 +359,18 @@ mod windows {
     fn well_known_sid(kind: i32) -> NativeResult<Vec<u8>> {
         let mut buffer = vec![0_u8; SECURITY_MAX_SID_SIZE as usize];
         let mut size = buffer.len() as u32;
-        if unsafe { CreateWellKnownSid(kind, null_mut(), buffer.as_mut_ptr().cast(), &mut size) }
-            == 0
-        {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "create well-known SID",
-            ));
-        }
+        let result = unsafe {
+            CreateWellKnownSid(kind, null_mut(), buffer.as_mut_ptr().cast(), &mut size)
+        };
+        check_win32_bool(result, "create well-known SID")?;
         buffer.truncate(size as usize);
         Ok(buffer)
     }
 
     fn sid_string(sid: PSID) -> NativeResult<String> {
         let mut value = null_mut();
-        if unsafe { ConvertSidToStringSidW(sid, &mut value) } == 0 {
-            return Err(win_error(unsafe { GetLastError() }, "format SID"));
-        }
+        let result = unsafe { ConvertSidToStringSidW(sid, &mut value) };
+        check_win32_bool(result, "format SID")?;
         let mut length = 0;
         while unsafe { *value.add(length) } != 0 {
             length += 1;
@@ -808,13 +804,10 @@ mod windows {
             }
             let mut control = 0_u16;
             let mut revision = 0_u32;
-            if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
-            {
-                return Err(win_error(
-                    unsafe { GetLastError() },
-                    "read security descriptor control",
-                ));
-            }
+            let result = unsafe {
+                GetSecurityDescriptorControl(descriptor, &mut control, &mut revision)
+            };
+            check_win32_bool(result, "read security descriptor control")?;
             let owner_class = if unsafe { EqualSid(owner, current.sid) } != 0 {
                 OwnerClass::CurrentUser
             } else if unsafe { IsWellKnownSid(owner, WinLocalSystemSid) } != 0 {
@@ -1040,9 +1033,8 @@ mod windows {
         expected_links: u32,
     ) -> NativeResult<HandleFileIdentity> {
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-        if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-            return Err(win_error(unsafe { GetLastError() }, "inspect private file"));
-        }
+        let result = unsafe { GetFileInformationByHandle(handle, &mut info) };
+        check_win32_bool(result, "inspect private file")?;
         if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(native_error(
                 "ELOOP",
@@ -1465,12 +1457,44 @@ mod windows {
         use std::path::{Path, PathBuf};
         use std::time::{SystemTime, UNIX_EPOCH};
 
+        use windows_sys::Win32::Foundation::SetLastError;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
             FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
 
         use super::*;
+
+        #[test]
+        fn bool_failures_preserve_the_separate_security_error_policy() {
+            for (code, security_status, filesystem_status) in [
+                (5, "EACCES", "EPERM"),
+                (39, "EIO", "ENOSPC"),
+                (112, "EIO", "ENOSPC"),
+                (32, "EIO", "EBUSY"),
+                (33, "EIO", "EBUSY"),
+                (80, "EEXIST", "EEXIST"),
+                (183, "EEXIST", "EEXIST"),
+                (2, "ENOENT", "ENOENT"),
+                (3, "ENOENT", "ENOENT"),
+                (6, "EIO", "EIO"),
+                (0, "EIO", "EIO"),
+            ] {
+                unsafe { SetLastError(code) };
+                let security = check_win32_bool(0, "inspect private file").unwrap_err();
+                unsafe { SetLastError(code) };
+                let filesystem =
+                    crate::windows::check_win32_bool(0, "inspect private file").unwrap_err();
+                assert_eq!(security.status, security_status, "Windows error {code}");
+                assert_eq!(filesystem.status, filesystem_status, "Windows error {code}");
+                let reason = format!("inspect private file failed with Windows error {code}");
+                assert_eq!(security.reason, reason);
+                assert_eq!(filesystem.reason, reason);
+            }
+            for value in [1, 2, -1, i32::MIN, i32::MAX] {
+                assert!(check_win32_bool(value, "successful security query").is_ok());
+            }
+        }
 
         fn temp_root(label: &str) -> PathBuf {
             let base = fs::canonicalize(std::env::temp_dir()).unwrap();
