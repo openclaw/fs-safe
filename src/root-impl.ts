@@ -685,13 +685,8 @@ function rootWriteQueueKey(root: RootContext, relativePath: string): string {
   return `${root.rootReal}\0${relativePath}`;
 }
 
-type WritableFileInRootParams = {
+type WritableFileInRootParams = Omit<RootOpenWritableOptions, "writeMode"> & {
   relativePath: string;
-  mkdir?: boolean;
-  mode?: number;
-  denyMutations?: DenyMutationPolicy;
-  assertBeforeMutation?: () => void;
-  mutationSymlinks?: MutationSymlinkPolicy;
   truncateExisting?: boolean;
   append?: boolean;
   expectedWritePath?: string;
