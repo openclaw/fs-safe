@@ -219,8 +219,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
       );
     }
   }
-  const ids: string[] = [];
-  const seenIds = new Set<string>();
+  const ids = new Set<string>();
   for (const file of files) {
     const suffix = file.endsWith(".processing")
       ? ".processing"
@@ -230,9 +229,7 @@ export async function loadPendingJsonDurableQueueEntries<T>(
     if (!suffix) continue;
     const id = file.slice(0, -suffix.length);
     try { assertSafeQueueEntryId(id); } catch { continue; }
-    if (seenIds.has(id)) continue;
-    seenIds.add(id);
-    ids.push(id);
+    ids.add(id);
   }
 
   const entries: T[] = [];
