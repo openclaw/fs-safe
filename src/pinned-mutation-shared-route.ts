@@ -1,17 +1,11 @@
 import path from "node:path";
-import type { DenyMutationPolicy } from "./deny-mutations.js";
+import type { PinnedMutationPolicySnapshot } from "./pinned-mutation-admission.js";
 import { WINDOWS_RESERVED_DEVICE_NAMES } from "./device-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import type { RootBoundaryIdentity } from "./root-boundary.js";
 import { isSafePathSegment } from "./safe-path-segment.js";
-import type { MutationSymlinkPolicy } from "./root-symlink-policy.js";
 
 export type ExactRootIdentity = Readonly<{ dev: bigint; ino: bigint }>;
-
-type SharedMutationPolicy = Readonly<{
-  denyMutations?: DenyMutationPolicy;
-  mutationSymlinks?: MutationSymlinkPolicy;
-}>;
 
 function windowsReservedDeviceSegment(segment: string): boolean {
   const extension = segment.indexOf(".");
@@ -68,7 +62,7 @@ export function simpleSharedRoute(params: {
   rootIdentity?: RootBoundaryIdentity;
   originalPath?: string;
   selectedTarget: string;
-  policy: SharedMutationPolicy;
+  policy: PinnedMutationPolicySnapshot;
 }): { route: string; rootIdentity: ExactRootIdentity } | undefined {
   if (process.versions.bun ||
     params.policy.mutationSymlinks !== "reject" || !params.originalPath ||

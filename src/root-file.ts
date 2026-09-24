@@ -66,16 +66,14 @@ type ResolvedRootFilePath = {
   rootObservation: Extract<CanonicalRootObservation, { ok: true }>;
 };
 
-type AsyncResolutionSnapshot = {
-  absolutePath: string;
-  rootPath: string;
-  rootRealPath?: string;
-  boundaryLabel: string;
-  aliasPolicy?: PathAliasPolicy;
+type AsyncResolutionSnapshot = Pick<OpenRootFileParams,
+  "absolutePath" | "rootPath" | "rootRealPath" | "boundaryLabel" | "aliasPolicy" | "skipLexicalRootCheck"> & {
   rejectSymlinks: boolean;
   rejectFinalSymlink: boolean;
-  skipLexicalRootCheck?: boolean;
 };
+
+type RootFileOpenSettings = Pick<OpenRootFileSyncParams,
+  "maxBytes" | "rejectHardlinks" | "allowedType"> & { ioFs: BoundaryReadFs };
 
 export function canUseRootFileOpen(ioFs: typeof fs): boolean {
   return (
@@ -159,17 +157,7 @@ export function matchRootFileOpenFailure<T>(
   return handlers.fallback(failure);
 }
 
-function openRootFileResolved(params: {
-  absolutePath: string;
-  resolvedPath: string;
-  rootRealPath: string;
-  boundaryLabel: string;
-  rootObservation: Extract<CanonicalRootObservation, { ok: true }>;
-  maxBytes?: number;
-  rejectHardlinks?: boolean;
-  allowedType?: PinnedOpenSyncAllowedType;
-  ioFs: BoundaryReadFs;
-}): RootFileOpenResult {
+function openRootFileResolved(params: ResolvedRootFilePath & RootFileOpenSettings): RootFileOpenResult {
   const rejectHardlinks = params.rejectHardlinks ?? true;
   const opened = openPinnedFileSync({
     filePath: params.absolutePath,
@@ -197,12 +185,8 @@ function openRootFileResolved(params: {
   };
 }
 
-function finalizeRootFileOpen(params: {
+function finalizeRootFileOpen(params: RootFileOpenSettings & {
   resolved: ResolvedRootFilePath | RootFileOpenResult;
-  maxBytes?: number;
-  rejectHardlinks?: boolean;
-  allowedType?: PinnedOpenSyncAllowedType;
-  ioFs: BoundaryReadFs;
 }): RootFileOpenResult {
   if ("ok" in params.resolved) {
     return params.resolved;

@@ -2,7 +2,8 @@ import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
+import { assertMutationNotDenied } from "./deny-mutations.js";
+import type { RootMoveOptions } from "./root-options.js";
 import {
   openNativeParentAdmission,
   openNativeRootAdmission,
@@ -21,7 +22,7 @@ import {
   normalizePinnedPathError,
   outsideWorkspaceError,
 } from "./root-errors.js";
-import { assertFinalSymlinkRejected, type MutationSymlinkPolicy } from "./root-symlink-policy.js";
+import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -90,11 +91,7 @@ export function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T, over
 
 export async function movePathNoReplaceNative(
   root: RootContext,
-  params: {
-    assertBeforeMutation?: () => void;
-    denyMutations?: DenyMutationPolicy;
-    mutationSymlinks?: MutationSymlinkPolicy;
-  },
+  params: Pick<RootMoveOptions, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">,
   paths: {
     sourcePath: string;
     sourceParentPath: string;

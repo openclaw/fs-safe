@@ -439,13 +439,18 @@ describe.runIf(native)("native filesystem primitives", () => {
 
     await expect(
       acquireFileLock(targetPath, {
-        timeoutMs: 1_000,
+        // Exercise the denial-count cap without an elapsed deadline.
+        timeoutMs: Number.POSITIVE_INFINITY,
         retry: { retries: 20, minTimeout: 1, maxTimeout: 1 },
         payload: () => ({ pid: process.pid }),
       }),
-    ).rejects.toMatchObject({ code: "EPERM", path: lockPath });
+    ).rejects.toMatchObject({
+      code: "EPERM",
+      path: lockPath,
+      message: "open relative path failed with Windows error 5",
+    });
     expect(exclusiveOpenCalls).toBe(9);
-  });
+  }, 30_000);
 
   it("publishes by native rename without replacing an existing target", async () => {
     __setNativeLoaderForTest(() => native!);

@@ -52,7 +52,7 @@ permissions:
 jobs:
   public-behavior-proof:
     name: Node 24 public mutation proof (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'blacksmith-16vcpu-windows-2025' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false

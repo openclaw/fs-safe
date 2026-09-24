@@ -24,7 +24,7 @@
 
 ### Maintenance
 
-- **Windows CI capacity:** run recurring checks on 16-vCPU Windows x64 runners, with an explicit platform and processor-capacity check before setup.
+- **Windows CI capacity:** run recurring checks on GitHub-managed 16-core Windows x64 runners, verifying the platform and at least 16 logical processors before setup.
 
 ## 0.18.2 - 2026-09-22
 

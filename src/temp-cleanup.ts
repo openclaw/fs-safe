@@ -7,12 +7,9 @@ export type TempPathRegistration = (() => void) & {
   setIdentity(identity: FileIdentityStat): void;
 };
 
-type TempCleanupEntry = {
+type TempCleanupEntry = Omit<NonNullable<Parameters<typeof registerTempPathForExit>[1]>, "recursive"> & {
   path: string;
   recursive: boolean;
-  identity?: FileIdentityStat;
-  singleLinkFile?: boolean;
-  cleanupSync?: () => unknown;
 };
 
 const tempCleanupEntries = new Map<string, TempCleanupEntry>();

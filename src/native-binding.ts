@@ -2,6 +2,7 @@ import type { TarMeterLimits } from "./archive-limits.js";
 import type { ArchiveMemberKind } from "./archive-plan.js";
 import type { CopyCloneMode } from "./copy-policy.js";
 import { FsSafeError } from "./errors.js";
+import type { WindowsAceFlags } from "./owner-dacl.js";
 
 export interface NativeFileHash {
   bytes: number;
@@ -69,16 +70,7 @@ export interface NativeWindowsAccessControlEntry {
   sid: string;
   mask: number;
   aceType: string;
-  flags: {
-    raw: number;
-    objectInherit: boolean;
-    containerInherit: boolean;
-    noPropagateInherit: boolean;
-    inheritOnly: boolean;
-    inherited: boolean;
-    successfulAccess: boolean;
-    failedAccess: boolean;
-  };
+  flags: WindowsAceFlags;
 }
 
 export interface NativeWindowsSecurityFacts {

@@ -13,7 +13,7 @@ import {
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 import { resolvePathWithinRoot } from "./root-paths-lexical.js";
-import { resolvePathWithinNormalizedRoot } from "./path-scope-lexical.js";
+import { resolvePathWithinNormalizedRoot, type ResolvePathWithinRootParams } from "./path-scope-lexical.js";
 import {
   assertNoSymlinkSegments,
   ensureDirectoryWithinRoot,
@@ -123,12 +123,9 @@ async function validateCanonicalPathWithinRoot(params: {
   }
 }
 
-export async function resolveWritablePathWithinRoot(params: {
-  rootDir: string;
-  requestedPath: string;
-  scopeLabel: string;
-  defaultFileName?: string;
-}): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+export async function resolveWritablePathWithinRoot(
+  params: ResolvePathWithinRootParams,
+): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   const rootDirInput = params.rootDir;
   const requestedPathInput = params.requestedPath;
   const scopeLabel = params.scopeLabel;

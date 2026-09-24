@@ -159,14 +159,9 @@ function buildSiblingTempName(targetPath: string, fallbackFileName?: string): st
   return `${prefix}${safeTail}${suffix}`;
 }
 
-async function writeExternalFileViaSibling<T>(params: {
-  finalPath: string;
-  write: (filePath: string) => Promise<T>;
-  producerIsolation?: "private-directory";
-  fallbackFileName?: string;
-  maxBytes?: number;
-  mode?: number;
-}): Promise<T> {
+async function writeExternalFileViaSibling<T>(
+  params: Omit<ExternalFileWriteOptions<T>, "rootDir" | "path" | "staging"> & { finalPath: string },
+): Promise<T> {
   assertNoWindowsPathAlias(params.finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const finalPath = path.resolve(params.finalPath);
   assertNoWindowsPathAlias(finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
