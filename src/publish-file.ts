@@ -55,10 +55,7 @@ function directoryOpenFlags(): number {
   );
 }
 
-async function openNativeParent(filePath: string): Promise<{
-  basename: string;
-  handle: FileHandle;
-}> {
+async function openNativeParent(filePath: string) {
   const parentPath = path.dirname(filePath);
   const handle = await fs.open(parentPath, directoryOpenFlags());
   try {
@@ -117,12 +114,7 @@ async function copyPinnedSource(params: {
   native?: NativeBinding;
   targetNativeParent?: Awaited<ReturnType<typeof openNativeParent>>;
   failure: PublishFailureState;
-}): Promise<{
-  handle: FileHandle;
-  exactIdentity: BigIntStats;
-  digest: string;
-  bytes: number;
-}> {
+}) {
   if (params.native && params.targetNativeParent) {
     const closeFd = captureNativeFdClose(params.native);
     for (const method of ["clone", "copy-file-range"] as const) {
