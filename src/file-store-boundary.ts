@@ -143,12 +143,9 @@ export function ensureParentSync(params: {
   });
 }
 
-export function ensureStoreDirectorySync(params: {
-  rootDir: string;
-  targetDir: string;
-  mode: number;
-  messagePrefix: "private store" | "store";
-}): SyncParentGuard {
+export function ensureStoreDirectorySync(
+  params: Parameters<typeof ensureSyncStoreDirectory>[0],
+): SyncParentGuard {
   const guard = ensureSyncStoreDirectory(params);
   assertSyncStoreDirectoryReceipt(guard);
   return guard;

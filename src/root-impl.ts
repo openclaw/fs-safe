@@ -145,11 +145,7 @@ const OPEN_APPEND_CREATE_FLAGS =
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 
-function openResult(params: {
-  handle: FileHandle;
-  realPath: string;
-  stat: Stats;
-}): OpenResult {
+function openResult(params: Pick<OpenResult, "handle" | "realPath" | "stat">): OpenResult {
   return {
     handle: params.handle,
     containment: "best-effort",
@@ -1241,13 +1237,10 @@ async function copyFileInRoot(
 
 async function resolvePinnedPathInRoot(
   root: RootContext,
-  params: {
-    relativePath: string;
+  params: Omit<Parameters<typeof resolvePinnedRootPathInRoot>[1], "policy"> & {
     allowRoot?: boolean;
     denyMutations?: DenyMutationPolicy;
-    mutationSymlinks?: MutationSymlinkPolicy;
     remove?: boolean;
-    removalReceipts?: RemovalPathReceipts;
   },
 ): Promise<{ rootReal: string; resolved: string; relativePosix: string }> {
   const resolved = await resolvePinnedRootPathInRoot(root, {
@@ -1348,9 +1341,7 @@ async function listPathFallback(
 
 async function movePathFallback(
   root: RootContext,
-  params: RootMoveOptions & {
-    fromRelative: string;
-    toRelative: string;
+  params: RootMoveOptions & Parameters<typeof assertMoveMutationAllowed>[1] & {
     overwrite: boolean;
   },
 ): Promise<void> {

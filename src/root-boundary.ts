@@ -19,11 +19,8 @@ export type AdmittedRootPath = Readonly<{
   admission: "exact" | "identity";
 }>;
 
-type WindowsRootPrefix = Readonly<{
+type WindowsRootPrefix = AdmittedRootPath & Readonly<{
   candidateRootPath: string;
-  path: string;
-  relativePath: string;
-  admission: "exact" | "identity";
 }>;
 
 type WindowsComparablePath = Readonly<{

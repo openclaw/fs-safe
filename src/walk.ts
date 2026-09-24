@@ -85,11 +85,8 @@ function shouldStop(result: WalkDirectoryResult, options: Pick<WalkDirectoryOpti
   return options.maxEntries !== undefined && result.scannedEntryCount >= Math.max(0, options.maxEntries);
 }
 
-function buildEntry(params: {
-  relativePath: string;
+function buildEntry(params: Pick<WalkDirectoryEntry, "relativePath" | "dirent" | "depth"> & {
   fullPath: string;
-  dirent: fsSync.Dirent;
-  depth: number;
   kind?: WalkEntryKind;
 }): WalkDirectoryEntry {
   const fullPath = params.fullPath;
