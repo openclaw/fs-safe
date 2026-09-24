@@ -5,7 +5,7 @@ describe("benchmark workflow contract", () => {
   it("keeps raw dispatch values in the preflight job and uses fixed measured paths", async () => {
     const workflow = (await readFile(".github/workflows/benchmarks.yml", "utf8")).replaceAll("\r\n", "\n");
     const methodJobStart = workflow.indexOf("  method-audit:");
-    const methodJobEnd = workflow.indexOf("  benchmark:");
+    const methodJobEnd = workflow.indexOf("  windows-native-pair:");
     const methodStepsStart = workflow.indexOf("    steps:", methodJobStart);
     const methodJob = workflow.slice(methodJobStart, methodJobEnd);
     const methodJobHeader = workflow.slice(methodJobStart, methodStepsStart);
@@ -58,9 +58,39 @@ describe("benchmark workflow contract", () => {
     expect(workflow).toContain('options: ["45", "90", "120"]');
   });
 
-  it("leaves the ordinary PR/schedule benchmark job byte-for-byte unchanged", async () => {
+  it("leaves the ordinary benchmark body unchanged behind the build-only guard", async () => {
     const workflow = (await readFile(".github/workflows/benchmarks.yml", "utf8")).replaceAll("\r\n", "\n");
     const expected = (await readFile("test/fixtures/benchmark-job.yml", "utf8")).replaceAll("\r\n", "\n");
-    expect(workflow.slice(workflow.indexOf("  benchmark:"))).toBe(expected);
+    expect(workflow.slice(workflow.indexOf("  benchmark:")).replace(
+      "    if: github.event_name != 'workflow_dispatch' || !inputs.build_only\n", "",
+    )).toBe(expected);
+  });
+
+  it("isolates the fixed native pair from every timed job and always retains cleanup evidence", async () => {
+    const workflow = (await readFile(".github/workflows/benchmarks.yml", "utf8")).replaceAll("\r\n", "\n");
+    const job = (name: string) => {
+      const start = workflow.indexOf(`  ${name}:\n`);
+      expect(start).toBeGreaterThan(-1);
+      const remaining = workflow.slice(start + 1);
+      const next = remaining.search(/\n  [a-zA-Z0-9_-]+:\n/);
+      return next < 0 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
+    };
+    expect(job("prepare_method_audit")).toContain("inputs.method_audit && !inputs.build_only");
+    expect(job("method-audit")).toContain("if: ${{ !inputs.build_only }}");
+    expect(job("benchmark")).toContain("if: github.event_name != 'workflow_dispatch' || !inputs.build_only");
+    const pair = job("windows-native-pair");
+    expect(pair).toContain("if: github.event_name == 'workflow_dispatch' && inputs.build_only");
+    expect(pair).toContain("runs-on: fs-safe-windows-16core");
+    expect(pair).not.toContain("matrix:");
+    expect(pair).not.toMatch(/pnpm benchmark|method-audit-evidence|benchmarks\/runner/);
+    expect(pair).toContain("ref: b7beb3e429973ce023a7e78faccf5f58adbcc934");
+    expect(pair).toContain("ref: f938c7ac9a5e755d78f72a41c26a57d662002bfd");
+    expect(pair).toContain("$env:PAIR_EXPECTED_HARNESS_SHA -cne $env:PAIR_HARNESS_SHA");
+    expect(pair).toContain("node-version: 24.21.0");
+    expect(pair).toContain("rustup toolchain install 1.98.1 --profile minimal --no-self-update");
+    expect(pair).toContain("Ensure owned VHD is dismounted and removed\n        if: always()");
+    expect(pair).toContain("Upload native pair and receipts\n        if: always()");
+    expect(pair).toContain("path: ${{ runner.temp }}/fs-safe-native-pair/artifacts/");
+    expect(pair).not.toContain("path: ${{ runner.temp }}/fs-safe-native-pair/\n");
   });
 });

@@ -6,6 +6,10 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
+      build_only:
+        description: Build and qualify the fixed Windows native pair without timing
+        type: boolean
+        default: false
       method_audit:
         description: Run the complete callable-method matrix
         type: boolean
@@ -74,7 +78,7 @@ permissions:
 
 jobs:
   prepare_method_audit:
-    if: github.event_name == 'workflow_dispatch' && inputs.method_audit
+    if: github.event_name == 'workflow_dispatch' && inputs.method_audit && !inputs.build_only
     name: Prepare method audit
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -136,6 +140,7 @@ jobs:
           if-no-files-found: error
 
   method-audit:
+    if: ${{ !inputs.build_only }}
     needs: prepare_method_audit
     name: Method audit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -261,7 +266,84 @@ jobs:
           path: ${{ env.REPORT_ROOT }}/
           if-no-files-found: warn
 
+  windows-native-pair:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_only
+    name: Windows native pair (build and untimed qualification only)
+    runs-on: fs-safe-windows-16core
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PAIR_HARNESS_SHA: ${{ github.workflow_sha }}
+      PAIR_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+      PAIR_BASELINE_INPUT: ${{ inputs.compare_ref }}
+      PAIR_CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+      RUSTUP_TOOLCHAIN: 1.98.1
+    steps:
+      - name: Validate fixed source inputs and configure byte-exact checkout
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PAIR_EXPECTED_HARNESS_SHA -cnotmatch '^[0-9a-f]{40}$' -or $env:PAIR_EXPECTED_HARNESS_SHA -cne $env:PAIR_HARNESS_SHA) { throw 'Exact reviewed workflow commit required' }
+          if ($env:PAIR_BASELINE_INPUT -cne 'b7beb3e429973ce023a7e78faccf5f58adbcc934' -or $env:PAIR_CANDIDATE_INPUT -cne 'f938c7ac9a5e755d78f72a41c26a57d662002bfd') { throw 'Only the fixed reviewed native pair is allowed' }
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - name: Check out reviewed build harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: harness
+          persist-credentials: false
+      - name: Check out exact baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: b7beb3e429973ce023a7e78faccf5f58adbcc934
+          path: baseline
+          persist-credentials: false
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: f938c7ac9a5e755d78f72a41c26a57d662002bfd
+          path: candidate
+          persist-credentials: false
+      - name: Verify Windows CI runner
+        uses: ./harness/.github/actions/verify-windows-ci-runner
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+      - name: Set up exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Install exact Rust toolchain
+        timeout-minutes: 15
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Rust installation failed' }
+      - name: Build both native variants and qualify NTFS and ReFS
+        timeout-minutes: 80
+        run: ./harness/scripts/windows-native-pair.ps1
+      - name: Ensure owned VHD is dismounted and removed
+        if: always()
+        timeout-minutes: 5
+        run: |
+          if (Test-Path -LiteralPath './harness/scripts/windows-native-pair.ps1') {
+            ./harness/scripts/windows-native-pair.ps1 -CleanupOnly
+          }
+      - name: Upload native pair and receipts
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-pair-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fs-safe-native-pair/artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
   benchmark:
+    if: github.event_name != 'workflow_dispatch' || !inputs.build_only
     name: Node 22 benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 15
