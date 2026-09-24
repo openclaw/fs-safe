@@ -146,9 +146,11 @@ try {
     $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join([char]31, $flags)
     $before = @{}
     foreach ($role in $roles.Keys) { $before[$role] = Source-Snapshot $role 'before' }
-    $changed = @($before.baseline.Keys | Where-Object { $before.baseline[$_] -cne $before.candidate[$_] } | Sort-Object)
+    $baselinePaths = [Collections.Generic.HashSet[string]]::new([string[]]@($before.baseline.Keys), [StringComparer]::Ordinal)
+    $candidatePaths = [Collections.Generic.HashSet[string]]::new([string[]]@($before.candidate.Keys), [StringComparer]::Ordinal)
+    $changed = [Collections.Generic.HashSet[string]]::new([string[]]@($baselinePaths | Where-Object { $before.baseline[$_] -cne $before.candidate[$_] }), [StringComparer]::Ordinal)
     $expected = @('native/src/clone_windows.rs','native/src/copy_windows.rs','native/src/windows.rs','native/src/windows_security.rs')
-    if (($before.baseline.Keys -join "`n") -cne ($before.candidate.Keys -join "`n") -or ($changed -join "`n") -cne ($expected -join "`n")) { throw 'Unexpected source delta outside the four reviewed Rust files' }
+    if (!$baselinePaths.SetEquals($candidatePaths) -or !$changed.SetEquals([string[]]$expected)) { throw 'Unexpected source delta outside the four reviewed Rust files' }
     Save-Json 'inputs.json' ([ordered]@{ roles=$roles; workflowSha=$env:PAIR_HARNESS_SHA; runId=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT; flags=$flags; sharedPortableSha256='f47db7d77056d8a202019a8cd791accfd6893816a34ea41027d41699fd0153f3'; measurementExecuted=$false })
 
     $previous = @(Get-Disk | Select-Object Number,UniqueId)
