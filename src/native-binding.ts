@@ -112,6 +112,13 @@ export interface NativeDarwinAclFacts {
   state: "absent" | "empty" | "present";
 }
 
+type NativeTwoPathArgs = [
+  sourceRootFd: number,
+  sourceRelPath: string,
+  targetRootFd: number,
+  targetRelPath: string,
+];
+
 export interface NativeBinding {
   /** Internal: consumes only a descriptor returned by this binding. */
   closeOwnedFd(fd: number): void;
@@ -202,12 +209,7 @@ export interface NativeBinding {
     limits: TarMeterLimits,
     signal: AbortSignal,
   ): Promise<NativeArchiveEntry[]>;
-  linkBeneath(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-  ): void;
+  linkBeneath(...args: NativeTwoPathArgs): void;
   /** Direct-child mkdir; true is receipt provenance only, never cleanup ownership. */
   mkdirChildBeneath?(parentFd: number, basename: string, mode: number): boolean;
   mkdirBeneath(rootFd: number, relPath: string, mode: number): void;
@@ -234,12 +236,7 @@ export interface NativeBinding {
     basename: string,
     directoryFd: number,
   ): NativeOwnedTreeRemovalResult;
-  renameNoReplace(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-  ): void;
+  renameNoReplace(...args: NativeTwoPathArgs): void;
   /** Identity-fenced retained-directory rename capability. */
   renameNoReplaceWithIdentity?(
     sourceRootFd: number,
@@ -249,12 +246,7 @@ export interface NativeBinding {
     expectedSourceDev: bigint,
     expectedSourceIno: bigint,
   ): void;
-  renameReplace(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-  ): void;
+  renameReplace(...args: NativeTwoPathArgs): void;
   sha256File(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
 }
 
