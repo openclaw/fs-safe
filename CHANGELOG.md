@@ -22,6 +22,10 @@
 
 - **Creation permissions:** clarify that `Root.append()` and `openWritable()` creation modes remain subject to the process umask and do not chmod existing files.
 
+### Maintenance
+
+- **Windows CI capacity:** run recurring checks on 16-vCPU Windows x64 runners, with an explicit platform and processor-capacity check before setup.
+
 ## 0.18.2 - 2026-09-22
 
 ### Fixes

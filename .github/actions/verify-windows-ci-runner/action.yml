@@ -1,0 +1,21 @@
+name: Verify Windows CI runner
+description: Require native Windows x64 with at least 16 logical processors and a Windows runner context
+runs:
+  using: composite
+  steps:
+    - name: Verify Windows capacity and context
+      shell: pwsh
+      env:
+        FS_SAFE_RUNNER_OS: ${{ runner.os }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $windows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+        $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        if (-not $windows -or $architecture -ne "X64" -or $env:FS_SAFE_RUNNER_OS -ne "Windows") {
+          throw "Windows CI requires native Windows x64 and runner.os=Windows."
+        }
+        $logicalProcessors = [int](Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors
+        Write-Host "Windows CI runner: arch=$architecture logical_processors=$logicalProcessors runner_os=$env:FS_SAFE_RUNNER_OS"
+        if ($logicalProcessors -lt 16) {
+          throw "Windows CI requires at least 16 logical processors; found $logicalProcessors."
+        }
