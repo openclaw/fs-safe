@@ -649,12 +649,12 @@ mod tests {
         assert_eq!(missing.raw_os_error(), Some(2), "{path:?}: {missing}; {error}");
     }
 
-    fn rollback_fixture() -> (PathBuf, File, Arc<Directory>) {
+    fn rollback_fixture(label: &str) -> (PathBuf, File, Arc<Directory>) {
         let base = fs::canonicalize(
             std::env::var_os("FS_SAFE_CLONE_TEST_ROOT").map_or_else(std::env::temp_dir, Into::into),
         ).unwrap();
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = base.join(format!("fs-safe-refs-rollback-{}-{nonce}", std::process::id()));
+        let root = base.join(format!("fs-safe-refs-rollback-{label}-{}-{nonce}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let parent = directory(&root);
         let target = create_directory(parent.as_raw_handle(), "partial").unwrap();
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn clone_rollback_preserves_readonly_attributes_on_outside_hardlinks() {
-        let (root, parent, target) = rollback_fixture();
+        let (root, parent, target) = rollback_fixture("readonly");
         let inside = root.join("partial/readonly");
         let outside = root.join("outside");
         fs::write(&inside, b"preserve attributes and bytes").unwrap();
@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn clone_rollback_removes_junction_without_traversing_its_target() {
-        let (root, parent, target) = rollback_fixture();
+        let (root, parent, target) = rollback_fixture("junction");
         let outside = root.join("outside");
         fs::create_dir(&outside).unwrap();
         fs::write(outside.join("keep"), b"outside sentinel").unwrap();
