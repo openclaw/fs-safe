@@ -8,10 +8,8 @@ import { directoryComponentNotDirectoryError, errorCauseOptions } from "./root-e
 type ExactDirectoryIdentity = Readonly<Pick<BigIntStats, "dev" | "ino">>;
 const MAX_SAFE_DIRECTORY_IDENTITY = BigInt(Number.MAX_SAFE_INTEGER);
 
-export type RemovalDirectoryAssertion = Readonly<{
+export type RemovalDirectoryAssertion = ExactDirectoryIdentity & Readonly<{
   path: string;
-  dev: bigint;
-  ino: bigint;
   numericDev?: number;
   numericIno?: number;
   platform: NodeJS.Platform;

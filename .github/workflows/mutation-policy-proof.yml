@@ -39,6 +39,7 @@ on:
       - src/write-file-handle.ts
       - src/replace-file-temp-owner.ts
       - .github/workflows/mutation-policy-proof.yml
+      - .github/actions/verify-windows-ci-runner/action.yml
       - package.json
       - pnpm-lock.yaml
   push:
@@ -51,7 +52,7 @@ permissions:
 jobs:
   public-behavior-proof:
     name: Node 24 public mutation proof (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -64,6 +65,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
 
       - name: Initialize pending sanitized receipt
         id: initialize

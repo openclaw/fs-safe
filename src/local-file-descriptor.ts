@@ -12,8 +12,7 @@ import {
 } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError } from "./root-errors.js";
-import type { HardlinkPolicy } from "./root-options.js";
-import type { SymlinkPolicy } from "./root-symlink-policy.js";
+import type { RootReadOptions } from "./root-options.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -31,11 +30,7 @@ type OwnedLocalFile = {
 // must close on rejection and construct an OpenResult only after admission.
 export async function openLocalFileDescriptor(
   filePath: string,
-  options?: {
-    hardlinks?: HardlinkPolicy;
-    symlinks?: SymlinkPolicy;
-    readWrite?: true;
-  },
+  options?: Pick<RootReadOptions, "hardlinks" | "symlinks"> & { readWrite?: true },
 ): Promise<OwnedLocalFile> {
   assertNoUnsafeDeviceReadPath(filePath);
   const fsSafeTestHooks = getFsSafeTestHooks();

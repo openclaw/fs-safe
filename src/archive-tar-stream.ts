@@ -25,10 +25,8 @@ async function gzipFile(filePath: string): Promise<boolean> {
   } finally { await handle.close(); }
 }
 
-async function withTarStream<T>(params: TarInput & {
-  limits: TarMeterLimits; signal?: AbortSignal; kind?: Exclude<ArchiveKind, "zip">;
-  onMember?: (entry: AdmittedTarMember) => void;
-}, consume: (parser: TarParserStream) => Promise<T>): Promise<T> {
+async function withTarStream<T>(params: Parameters<typeof inspectTar>[0],
+  consume: (parser: TarParserStream) => Promise<T>): Promise<T> {
   const buffer = params.archiveBuffer;
   const kind = params.kind ?? "tar";
   const gzip = kind === "tar" && (buffer !== undefined ? isGzipBuffer(buffer) : await gzipFile(params.archivePath!));

@@ -250,7 +250,9 @@ function assertNoEmbeddedDriveRelativeSegment(filePath: string, label: string): 
   );
 }
 
-type LexicalTraversalContext = {
+type LexicalTraversalContext = Pick<
+  LexicalResolutionParams, "rootPath" | "rootCanonicalPath" | "absolutePath" | "observationEligible"
+> & {
   state: {
     segments: string[];
     relativePath: string;
@@ -263,10 +265,6 @@ type LexicalTraversalContext = {
     missingDepth: number;
   };
   resolveParams: ResolveRootPathParams;
-  rootPath: string;
-  rootCanonicalPath: string;
-  absolutePath: string;
-  observationEligible: boolean;
 };
 
 function createLexicalTraversalContext(params: LexicalResolutionParams): LexicalTraversalContext {

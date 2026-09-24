@@ -15,7 +15,7 @@ permissions:
 jobs:
   coverage:
     name: Node 22 coverage (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     # Windows includes native/WASM builds and serial instrumented filesystem tests.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}
     strategy:
@@ -31,6 +31,10 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0

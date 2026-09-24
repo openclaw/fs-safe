@@ -2,6 +2,7 @@ import type { TarMeterLimits } from "./archive-limits.js";
 import type { ArchiveMemberKind } from "./archive-plan.js";
 import type { CopyCloneMode } from "./copy-policy.js";
 import { FsSafeError } from "./errors.js";
+import type { WindowsAceFlags } from "./owner-dacl.js";
 
 export interface NativeFileHash {
   bytes: number;
@@ -69,16 +70,7 @@ export interface NativeWindowsAccessControlEntry {
   sid: string;
   mask: number;
   aceType: string;
-  flags: {
-    raw: number;
-    objectInherit: boolean;
-    containerInherit: boolean;
-    noPropagateInherit: boolean;
-    inheritOnly: boolean;
-    inherited: boolean;
-    successfulAccess: boolean;
-    failedAccess: boolean;
-  };
+  flags: WindowsAceFlags;
 }
 
 export interface NativeWindowsSecurityFacts {
@@ -111,6 +103,13 @@ export interface NativeWindowsDirectoryReceipt {
 export interface NativeDarwinAclFacts {
   state: "absent" | "empty" | "present";
 }
+
+type NativeTwoPathArgs = [
+  sourceRootFd: number,
+  sourceRelPath: string,
+  targetRootFd: number,
+  targetRelPath: string,
+];
 
 export interface NativeBinding {
   /** Internal: consumes only a descriptor returned by this binding. */
@@ -202,12 +201,7 @@ export interface NativeBinding {
     limits: TarMeterLimits,
     signal: AbortSignal,
   ): Promise<NativeArchiveEntry[]>;
-  linkBeneath(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-  ): void;
+  linkBeneath(...args: NativeTwoPathArgs): void;
   /** Direct-child mkdir; true is receipt provenance only, never cleanup ownership. */
   mkdirChildBeneath?(parentFd: number, basename: string, mode: number): boolean;
   mkdirBeneath(rootFd: number, relPath: string, mode: number): void;
@@ -234,12 +228,7 @@ export interface NativeBinding {
     basename: string,
     directoryFd: number,
   ): NativeOwnedTreeRemovalResult;
-  renameNoReplace(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-  ): void;
+  renameNoReplace(...args: NativeTwoPathArgs): void;
   /** Identity-fenced retained-directory rename capability. */
   renameNoReplaceWithIdentity?(
     sourceRootFd: number,
@@ -249,12 +238,7 @@ export interface NativeBinding {
     expectedSourceDev: bigint,
     expectedSourceIno: bigint,
   ): void;
-  renameReplace(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-  ): void;
+  renameReplace(...args: NativeTwoPathArgs): void;
   sha256File(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
 }
 

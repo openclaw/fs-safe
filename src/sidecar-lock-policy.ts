@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import type { SidecarLockRetryOptions } from "./sidecar-lock-types.js";
+import type { SidecarLockReclaimParams, SidecarLockRetryOptions } from "./sidecar-lock-types.js";
 
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
@@ -122,12 +122,9 @@ export function sidecarLockPayloadCreatedAtMs(payload: unknown): number | null {
   return Number.isFinite(createdAtMs) ? createdAtMs : null;
 }
 
-export async function defaultSidecarLockShouldReclaim(params: {
-  lockPath: string;
-  payload: unknown;
-  staleMs: number;
-  nowMs: number;
-}): Promise<boolean> {
+export async function defaultSidecarLockShouldReclaim(
+  params: Pick<SidecarLockReclaimParams, "lockPath" | "payload" | "staleMs" | "nowMs">,
+): Promise<boolean> {
   const createdAtMs = sidecarLockPayloadCreatedAtMs(params.payload);
   if (createdAtMs !== null) return params.nowMs - createdAtMs > params.staleMs;
   try {

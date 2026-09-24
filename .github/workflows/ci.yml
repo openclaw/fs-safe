@@ -930,7 +930,7 @@ jobs:
 
   check:
     name: Node ${{ matrix.node }} check (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -945,6 +945,10 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -1003,7 +1007,7 @@ jobs:
 
   native-check:
     name: Native check (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1015,6 +1019,10 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -1314,7 +1322,7 @@ jobs:
 
   package-smoke:
     name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1333,6 +1341,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0

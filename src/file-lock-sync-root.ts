@@ -49,10 +49,7 @@ export type FileLockSyncRootAuthority = Readonly<{
   adapter: object;
   context: RootContext;
   assertBeforeMutation?: () => void;
-  denyMutations?: Readonly<{
-    paths?: readonly string[];
-    prefixes?: readonly string[];
-  }>;
+  denyMutations?: Readonly<DenyMutationPolicy>;
   hardlinks?: RootDefaults["hardlinks"];
   mutationPolicy: RootPathResolutionPolicy;
   readPolicy: RootPathResolutionPolicy;
