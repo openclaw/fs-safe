@@ -40,14 +40,11 @@ export type FileStoreOptions = {
   maxBytes?: number;
 };
 
-export type FileStoreWriteOptions = {
+export type FileStoreWriteOptions = Partial<Pick<FileStoreOptions, "dirMode" | "mode" | "maxBytes"> & {
   /** Override store durability; defaults to the store option, then true. */
-  durable?: boolean;
-  dirMode?: number;
-  mode?: number;
-  maxBytes?: number;
-  tempPrefix?: string;
-};
+  durable: boolean;
+  tempPrefix: string;
+}>;
 
 function snapshotWriteOptions(
   options?: FileStoreWriteOptions,

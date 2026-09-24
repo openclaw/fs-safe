@@ -12,12 +12,9 @@ export type ReadResult = {
   stat: Stats;
 };
 
-type OpenedFile = {
+type OpenedFile = Omit<ReadResult & {
   handle: FileHandle;
-  containment: ContainmentGuarantee;
-  realPath: string;
-  stat: Stats;
-};
+}, "buffer">;
 
 export async function readOpenedFileSafely(params: {
   opened: OpenedFile;

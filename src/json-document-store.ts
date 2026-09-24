@@ -1,11 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
-import type { FileLockRetryOptions } from "./file-lock.js";
-import { getFsSafeLockConfig } from "./lock-config.js";
+import { getFsSafeLockConfig, type FsSafeLockConfig } from "./lock-config.js";
 import type { Root } from "./root.js";
 import { createSidecarLockManager } from "./sidecar-lock.js";
-import type { SidecarLockStaleRecovery } from "./sidecar-lock.js";
 import { serializePathWrite } from "./write-queue.js";
 
 type StoreMutationToken = { active: boolean };
@@ -14,13 +12,9 @@ const activeStoreMutations = new AsyncLocalStorage<
   ReadonlyMap<string, StoreMutationToken>
 >();
 
-export type JsonStoreLockOptions = {
-  staleMs?: number;
-  timeoutMs?: number;
-  retry?: FileLockRetryOptions;
-  staleRecovery?: SidecarLockStaleRecovery;
-  managerKey?: string;
-};
+export type JsonStoreLockOptions = Partial<FsSafeLockConfig & {
+  managerKey: string;
+}>;
 
 export type JsonFileStoreOptions = {
   /** Overrides the parent store's durability for every JSON mutation. */
