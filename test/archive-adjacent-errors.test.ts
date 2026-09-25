@@ -10,7 +10,6 @@ import {
   withExtractionDeadline,
   type ExtractionDeadline,
 } from "../src/archive-deadline.js";
-import { writeFileHandleFully } from "../src/archive-input.js";
 import { stageArchiveFileForExtraction } from "../src/archive-input.js";
 import { resolveExtractLimits } from "../src/archive-limits.js";
 import {
@@ -200,31 +199,75 @@ describe("archive input staging failures", () => {
     })).rejects.toMatchObject({ code: "archive-size-exceeds-limit" });
   });
 
-  it("writes short chunks fully and rejects a writer that makes no progress", async () => {
-    const checks = vi.fn();
+  it.each(["short", "zero", "deadline"] as const)("retains admitted scratch and deadline checks through %s writes", async outcome => {
+    const root = await tempRoot("fs-safe-stage-write-");
+    const archivePath = path.join(root, "archive");
+    await fs.writeFile(archivePath, "abc");
+    const realOpen = fs.open.bind(fs);
+    const events: string[] = [];
+    const lengths: number[] = [];
+    let scratch: Buffer | undefined;
+    let stagedPath: string | undefined;
+    let sourceFd: number | undefined;
     let writes = 0;
-    const shortWriter = {
-      async write() {
-        writes += 1;
-        return { bytesWritten: 1 };
+    const failure = new Error("archive deadline expired after write");
+    const checkedDeadline: ExtractionDeadline = {
+      ...deadline(),
+      check() {
+        expect(this).toBe(checkedDeadline);
+        events.push("check");
+        if (outcome === "deadline" && writes > 0) throw failure;
       },
-    } as unknown as FileHandle;
-    await writeFileHandleFully({
-      handle: shortWriter,
-      buffer: Buffer.from("abc"),
-      bytes: 3,
-      deadline: { ...deadline(), check: checks },
+    };
+    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      if (String(args[0]) === archivePath) {
+        sourceFd = handle.fd;
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (buffer, offset, length, position) => {
+          scratch = buffer as Buffer;
+          return await read(buffer, offset, length, position);
+        });
+      } else if (typeof args[1] === "number" && (args[1] & fsSync.constants.O_WRONLY)) {
+        stagedPath = String(args[0]);
+        const write = handle.write.bind(handle);
+        vi.spyOn(handle, "write").mockImplementation(async (buffer, offset, length, position) => {
+          expect(events.at(-1)).toBe("check");
+          expect(buffer).toBe(scratch);
+          expect(buffer.byteLength).toBeGreaterThan(3);
+          events.push("write");
+          lengths.push(length);
+          const result = outcome === "zero" ? { bytesWritten: 0, buffer }
+            : await write(buffer, offset, Math.min(length, 1), position);
+          writes += 1;
+          return result;
+        });
+      }
+      return handle;
     });
-    expect(writes).toBe(3);
-    expect(checks).toHaveBeenCalledTimes(3);
-
-    const stalled = { async write() { return { bytesWritten: 0 }; } } as unknown as FileHandle;
-    await expect(writeFileHandleFully({
-      handle: stalled,
-      buffer: Buffer.from("x"),
-      bytes: 1,
-      deadline: deadline(),
-    })).rejects.toThrow("archive staging write made no progress");
+    const operation = stageArchiveFileForExtraction({
+      archivePath, limits: resolveExtractLimits({ maxArchiveBytes: 64 }), deadline: checkedDeadline,
+    });
+    if (outcome === "short") {
+      const staged = await operation;
+      try {
+        expect(await fs.readFile(staged.path, "utf8")).toBe("abc");
+        expect(lengths).toEqual([3, 2, 1]);
+      } finally { await staged.cleanup(); }
+      expect(writes).toBe(3);
+    } else {
+      if (outcome === "deadline") await expect(operation).rejects.toBe(failure);
+      else {
+        const error = await operation.catch(error => error);
+        expect(error.constructor).toBe(Error);
+        expect(error.message).toBe("archive staging write made no progress");
+        expect(error.code).toBeUndefined();
+      }
+      expect(writes).toBe(1);
+      await expect(fs.lstat(stagedPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    expect(() => fsSync.fstatSync(sourceFd!)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    expect(await fs.readFile(archivePath, "utf8")).toBe("abc");
   });
 });
 

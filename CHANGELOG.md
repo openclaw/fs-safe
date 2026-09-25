@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share short-write completion for archive staging and cross-device moves, reusing archive write options across chunks while preserving deadline checks and failure diagnostics.
+
 ## 0.19.0 - 2026-09-24
 
 ### Highlights

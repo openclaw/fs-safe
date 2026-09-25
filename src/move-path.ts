@@ -22,6 +22,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { createMoveStageOwner } from "./move-path-stage.js";
+import { writeAllToFile } from "./write-file-handle.js";
 import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type MovePathPublicationReceipt = Readonly<{
@@ -154,14 +155,9 @@ async function chmodDirectoryPinned(directoryPath: string, mode: number): Promis
   }
 }
 
-async function writeAll(handle: FileHandle, buffer: Buffer, bytesRead: number): Promise<void> {
-  let offset = 0;
-  while (offset < bytesRead) {
-    const { bytesWritten } = await handle.write(buffer, offset, bytesRead - offset);
-    if (bytesWritten <= 0) throw new FsSafeError("helper-failed", "move copy made no progress");
-    offset += bytesWritten;
-  }
-}
+const MOVE_COPY_WRITE_OPTIONS = {
+  createNoProgressError: () => new FsSafeError("helper-failed", "move copy made no progress"),
+};
 
 async function copyRegularFilePinned(params: {
   from: string;
@@ -223,7 +219,7 @@ async function copyRegularFilePinned(params: {
         if (bytesRead === 0) {
           break;
         }
-        await writeAll(destinationHandle, scratch, bytesRead);
+        await writeAllToFile(destinationHandle, scratch, MOVE_COPY_WRITE_OPTIONS, bytesRead);
       }
       // Re-check the opened source before the staged tree can be committed. If
       // it changed while we copied, the caller should retry the move.

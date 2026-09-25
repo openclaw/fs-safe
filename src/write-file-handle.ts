@@ -42,17 +42,22 @@ export async function writeFileWindowFully(
   signal?.throwIfAborted();
 }
 
+/** Private prefix length keeps admitted scratch windows on their original byte view. */
 export async function writeAllToFile(
   target: FileHandle | number,
   data: string | Uint8Array,
-  options: { encoding?: BufferEncoding; position?: number; assertBeforeMutation?: () => void } = {},
+  options?: {
+    encoding?: BufferEncoding; position?: number; assertBeforeMutation?: () => void;
+    createNoProgressError?: () => Error;
+  },
+  byteLength?: number,
 ): Promise<void> {
-  const buffer = typeof data === "string" ? Buffer.from(data, options.encoding ?? "utf8") : data;
+  const buffer = typeof data === "string" ? Buffer.from(data, options?.encoding ?? "utf8") : data;
   let offset = 0;
-  while (offset < buffer.byteLength) {
-    const length = Math.min(WRITE_CHUNK_BYTES, buffer.byteLength - offset);
-    const position = options.position === undefined ? null : options.position + offset;
-    options.assertBeforeMutation?.();
+  while (offset < (byteLength ?? buffer.byteLength)) {
+    const length = Math.min(WRITE_CHUNK_BYTES, (byteLength ?? buffer.byteLength) - offset);
+    const position = options?.position === undefined ? null : options.position + offset;
+    options?.assertBeforeMutation?.();
     const written = typeof target === "number"
       ? await new Promise<number>((resolve, reject) => {
         fs.write(target, buffer, offset, length, position, (error, bytesWritten) => {
@@ -62,7 +67,7 @@ export async function writeAllToFile(
       })
       : (await target.write(buffer, offset, length, position)).bytesWritten;
     if (written <= 0) {
-      throw new FsSafeError("helper-failed", "file write made no progress");
+      throw options?.createNoProgressError?.() ?? new FsSafeError("helper-failed", "file write made no progress");
     }
     offset += written;
   }

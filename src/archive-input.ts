@@ -12,6 +12,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { tempFile } from "./temp-target.js";
+import { writeAllToFile } from "./write-file-handle.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
@@ -20,26 +21,7 @@ async function closeFileHandle(handle: FileHandle | undefined): Promise<void> {
   if (handle) await handle.close().catch(() => undefined);
 }
 
-export async function writeFileHandleFully(params: {
-  handle: FileHandle;
-  buffer: Buffer;
-  bytes: number;
-  deadline: ExtractionDeadline;
-}): Promise<void> {
-  let offset = 0;
-  while (offset < params.bytes) {
-    params.deadline.check();
-    const { bytesWritten } = await params.handle.write(
-      params.buffer,
-      offset,
-      params.bytes - offset,
-    );
-    if (bytesWritten <= 0) {
-      throw new Error("archive staging write made no progress");
-    }
-    offset += bytesWritten;
-  }
-}
+const createArchiveWriteError = () => new Error("archive staging write made no progress");
 
 export async function stageArchiveFileForExtraction(params: {
   archivePath: string;
@@ -91,6 +73,10 @@ export async function stageArchiveFileForExtraction(params: {
     const buffer = Buffer.allocUnsafe(Math.min(
       512 * 1024, Math.max(64 * 1024, Number(opened.size)), params.limits.maxArchiveBytes + 1,
     ));
+    const writeOptions = {
+      assertBeforeMutation: () => params.deadline.check(),
+      createNoProgressError: createArchiveWriteError,
+    };
     let written = 0;
     while (true) {
       params.deadline.check();
@@ -102,7 +88,7 @@ export async function stageArchiveFileForExtraction(params: {
       if (written > params.limits.maxArchiveBytes) {
         throw new ArchiveLimitError(ARCHIVE_LIMIT_ERROR_CODE.ARCHIVE_SIZE_EXCEEDS_LIMIT);
       }
-      await writeFileHandleFully({ handle: output, buffer, bytes: bytesRead, deadline: params.deadline });
+      await writeAllToFile(output, buffer, writeOptions, bytesRead);
     }
     await output.close();
     output = undefined;

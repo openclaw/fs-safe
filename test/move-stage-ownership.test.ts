@@ -107,3 +107,36 @@ it("rejects a zero-progress copy without retrying the write", async () => {
   expect(writes).toBe(1);
   expect(await fs.readdir(dir)).toEqual(["source"]);
 });
+
+it("finishes short writes from the original scratch buffer without copying its unused tail", async () => {
+  const { source, target } = await fixture();
+  const bytes = Buffer.alloc(64 * 1024 + 7, 97);
+  await fs.writeFile(source, bytes);
+  const open = fs.open.bind(fs);
+  let scratch: Buffer | undefined;
+  const lengths: number[] = [];
+  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (String(args[0]) === source) {
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (buffer, offset, length, position) => {
+        scratch = buffer as Buffer;
+        return await read(buffer, offset, length, position);
+      });
+    } else if (path.basename(String(args[0])).startsWith(".fs-safe-move-")) {
+      const write = handle.write.bind(handle);
+      vi.spyOn(handle, "write").mockImplementation(async (buffer, offset, length, position) => {
+        expect(buffer).toBe(scratch);
+        expect(buffer.byteLength).toBe(64 * 1024);
+        lengths.push(length);
+        return await write(buffer, offset, Math.min(length, 4096), position);
+      });
+    }
+    return handle;
+  });
+  await movePathWithCopyFallback({ from: source, to: target });
+  expect(await fs.readFile(target)).toEqual(bytes);
+  expect(lengths).toHaveLength(17);
+  expect(lengths.at(-1)).toBe(7);
+  await expect(fs.lstat(source)).rejects.toMatchObject({ code: "ENOENT" });
+});
