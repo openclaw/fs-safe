@@ -1,33 +1,25 @@
 export type FsSafeErrorCode =
+  | (typeof OPERATIONAL_CODE_VALUES)[number]
   | "already-exists"
   | "denied-path"
   | "device-path"
   | "hardlink"
-  | "helper-failed"
-  | "helper-unavailable"
   | "invalid-path"
   | "insecure-permissions"
-  | "not-empty"
   | "not-file"
-  | "not-found"
   | "not-owned"
-  | "not-removable"
   | "outside-workspace"
   | "path-alias"
   | "path-mismatch"
-  | "permission-unverified"
-  | "read-failed"
   | "secret-exists"
   | "store-reentrant-update"
   | "symlink"
-  | "timeout"
-  | "too-large"
-  | "unsupported-platform";
+  | "too-large";
 
 export type FsSafeErrorCategory = "policy" | "operational";
 export type FsSafeErrorDetails = Readonly<Record<string, unknown>>;
 
-const OPERATIONAL_CODES: ReadonlySet<FsSafeErrorCode> = new Set([
+const OPERATIONAL_CODE_VALUES = [
   "helper-failed",
   "helper-unavailable",
   "not-empty",
@@ -37,7 +29,8 @@ const OPERATIONAL_CODES: ReadonlySet<FsSafeErrorCode> = new Set([
   "read-failed",
   "timeout",
   "unsupported-platform",
-]);
+] as const;
+const OPERATIONAL_CODES: ReadonlySet<FsSafeErrorCode> = new Set(OPERATIONAL_CODE_VALUES);
 
 export function categorizeFsSafeError(code: FsSafeErrorCode): FsSafeErrorCategory {
   return OPERATIONAL_CODES.has(code) ? "operational" : "policy";
