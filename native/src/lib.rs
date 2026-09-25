@@ -31,6 +31,8 @@ mod realpath;
 mod darwin_security;
 #[cfg(unix)]
 mod staged_file;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod staged_symlink;
 use fs_safe_archive_core::tar_meter;
 #[cfg(unix)]
 mod unix;

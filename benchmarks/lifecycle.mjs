@@ -10,6 +10,7 @@ import { registerSecureTempRootCoverage } from "./secure-temp-root-fixtures.mjs"
 import { registerSidecarPathSnapshot } from "./sidecar-path-snapshot.mjs";
 import { registerAtomicTempSettlementCoverage } from "./atomic-temp-settlement.mjs";
 import { registerCreation } from "./creation.mjs";
+import { registerStagedSymlink } from "./staged-symlink.mjs";
 import {
   PROBE_TREE_SUCCESS_WORKLOAD,
   probeTreeSuccessFixtureReceipt,
@@ -318,6 +319,7 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
       before: () => fs.writeFileSync(path.join(w, "publish-source"), data), after: () => fs.rmSync(path.join(w, "publish-target"), { force: true }),
     });
   }
+  await registerStagedSymlink({ api: a, workspace: w, native, register: add, contract });
   const stagingSkip = !native || !["darwin", "linux"].includes(process.platform) ? "Retained-directory staging requires native Linux/macOS." : undefined;
   const stage = () => a.stageFileInDirectory({ directory: w, content: data });
   add("stageFileInDirectory", stage, { skip: stagingSkip, after: (r) => r?.cleanup() });

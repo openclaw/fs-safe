@@ -4,7 +4,14 @@
 
 ### Features
 
+- **Retained symlink publication:** `retainSymlinkInDirectory()` on the advanced surface holds an explicitly identified POSIX symlink through exact-slot no-replace publication and explicit recovery, preserving observed foreign replacements and uncertain outcomes.
+
 - **Batched Windows ACL facts:** add `readOwnerAndDaclBatch()` to inspect ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Existing synchronous inspection remains unchanged.
+
+### Fixes
+
+- **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
+- **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
 
 ## 0.19.0 - 2026-09-24
 

@@ -78,7 +78,7 @@ describe.each(modes)("streamed Root.create (native %s)", (mode) => {
       yield Buffer.from("replacement");
       await fs.writeFile(target, "winner", { flag: "wx" });
     }
-    const indeterminate = scenario === "competing";
+    const indeterminate = scenario === "competing" && mode === "require";
     await expect(capability.create("file", input())).rejects.toMatchObject(indeterminate && mode === "require" && process.platform !== "win32" ? {
       cause: {
         name: "SuppressedError",
