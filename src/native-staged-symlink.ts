@@ -79,12 +79,12 @@ class NativeStagedSymlink implements StagedSymlink {
   #matches(name: string): boolean {
     if (!this.#binding.stagedSymlinkMatches(this.#parentFd, name, this.#linkFd)) return false;
     const stat = fs.fstatSync(this.#linkFd, { bigint: true });
-    const identity = this.receipt.identity;
+    const identity = this.#receipt.identity;
     // ctime changes on rename; identity, ownership, mode and target do not.
     return stat.dev === identity.dev && stat.ino === identity.ino &&
       stat.uid === BigInt(identity.uid) && stat.gid === BigInt(identity.gid) &&
       Number(stat.mode & 0o7777n) === identity.mode && stat.nlink === 1n &&
-      this.#binding.stagedSymlinkTarget(this.#parentFd, name, this.#linkFd) === this.receipt.target;
+      this.#binding.stagedSymlinkTarget(this.#parentFd, name, this.#linkFd) === this.#receipt.target;
   }
 
   #assertNamed(name: string): void {
@@ -96,8 +96,8 @@ class NativeStagedSymlink implements StagedSymlink {
     if (this.#publication.status !== "not-published") {
       throw new FsSafeError("helper-failed", "symlink publication has already been attempted");
     }
-    assertStagedDirectoryCurrent(this.receipt.directory);
-    this.#assertNamed(this.receipt.temporaryBasename);
+    assertStagedDirectoryCurrent(this.#receipt.directory);
+    this.#assertNamed(this.#receipt.temporaryBasename);
   }
 
   async assertCurrent(): Promise<void> { this.#idle(); this.#assertCurrent(); }
@@ -107,7 +107,7 @@ class NativeStagedSymlink implements StagedSymlink {
     this.#busy = true;
     try {
       basename(name);
-      if (name === this.receipt.temporaryBasename) {
+      if (name === this.#receipt.temporaryBasename) {
         throw new FsSafeError("invalid-path", "publication requires a distinct basename");
       }
       this.#assertCurrent();
@@ -115,7 +115,7 @@ class NativeStagedSymlink implements StagedSymlink {
       // A synchronous caller assertion can itself change either pathname.
       this.#assertCurrent();
       try {
-        this.#binding.publishStagedSymlink(this.#parentFd, this.receipt.temporaryBasename, this.#linkFd, name);
+        this.#binding.publishStagedSymlink(this.#parentFd, this.#receipt.temporaryBasename, this.#linkFd, name);
       } catch (error) {
         if (classifyNativeRenameFailure(error) === "indeterminate") {
           this.#publication = Object.freeze({ status: "indeterminate", basename: name, overwrite: false });
@@ -123,12 +123,12 @@ class NativeStagedSymlink implements StagedSymlink {
         throw error;
       }
       const published = Object.freeze({
-        status: "published" as const, staged: this.receipt, basename: name, overwrite: false as const,
+        status: "published" as const, staged: this.#receipt, basename: name, overwrite: false as const,
       });
       // Record dispatch success before any fallible post-observation.
       this.#publication = published;
       this.#assertNamed(name);
-      assertStagedDirectoryCurrent(this.receipt.directory);
+      assertStagedDirectoryCurrent(this.#receipt.directory);
       return published;
     } catch (error) {
       throw failure(error, { phase: "publish", publication: this.#publication });
@@ -146,7 +146,7 @@ class NativeStagedSymlink implements StagedSymlink {
   async assertPublished(): Promise<void> {
     this.#idle();
     const name = this.#publishedName();
-    assertStagedDirectoryCurrent(this.receipt.directory);
+    assertStagedDirectoryCurrent(this.#receipt.directory);
     this.#assertNamed(name);
   }
 
@@ -195,7 +195,7 @@ class NativeStagedSymlink implements StagedSymlink {
     const errors: unknown[] = [];
     if (this.#publication.status === "indeterminate") status = "preserved";
     else if (this.#publication.status === "not-published") {
-      try { status = this.#remove(this.receipt.temporaryBasename); }
+      try { status = this.#remove(this.#receipt.temporaryBasename); }
       catch (error) { status = "failed"; errors.push(error); }
     }
     let resources: StagedSymlinkCleanupReceipt["resources"] = "closed";
@@ -203,7 +203,7 @@ class NativeStagedSymlink implements StagedSymlink {
       try { close(); } catch (error) { resources = "close-failed"; errors.push(error); }
     }
     const receipt = Object.freeze({
-      temporaryBasename: this.receipt.temporaryBasename,
+      temporaryBasename: this.#receipt.temporaryBasename,
       publication: this.#publication, status, resources,
     });
     const error = errors.length ? failure(

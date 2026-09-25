@@ -354,6 +354,25 @@ describe.runIf(supported && !!binding)("retained staged symlink", () => {
     await owner.cleanup();
   });
 
+  it("uses private admission authority even if the public receipt property is shadowed", async () => {
+    const { directory, owner } = await fixture();
+    const outer = await tempRoot("fs-safe-link-shadow-");
+    const original = path.join(outer, "original");
+    fs.renameSync(directory, original);
+    fs.mkdirSync(directory);
+    const captured = owner.receipt;
+    Object.defineProperty(owner, "receipt", { value: Object.freeze({
+      ...captured, directory: Object.freeze({ ...captured.directory, path: original, realPath: original }),
+    }) });
+    try {
+      await expect(owner.assertCurrent()).rejects.toMatchObject({ code: "path-mismatch" });
+      await expect(owner.publish("slot")).rejects.toMatchObject({ details: { publication: { status: "not-published" } } });
+      expect(await owner.cleanup()).toMatchObject({ status: "removed" });
+      expect(fs.readdirSync(original)).toEqual(["runtime"]);
+      expect(fs.readdirSync(directory)).toEqual([]);
+    } finally { await owner.cleanup(); }
+  });
+
   it("rejects callback reentrancy without closing the in-flight publication descriptors", async () => {
     let nested: Promise<unknown> | undefined;
     let armed = false;
