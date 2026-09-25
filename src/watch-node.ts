@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { FsSafeError } from "./errors.js";
+import { createSuppressedError } from "./suppressed-error.js";
 
 export type NodeWatchHint = { directory: string; name: string | null; event: string };
 export type NodeWatchBatch = { hints: NodeWatchHint[]; overflow: boolean };
@@ -17,15 +18,25 @@ let outstanding = false;
 let hints = new Map();
 let overflow = false;
 let failed = false;
+let closing = false;
+const closeErrors = [];
 function send() {
-  if (failed || outstanding || (!overflow && hints.size === 0)) return;
+  if (closing || failed || outstanding || (!overflow && hints.size === 0)) return;
   outstanding = true;
   parentPort.postMessage({ type: 'dirty', hints: [...hints.values()], overflow });
   hints.clear();
   overflow = false;
 }
 function dirty(directory, event, name) {
-  if (failed) return;
+  if (closing || failed) return;
+  if (workerData.recursiveRoot && typeof name === 'string') {
+    const parts = name.replaceAll(String.fromCharCode(92), '/').split('/');
+    if (name.includes(String.fromCharCode(0)) || parts.some(part => !part || part === '.' || part === '..' || part.includes(':'))) {
+      directory = ''; name = null;
+    } else {
+      name = parts.pop(); directory = parts.join(String.fromCharCode(92));
+    }
+  }
   if (!overflow) {
     if (hints.size >= workerData.maxPendingPaths) { hints.clear(); overflow = true; }
     else {
@@ -37,11 +48,27 @@ function dirty(directory, event, name) {
   send();
 }
 function failure(error) {
+  if (closing) { closeErrors.push({ message: error.message, code: error.code }); return; }
   if (failed) return;
   failed = true;
   parentPort.postMessage({ type: 'error', message: error.message, code: error.code });
 }
 parentPort.on('message', command => {
+  if (command.type === 'close') {
+    if (closing) return;
+    closing = true;
+    // Bun's watch manager is process-global. Detach our registrations explicitly;
+    // a joined JS worker does not own the runtime's shared driver descriptor.
+    for (const handle of watches.values()) {
+      try { handle.close(); }
+      catch (error) { closeErrors.push({ message: error.message, code: error.code }); }
+    }
+    watches.clear(); hints.clear();
+    parentPort.postMessage({ type: 'closed', errors: closeErrors });
+    parentPort.close();
+    return;
+  }
+  if (closing) return;
   if (command.type === 'ack') {
     outstanding = false;
     send();
@@ -50,7 +77,7 @@ parentPort.on('message', command => {
   if (failed) return;
   try {
     if (command.type === 'add') {
-      const handle = watch(command.path, { recursive: false }, (event, name) => dirty(command.relative, event, name));
+      const handle = watch(command.path, { recursive: workerData.recursiveRoot }, (event, name) => dirty(command.relative, event, name));
       watches.set(command.path, handle);
       handle.on('error', failure);
     }
@@ -62,16 +89,19 @@ parentPort.on('message', command => {
 
 export class NodeWatchBackend {
   private readonly worker: Worker;
+  private readonly recursiveRoot = process.platform === "win32";
+  private registrations = 0;
   private nextId = 0;
   private pending = new Map<number, { resolve(): void; reject(error: unknown): void }>();
   private closing?: Promise<void>;
   private stopped = false;
   private failure?: unknown;
   private readonly exited: Promise<void>;
+  private closeReply?: (errors: Array<{ message: string; code?: string }>) => void;
 
   constructor(onDirty: (batch: NodeWatchBatch) => void, onError: (error: unknown) => void, persistent: boolean, maxPendingPaths: number) {
     try {
-      this.worker = new Worker(program, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths } });
+      this.worker = new Worker(program, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths, recursiveRoot: this.recursiveRoot } });
     } catch (cause) {
       throw new FsSafeError("helper-failed", "watch worker could not start", {
         cause, details: { operation: "watch", code: (cause as NodeJS.ErrnoException | null)?.code },
@@ -85,12 +115,13 @@ export class NodeWatchBackend {
     }));
     this.worker.on("error", error => this.fail(error, onError));
     this.worker.on("message", message => {
-      if (this.stopped) return;
+      if (message.type === "closed") { this.closeReply?.(message.errors); return; }
       if (message.type === "error") {
         this.fail(new FsSafeError("helper-failed", "directory watch failed", {
-          details: { code: message.code, operation: "watch" },
+          details: { code: message.code, operation: this.stopped ? "close" : "watch" },
           cause: new Error(message.message),
         }), onError);
+      } else if (this.stopped) { return;
       } else if (message.type === "dirty") {
         onDirty(message);
         if (!this.stopped) this.worker.postMessage({ type: "ack" });
@@ -122,7 +153,16 @@ export class NodeWatchBackend {
       catch (error) { this.pending.delete(id); reject(error); }
     });
   }
-  add(path: string, relative: string): Promise<void> { return this.command("add", path, relative); }
+  async add(path: string, relative: string): Promise<void> {
+    if (this.stopped || this.failure !== undefined) throw this.failure ?? new DOMException("Watch closed", "AbortError");
+    // ReadDirectoryChangesW already covers the admitted subtree. Holding child
+    // directory watches prevents ancestor moves on Windows; never use Node’s
+    // recursive Linux implementation (which creates per-file registrations).
+    if (this.recursiveRoot && relative !== "") return;
+    await this.command("add", path, relative);
+    this.registrations++;
+  }
+  directoryCount(): number { return this.registrations; }
   drainCommands(): Promise<void> { return this.command("barrier"); }
 
   close(): Promise<void> {
@@ -130,13 +170,40 @@ export class NodeWatchBackend {
     this.stopped = true;
     for (const waiter of this.pending.values()) waiter.reject(new DOMException("Watch closed", "AbortError"));
     this.pending.clear();
-    // FSWatcher 'close' is only nextTick in Node. Terminating and joining the
-    // owning worker also drains its native event loop, not just JS callbacks.
-    this.closing = (async () => {
-      await this.worker.terminate();
+    let acknowledged = false;
+    const detached = new Promise<void>((resolve, reject) => {
+      this.closeReply = errors => {
+        acknowledged = true;
+        if (errors.length) reject(new FsSafeError("helper-failed", "watch detach failed", {
+          details: { operation: "close" }, cause: new AggregateError(errors.map(error => Object.assign(new Error(error.message), { code: error.code }))),
+        }));
+        else resolve();
+      };
+    });
+    this.worker.ref();
+    // Enroll shutdown before posting to a possibly reentrant worker transport.
+    this.closing = Promise.resolve().then(async () => {
+      let closeError: unknown;
+      try {
+        await Promise.race([detached, this.exited.then(() => {
+          if (!acknowledged) throw new FsSafeError("helper-failed", "watch worker exited before detach acknowledgement");
+        })]);
+      } catch (error) { closeError = error; }
+      try { await this.worker.terminate(); }
+      catch (error) { closeError = closeError === undefined ? error : createSuppressedError(error, closeError, "watch detach and join failed"); }
+      // Detach closes the port too, so even a failed termination request must
+      // still join actual worker exit before relinquishing ownership.
       await this.exited;
-      if (this.failure !== undefined) throw this.failure;
-    })();
+      this.closeReply = undefined;
+      this.registrations = 0;
+      if (this.failure !== undefined) {
+        if (closeError !== undefined) throw createSuppressedError(closeError, this.failure, "watch observation and retirement failed");
+        throw this.failure;
+      }
+      if (closeError !== undefined) throw closeError;
+    });
+    try { this.worker.postMessage({ type: "close" }); }
+    catch (error) { this.fail(error, () => {}); void this.worker.terminate(); }
     return this.closing;
   }
 }

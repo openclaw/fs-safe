@@ -9,29 +9,42 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "../src/config.js";
 let dir: string;
 let owners: WatchSubscription[];
-beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-watch-life-")); owners = []; });
+beforeEach(async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-watch-life-"));
+  dir = (await root(temporary)).rootReal;
+  owners = [];
+});
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
   await Promise.allSettled(owners.map(owner => owner.close()));
   await fs.rm(dir, { recursive: true, force: true });
 });
 const scopes = [{ path: "", kind: "tree" as const }];
-async function inotifyInstances() {
+async function inotifyState() {
   const descriptors = await fs.readdir("/proc/self/fd");
-  let count = 0;
+  const state = { descriptors: 0, watches: 0 };
   for (const descriptor of descriptors) {
     const target = await fs.readlink("/proc/self/fd/" + descriptor).catch(() => "");
-    if (target.includes("inotify")) count++;
+    if (!target.includes("inotify")) continue;
+    state.descriptors++;
+    const info = await fs.readFile("/proc/self/fdinfo/" + descriptor, "utf8");
+    state.watches += info.split("\n").filter(line => line.startsWith("inotify wd:")).length;
   }
-  return count;
+  return state;
 }
-it.skipIf(process.platform !== "linux")("joins the actual worker and returns inotify descriptors to baseline", async () => {
-  const before = await inotifyInstances();
+it.skipIf(process.platform !== "linux")("joins the worker and releases every owned inotify watch", async () => {
+  const before = await inotifyState();
   const owner = watch(await root(dir), { scopes, onDirty() {} }); owners.push(owner);
   await owner.ready;
-  expect(await inotifyInstances()).toBe(before + 1);
+  const during = await inotifyState();
+  expect(during.watches).toBe(before.watches + 1);
+  expect(during.descriptors).toBe(process.versions.bun ? Math.max(1, before.descriptors) : before.descriptors + 1);
   await owner.close();
-  expect(await inotifyInstances()).toBe(before);
+  const after = await inotifyState();
+  expect(after.watches).toBe(before.watches);
+  // Bun 1.4.2 PathWatcherManager intentionally retains its process-lifetime
+  // driver fd/thread. It is not subscription authority and must not be killed.
+  expect(after.descriptors).toBe(process.versions.bun ? during.descriptors : before.descriptors);
   expect(owner.health().workers).toBe(0);
 });
 it("enrolls and joins close before startup", async () => {
@@ -53,7 +66,7 @@ it("reports watch acquisition errors separately and keeps them on joined close",
   const errors: unknown[] = [];
   const backend = new NodeWatchBackend(() => {}, error => { errors.push(error); }, true, 2);
   try {
-    await expect(backend.add(path.join(dir, "absent"), "absent")).rejects.toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
+    await expect(backend.add(path.join(dir, "absent"), "")).rejects.toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
     expect(errors).toHaveLength(1);
   } finally {
     await expect(backend.close()).rejects.toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
@@ -111,4 +124,20 @@ it("retains an undefined exclusion failure instead of treating it as success", a
   await expect(owner.ready).rejects.toMatchObject({ code: "helper-failed", details: { operation: "callback" } });
   expect(owner.health()).toMatchObject({ state: "unavailable", failure: { operation: "callback" } });
   await expect(owner.close()).rejects.toMatchObject({ code: "helper-failed" });
+});
+
+it.skipIf(process.platform !== "linux")("closing one owner leaves a shared-runtime peer live without leaked watches", async () => {
+  const before = await inotifyState();
+  const admitted = await root(dir);
+  let hints = 0;
+  const first = watch(admitted, { scopes, onDirty() {} }); owners.push(first);
+  const peer = watch(admitted, { scopes, onDirty() { hints++; } }); owners.push(peer);
+  await Promise.all([first.ready, peer.ready]);
+  await first.close();
+  expect((await inotifyState()).watches).toBe(before.watches + 1);
+  hints = 0;
+  await fs.writeFile(path.join(dir, "peer-edit"), "still observed");
+  await expect.poll(() => hints).toBeGreaterThan(0);
+  await peer.close();
+  expect((await inotifyState()).watches).toBe(before.watches);
 });

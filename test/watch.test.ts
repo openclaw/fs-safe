@@ -8,7 +8,10 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 let dir: string;
 const owners: WatchSubscription[] = [];
-beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-watch-")); });
+beforeEach(async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-watch-"));
+  dir = (await root(temporary)).rootReal;
+});
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
   await Promise.allSettled(owners.splice(0).map(owner => owner.close()));
@@ -57,7 +60,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     const owner = own(watch(await root(dir), { mode, scopes: [{ path: "tree", kind: "tree", depth: 2 }], exclude: entry => entry.path.endsWith("ignored"), onDirty() {} }));
     await owner.ready;
     expect(owner.health().observedDirectories).toBe(3);
-    expect(owner.health().directories).toBe(mode === "node" ? 3 : 0);
+    expect(owner.health().directories).toBe(mode === "node" ? (process.platform === "win32" ? 1 : 3) : 0);
     expect(owner.health().workers).toBe(mode === "node" ? 1 : 0);
     expect(owner.health().scannedEntries).toBeGreaterThan(100);
   });
@@ -198,6 +201,8 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
   const hints: WatchDirty[] = [];
   const owner = own(watch(await root(authority), { scopes, onDirty: hint => { hints.push(hint); } }));
   await owner.ready;
+  expect(swapped).toBe(true);
+  expect(restored).toBe(true);
   hints.length = 0;
   await fs.writeFile(path.join(outside, "private-outside-name"), "outside");
   await expect.poll(() => hints.length).toBeGreaterThan(0);

@@ -120,7 +120,11 @@ fallback or infinite retry occurs.
 ## Modes, budgets and lifetime
 
 - `mode: "node"` (default): one owned Node worker per subscription with
-  **non-recursive directory-only** `fs.watch` registrations. No per-file watches.
+  directory-only `fs.watch` registrations. Linux/macOS use non-recursive
+  registrations; Windows uses one native recursive registration at the admitted
+  Root rather than child handles that prevent ancestor moves. No per-file watches.
+  Windows may receive hints from unselected descendants, which guarded scope
+  reconciliation filters before publication.
   Default guarded reconciliation interval: 30,000 ms.
 - `mode: "poll"`: no watch worker; explicit guarded metadata polling, default
   interval 1,000 ms. It does not hash file content.
@@ -143,12 +147,15 @@ count, observed-directory inventory count, last scanned-entry count, reconciliat
 flag. Polling reports zero physical directory registrations. Directory counts are not portable kernel-watch counts. Repeated whole-tree
 metadata scans and one worker per subscription have real CPU/memory costs; this
 API makes no performance-win claim. Share logical subscriptions at the application
-layer only when appropriate; there is no shared physical watcher pool.
+layer only when appropriate; fs-safe maintains no application-level shared
+watcher pool. A runtime may share its native driver infrastructure.
 
 `update(scopes)` synchronously fences the previous generation and resolves after
 the new generation has reconciled. Superseded requests reject with `AbortError`.
 `close()` is terminal and idempotent: it stops admission synchronously, cancels
-timers/scans, joins in-flight work and awaits termination of the owning worker.
+timers/scans, joins in-flight work and awaits termination of the owning worker after explicitly detaching its registrations. Bun 1.4.2 has
+a process-lifetime native watcher manager: close releases this subscription’s
+kernel watches, not the runtime’s shared driver descriptor/thread or peers.
 A Node `FSWatcher` close event alone is insufficient: Node schedules that event
 on the next tick rather than exposing a native-loop join. No `add()` can reopen
 a retired subscription. Close failures remain rejected on repeated calls.
@@ -178,3 +185,20 @@ tarballs beside its integrity manifest and consumer proof. Dependent PRs may use
 those artifacts in isolated test installs, recording the source commit/tree and
 manifest integrity. That is not an npm release: do not commit local tarball paths
 or invent a published version to consume an unreleased API.
+
+
+## Exported types
+
+All observation types are exported from `@openclaw/fs-safe/watch`:
+
+| Type | Contract |
+| --- | --- |
+| `WatchFunction` | Callable type of `watch(root, options)`. |
+| `WatchScope` | Literal relative entry/tree selection and depth. |
+| `WatchEntry` | Relative path and kind passed to the synchronous exclusion predicate. |
+| `WatchOptions` | Scopes, mode, budgets, callbacks, persistence and cancellation. |
+| `WatchSubscription` | Ready promise, target update, reconciliation, health and joined close. |
+| `WatchChange` | One bounded relative content/structural hint. |
+| `WatchDirty` | Generation, scopes, reason and optional admitted detail; absent detail invalidates scopes. |
+| `WatchHealth` | Observation state and resource facts, separate from application freshness. |
+| `WatchFailure` | Failure operation and optional code; distinguish watch creation from scan failure. |

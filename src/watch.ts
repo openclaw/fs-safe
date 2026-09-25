@@ -1,5 +1,6 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { isNotFoundPathError } from "./path.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { assertRootIdentityCurrent } from "./root-context.js";
 import { rootHandleContext } from "./root-handle-context.js";
@@ -71,7 +72,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
   type Generation = typeof current;
   const health = (): WatchHealth => Object.freeze({
-    state, generation: current.id, mode, directories: mode === "node" ? registered.size : 0,
+    state, generation: current.id, mode, directories: backend?.directoryCount() ?? 0,
     observedDirectories: registered.size,
     workers: backend ? 1 : 0, scannedEntries, reconciliations,
     pendingInvalidations: pendingHint ? 1 : 0,
@@ -117,7 +118,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     retain(error);
     const details = error instanceof FsSafeError ? error.details : undefined;
     const code = details?.code ?? (error as { code?: unknown } | null)?.code;
-    failureInfo = Object.freeze({ operation: details?.operation === "watch" ? "watch" : details?.operation === "callback" ? "callback" : operation, ...(typeof code === "string" ? { code } : {}) });
+    failureInfo = Object.freeze({ operation: details?.operation === "watch" ? "watch" : details?.operation === "callback" ? "callback" : details?.operation === "close" ? "close" : operation, ...(typeof code === "string" ? { code } : {}) });
     current.abort.abort(error);
     current.waiter.reject(error);
     clearTimers();
@@ -162,6 +163,16 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     check(g);
     let prior: WatchSnapshot | undefined;
     let reacquired = false;
+    const retryChurn = async (error: unknown) => {
+      check(g);
+      // Descendant churn never grants a replacement authority Root.
+      await assertRootIdentityCurrent(context);
+      if (error !== restart && !isNotFoundPathError(error) &&
+        !(error instanceof FsSafeError && ["not-found", "path-mismatch"].includes(error.code))) throw error;
+      dirty(g, "reconcile");
+      await retireBackend();
+      prior = undefined; reacquired = true;
+    };
     for (let pass = 0; pass < maxPasses; pass++) {
       check(g);
       if (mode === "node" && !backend && g.scopes.length) {
@@ -188,16 +199,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         await backend?.drainCommands();
         check(g);
       } catch (error) {
-        check(g);
-        // Never repin a replaced Root while retrying descendant churn.
-        await assertRootIdentityCurrent(context);
-        const transient = error === restart || (error instanceof FsSafeError && ["not-found", "path-mismatch"].includes(error.code));
-        if (!transient) throw error;
-        // Safe scope invalidation must not wait behind slow physical retirement.
-        dirty(g, "reconcile");
-        await retireBackend();
-        prior = undefined;
-        reacquired = true;
+        await retryChurn(error);
         continue;
       }
       scannedEntries = next.scanned;
@@ -207,9 +209,12 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         const hadHints = pendingHint;
         const observed = reacquired ? undefined : changedEntries(snapshot, next, maxPendingPaths);
         const nativeRevision = revision;
-        const admittedHints = hadHints ? await admittedNativeChanges(context, g.scopes, snapshot, next, {
-          hints: pendingChanges ? [...pendingChanges.values()] : [], overflow: !pendingChanges,
-        }, g.abort.signal, maxPendingPaths) : [];
+        let admittedHints: WatchChange[] | undefined = [];
+        try {
+          if (hadHints) admittedHints = await admittedNativeChanges(context, g.scopes, snapshot, next, {
+            hints: pendingChanges ? [...pendingChanges.values()] : [], overflow: !pendingChanges,
+          }, g.abort.signal, maxPendingPaths);
+        } catch (error) { await retryChurn(error); continue; }
         check(g);
         if (nativeRevision !== revision) { prior = next; continue; }
         const details = hadHints

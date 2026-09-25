@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { changedEntries, nativeChanges } from "../src/watch-hints.js";
 import { watchScopes, type WatchSnapshot } from "../src/watch-scan.js";
@@ -12,7 +13,7 @@ describe("bounded advisory hints", () => {
     expect(nativeChanges(scopes, before, { overflow: false, hints: [{ directory: "", name: "unrelated", event: "rename" }] })).toEqual([]);
   });
   it("invalidates a missing descendant on ancestor replacement", () => {
-    expect(nativeChanges(watchScopes([{ path: "a/b/config", kind: "entry" }]), undefined, { overflow: false, hints: [{ directory: "", name: "a", event: "rename" }] })).toEqual([{ path: "a/b/config", type: "structural" }]);
+    expect(nativeChanges(watchScopes([{ path: "a/b/config", kind: "entry" }]), undefined, { overflow: false, hints: [{ directory: "", name: "a", event: "rename" }] })).toEqual([{ path: path.join("a", "b", "config"), type: "structural" }]);
   });
   it("makes unknown, escaping names and overflow explicit scope invalidation", () => {
     for (const name of [null, "", "../outside", ".", "..", "a/b", "bad\0name"]) {

@@ -180,7 +180,7 @@ for (const nativeMode of expected.omitted ? ["auto", "off"] : ["auto", "off", "r
       assert.equal(owner.health().state, "ready");
       assert.equal(owner.health().mode, mode);
       assert.ok(hints.length >= 1);
-      assert.equal(owner.health().directories, mode === "node" ? 2 : 0);
+      assert.equal(owner.health().directories, mode === "node" ? (process.platform === "win32" ? 1 : 2) : 0);
     } finally { await owner.close(); }
     assert.equal(owner.health().workers, 0);
     assert.equal(owner.health().directories, 0);
