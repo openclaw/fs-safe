@@ -60,6 +60,7 @@ pub struct DirectoryObservation {
 
 #[cfg(unix)]
 #[napi(object)]
+#[derive(Debug)]
 pub struct DirectoryFdObservation {
     pub dev: BigInt,
     pub ino: BigInt,
@@ -339,14 +340,7 @@ pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
 
 #[napi(js_name = "observeDirectory")]
 pub fn observe_directory(env: Env, path: String) -> Result<DirectoryObservation> {
-    into_napi(
-        env,
-        directory_observation::observe_directory(&path).map(|observed| DirectoryObservation {
-            dev: BigInt::from(observed.dev),
-            ino: BigInt::from(observed.ino),
-            real_path: observed.real_path,
-        }),
-    )
+    into_napi(env, directory_observation::observe_directory(&path))
 }
 
 #[cfg(unix)]
@@ -358,14 +352,7 @@ pub fn observe_directory_fd(
 ) -> Result<DirectoryFdObservation> {
     into_napi(
         env,
-        directory_observation::observe_directory_fd(fd, &expected_path)
-            .map(|observed| DirectoryFdObservation {
-                dev: BigInt::from(observed.dev),
-                ino: BigInt::from(observed.ino),
-                mode: BigInt::from(u64::from(observed.mode)),
-                nlink: BigInt::from(observed.nlink),
-                real_path: observed.real_path,
-            }),
+        directory_observation::observe_directory_fd(fd, &expected_path),
     )
 }
 

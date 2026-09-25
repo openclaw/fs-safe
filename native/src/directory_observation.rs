@@ -1,28 +1,16 @@
-use crate::NativeResult;
-
-pub(crate) struct ExactDirectoryObservation {
-    pub dev: u64,
-    pub ino: u64,
-    pub real_path: String,
-}
+use crate::{DirectoryObservation, NativeResult};
 
 #[cfg(unix)]
-#[derive(Debug)]
-pub(crate) struct ExactDirectoryFdObservation {
-    pub dev: u64,
-    pub ino: u64,
-    pub mode: u32,
-    pub nlink: u64,
-    pub real_path: String,
-}
+use crate::DirectoryFdObservation;
 
 #[cfg(unix)]
 mod platform {
     use std::os::fd::AsRawFd;
 
+    use napi::bindgen_prelude::BigInt;
     use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, Stat};
 
-    use super::{ExactDirectoryFdObservation, ExactDirectoryObservation};
+    use super::{DirectoryFdObservation, DirectoryObservation};
     use crate::{NativeResult, native_error, unix::{borrowed, os_error}};
 
     #[cfg(target_os = "linux")]
@@ -106,7 +94,7 @@ mod platform {
         fd: i32,
         expected_path: &str,
         inspect_name: impl FnOnce() -> NativeResult<Stat>,
-    ) -> NativeResult<ExactDirectoryFdObservation> {
+    ) -> NativeResult<DirectoryFdObservation> {
         if fd < 0 {
             return Err(native_error("EBADF", "invalid observed directory descriptor"));
         }
@@ -155,11 +143,11 @@ mod platform {
                 return Err(native_error("path-mismatch", "observed directory identity changed"));
             }
         }
-        Ok(ExactDirectoryFdObservation {
-            dev: after.st_dev as u64,
-            ino: after.st_ino as u64,
-            mode: after.st_mode as u32,
-            nlink: after.st_nlink as u64,
+        Ok(DirectoryFdObservation {
+            dev: BigInt::from(after.st_dev as u64),
+            ino: BigInt::from(after.st_ino as u64),
+            mode: BigInt::from(u64::from(after.st_mode as u32)),
+            nlink: BigInt::from(after.st_nlink as u64),
             real_path,
         })
     }
@@ -167,11 +155,11 @@ mod platform {
     pub(super) fn observe_directory_fd(
         fd: i32,
         expected_path: &str,
-    ) -> NativeResult<ExactDirectoryFdObservation> {
+    ) -> NativeResult<DirectoryFdObservation> {
         observe_directory_fd_with(fd, expected_path, || inspect_named_directory(expected_path))
     }
 
-    pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
+    pub(super) fn observe_directory(path: &str) -> NativeResult<DirectoryObservation> {
         let directory = rustix::fs::open(path, observation_open_flags(), Mode::empty())
             .map_err(|error| os_error(error, "open directory observation"))?;
         let stat = rustix::fs::fstat(&directory)
@@ -194,9 +182,11 @@ mod platform {
                 ));
             }
         }
-        Ok(ExactDirectoryObservation {
-            dev: stat.st_dev as u64,
-            ino: stat.st_ino as u64,
+        // Keep the temporary descriptor closed before allocating the N-API fields.
+        drop(directory);
+        Ok(DirectoryObservation {
+            dev: BigInt::from(stat.st_dev as u64),
+            ino: BigInt::from(stat.st_ino as u64),
             real_path,
         })
     }
@@ -211,13 +201,14 @@ mod platform {
 mod platform {
     use std::os::windows::ffi::OsStrExt;
 
+    use napi::bindgen_prelude::BigInt;
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_READ_ATTRIBUTES, GetFinalPathNameByHandleW,
     };
 
-    use super::ExactDirectoryObservation;
+    use super::DirectoryObservation;
     use crate::{
         NativeResult, native_error,
         windows::{observe_directory_identity, open_existing_handle, win_error},
@@ -305,7 +296,7 @@ mod platform {
         })
     }
 
-    pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
+    pub(super) fn observe_directory(path: &str) -> NativeResult<DirectoryObservation> {
         let path = wide_path(path)?;
         let handle = open_existing_handle(
             &path,
@@ -315,9 +306,12 @@ mod platform {
         )?;
         let (dev, ino) = observe_directory_identity(handle.0)?;
         let real_path = canonical_path(handle.0)?;
-        Ok(ExactDirectoryObservation {
-            dev: u64::from(dev),
-            ino,
+        // Keep the temporary handle closed before allocating the N-API fields.
+        drop(handle);
+        drop(path);
+        Ok(DirectoryObservation {
+            dev: BigInt::from(u64::from(dev)),
+            ino: BigInt::from(ino),
             real_path,
         })
     }
@@ -328,7 +322,7 @@ mod platform {
     }
 }
 
-pub(crate) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
+pub(crate) fn observe_directory(path: &str) -> NativeResult<DirectoryObservation> {
     platform::observe_directory(path)
 }
 
@@ -336,6 +330,6 @@ pub(crate) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObserv
 pub(crate) fn observe_directory_fd(
     fd: i32,
     expected_path: &str,
-) -> NativeResult<ExactDirectoryFdObservation> {
+) -> NativeResult<DirectoryFdObservation> {
     platform::observe_directory_fd(fd, expected_path)
 }

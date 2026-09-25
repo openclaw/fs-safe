@@ -41,10 +41,10 @@ fn retained_directory_observation_preserves_exact_metadata_and_fd_ownership() {
     let expected = rustix::fs::fstat(directory.as_fd()).unwrap();
     for _ in 0..3 {
         let observed = observe_directory_fd(directory.as_raw_fd(), path.to_str().unwrap()).unwrap();
-        assert_eq!(observed.dev, expected.st_dev as u64);
-        assert_eq!(observed.ino, expected.st_ino as u64);
-        assert_eq!(observed.mode, expected.st_mode as u32);
-        assert_eq!(observed.nlink, expected.st_nlink as u64);
+        assert_eq!(observed.dev.get_u64(), (false, expected.st_dev as u64, true));
+        assert_eq!(observed.ino.get_u64(), (false, expected.st_ino as u64, true));
+        assert_eq!(observed.mode.get_u64(), (false, u64::from(expected.st_mode as u32), true));
+        assert_eq!(observed.nlink.get_u64(), (false, expected.st_nlink as u64, true));
         assert_eq!(observed.real_path, path.to_str().unwrap());
         assert!(same_directory(&expected, &rustix::fs::fstat(directory.as_fd()).unwrap()));
     }
