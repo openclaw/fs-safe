@@ -29,14 +29,11 @@ export type RootPathTargetObservation =
   | NativeDirectoryObservationGuard;
 
 /** An exact receipt owned by one stat/list operation. Never cache it. */
-export type RootPathObservationReceipt = {
-  kind: RootPathObservationKind;
-  rootGuard: DirectoryObservationGuard;
+export type RootPathObservationReceipt = Pick<RootPathObservationRequest & {
   directoryGuard: RootPathDirectoryObservationGuard;
-  directoryObserver?: NativeDirectoryObservationBackend;
   targetPath: string;
   target: RootPathTargetObservation;
-};
+}, "kind" | "rootGuard" | "directoryGuard" | "directoryObserver" | "targetPath" | "target">;
 
 /** A failed initial target lookup must not discard its already admitted parent. */
 export type RootPathParentObservationReceipt = Omit<RootPathObservationReceipt, "kind" | "target"> & {
@@ -49,16 +46,12 @@ export type RootPathObservationRequest = {
   directoryObserver?: NativeDirectoryObservationBackend;
 };
 
-export type RootPathTraversalObservation = {
+export type RootPathTraversalObservation = Omit<Partial<RootPathObservationReceipt> & {
   enabled: boolean;
   request: RootPathObservationRequest;
   targetIndex: number;
   directoryIndex: number;
-  directoryGuard?: RootPathDirectoryObservationGuard;
-  directoryObserver?: NativeDirectoryObservationBackend;
-  targetPath?: string;
-  target?: RootPathTargetObservation;
-};
+}, "kind" | "rootGuard">;
 
 export type RootPathObservedTraversalEntry =
   | StatObservationReceipt

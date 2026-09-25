@@ -321,6 +321,7 @@ pub(crate) fn win32_bool_result(result: windows_sys::core::BOOL) -> Result<(), u
     }
 }
 
+#[inline(always)]
 pub(crate) fn check_win32_bool(
     result: windows_sys::core::BOOL,
     operation: &str,

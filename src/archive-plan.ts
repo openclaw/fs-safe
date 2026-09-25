@@ -167,14 +167,9 @@ export function createTarEntryPlanner(params: ArchivePlanOptions):
   };
 }
 
-export function createTarEntryPreflightChecker(params: {
-  rootDir: string;
-  stripComponents?: number;
-  limits?: ArchiveExtractLimits;
-  escapeLabel?: string;
-  entryFilter?: ArchiveEntryFilter;
-  onFiltered?: ArchiveFilteredEntryPolicy;
-}): (entry: TarEntryInfo) => boolean {
+export function createTarEntryPreflightChecker(
+  params: Omit<ArchivePlanOptions & { rootDir: string }, "entryModes">,
+): (entry: TarEntryInfo) => boolean {
   const plan = createTarEntryPlanner(params);
   return (entry) => plan(entry) !== null;
 }
