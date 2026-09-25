@@ -18,7 +18,7 @@ export type WatchDirty = Readonly<{
   scopes: readonly WatchScope[];
   /** Bounded advisory detail; undefined means invalidate every supplied scope. */
   changes?: readonly WatchChange[];
-  reason: "event" | "reconcile" | "update" | "overflow";
+  reason: "event" | "reconcile" | "overflow";
 }>;
 export type WatchHealth = Readonly<{
   state: "starting" | "ready" | "reconciling" | "unavailable" | "closing" | "closed";

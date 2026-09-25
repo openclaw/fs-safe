@@ -3,7 +3,7 @@ import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { assertRootIdentityCurrent, assertValidRootRelativePath, resolvePathInRoot, type RootContext } from "./root-context.js";
-import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, openRootDirectoryListing, type RootDirectoryObservationGuard } from "./root-directory-list.js";
+import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, openRootDirectoryListing, pathStatFromStats, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
 import type { DirEntry } from "./types.js";
@@ -21,7 +21,9 @@ export function watchScopes(input: readonly WatchScope[]): readonly WatchScope[]
     if (suppliedKind !== "entry" && suppliedKind !== "tree") throw new TypeError("invalid watch scope kind");
     const depth = suppliedDepth ?? 32;
     if (!Number.isSafeInteger(depth) || depth < 0 || depth > 128) throw new RangeError("watch depth must be between 0 and 128");
-    const normalized = path.normalize(suppliedPath);
+    // Normalize only admitted input, then remove the separator normalize preserves.
+    const spelling = path.normalize(suppliedPath);
+    const normalized = spelling.endsWith(path.sep) ? spelling.slice(0, -1) : spelling;
     return Object.freeze({ path: normalized === "." ? "" : normalized, kind: suppliedKind, depth });
   }));
 }
@@ -118,7 +120,8 @@ export async function scanWatch(
   for (const scope of scopes) {
     signal.throwIfAborted();
     if (!scope.path) {
-      await directory("");
+      const guard = await directory("");
+      result.entries.set("", fingerprint({ name: "", ...pathStatFromStats(guard.stat) }, guard.stat));
       if (scope.kind === "tree" && scope.depth! > 0) await tree("", scope.depth!);
       continue;
     }

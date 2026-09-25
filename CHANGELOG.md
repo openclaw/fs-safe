@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Add `@openclaw/fs-safe/watch`: bounded advisory observation of admitted Root-relative entries and trees, descriptor-bound native observation on Linux Node.js, portable explicit polling, guarded reconciliation, generation-fenced target updates, and terminal joined shutdown that distinguishes observation loss from cleanup failure. Notifications do not establish continuous coverage or authorize reads.
+- Add `@openclaw/fs-safe/watch`: bounded advisory observation of admitted Root-relative entries and trees, descriptor-bound native observation on Linux Node.js, portable explicit polling, guarded reconciliation, generation-fenced target updates, and terminal joined shutdown that distinguishes observation loss from cleanup failure. Notifications do not establish continuous coverage or authorize reads. Thanks @vincentkoc. ([#666](https://github.com/openclaw/fs-safe/pull/666))
+- Include Root directory metadata in watch entry/tree scopes and accept validated scopes with trailing separators without treating child-only directory mtime changes as entry changes.
 
 ## 0.19.0 - 2026-09-24
 

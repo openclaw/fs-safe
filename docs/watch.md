@@ -40,7 +40,9 @@ matching. Case/short-name aliases retain filesystem behavior; case-sensitive
 Windows siblings stay distinct. Unmatched native spellings are reconciled with
 exact observed identities before any detail is published. A filename
 starting with `~` stays literal. Absolute paths, parent traversal and platform
-namespace aliases are rejected. A structurally similar object is not a Root.
+namespace aliases are rejected. Trailing separators are accepted and canonicalized
+after validation: `./` selects the Root and `child/` selects `child` (with either
+separator on Windows). A structurally similar object is not a Root.
 The subscription reuses the Root’s exact admitted identity; it never obtains new
 authority from its public pathname fields.
 
@@ -54,7 +56,9 @@ Root or repins its replacement.
 
 A scope with `kind: "entry"` observes just the named entry, even if it is a
 directory. Changes to children are not selected. A tree observes its entry and
-descendants up to its depth. Symbolic links are included **as entries**, never
+descendants up to its depth. This includes the Root entry selected by `path: ""`:
+directory mode changes are observed, but child-only size/mtime changes do not
+count as changes to the directory entry. Symbolic links are included **as entries**, never
 followed. A scope passing through a symbolic parent fails with `symlink`. To
 observe a trusted link target, admit that target as a separate Root and observe
 the lexical link entry separately. Replacing a Root’s lexical alias does not
@@ -77,6 +81,8 @@ authority outside its scope. Unknown filenames, invalid backend names and queue
 overflow discard detail and invalidate **all configured scopes**. Consumers must
 not filter whole-scope invalidation away. Initial reconciliation and target
 updates also invalidate scopes, so domain caches can rebuild from guarded reads.
+The reasons are `event`, `reconcile` and `overflow`; initial admission and
+`update(scopes)` both publish a `reconcile` invalidation for the admitted generation.
 
 Both sides of the worker channel have bounded pending detail. The worker allows
 one outstanding batch plus one bounded accumulator; the main owner coalesces
