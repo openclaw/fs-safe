@@ -1246,6 +1246,67 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/archive-zip-admission.test.ts test/archive-zip-metadata.test.ts test/archive-zip-integrity.test.ts
 
+  native-gnu-floor:
+    name: Native glibc 2.28 (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64-gnu
+            target: x86_64-unknown-linux-gnu
+          - label: linux-arm64-gnu
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --version 0.23.4 --locked
+
+      - name: Add Rust targets
+        run: rustup target add ${{ matrix.target }} wasm32-unknown-unknown
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build GNU binding and verify glibc floor
+        run: node scripts/build-linux-gnu.mjs ${{ matrix.target }}
+
+      - name: Set up portable archive LLVM
+        if: matrix.label == 'linux-x64-gnu'
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Build package and stage GNU x64 binding
+        if: matrix.label == 'linux-x64-gnu'
+        run: |
+          pnpm build
+          cp artifacts/fs-safe-native.linux-x64-gnu.node native/
+          node scripts/stage-host-native.mjs
+
+      - name: Load and test on glibc 2.28
+        if: matrix.label == 'linux-x64-gnu'
+        run: bash scripts/test-linux-glibc-floor.sh
+
   native-musl:
     name: Native check (linux-x64-musl)
     runs-on: ubuntu-latest

@@ -232,12 +232,15 @@ The library does not modify or constrain the global Node.js `fs` namespace, and 
 
 | Mechanism | Reported containment | Boundary |
 |---|---|---|
-| Linux native | `kernel-atomic` | `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` resolves and opens under the root in one kernel operation. |
+| Linux native with `openat2` | `kernel-atomic` | `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` resolves and opens under the root in one kernel operation. |
+| Linux native without `openat2` | `best-effort` | A no-follow `openat` component walk retains each parent and verifies exact identity associations before and after the final open; all symlink components are rejected. |
 | macOS native | `best-effort` | macOS 15.4 and newer use `O_RESOLVE_BENEATH` first; older kernels use the guarded `openat(O_NOFOLLOW)` component walk. Both verify the opened descriptor with `F_GETPATH`. |
 | Windows native | `best-effort` | Handle-relative `NtCreateFile` rejects reparse points, but this package does not claim a Linux-style atomic beneath guarantee. |
 | JavaScript fallback | `best-effort` | Canonical checks, no-follow opens where Node exposes them, and post-open identity checks form a check-then-use sequence. |
 
 The macOS `F_GETPATH` verification is an escape detector, not a race-atomic guarantee. A hostile same-UID process can rename a directory after `O_RESOLVE_BENEATH` or the manual walk and race the post-open sample or a later descriptor-relative mutation. The native result therefore remains `best-effort` on macOS even when the kernel flag is available. No policy decision is attached to these labels; callers can inspect the fact and decide what their own threat model requires.
+
+The Linux fallback's identity checks are also detection-based: a directory can be renamed between chain samples or before a later descriptor-relative mutation. It cannot provide atomic resolution, and rejection after a mutating open does not promise rollback. See [Linux without openat2](native.md#linux-without-openat2) for the cached capability probe, conservative symlink rejection, and operations that remain unavailable.
 
 The public `OpenResult`, `ReadResult`, and `WritableOpenResult` expose `containment`. Those root APIs currently report `best-effort`; direct native `openBeneath()` reports the platform value above. No-replace publication uses `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS, and `FileRenameInfoEx` with replacement disabled on Windows, but those separate mutation semantics do not upgrade an open result's containment label.
 

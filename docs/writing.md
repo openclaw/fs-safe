@@ -359,6 +359,11 @@ replacing rename. After dispatch it rechecks both parent identities, so a
 post-operation rejection can mean the no-replace rename completed. Directory
 moves continue to require `overwrite: true`.
 
+Linux without `openat2` uses the [guarded native parent walk](native.md#linux-without-openat2).
+The move still uses `renameat2(RENAME_NOREPLACE)` and preserves collisions;
+parent resolution reports the documented `best-effort` containment class.
+Disabling the addon still makes no-clobber moves unavailable.
+
 Both selected canonical endpoints are admitted inside the retained Root after
 native parent admission. With `mutationSymlinks: "reject"`, both full operation
 paths are rechecked after the live mutation-authority callback and before

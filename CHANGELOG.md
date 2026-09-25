@@ -10,6 +10,8 @@
 
 ### Fixes
 
+- **Linux native compatibility:** build GNU x64/arm64 bindings for glibc 2.28 and newer, restoring native operations on RHEL 8-family systems; reject release artifacts that require newer GLIBC symbols. ([#548](https://github.com/openclaw/fs-safe/issues/548))
+- **Older Linux kernels:** fall back to guarded no-follow native parent resolution when `openat2` is absent or blocked by seccomp, retaining nested no-clobber moves, exact identity checks, explicit `best-effort` containment, and fail-closed bounded cleanup. ([#572](https://github.com/openclaw/fs-safe/issues/572), [#511](https://github.com/openclaw/fs-safe/issues/511))
 - **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
 - **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
 
