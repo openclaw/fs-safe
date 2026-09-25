@@ -104,3 +104,11 @@ it("cannot reopen when a scope accessor closes during target admission", async (
   await owner.close();
   expect(owner.health()).toMatchObject({ state: "closed", workers: 0, directories: 0 });
 });
+
+it("retains an undefined exclusion failure instead of treating it as success", async () => {
+  await fs.writeFile(path.join(dir, "file"), "value");
+  const owner = watch(await root(dir), { mode: "poll", scopes, onDirty() {}, exclude() { throw undefined; } }); owners.push(owner);
+  await expect(owner.ready).rejects.toMatchObject({ code: "helper-failed", details: { operation: "callback" } });
+  expect(owner.health()).toMatchObject({ state: "unavailable", failure: { operation: "callback" } });
+  await expect(owner.close()).rejects.toMatchObject({ code: "helper-failed" });
+});

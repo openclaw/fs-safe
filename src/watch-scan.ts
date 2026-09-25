@@ -56,8 +56,13 @@ export async function scanWatch(
     if (++result.scanned > options.maxEntries) throw new FsSafeError("too-large", "watch entry budget exceeded", { details: { operation: "scan" } });
   };
   const excluded = (name: string, entry: DirEntry) => {
-    const value = options.exclude?.({ path: name, kind: kind(entry) });
-    assertSynchronousCallbackResult(value, "watch exclude");
+    let value: boolean | undefined;
+    try {
+      value = options.exclude?.({ path: name, kind: kind(entry) });
+      assertSynchronousCallbackResult(value, "watch exclude");
+    } catch (cause) {
+      throw new FsSafeError("helper-failed", "watch exclusion callback failed", { cause, details: { operation: "callback" } });
+    }
     signal.throwIfAborted();
     return value;
   };

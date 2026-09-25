@@ -70,7 +70,13 @@ export class NodeWatchBackend {
   private readonly exited: Promise<void>;
 
   constructor(onDirty: (batch: NodeWatchBatch) => void, onError: (error: unknown) => void, persistent: boolean, maxPendingPaths: number) {
-    this.worker = new Worker(program, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths } });
+    try {
+      this.worker = new Worker(program, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths } });
+    } catch (cause) {
+      throw new FsSafeError("helper-failed", "watch worker could not start", {
+        cause, details: { operation: "watch", code: (cause as NodeJS.ErrnoException | null)?.code },
+      });
+    }
     this.exited = new Promise(resolve => this.worker.once("exit", code => {
       if (!this.stopped) this.fail(new FsSafeError("helper-failed", "watch worker exited", {
         details: { code, operation: "watch" },
