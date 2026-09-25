@@ -51,21 +51,21 @@ pub struct FileIdentity {
     pub is_symbolic_link: bool,
 }
 
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 pub struct DirectoryObservation {
-    pub dev: BigInt,
-    pub ino: BigInt,
+    pub dev: u64,
+    pub ino: u64,
     pub real_path: String,
 }
 
 #[cfg(unix)]
-#[napi(object)]
+#[napi(object, object_from_js = false)]
 #[derive(Debug)]
 pub struct DirectoryFdObservation {
-    pub dev: BigInt,
-    pub ino: BigInt,
-    pub mode: BigInt,
-    pub nlink: BigInt,
+    pub dev: u64,
+    pub ino: u64,
+    pub mode: u64,
+    pub nlink: u64,
     pub real_path: String,
 }
 

@@ -7,7 +7,6 @@ use crate::DirectoryFdObservation;
 mod platform {
     use std::os::fd::AsRawFd;
 
-    use napi::bindgen_prelude::BigInt;
     use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, Stat};
 
     use super::{DirectoryFdObservation, DirectoryObservation};
@@ -144,10 +143,10 @@ mod platform {
             }
         }
         Ok(DirectoryFdObservation {
-            dev: BigInt::from(after.st_dev as u64),
-            ino: BigInt::from(after.st_ino as u64),
-            mode: BigInt::from(u64::from(after.st_mode as u32)),
-            nlink: BigInt::from(after.st_nlink as u64),
+            dev: after.st_dev as u64,
+            ino: after.st_ino as u64,
+            mode: u64::from(after.st_mode as u32),
+            nlink: after.st_nlink as u64,
             real_path,
         })
     }
@@ -182,11 +181,9 @@ mod platform {
                 ));
             }
         }
-        // Keep the temporary descriptor closed before allocating the N-API fields.
-        drop(directory);
         Ok(DirectoryObservation {
-            dev: BigInt::from(stat.st_dev as u64),
-            ino: BigInt::from(stat.st_ino as u64),
+            dev: stat.st_dev as u64,
+            ino: stat.st_ino as u64,
             real_path,
         })
     }
@@ -201,7 +198,6 @@ mod platform {
 mod platform {
     use std::os::windows::ffi::OsStrExt;
 
-    use napi::bindgen_prelude::BigInt;
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -306,12 +302,9 @@ mod platform {
         )?;
         let (dev, ino) = observe_directory_identity(handle.0)?;
         let real_path = canonical_path(handle.0)?;
-        // Keep the temporary handle closed before allocating the N-API fields.
-        drop(handle);
-        drop(path);
         Ok(DirectoryObservation {
-            dev: BigInt::from(u64::from(dev)),
-            ino: BigInt::from(ino),
+            dev: u64::from(dev),
+            ino,
             real_path,
         })
     }
