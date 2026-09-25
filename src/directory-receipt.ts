@@ -93,12 +93,6 @@ export function directoryReceiptAuthority(receipt: DirectoryReceipt<Stats | BigI
   return authorities.get(receipt) ?? snapshotDirectoryReceipt(receipt);
 }
 
-function rememberReceipt(receipt: DirectoryReceipt, authority: DirectoryAuthority): DirectoryReceipt {
-  authorities.set(receipt, authority);
-  identities.set(receipt.identity, authority);
-  return receipt;
-}
-
 export function ownDirectoryReceipt(receipt: DirectoryReceipt<Stats | BigIntStats>): DirectoryReceipt {
   return receiptFromAuthority(snapshotDirectoryReceipt(receipt));
 }
@@ -109,11 +103,14 @@ export function copyRetainedDirectoryReceipt(receipt: DirectoryReceipt): Directo
 }
 
 function receiptFromAuthority(authority: DirectoryAuthority): DirectoryReceipt {
-  return rememberReceipt({
+  const receipt: DirectoryReceipt = {
     path: authority.path,
     realPath: authority.realPath,
     identity: Object.assign(Object.create(fs.Stats.prototype) as Stats, authority.metadata),
-  }, authority);
+  };
+  authorities.set(receipt, authority);
+  identities.set(receipt.identity, authority);
+  return receipt;
 }
 
 // The caller already admitted the exact observation and its paths.

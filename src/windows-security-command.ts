@@ -2,15 +2,17 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { FsSafeError } from "./errors.js";
 import type { NativeWindowsDescriptorSecurityFacts, NativeWindowsSecurityFacts } from "./native-binding.js";
+import type { FsSafeNativeMode } from "./native-config.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, PermissionCommandError } from "./permission-exec.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
-import { parseWindowsSecurityCommandFacts, unverified } from "./windows-security-facts.js";
+import { parseWindowsOwnerAndDaclFacts, parseWindowsSecurityCommandFacts, unverified, type DescriptorFacts } from "./windows-security-facts.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const TERMINATION_GRACE_MS = 1_000;
 const FULL_IDENTITY = /^[0-9a-f]{16}:[0-9a-f]{32}$/;
+export const WINDOWS_SECURITY_BATCH_MAX_BYTES = 16 * 1024 * 1024;
 
-type CommandOperation = "path" | "descriptor" | "create" | "directory" | "protect-file" | "verify-file";
+type CommandOperation = "path" | "paths" | "descriptor" | "create" | "directory" | "protect-file" | "verify-file";
 type CommandParams = {
   targetPath?: string;
   fd?: number;
@@ -88,6 +90,10 @@ function parseReplyValue(stdout: string, operation: CommandOperation): unknown {
     unverified("Windows security command returned an incomplete response");
   }
   if (!response.ok) {
+    if (operation === "paths" &&
+      (response.code === "helper-unavailable" || response.code === "too-large") && typeof response.message === "string") {
+      throw new FsSafeError(response.code, response.message);
+    }
     const codes = new Set(["EACCES", "EPERM", "EEXIST", "ENOENT", "ENOTSUP", "EIO", "EBADF", "ELOOP", "ENOTDIR", "EINVAL", "ENOSPC", "EBUSY"]);
     if (typeof response.code !== "string" || !codes.has(response.code) || typeof response.message !== "string") {
       unverified("Windows security command returned an invalid failure");
@@ -139,11 +145,11 @@ class WindowsSecurityCommandError extends PermissionCommandError {
   readonly creationOutcome?: "unconfirmed";
   readonly processExitConfirmed: boolean;
 
-  constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, override readonly timedOut: boolean) {
-    super(file, durationMs, receipt);
+  constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, override readonly timedOut: boolean, timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS) {
+    super(file, durationMs, receipt, timeoutMs);
     this.creationOutcome = receipt.creationOutcome;
     this.processExitConfirmed = receipt.processExitConfirmed;
-    if (timedOut) this.message = `Windows permission inspection timed out after ${DEFAULT_PERMISSION_EXEC_TIMEOUT_MS}ms`;
+    if (timedOut) this.message = `Windows permission inspection timed out after ${timeoutMs}ms`;
     if (!receipt.processExitConfirmed) this.message += "; process exit was not confirmed";
     else if (!receipt.outputClosed) this.message += "; command output did not close";
     if (receipt.creationOutcome) this.message += "; private-directory creation outcome is unconfirmed";
@@ -176,11 +182,21 @@ export function hasUnsettledWindowsSecurityCommand(error: unknown): boolean {
 
 function ignoreLateError(): void {}
 
-async function execute(operation: CommandOperation, params: CommandParams): Promise<unknown> {
-  const { file, args, env } = command(operation, params);
+type AsyncCommandRequest = {
+  file: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  input?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+};
+
+async function execute(operation: CommandOperation, params: CommandParams, request?: AsyncCommandRequest): Promise<unknown> {
+  const selected: AsyncCommandRequest = request ?? command(operation, params);
+  const { file, args, env, input, timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, maxOutputBytes = MAX_OUTPUT_BYTES } = selected;
   const startedAt = performance.now();
   return await new Promise((resolve, reject) => {
-    const child = spawn(file, args, { windowsHide: true, env, stdio: [params.fd ?? "ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { windowsHide: true, env, stdio: [input === undefined ? params.fd ?? "ignore" : "pipe", "pipe", "pipe"] });
     const output: Buffer[] = [];
     const errors: Buffer[] = [];
     let bytes = 0;
@@ -200,7 +216,7 @@ async function execute(operation: CommandOperation, params: CommandParams): Prom
     const timeout = setTimeout(() => {
       timedOut = true;
       fail(deadlineError());
-    }, DEFAULT_PERMISSION_EXEC_TIMEOUT_MS);
+    }, timeoutMs);
 
     const finish = (outputClosed: boolean) => {
       if (settled) return;
@@ -213,6 +229,13 @@ async function execute(operation: CommandOperation, params: CommandParams): Prom
       child.removeListener("error", onChildError);
       child.on("error", ignoreLateError);
       const cleanupErrors: unknown[] = [];
+      if (input !== undefined && child.stdin) {
+        child.stdin.removeListener("error", fail);
+        child.stdin.on("error", ignoreLateError);
+        if (!outputClosed) {
+          try { child.stdin.destroy(); } catch (error) { cleanupErrors.push(error); }
+        }
+      }
       for (const [stream, collect] of [[child.stdout, collectOutput], [child.stderr, collectErrors]] as const) {
         if (!stream) continue;
         stream.removeListener("data", collect);
@@ -230,7 +253,7 @@ async function execute(operation: CommandOperation, params: CommandParams): Prom
           cause: failure, pid: child.pid ?? null, code: exitCode, signal: exitSignal, stderr: Buffer.concat(errors),
           processExitConfirmed, outputClosed, terminationSignalSent, terminationError, cleanupErrors,
           ...(operation === "create" ? { creationOutcome: "unconfirmed" } as const : {}),
-        }, timedOut));
+        }, timedOut, timeoutMs));
       } else {
         try { resolve(parseReply(Buffer.concat(output).toString("utf8"), operation)); } catch (error) { reject(error); }
       }
@@ -252,7 +275,7 @@ async function execute(operation: CommandOperation, params: CommandParams): Prom
     const collect = (chunks: Buffer[]) => (chunk: Buffer) => {
       if (failed || settled) return;
       bytes += chunk.length;
-      if (bytes <= MAX_OUTPUT_BYTES) chunks.push(chunk);
+      if (bytes <= maxOutputBytes) chunks.push(chunk);
       else fail(new Error("Windows security command exceeded its output budget"));
     };
     const collectOutput = collect(output);
@@ -269,7 +292,7 @@ async function execute(operation: CommandOperation, params: CommandParams): Prom
     };
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
       onExit(code, signal);
-      if (!failed && performance.now() - startedAt >= DEFAULT_PERMISSION_EXEC_TIMEOUT_MS) {
+      if (!failed && performance.now() - startedAt >= timeoutMs) {
         timedOut = true;
         failed = true;
         failure = deadlineError();
@@ -285,10 +308,46 @@ async function execute(operation: CommandOperation, params: CommandParams): Prom
     child.stderr?.on("error", fail);
     child.stdout?.on("data", collectOutput);
     child.stderr?.on("data", collectErrors);
-    if (!child.stdout || !child.stderr) {
+    if (!child.stdout || !child.stderr || (input !== undefined && !child.stdin)) {
       // Node reports spawn errors on nextTick, which can follow the current microtask.
       missingPipes = setImmediate(() => { if (!failed && !settled) fail(new Error("Windows security command output pipes are unavailable")); });
     }
+    if (input !== undefined && child.stdin) {
+      child.stdin.on("error", fail);
+      try { child.stdin.end(input, "utf8"); } catch (error) { fail(error); }
+    }
+  });
+}
+
+export async function readWindowsSecurityFactsBatch(
+  paths: readonly string[],
+  options: { timeoutMs: number; native: boolean; mode: FsSafeNativeMode },
+): Promise<DescriptorFacts[]> {
+  const invocation = command("paths", {});
+  const request: AsyncCommandRequest = {
+    ...invocation,
+    input: JSON.stringify(paths),
+    timeoutMs: options.timeoutMs,
+    maxOutputBytes: WINDOWS_SECURITY_BATCH_MAX_BYTES,
+  };
+  if (options.native) {
+    request.file = process.execPath;
+    request.args = ["--", fileURLToPath(new URL("./owner-dacl-batch-worker.js", import.meta.url))];
+    request.env = {
+      ...Object.fromEntries(Object.entries(invocation.env).filter(([key]) =>
+        !["NODE_OPTIONS", "NODE_PATH", "FS_SAFE_OWNER_DACL_BATCH_MODE"].includes(key.toUpperCase()))),
+      FS_SAFE_OWNER_DACL_BATCH_MODE: options.mode,
+    };
+  }
+  const response = await execute("paths", {}, request);
+  if (!Array.isArray(response) || response.length !== paths.length) {
+    unverified("Windows security command returned an incomplete path batch");
+  }
+  return response.map((row: unknown, index: number) => {
+    if (!record(row) || row.path !== paths[index]) {
+      unverified("Windows security command returned a mismatched path batch");
+    }
+    return parseWindowsOwnerAndDaclFacts(row.security);
   });
 }
 

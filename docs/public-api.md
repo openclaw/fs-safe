@@ -100,7 +100,8 @@ best-effort cleanup helper used by those queue flows.
 Permission inspection exposes `PermissionCheckOptions` and `SafeStatResult`.
 Private-directory creation uses `CreatePrivateDirectoryOptions`. Raw Windows
 descriptor facts use `OwnerAndDaclResult`, `WindowsAccessControlEntry`, and
-`WindowsAceFlags`.
+`WindowsAceFlags`. `readOwnerAndDaclBatch()` returns those same facts in input
+order through an isolated asynchronous batch with a whole-process timeout.
 
 Secure reads split their option and result shapes into
 `SecureFileTrustOptions`, `SecureFilePermissionOptions`,

@@ -15,11 +15,6 @@ export function isFileUrl(input: string): boolean {
   return FILE_URL_PREFIX_RE.test(input);
 }
 
-function isLocalFileUrlHost(hostname: string): boolean {
-  const normalized = normalizeLowercaseStringOrEmpty(hostname);
-  return normalized === "" || normalized === "localhost";
-}
-
 export function hasEncodedFileUrlSeparator(pathname: string): boolean {
   return ENCODED_FILE_URL_SEPARATOR_RE.test(pathname);
 }
@@ -61,7 +56,8 @@ export function safeFileURLToPath(
   if (parsed.protocol !== "file:") {
     throw new Error(`Invalid file:// URL: ${fileUrl}`);
   }
-  if (!isLocalFileUrlHost(parsed.hostname)) {
+  const normalizedHost = normalizeLowercaseStringOrEmpty(parsed.hostname);
+  if (!(normalizedHost === "" || normalizedHost === "localhost")) {
     throw new Error(`file:// URLs with remote hosts are not allowed: ${fileUrl}`);
   }
   if (hasEncodedFileUrlSeparator(parsed.pathname)) {

@@ -1,7 +1,3 @@
-function isValidUid(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
 function unavailable(cause?: unknown): Error {
   return new Error("Effective user identity is unavailable.", {
     ...(cause === undefined ? {} : { cause }),
@@ -19,7 +15,7 @@ export function resolveEffectiveUid(): number {
   } catch (cause) {
     throw unavailable(cause);
   }
-  if (!isValidUid(uid)) {
+  if (!(typeof uid === "number" && Number.isSafeInteger(uid) && uid >= 0)) {
     throw unavailable();
   }
   return uid;

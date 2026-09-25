@@ -90,14 +90,11 @@ function dataProperty(value: unknown, name: string): { value: unknown } | undefi
   return undefined;
 }
 
-function caughtPrimitiveDisplay(value: unknown): string | undefined {
-  if (value !== null && (typeof value === "object" || typeof value === "function")) return undefined;
-  return primitiveString(value);
-}
-
 /** Formats only caught permission-query failures without invoking user code. */
 export function formatCaughtPermissionFailure(error: unknown): string {
-  const primitive = caughtPrimitiveDisplay(error);
+  const primitive = error !== null && (typeof error === "object" || typeof error === "function")
+    ? undefined
+    : primitiveString(error);
   if (primitive !== undefined) return formatBoundedCaughtDetail(primitive);
   if (!isInspectableCaughtObject(error)) {
     return "Uninspectable proxy failure";

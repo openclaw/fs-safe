@@ -292,6 +292,9 @@ Windows `readOwnerAndDacl` and `createPrivateDirectory` also run in `off` mode
 through the built-in command fallback. Every result is checked outside timing;
 private directories must have a trusted owner and no group/world read/write
 grants before their empty fixture is removed. Other platforms remain skipped.
+`readOwnerAndDaclBatch` measures one batch containing a file, its directory,
+and the repeated file in both `off` and `require` modes. Each ordered result
+must match singular observations collected outside timing, including duplicates.
 ZIP reads and extraction also cover 1 MiB and 16 MiB stored and deflated members
 to expose payload integrity costs beyond tiny archive fixtures. ZIP admission and
 member reads also cover 512 ASCII and Unicode names with stored and deflated data.

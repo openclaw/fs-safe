@@ -24,3 +24,4 @@ export {
   type WindowsAccessControlEntry,
   type WindowsAceFlags,
 } from "./owner-dacl.js";
+export { readOwnerAndDaclBatch } from "./owner-dacl-batch.js";

@@ -312,6 +312,23 @@ public static partial class FsSafeWindowsBridge {
       }
     }
   }
+  static object InspectPath(string path) {
+    // Raw reporting retains ACL facts when locality is unknown; admission remains strict.
+    using(var handle=Open(path,0x00020080,false)) return Security(handle,false);
+  }
+  public static object ExecutePaths(string[] paths) {
+    try {
+      Require(paths!=null,"EINVAL","Windows security paths must be an array");
+      var results=new object[paths.Length];
+      for(int i=0;i<paths.Length;i++) {
+        Require(!String.IsNullOrEmpty(paths[i]) && paths[i].IndexOf('\0')<0,
+          "EINVAL","Windows security paths must be nonempty strings without NUL bytes");
+        results[i]=Row("path",paths[i],"security",InspectPath(paths[i]));
+      }
+      return Row("ok",true,"result",results);
+    } catch(Failure error) { return Row("ok",false,"code",error.Code,"message",error.Message); }
+      catch(Exception) { return Row("ok",false,"code","EIO","message","Windows security descriptor processing failed"); }
+  }
   public static object Execute(string operation,string path) {
     try {
       object result;
@@ -323,10 +340,8 @@ public static partial class FsSafeWindowsBridge {
           Require(!handle.IsInvalid,"EBADF","inherited file handle is unavailable");
           result=Row("identity",Identity(handle),"security",Security(handle));
         }
-      } else if(operation=="path") {
-        // Raw reporting retains ACL facts when locality is unknown; admission remains strict.
-        using(var handle=Open(path,0x00020080,false)) result=Security(handle,false);
-      } else throw new Failure("EINVAL","unknown Windows security operation");
+      } else if(operation=="path") result=InspectPath(path);
+      else throw new Failure("EINVAL","unknown Windows security operation");
       return Row("ok",true,"result",result);
     } catch(Failure error) { return Row("ok",false,"code",error.Code,"message",error.Message); }
       catch(Exception) { return Row("ok",false,"code","EIO","message","Windows security descriptor processing failed"); }
