@@ -1009,7 +1009,6 @@ async function mkdirPathInRoot(
   const prepared = policy && resolved.relativePosix !== ""
     ? await preparePinnedWriteMutationAdmission({
       rootReal: resolved.rootReal,
-      rootWithSep: ensureTrailingSep(resolved.rootReal),
       rootIdentity: root.rootIdentity,
       resolvedTargetPath: resolved.resolved,
       originalPath: params.relativePath,
@@ -1286,7 +1285,7 @@ async function resolvePinnedRootPathInRoot(
     mutationSymlinks?: MutationSymlinkPolicy;
     removalReceipts?: RemovalPathReceipts;
   },
-): Promise<{ rootReal: string; rootWithSep: string; canonicalPath: string }> {
+): Promise<{ rootReal: string; canonicalPath: string }> {
   await assertRootIdentityCurrent(root, params.removalReceipts?.observeRoot);
   const rootReal = root.rootReal;
   let resolved;
@@ -1308,10 +1307,8 @@ async function resolvePinnedRootPathInRoot(
     if (err instanceof FsSafeError && err.code === "symlink") throw err;
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
-  const rootWithSep = ensureTrailingSep(resolved.rootCanonicalPath);
   return {
     rootReal: resolved.rootCanonicalPath,
-    rootWithSep,
     canonicalPath: resolved.canonicalPath,
   };
 }

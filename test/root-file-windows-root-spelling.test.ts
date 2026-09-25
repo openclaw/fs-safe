@@ -161,7 +161,6 @@ it("rejects a final canonical stream alias before its identity lookup", () => {
 
   expect(() => admission({
     path: `${shortRoot}\\value`,
-    preRealpathIdentity: directoryStat(),
     descriptorIdentity: directoryStat(),
   })).toThrow(expect.objectContaining({
     code: "invalid-path", details: { reason: "windows-path-alias" },

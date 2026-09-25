@@ -331,7 +331,6 @@ export async function resolveGuardedWriteTargetInRoot(
   const relativeParent = path.relative(resolvedPath.rootReal, path.dirname(resolvedPath.resolved));
   const prepared = await preparePinnedWriteMutationAdmission({
     rootReal: resolvedPath.rootReal,
-    rootWithSep: resolvedPath.rootWithSep,
     rootIdentity: root.rootIdentity,
     resolvedTargetPath: resolvedPath.resolved,
     originalPath: params.relativePath,
@@ -427,7 +426,6 @@ export async function resolvePinnedWriteTargetInRoot(
   if (policy) {
     ({ relativeParentPath, mutationAdmission } = await preparePinnedWriteMutationAdmission({
       rootReal,
-      rootWithSep,
       rootIdentity: root.rootIdentity,
       resolvedTargetPath: resolved,
       originalPath: relativePath,
