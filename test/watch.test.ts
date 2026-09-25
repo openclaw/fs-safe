@@ -209,7 +209,8 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
     },
   });
   const hints: WatchDirty[] = [];
-  const owner = own(watch(await root(authority), { scopes, onDirty: hint => { hints.push(hint); } }));
+  const admitted = await root(authority);
+  const owner = own(watch(admitted, { scopes, onDirty: hint => { hints.push(hint); } }));
   await owner.ready;
   expect(swapped).toBe(true);
   expect(restored).toBe(true);
@@ -224,7 +225,15 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
   inject!({ overflow: false, hints: [{ directory: "tree", name: "private-outside-name", event: "rename" }] });
   await expect.poll(() => hints.length).toBeGreaterThan(beforeInjection);
   expect(hints.flatMap(hint => hint.changes?.map(change => change.path) ?? [])).not.toContain(path.join("tree", "private-outside-name"));
+  // Swap/restore can leave a physical registration on the wrong inode without
+  // changing guarded path identities. Explicitly retire/reacquire before testing
+  // a later native edit; no injected hint or post-edit scan may satisfy it.
+  await owner.update(scopes);
+  const beforeAdmittedEdit = hints.length;
   await fs.writeFile(path.join(watched, "admitted-name"), "inside");
-  await owner.reconcile();
-  expect(hints.some(hint => hint.changes?.some(change => change.path === path.join("tree", "admitted-name")))).toBe(true);
+  await expect.poll(() => hints.slice(beforeAdmittedEdit).some(hint => hint.changes === undefined
+    ? hint.scopes.some(scope => scope.path === "tree")
+    : hint.changes.some(change => change.path === path.join("tree", "admitted-name")))).toBe(true);
+  await expect(admitted.readText("tree/admitted-name")).resolves.toBe("inside");
+  expect(hints.flatMap(hint => hint.changes?.map(change => change.path) ?? [])).not.toContain(path.join("tree", "private-outside-name"));
 });
