@@ -4,7 +4,7 @@ import path from "node:path";
 export const sections = [
   ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "config.md"]],
   ["Root API", ["root.md", "reading.md", "writing.md", "entries.md", "walk.md", "path-scope.md"]],
-  ["Atomic & temp", ["atomic.md", "staged-file.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]],
+  ["Atomic & temp", ["atomic.md", "staged-file.md", "staged-symlink.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]],
   ["Stores", ["store.md", "json-store.md", "file-store.md", "private-file-store.md"]],
   ["Specialized", ["copy.md", "guest.md", "secret-file.md", "secure-file.md", "permissions.md", "creation.md", "regular-file.md", "positional-read.md", "file-contents.md", "in-place-write.md", "sidecar-lock.md", "local-roots.md"]],
   ["Path & filename", ["path.md", "filename.md", "install-path.md", "directory-identity.md", "path-case.md", "path-prefix.md", "path-suffix-aliases.md"]],

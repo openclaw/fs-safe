@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { retainSymlinkInDirectory, type StagedSymlinkExpected } from "../src/advanced.js";
@@ -99,11 +100,12 @@ describe.runIf(supported && !!binding)("retained staged symlink", () => {
     expect(identity(directory, "stage")).toEqual(before);
   });
 
-  it.each(["file", "directory", "symlink-hardlink"])("rejects %s instead of retaining it as an exclusive symlink", async (kind) => {
+  it.each(["file", "directory", "fifo", "symlink-hardlink"])("rejects %s instead of retaining it as an exclusive symlink", async (kind) => {
     const directory = await tempRoot("fs-safe-link-type-");
     const name = path.join(directory, "stage");
     if (kind === "file") fs.writeFileSync(name, "sentinel");
     else if (kind === "directory") fs.mkdirSync(name);
+    else if (kind === "fifo") execFileSync("mkfifo", [name]);
     else {
       fs.symlinkSync("runtime", name);
       const parent = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);

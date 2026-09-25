@@ -10,15 +10,25 @@ use crate::{NativeResult, into_napi, native_error};
 fn open(parent_fd: i32, name: &str) -> NativeResult<i32> {
     validate_child_basename(name)?;
     let parent_fd = nonnegative_fd(parent_fd, "retain staged symlink")?;
+    // O_SYMLINK is not an only-symlinks filter. Refuse observed devices/FIFOs
+    // before opening and bind the resulting handle to this observation.
+    let before = rustix::fs::statat(borrowed(parent_fd), name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| os_error(error, "inspect staged symlink before open"))?;
+    if !FileType::from_raw_mode(before.st_mode).is_symlink() || before.st_nlink != 1 {
+        return Err(native_error("EINVAL", "stage must be a singly linked symlink"));
+    }
     #[cfg(target_os = "linux")]
     let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     #[cfg(target_os = "macos")]
-    let flags = OFlags::RDONLY | OFlags::SYMLINK | OFlags::CLOEXEC | OFlags::NONBLOCK;
+    let flags = OFlags::from_bits_retain(libc::O_EVTONLY as u32)
+        | OFlags::SYMLINK | OFlags::CLOEXEC | OFlags::NONBLOCK | OFlags::NOCTTY;
     let fd = rustix::fs::openat(borrowed(parent_fd), name, flags, Mode::empty())
         .map_err(|error| os_error(error, "retain staged symlink"))?;
     let stat = rustix::fs::fstat(&fd)
         .map_err(|error| os_error(error, "inspect retained symlink"))?;
-    if !FileType::from_raw_mode(stat.st_mode).is_symlink() || stat.st_nlink != 1 {
+    if !FileType::from_raw_mode(stat.st_mode).is_symlink() || stat.st_nlink != 1
+        || stat.st_dev != before.st_dev || stat.st_ino != before.st_ino
+    {
         return Err(native_error("EINVAL", "stage must be a singly linked symlink"));
     }
     Ok(fd.into_raw_fd())
@@ -106,3 +116,7 @@ pub fn remove_staged_symlink(env: Env, parent_fd: i32, name: String, link_fd: i3
     })();
     into_napi(env, result.map(str::to_owned))
 }
+
+#[cfg(test)]
+#[path = "staged_symlink_tests.rs"]
+mod tests;

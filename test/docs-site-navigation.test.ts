@@ -81,10 +81,10 @@ describe("docs site navigation", () => {
     ])).not.toThrow();
   });
 
-  it("covers the full repository inventory and retains staged-file in Atomic & temp", () => {
+  it("covers the full repository inventory and retains staging pages in Atomic & temp", () => {
     expect(() => assertNavigationCoversDocs(readDocPages(docsDir))).not.toThrow();
     expect(sections.find(([name]) => name === "Atomic & temp")?.[1])
-      .toEqual(["atomic.md", "staged-file.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]);
+      .toEqual(["atomic.md", "staged-file.md", "staged-symlink.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]);
   });
 
   it.each(["missing nested registration", "nonexistent target"])("the builder rejects %s before replacing output", (problem) => {
@@ -110,8 +110,9 @@ describe("docs site navigation", () => {
     for (const [page, section, prev, next] of [
       ["entries", "Root API", "writing", "walk"],
       ["walk", "Root API", "entries", "path-scope"],
-      ["staged-file", "Atomic &amp; temp", "atomic", "durability"],
-      ["durability", "Atomic &amp; temp", "staged-file", "output"],
+      ["staged-file", "Atomic &amp; temp", "atomic", "staged-symlink"],
+      ["staged-symlink", "Atomic &amp; temp", "staged-file", "durability"],
+      ["durability", "Atomic &amp; temp", "staged-symlink", "output"],
       ["secure-file", "Specialized", "secret-file", "permissions"],
       ["permissions", "Specialized", "secure-file", "creation"],
       ["creation", "Specialized", "permissions", "regular-file"],

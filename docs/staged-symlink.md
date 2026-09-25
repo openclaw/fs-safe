@@ -20,7 +20,9 @@ historical ownership. Once admitted, the retained descriptor prevents inode
 reuse until this owner closes. Failed admission closes descriptors without
 unlinking anything; all staging cleanup remains with the caller.
 
-Linux uses `O_PATH | O_NOFOLLOW`; macOS uses `O_SYMLINK`.
+Linux uses `O_PATH | O_NOFOLLOW`; macOS uses metadata-only `O_EVTONLY | O_SYMLINK`
+with nonblocking/no-controlling-terminal flags. A non-following preflight rejects
+observed special files before open; the opened descriptor must still match.
 Windows, native mode off, and missing or older bindings reject before namespace
 mutation. No fallback interpreter, copy, following open, or public descriptor
 is used. Symlinks must have one link and a UTF-8 target; their targets are never
