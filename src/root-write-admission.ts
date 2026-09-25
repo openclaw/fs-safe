@@ -195,7 +195,7 @@ export async function prepareRootWritePathSelection(params: Omit<
 }>): Promise<RootWritePathSelection> {
   const { preparedParent, ...selectionParams } = params;
   if (preparedParent && (
-    !sameNormalizedPathSpelling(preparedParent.operationTargetPath, params.operationTargetPath) ||
+    !sameNormalizedPathSpelling(preparedParent.targetPath, params.operationTargetPath) ||
     !sameNormalizedPathSpelling(preparedParent.parentGuard.dir, path.dirname(params.operationTargetPath))
   )) throw writeSelectionChanged();
   const selection: RootWritePathSelection = Object.freeze({
@@ -213,7 +213,7 @@ export async function prepareRootWritePathSelection(params: Omit<
       : undefined,
   );
   if (preparedParent) {
-    if (!sameNormalizedPathSpelling(preparedParent.selectedTargetPath, params.selectedPath)) {
+    if (!sameNormalizedPathSpelling(preparedParent.targetPath, params.selectedPath)) {
       throw writeSelectionChanged();
     }
   } else {

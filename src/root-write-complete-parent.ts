@@ -21,24 +21,18 @@ import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.j
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
-type PreparedWriteTargetObservation = Readonly<
-  | { exists: false }
-  | { exists: true; stat: BigIntStats }
->;
-
 /**
  * Exact, operation-local evidence that an ordinary shared-JavaScript write
  * already has a complete parent. Path selection consumes this instead of
  * recapturing the same parent after a component walk.
  */
 export type PreparedRootWriteParent = Readonly<{
-  operationTargetPath: string;
-  selectedTargetPath: string;
+  targetPath: string;
   parentGuard: AsyncDirectoryGuard<BigIntStats>;
   rootPath: string;
   rootIdentity: Readonly<{ dev: bigint; ino: bigint }>;
   nativeMode: string;
-  target: PreparedWriteTargetObservation;
+  target: BigIntStats | null;
 }>;
 
 type SharedRootWriteTargetParams = Readonly<{
@@ -91,12 +85,12 @@ function deoptPreparationFailure(error: unknown): undefined {
 
 function capturePreparedTargetObservation(
   targetPath: string,
-): PreparedWriteTargetObservation | undefined {
+): BigIntStats | null | undefined {
   let stat: BigIntStats;
   try {
     stat = inspectFileIdentitySync(() => fsSync.lstatSync(targetPath, { bigint: true }));
   } catch (error) {
-    if (hasNodeErrorCode(error, "ENOENT")) return Object.freeze({ exists: false });
+    if (hasNodeErrorCode(error, "ENOENT")) return null;
     return deoptPreparationFailure(error);
   }
   // Final aliases retain the established full component walk and selected-path
@@ -109,7 +103,7 @@ function capturePreparedTargetObservation(
     return deoptPreparationFailure(error);
   }
   if (!sameNormalizedPathSpelling(realPath, targetPath)) return undefined;
-  return Object.freeze({ exists: true, stat });
+  return stat;
 }
 
 function samePreparedTargetFacts(left: BigIntStats, right: BigIntStats): boolean {
@@ -118,9 +112,9 @@ function samePreparedTargetFacts(left: BigIntStats, right: BigIntStats): boolean
 }
 
 function assertPreparedTargetCurrent(prepared: PreparedRootWriteParent): void {
-  if (!prepared.target.exists) {
+  if (prepared.target === null) {
     try {
-      fsSync.lstatSync(prepared.selectedTargetPath, { bigint: true });
+      fsSync.lstatSync(prepared.targetPath, { bigint: true });
     } catch (error) {
       if (hasNodeErrorCode(error, "ENOENT")) return;
       throw writeSelectionChanged(error);
@@ -129,10 +123,10 @@ function assertPreparedTargetCurrent(prepared: PreparedRootWriteParent): void {
   }
   try {
     const current = inspectFileIdentitySync(
-      () => fsSync.lstatSync(prepared.selectedTargetPath, { bigint: true }),
-      prepared.target.stat,
+      () => fsSync.lstatSync(prepared.targetPath, { bigint: true }),
+      prepared.target,
     );
-    if (current.isSymbolicLink() || !samePreparedTargetFacts(prepared.target.stat, current)) {
+    if (current.isSymbolicLink() || !samePreparedTargetFacts(prepared.target, current)) {
       throw writeSelectionChanged();
     }
   } catch (error) {
@@ -193,10 +187,9 @@ async function prepareCompleteRootWriteParent(
   if (!sameNormalizedPathSpelling(parentGuard.dir, parentPath) ||
     !sameNormalizedPathSpelling(parentGuard.realPath, parentPath)) return undefined;
   const target = capturePreparedTargetObservation(guarded.targetPath);
-  if (!target) return undefined;
+  if (target === undefined) return undefined;
   return Object.freeze({
-    operationTargetPath: guarded.targetPath,
-    selectedTargetPath: guarded.targetPath,
+    targetPath: guarded.targetPath,
     parentGuard,
     rootPath: root.rootReal,
     rootIdentity: Object.freeze({ dev: root.rootIdentity.dev, ino: root.rootIdentity.ino }),
@@ -223,7 +216,7 @@ export async function prepareSharedRootWriteTarget(
     : undefined;
   const targetPath = params.mkdir === false
     ? guardedTarget.targetPath
-    : preparedParent?.selectedTargetPath ?? await prepareRootWriteTarget(
+    : preparedParent?.targetPath ?? await prepareRootWriteTarget(
       root,
       resolvedPath,
       params.assertBeforeMutation,
