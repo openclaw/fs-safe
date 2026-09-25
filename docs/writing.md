@@ -211,6 +211,11 @@ can establish them; native disposal can retain them inside a `SuppressedError`
 cause. Preserve those details when handling errors: a rejection can follow
 complete publication, and an indeterminate link or native rename must preserve names for
 recovery. A cleanup or close failure also retains the original operation failure.
+The JavaScript fallback checks the destination again immediately before attempting
+publication. A collision observed there leaves publication unattempted and cleans
+the owned stage. A later collision or other error from the link call remains
+indeterminate, including `EEXIST`; the error code alone does not prove that the
+filesystem left both names unchanged.
 No later verification, mode, or synchronization failure authorizes deleting an
 already published complete destination. See [receipt meanings](staged-file.md).
 

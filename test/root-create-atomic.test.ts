@@ -230,9 +230,9 @@ describe("atomic create fallback settlement", () => {
     }
   });
 
-  it("preserves complete bytes and reports an indeterminate link whose reply is lost", async () => {
+  it.each(["EIO", "EEXIST"])("preserves complete bytes when a committed link reports %s", async (code) => {
     const capability = await workspace();
-    const failure = Object.assign(new Error("link reply lost"), { code: "EIO" });
+    const failure = Object.assign(new Error("link reply lost"), { code });
     const link = fsSync.linkSync.bind(fsSync);
     vi.spyOn(fsSync, "linkSync").mockImplementation((source, target) => {
       link(source, target);

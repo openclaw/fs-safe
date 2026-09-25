@@ -32,6 +32,10 @@ export function publishCopyStage(params: {
   params.assertBeforeMutation?.();
   // Caller authority checks can synchronously replace a parent or staged entry.
   if (params.assertBeforeMutation) assertCurrent();
+  // An observed collision needs no dispatch; errno after a link attempt remains ambiguous.
+  if (fs.lstatSync(targetPath, { throwIfNoEntry: false })) {
+    throw new FsSafeError("already-exists", "destination already exists");
+  }
   params.onPublicationAttempt?.();
   fs.linkSync(temporaryPath, targetPath);
   let observerRejected = false;
