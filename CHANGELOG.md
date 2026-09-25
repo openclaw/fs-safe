@@ -8,6 +8,10 @@
 
 - **Batched Windows ACL facts:** add `readOwnerAndDaclBatch()` to inspect ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Existing synchronous inspection remains unchanged.
 
+### Fixes
+
+- **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
+
 ## 0.19.0 - 2026-09-24
 
 ### Highlights
