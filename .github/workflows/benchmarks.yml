@@ -285,7 +285,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:PAIR_EXPECTED_HARNESS_SHA -cnotmatch '^[0-9a-f]{40}$' -or $env:PAIR_EXPECTED_HARNESS_SHA -cne $env:PAIR_HARNESS_SHA) { throw 'Exact reviewed workflow commit required' }
-          if ($env:PAIR_BASELINE_INPUT -cne 'b7beb3e429973ce023a7e78faccf5f58adbcc934' -or $env:PAIR_CANDIDATE_INPUT -cne 'f938c7ac9a5e755d78f72a41c26a57d662002bfd') { throw 'Only the fixed reviewed native pair is allowed' }
+          if ($env:PAIR_BASELINE_INPUT -cne '3c6edb85f090cda1438af81bf524ebfb6314b87b' -or $env:PAIR_CANDIDATE_INPUT -cne '5a556ba7bf35bc79fc5a04d59cbd5224c5bc01a4') { throw 'Only the fixed reviewed native pair is allowed' }
           git config --global core.autocrlf false
           git config --global core.eol lf
       - name: Check out reviewed build harness
@@ -297,13 +297,13 @@ jobs:
       - name: Check out exact baseline
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: b7beb3e429973ce023a7e78faccf5f58adbcc934
+          ref: 3c6edb85f090cda1438af81bf524ebfb6314b87b
           path: baseline
           persist-credentials: false
       - name: Check out exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: f938c7ac9a5e755d78f72a41c26a57d662002bfd
+          ref: 5a556ba7bf35bc79fc5a04d59cbd5224c5bc01a4
           path: candidate
           persist-credentials: false
       - name: Verify Windows CI runner

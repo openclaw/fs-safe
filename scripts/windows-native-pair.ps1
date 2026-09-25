@@ -8,8 +8,8 @@ $output = Join-Path $root 'artifacts'
 $image = Join-Path $root 'owned-refs.vhdx'
 $ownershipFile = Join-Path $output 'owned-vhd.json'
 $roles = [ordered]@{
-    baseline = @{ commit='b7beb3e429973ce023a7e78faccf5f58adbcc934'; tree='35f25351403d9ca587600910603305418a59cc1c' }
-    candidate = @{ commit='f938c7ac9a5e755d78f72a41c26a57d662002bfd'; tree='4f8b203f2121b8e66547458df87548cd701bea0d' }
+    baseline = @{ commit='3c6edb85f090cda1438af81bf524ebfb6314b87b'; tree='341cc49361215df84dd4417adc6957c4a1e09900' }
+    candidate = @{ commit='5a556ba7bf35bc79fc5a04d59cbd5224c5bc01a4'; tree='14d6deff78c2374b7cebe12f8ff2e834223461a3' }
 }
 function Save-Json([string]$name, $value) {
     [IO.File]::WriteAllText((Join-Path $output $name), (ConvertTo-Json -InputObject $value -Depth 12), [Text.UTF8Encoding]::new($false))
