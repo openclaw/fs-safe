@@ -15,7 +15,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_END_OF_FILE_INFO,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_STREAM_INFO,
     FileBasicInfo, FileEndOfFileInfo, FileStreamInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, SetFileInformationByHandle,
+    GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
@@ -28,7 +28,7 @@ use windows_sys::Win32::System::Ioctl::{
 use crate::windows::{
     OwnedHandle, ReparsePolicy, duplicate_handle, handle_identity, handle_is_reparse, list_directory_entries,
     mark_clone_handle_for_deletion, nt_open_relative_with_policy, nt_open_relative_with_sharing,
-    remove_directory_handle, root_handle, win_error,
+    remove_directory_handle, root_handle, set_file_information, win_error,
 };
 use crate::{NativeResult, native_error};
 
@@ -219,21 +219,9 @@ fn set_metadata(handle: HANDLE, mut info: FILE_BASIC_INFO) -> NativeResult<()> {
         info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
     }
     info.ChangeTime = 0;
-    if unsafe {
-        SetFileInformationByHandle(
-            handle,
-            FileBasicInfo,
-            (&info as *const FILE_BASIC_INFO).cast(),
-            size_of::<FILE_BASIC_INFO>() as u32,
-        )
-    } == 0
-    {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "preserve clone metadata",
-        ));
-    }
-    Ok(())
+    // SAFETY: FILE_BASIC_INFO is the initialized record for this class.
+    unsafe { set_file_information(handle, FileBasicInfo, &info) }
+        .map_err(|code| win_error(code, "preserve clone metadata"))
 }
 
 fn control(
@@ -390,20 +378,9 @@ fn clone_file(job: FileJob, cancelled: &AtomicBool) -> NativeResult<()> {
         let eof = FILE_END_OF_FILE_INFO {
             EndOfFile: size as i64,
         };
-        if unsafe {
-            SetFileInformationByHandle(
-                target.0,
-                FileEndOfFileInfo,
-                (&eof as *const FILE_END_OF_FILE_INFO).cast(),
-                size_of::<FILE_END_OF_FILE_INFO>() as u32,
-            )
-        } == 0
-        {
-            return Err(win_error(
-                unsafe { GetLastError() },
-                "set clone file length",
-            ));
-        }
+        // SAFETY: FILE_END_OF_FILE_INFO is the initialized record for this class.
+        unsafe { set_file_information(target.0, FileEndOfFileInfo, &eof) }
+            .map_err(|code| win_error(code, "set clone file length"))?;
         // ReFS permits the final partial cluster beyond EOF while retaining the exact
         // logical file size. Each request remains below the API's 4 GiB limit.
         let mut offset = 0;

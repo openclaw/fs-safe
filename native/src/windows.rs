@@ -353,6 +353,30 @@ fn rename_nt_error(status: i32, operation: &str) -> napi::Error<String> {
     rename_win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
+/// # Safety
+/// `T` must be the initialized fixed-size input record for `class`, with a size
+/// fitting u32. The API may read it only for the duration of this call.
+#[inline(always)]
+pub(crate) unsafe fn set_file_information<T>(
+    handle: HANDLE,
+    class: windows_sys::Win32::Storage::FileSystem::FILE_INFO_BY_HANDLE_CLASS,
+    info: &T,
+) -> std::result::Result<(), u32> {
+    // SAFETY: the caller admits the class/layout pair; the borrowed record stays live.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            handle,
+            class,
+            (info as *const T).cast(),
+            size_of::<T>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(unsafe { GetLastError() });
+    }
+    Ok(())
+}
+
 fn handle_attribute_tag_information(
     handle: HANDLE,
     operation: &str,
@@ -1016,18 +1040,8 @@ const OWNED_DELETE_FLAGS: u32 = FILE_DISPOSITION_FLAG_DELETE
 
 fn set_delete_disposition(handle: HANDLE, flags: u32) -> std::result::Result<(), u32> {
     let info = FILE_DISPOSITION_INFO_EX { Flags: flags };
-    let ok = unsafe {
-        SetFileInformationByHandle(
-            handle,
-            FileDispositionInfoEx,
-            (&info as *const FILE_DISPOSITION_INFO_EX).cast(),
-            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
-        )
-    };
-    if ok == 0 {
-        return Err(unsafe { GetLastError() });
-    }
-    Ok(())
+    // SAFETY: FILE_DISPOSITION_INFO_EX is the initialized record for this class.
+    unsafe { set_file_information(handle, FileDispositionInfoEx, &info) }
 }
 
 pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
@@ -1663,6 +1677,86 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn fixed_information_setter_captures_raw_errors_before_caller_mapping() {
+        use windows_sys::Win32::Foundation::{ERROR_INVALID_HANDLE, SetLastError};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_BASIC_INFO, FILE_END_OF_FILE_INFO, FileBasicInfo, FileEndOfFileInfo,
+        };
+
+        let basic = FILE_BASIC_INFO::default();
+        let eof = FILE_END_OF_FILE_INFO { EndOfFile: 0 };
+        let disposition = FILE_DISPOSITION_INFO_EX { Flags: 0 };
+        // SAFETY: each initialized input matches its class and remains live.
+        let errors = unsafe {
+            SetLastError(ERROR_ACCESS_DENIED);
+            let basic = set_file_information(INVALID_HANDLE_VALUE, FileBasicInfo, &basic).unwrap_err();
+            SetLastError(ERROR_FILE_NOT_FOUND);
+            let eof = set_file_information(INVALID_HANDLE_VALUE, FileEndOfFileInfo, &eof).unwrap_err();
+            SetLastError(ERROR_DISK_FULL);
+            let disposition =
+                set_file_information(INVALID_HANDLE_VALUE, FileDispositionInfoEx, &disposition)
+                    .unwrap_err();
+            SetLastError(ERROR_SHARING_VIOLATION);
+            [basic, eof, disposition]
+        };
+        assert_eq!(errors, [ERROR_INVALID_HANDLE; 3]);
+        let error = mark_handle_for_deletion(INVALID_HANDLE_VALUE).unwrap_err();
+        assert_eq!(error.status, "EIO");
+        assert_eq!(
+            error.reason,
+            format!("remove owned tree handle failed with Windows error {ERROR_INVALID_HANDLE}"),
+        );
+    }
+
+    #[test]
+    fn fixed_information_setter_preserves_input_records_and_borrowed_handle() {
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO, FILE_END_OF_FILE_INFO, FileBasicInfo,
+            FileEndOfFileInfo,
+        };
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "fs-safe-fixed-setter-{}-{nonce}",
+            std::process::id(),
+        ));
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let handle = file.as_raw_handle();
+        let basic = FILE_BASIC_INFO {
+            FileAttributes: FILE_ATTRIBUTE_NORMAL,
+            ..Default::default()
+        };
+        let eof = FILE_END_OF_FILE_INFO { EndOfFile: 37 };
+        // SAFETY: both initialized inputs match their classes and remain borrowed.
+        unsafe {
+            set_file_information(handle, FileEndOfFileInfo, &eof).unwrap();
+            set_file_information(handle, FileBasicInfo, &basic).unwrap();
+        }
+        assert_eq!(eof.EndOfFile, 37);
+        assert_eq!(basic.FileAttributes, FILE_ATTRIBUTE_NORMAL);
+        assert_eq!(
+            (
+                basic.CreationTime,
+                basic.LastAccessTime,
+                basic.LastWriteTime,
+                basic.ChangeTime
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(file.metadata().unwrap().len(), 37);
+        drop(file);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
