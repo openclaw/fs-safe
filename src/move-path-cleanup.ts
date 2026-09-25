@@ -195,13 +195,6 @@ async function observeOwnedAliasUnlink(
   return "removed";
 }
 
-function mergeCleanupResults(
-  a: CleanupCopiedEntryResult,
-  b: CleanupCopiedEntryResult,
-): CleanupCopiedEntryResult {
-  return a === "stale" || b === "stale" ? "stale" : "removed";
-}
-
 export async function cleanupCopiedEntry(
   sourcePath: string,
   manifest: CopiedEntryManifest,
@@ -231,15 +224,15 @@ export async function cleanupCopiedEntry(
       inspectSourceDirectory(sourcePath, manifest.directoryIdentity);
     } : undefined;
     for (const child of manifest.children) {
-      result = mergeCleanupResults(
-        result,
-        await cleanupCopiedEntry(
-          path.join(sourcePath, child.name),
-          child.manifest,
-          state,
-          assertBeforeChildMutation,
-        ),
+      const childResult = await cleanupCopiedEntry(
+        path.join(sourcePath, child.name),
+        child.manifest,
+        state,
+        assertBeforeChildMutation,
       );
+      if (childResult === "stale") {
+        result = "stale";
+      }
     }
     // Child cleanup and the caller's authority check can replace the directory.
     // Keep the final exact observation after both, immediately before removal.

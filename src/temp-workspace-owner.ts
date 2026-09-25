@@ -32,13 +32,6 @@ function isNativeCleanupBinding(
     typeof binding.ownedTreeRemovalAvailable === "function";
 }
 
-function nativeRemovalError(result: NativeOwnedTreeRemovalResult): Error | undefined {
-  if (!result.errorCode) return undefined;
-  return Object.assign(new Error(result.errorMessage ?? "native owned-tree cleanup failed"), {
-    code: result.errorCode,
-  });
-}
-
 export class TempWorkspaceCleanupCapability {
   readonly binding: NativeBinding | undefined;
   readonly parent: RetainedDirectory | undefined;
@@ -339,8 +332,10 @@ export class TempWorkspaceCleanupOwner {
   }
 
   #mapRemoval(result: NativeOwnedTreeRemovalResult): TempWorkspaceCleanupResult {
-    const error = nativeRemovalError(result);
-    if (error) {
+    if (result.errorCode) {
+      const error = Object.assign(new Error(result.errorMessage ?? "native owned-tree cleanup failed"), {
+        code: result.errorCode,
+      });
       if ((error as NodeJS.ErrnoException).code === "path-mismatch") return "indeterminate";
       throw error;
     }

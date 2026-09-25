@@ -114,6 +114,49 @@ describe("copied-source directory cleanup", () => {
     await expect(fs.readdir(move.target)).resolves.toEqual(["payload"]);
   });
 
+  it("removes later copied children after an earlier child becomes stale", async () => {
+    const move = await fixture();
+    const sibling = path.join(move.source, "sibling");
+    await fs.writeFile(sibling, "independent");
+    const enumerations: string[][] = [];
+    const opendir = fs.opendir.bind(fs);
+    vi.spyOn(fs, "opendir").mockImplementation(async (...args) => {
+      const directory = await opendir(...args);
+      if (args[0] !== move.source) return directory;
+      const iterate = directory[Symbol.asyncIterator].bind(directory);
+      directory[Symbol.asyncIterator] = async function* () {
+        const entries: fsSync.Dirent[] = [];
+        for await (const entry of iterate()) entries.push(entry);
+        // Order both preflight and copy traversal independently of the filesystem.
+        entries.sort((left, right) => left.name.localeCompare(right.name));
+        enumerations.push(entries.map((entry) => entry.name));
+        yield* entries;
+      };
+      return directory;
+    });
+    const published = vi.fn(() => {
+      fsSync.renameSync(move.child, move.parked);
+      fsSync.writeFileSync(move.child, "replacement");
+    });
+
+    await expect(movePathWithCopyFallback({
+      from: move.source,
+      to: move.target,
+      sourceHardlinks: "reject",
+      onDestinationPublished: published,
+    })).rejects.toMatchObject({ code: "ESTALE" });
+
+    expect(published).toHaveBeenCalledTimes(1);
+    expect(enumerations.length).toBeGreaterThan(0);
+    for (const names of enumerations) expect(names).toEqual(["payload", "sibling"]);
+    await expect(fs.readFile(move.publishedChild, "utf8")).resolves.toBe("copied");
+    await expect(fs.readFile(path.join(move.target, "sibling"), "utf8")).resolves.toBe("independent");
+    await expect(fs.readFile(move.child, "utf8")).resolves.toBe("replacement");
+    await expect(fs.readFile(move.parked, "utf8")).resolves.toBe("copied");
+    await expect(fs.lstat(sibling)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readdir(move.source)).resolves.toEqual(["payload"]);
+  });
+
   it("propagates a final directory observation error without attempting removal", async () => {
     const move = await fixture();
     const denied = Object.assign(new Error("directory observation denied"), { code: "EACCES" });

@@ -107,12 +107,6 @@ export function getRootSyncHeldLocks(): Map<string, RootSyncHeldLock> {
   return globalWithState[ROOT_SYNC_HELD_LOCKS_KEY];
 }
 
-function existingRootSyncHeldLocks(): Map<string, RootSyncHeldLock> | undefined {
-  return (globalThis as typeof globalThis & {
-    [ROOT_SYNC_HELD_LOCKS_KEY]?: Map<string, RootSyncHeldLock>;
-  })[ROOT_SYNC_HELD_LOCKS_KEY];
-}
-
 function reactivateExactHeldLock(
   heldLocks: Map<string, RootSyncHeldLock>,
   held: RootSyncHeldLock,
@@ -185,7 +179,9 @@ function releaseAllRootSyncHeldLocks(): void {
   try {
     // A newListener callback can invoke the candidate handler before
     // registration succeeds. Do not create acquisition state in that window.
-    const heldLocks = existingRootSyncHeldLocks();
+    const heldLocks = (globalThis as typeof globalThis & {
+      [ROOT_SYNC_HELD_LOCKS_KEY]?: Map<string, RootSyncHeldLock>;
+    })[ROOT_SYNC_HELD_LOCKS_KEY];
     if (!heldLocks) return;
     getSyncLockAdmissions().clear();
     for (const [normalizedTargetPath, held] of heldLocks) {
