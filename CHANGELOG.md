@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Native directory observations avoid temporary bigint buffers while preserving exact filesystem identities and descriptor ownership.
+
 ## 0.19.0 - 2026-09-24
 
 ### Highlights
