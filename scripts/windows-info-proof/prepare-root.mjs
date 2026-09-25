@@ -107,7 +107,7 @@ const rawPack = execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pa
 const packed = normalizePackResult(JSON.parse(rawPack), '@openclaw/fs-safe'); assert.equal(path.basename(packed.filename), packed.filename);
 const assembledPath = path.join(output, 'openclaw-fs-safe-common-root.tgz'); fs.renameSync(path.join(output, packed.filename), assembledPath);
 const assembled = archive(assembledPath, true); const actualMembers = memberFacts(assembled);
-assert.deepEqual(actualMembers, expectedCommonRootMembers(), 'fresh root differs from original baseline outside admitted common WASM');
+assert.deepEqual(actualMembers, expectedCommonRootMembers(), 'fresh root differs from pinned baseline bfc2749 reference inventory');
 assert.ok(!Object.keys(actualMembers).some(name => name.endsWith('.node')));
 assert.deepEqual(snapshot(source, contract.baseline), baselineBefore);
 assert.deepEqual(snapshot(candidate, contract.candidate), candidateBefore);
@@ -115,7 +115,7 @@ const manifest = {
   schema: 2, sha256: assembled.sha256, bytes: assembled.bytes, source: contract.baseline,
   originalBaselineRootSha256: contract.originalBaselineRootSha256,
   wasm: { ...contract.publishedWasm, origin: 'published 0.19.0 WASM member only; no compiler-execution equivalence claim' },
-  origin: 'fresh Linux CI baseline554 TypeScript/declarations/assets assembly with pinned published WASM; no native or WASM rebuild',
+  origin: 'fresh Linux CI baseline bfc2749 TypeScript/declarations/assets assembly with pinned published WASM; no native or WASM rebuild',
   members: actualMembers,
 };
 const manifestPath = path.join(output, 'common-root-manifest.json'); fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });

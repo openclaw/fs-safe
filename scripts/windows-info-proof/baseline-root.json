@@ -1,12 +1,12 @@
 {
-  "sha256": "e467a13198720078aa8155914d2573692d2c5408fb35544496da66bc118f4f55",
-  "bytes": 890595,
-  "origin": "Linux build of baseline554; portable root artifact only; no Linux addon",
-  "sourceCommit": "554fd1c3c3e5f5adc127dcdf416d859a724703f7",
-  "sourceTree": "e706e7116955f2e6079f8f8f6d74878d3a052d99",
+  "sha256": "745e06c21df1be7aae0a412351838de675c297c57a714c7cca9d406a65c48f59",
+  "bytes": 889129,
+  "origin": "Fresh local baseline bfc2749 TypeScript/declarations/assets-only reference assembly with pinned published 0.19.0 WASM; no native/WASM rebuild or product execution; fresh Linux CI tar hash remains to be recorded",
+  "sourceCommit": "bfc274950bf0444344b261625ae01f1c6598b0d6",
+  "sourceTree": "d8821ec91be2a7828f540b1e6d7856e230e4925f",
   "sourceFilesVerified": 1227,
   "distFilesVerified": 527,
-  "reverificationSha256": "b5b34866b6a430e3ea42d7966d3c401f83454b928aed80095effdb7b52c1db34",
+  "reverificationSha256": "8b6c7c8605ea88715c2822d3ccd5c3185859e7ac154ae0f666331e18b9825139",
   "members": {
     "package/LICENSE": {
       "bytes": 1137,
@@ -299,8 +299,8 @@
       "mode": 420
     },
     "package/dist/errors.js": {
-      "bytes": 668,
-      "sha256": "6187c0aff86970d3b39039c9a6e1a19e2f55f967c87351745b4c71a71b30ee6f",
+      "bytes": 725,
+      "sha256": "3fd6400f3981c280d1f61f67555132ca0af47ed26ce50f85f13b2fcaca8d5b28",
       "mode": 420
     },
     "package/dist/file-cleanup.js": {
@@ -1904,8 +1904,8 @@
       "mode": 420
     },
     "package/dist/errors.d.ts": {
-      "bytes": 986,
-      "sha256": "d964f18a13ae2f9f0fa42982ae95674ed7db01d3bce7be92a4b186e7cfafe93e",
+      "bytes": 1081,
+      "sha256": "7fa66b42d23470fd73e179c13f08626fe48b79a63e392dedb61802ae1e645730",
       "mode": 420
     },
     "package/dist/file-cleanup.d.ts": {
@@ -2939,8 +2939,8 @@
       "mode": 420
     },
     "package/dist/archive-parser.wasm": {
-      "bytes": 461990,
-      "sha256": "3ec636ddc5c25e2f3cdf73f569a99e29f9467d8c69fe3a7e72c699b9d009c46d",
+      "bytes": 461974,
+      "sha256": "182fc2e1ac12dfa06c4fc20d8e097b46b8481be1b5860a18aad16586d114dc94",
       "mode": 493
     }
   }

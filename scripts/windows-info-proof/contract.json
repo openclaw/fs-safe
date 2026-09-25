@@ -1,17 +1,16 @@
 {
   "schema": 2,
   "baseline": {
-    "commit": "554fd1c3c3e5f5adc127dcdf416d859a724703f7",
-    "tree": "e706e7116955f2e6079f8f8f6d74878d3a052d99"
+    "commit": "bfc274950bf0444344b261625ae01f1c6598b0d6",
+    "tree": "d8821ec91be2a7828f540b1e6d7856e230e4925f"
   },
   "candidate": {
-    "commit": "95269878a1a6254f28977e373d979a6b254cf733",
-    "tree": "13f4639eccc051e5d0648aaab0e4d191cae63e8f"
+    "commit": "b45a689e1ad063787d9b307487cee5fd8b6dad1e",
+    "tree": "36db1fec88bcc900da456c418333101bd971cee4"
   },
   "changedFiles": [
     "native/src/clone_windows.rs",
-    "native/src/windows.rs",
-    "native/src/windows_security.rs"
+    "native/src/windows.rs"
   ],
   "nodeVersion": "v24.21.0",
   "nodeSha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
@@ -118,7 +117,7 @@
   },
   "timing": false,
   "automaticRetry": false,
-  "originalBaselineRootSha256": "e467a13198720078aa8155914d2573692d2c5408fb35544496da66bc118f4f55",
+  "originalBaselineRootSha256": "745e06c21df1be7aae0a412351838de675c297c57a714c7cca9d406a65c48f59",
   "publishedWasm": {
     "releaseCommit": "b7beb3e429973ce023a7e78faccf5f58adbcc934",
     "releaseTag": "v0.19.0",

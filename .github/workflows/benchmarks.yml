@@ -47,8 +47,8 @@ jobs:
           set -euo pipefail
           [[ "$PAIR_EXPECTED_HARNESS_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$PAIR_EXPECTED_HARNESS_SHA" = "$PAIR_HARNESS_SHA" ]]
-          [[ "$PAIR_BASELINE_INPUT" = "554fd1c3c3e5f5adc127dcdf416d859a724703f7" ]]
-          [[ "$PAIR_CANDIDATE_INPUT" = "95269878a1a6254f28977e373d979a6b254cf733" ]]
+          [[ "$PAIR_BASELINE_INPUT" = "bfc274950bf0444344b261625ae01f1c6598b0d6" ]]
+          [[ "$PAIR_CANDIDATE_INPUT" = "b45a689e1ad063787d9b307487cee5fd8b6dad1e" ]]
           git config --global core.autocrlf false
           git config --global core.eol lf
       - name: Check out reviewed preparation harness
@@ -60,14 +60,14 @@ jobs:
       - name: Check out baseline with release source history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 554fd1c3c3e5f5adc127dcdf416d859a724703f7
+          ref: bfc274950bf0444344b261625ae01f1c6598b0d6
           fetch-depth: 0
           path: baseline
           persist-credentials: false
       - name: Check out candidate for source correspondence
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 95269878a1a6254f28977e373d979a6b254cf733
+          ref: b45a689e1ad063787d9b307487cee5fd8b6dad1e
           path: candidate
           persist-credentials: false
       - name: Set up pnpm
@@ -135,7 +135,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:PAIR_EXPECTED_HARNESS_SHA -cnotmatch '^[0-9a-f]{40}$' -or $env:PAIR_EXPECTED_HARNESS_SHA -cne $env:PAIR_HARNESS_SHA) { throw 'Exact reviewed workflow commit required' }
-          if ($env:PAIR_BASELINE_INPUT -cne '554fd1c3c3e5f5adc127dcdf416d859a724703f7' -or $env:PAIR_CANDIDATE_INPUT -cne '95269878a1a6254f28977e373d979a6b254cf733') { throw 'Only the fixed reviewed native pair is allowed' }
+          if ($env:PAIR_BASELINE_INPUT -cne 'bfc274950bf0444344b261625ae01f1c6598b0d6' -or $env:PAIR_CANDIDATE_INPUT -cne 'b45a689e1ad063787d9b307487cee5fd8b6dad1e') { throw 'Only the fixed reviewed native pair is allowed' }
           git config --global core.autocrlf false
           git config --global core.eol lf
       - name: Check out reviewed build harness
@@ -147,13 +147,13 @@ jobs:
       - name: Check out exact baseline
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 554fd1c3c3e5f5adc127dcdf416d859a724703f7
+          ref: bfc274950bf0444344b261625ae01f1c6598b0d6
           path: baseline
           persist-credentials: false
       - name: Check out exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 95269878a1a6254f28977e373d979a6b254cf733
+          ref: b45a689e1ad063787d9b307487cee5fd8b6dad1e
           path: candidate
           persist-credentials: false
       - name: Verify Windows CI runner
