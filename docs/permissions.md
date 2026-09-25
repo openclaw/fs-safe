@@ -185,6 +185,64 @@ the same raw ACE projection. Native `require` rejects either absence with
 query's failure is terminal. The existing coarse `inspectPathPermissions()` API
 still owns its compatibility fallback and trust classification.
 
+### Asynchronous batches
+
+Use `readOwnerAndDaclBatch()` when several paths, such as a directory and its
+ancestors, need inspection without blocking the caller's event loop:
+
+```ts
+import { readOwnerAndDaclBatch } from "@openclaw/fs-safe/permissions";
+
+const facts = await readOwnerAndDaclBatch(stagingDirectories, { timeoutMs: 60_000 });
+```
+
+```ts
+function readOwnerAndDaclBatch(
+  paths: readonly string[],
+  options?: { timeoutMs?: number },
+): Promise<OwnerAndDaclResult[]>;
+```
+
+Results use the same raw fact shape and SID spelling as `readOwnerAndDacl()`.
+They correspond one-for-one to input order, including duplicate paths. An empty
+array returns `[]` without dispatch. Other platforms return an
+`unsupported-platform` result for each path. Query failures, malformed facts,
+or missing/reordered response rows reject the entire batch; no partial facts
+are returned. Null DACLs, incomplete ACE lists and nonlocal observations remain
+raw facts for the caller's policy to evaluate.
+
+The call captures paths, options and native mode before awaiting. Windows
+relative paths are anchored to the current directory or selected drive at
+entry, without normalizing their remaining `.` or `..` components. Empty,
+nonstring, sparse or NUL-containing path entries and Windows namespace aliases
+reject before dispatch. The UTF-8 JSON input is limited to 16 MiB.
+
+An available native capability runs all queries in one isolated process using
+the current runtime executable. Its resolved native mode is forwarded explicitly;
+Node preload and module-search environment overrides are not inherited. An
+available native query's failure is terminal. In `auto` when the binding or
+capability is absent, or in `off`, one packaged PowerShell process reads the
+path array from stdin and compiles the existing C# bridge once. Native `require`
+rejects missing support before launching a process. No route launches one
+process per path or wraps synchronous parent-process queries in promises.
+
+`timeoutMs` defaults to 60,000 and applies to the whole process, including
+startup and fallback compilation. It must be an integer from 1 through
+2,147,483,647. Combined stdout and stderr are limited to 16 MiB. Success waits
+for process exit and both output pipes to close. Timeout and transport failure
+request termination, then retain the existing one-second settlement grace.
+The error's `processExitConfirmed` field, also retained in its cause receipt,
+distinguishes observed exit from an unconfirmed termination attempt. An
+unconfirmed child can still be reading after rejection; the operation returns
+no facts and owns no output files or artifact cleanup. Neither timing out nor
+receiving a successful kill request is reported as confirmed exit.
+
+Batch observations are point-in-time pathname facts, not a snapshot or a
+retained filesystem capability. The caller still owns ancestry trust, principal
+policy and authorization for subsequent operations. Existing singular queries
+and other command operations retain their 30-second deadline, 1 MiB output
+budget and documented failure behavior.
+
 ## Private directories
 
 ```ts

@@ -468,6 +468,7 @@
         "isWorldWritable",
         "modeBits",
         "readOwnerAndDacl",
+        "readOwnerAndDaclBatch",
         "safeStat"
       ],
       "types": [

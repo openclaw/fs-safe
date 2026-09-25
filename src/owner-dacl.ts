@@ -4,6 +4,7 @@ import { getFsSafeNativeConfig } from "./native-config.js";
 import { warnNativeFallback } from "./native-fallback-warning.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { readWindowsSecurityFactsCommand } from "./windows-security-command.js";
+import type { DescriptorFacts } from "./windows-security-facts.js";
 
 export type WindowsAceFlags = {
   raw: number;
@@ -59,6 +60,10 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
     warnNativeFallback("windows-owner-dacl", "Windows owner and DACL inspection uses a slower built-in system command.");
   }
   const facts = typeof inspect === "function" ? inspect.call(native, targetPath) : readWindowsSecurityFactsCommand(targetPath);
+  return projectOwnerAndDacl(facts);
+}
+
+export function projectOwnerAndDacl(facts: DescriptorFacts): OwnerAndDaclResult {
   return {
     status: "supported",
     ownerSid: facts.ownerSid,

@@ -9,7 +9,7 @@ const WORLD_SIDS = new Set([
   "s-1-5-32-546", "s-1-5-4", "s-1-5-2",
 ]);
 
-type DescriptorFacts = Pick<NativeWindowsSecurityFacts,
+export type DescriptorFacts = Pick<NativeWindowsSecurityFacts,
   "ownerSid" | "currentUserSid" | "daclPresent" | "isLocal" |
   "aceListComplete" | "unsupportedAceTypes" | "aces">;
 
@@ -55,6 +55,11 @@ function validateDescriptor(value: unknown, allowUnknownFlags: boolean): Descrip
     unverified("Windows descriptor DACL facts were inconsistent");
   }
   return value as DescriptorFacts;
+}
+
+/** Validate policy-free observations crossing the isolated batch transport. */
+export function parseWindowsOwnerAndDaclFacts(value: unknown): DescriptorFacts {
+  return validateDescriptor(value, true);
 }
 
 function summarize(facts: DescriptorFacts) {
