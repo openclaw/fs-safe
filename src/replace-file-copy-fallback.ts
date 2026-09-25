@@ -18,7 +18,6 @@ type AsyncFallbackFs = {
   lstat: typeof import("node:fs/promises").lstat;
   open: typeof import("node:fs/promises").open;
   rm: typeof import("node:fs/promises").rm;
-  unlink: typeof import("node:fs/promises").unlink;
 };
 
 type SyncFallbackFs = Pick<
@@ -31,7 +30,6 @@ type SyncFallbackFs = Pick<
   | "openSync"
   | "readSync"
   | "rmSync"
-  | "unlinkSync"
   | "writeSync"
 >;
 

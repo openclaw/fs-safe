@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -21,8 +22,8 @@ itPosix("preserves native and ordinary expansion of raw parent segments inside s
   const absolutePath = path.join(rootPath, "indirect");
   fs.symlinkSync("link/..", absolutePath, "dir");
   const params = { rootPath, absolutePath, boundaryLabel: "fixture" };
-  await expect(resolveRootPath(params)).resolves.toMatchObject({ canonicalPath: target, kind: "directory" });
-  expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: rootPath, kind: "directory" });
+  await expect(resolveRootPath(params)).resolves.toMatchObject({ canonicalPath: target, exists: true, kind: "directory" });
+  expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: rootPath, exists: true, kind: "directory" });
 });
 
 it.each(["async", "sync"] as const)(
@@ -49,12 +50,12 @@ it.each(["async", "sync"] as const)(
     const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
     await expect(Promise.resolve(resolve({
       rootPath, absolutePath: link, boundaryLabel: "fixture",
-    }))).resolves.toMatchObject({ canonicalPath: target, kind: "directory" });
+    }))).resolves.toMatchObject({ canonicalPath: target, exists: true, kind: "directory" });
     expect(calls).toEqual([rootPath, link]);
     calls.length = 0;
     await expect(Promise.resolve(resolve({
       rootPath, absolutePath: dangling, boundaryLabel: "fixture",
-    }))).resolves.toMatchObject({ canonicalPath: missing, kind: "missing" });
+    }))).resolves.toMatchObject({ canonicalPath: missing, exists: false, kind: "missing" });
     expect(calls).toEqual([rootPath, dangling, rootPath]);
   },
 );
@@ -71,7 +72,7 @@ it("keeps strict native existence errors separate from ordinary existsSync", asy
   const exists = vi.spyOn(fs, "existsSync");
   await expect(resolveRootPath(params)).rejects.toBe(failure);
   expect(exists).not.toHaveBeenCalled();
-  expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: rootPath, kind: "directory" });
+  expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: rootPath, exists: true, kind: "directory" });
   expect(exists).toHaveBeenCalledWith(rootPath);
 });
 
@@ -97,9 +98,35 @@ it.each(["async", "sync"] as const)(
       order.push("root");
     });
     expect(result.kind).toBe("file");
+    expect(result.exists).toBe(true);
     expect(order).toEqual(["root", "target"]);
   },
 );
+
+itPosix.each(["async", "sync"] as const)("%s reports an existing FIFO as other", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-fifo-");
+  const absolutePath = path.join(rootPath, "fifo");
+  expect(spawnSync("mkfifo", [absolutePath]).status).toBe(0);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  const result = await resolve({ rootPath, absolutePath, boundaryLabel: "fixture" });
+  expect(result).toMatchObject({ canonicalPath: absolutePath, exists: true, kind: "other" });
+});
+
+it.each(["async", "sync"] as const)("%s propagates final metadata failures", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-failure-");
+  const absolutePath = path.join(rootPath, "value");
+  fs.writeFileSync(absolutePath, "value");
+  const failure = Object.assign(new Error("final metadata denied"), { code: "EACCES" });
+  const stat = fs.statSync.bind(fs);
+  const metadata = vi.spyOn(fs, "statSync").mockImplementation(((candidate, options) => {
+    if (candidate === absolutePath) throw failure;
+    return stat(candidate, options);
+  }) as typeof fs.statSync);
+  const params = { rootPath, absolutePath, boundaryLabel: "fixture" };
+  if (mode === "async") await expect(resolveRootPath(params)).rejects.toBe(failure);
+  else expect(() => resolveRootPathSync(params)).toThrow(failure);
+  expect(metadata).toHaveBeenCalledWith(absolutePath);
+});
 
 it("returns rejected Promises for eager validation and canonical-root callback failures", async () => {
   const rootPath = await tempRoot("fs-safe-root-metadata-rejection-");
