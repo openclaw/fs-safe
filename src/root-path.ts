@@ -381,7 +381,7 @@ function disableLexicalTraversalObservation(
 
 function finalizeLexicalResolution(
   context: LexicalTraversalContext,
-  kind: { exists: boolean; kind: ResolvedRootPathKind },
+  kind: ResolvedRootPathKind,
 ): ResolvedRootPath {
   context.state.canonicalCursor = assertLexicalCursorInsideBoundary(
     context,
@@ -393,8 +393,8 @@ function finalizeLexicalResolution(
     rootPath: context.rootPath,
     rootCanonicalPath: context.rootCanonicalPath,
     relativePath: relativeInsideRoot(context.rootCanonicalPath, context.state.canonicalCursor),
-    exists: kind.exists,
-    kind: kind.kind,
+    exists: kind !== "missing",
+    kind,
   };
 }
 
@@ -600,12 +600,9 @@ function traverseRootPath(
   const completeObservation = observation?.enabled === true && observation.directoryGuard !== undefined &&
     observation.targetPath === state.canonicalCursor && observation.target !== undefined;
   const kind = completeObservation
-    ? {
-      exists: true,
-      kind: isNativeDirectoryObservationGuard(observation.target)
-        ? "directory" as const
-        : toResolvedKind(observation.target!.stat),
-    }
+    ? isNativeDirectoryObservationGuard(observation.target)
+      ? "directory" as const
+      : toResolvedKind(observation.target!.stat)
     : getPathKindSync(state.canonicalCursor, state.preserveFinalSymlink);
   if (completeObservation && observationOutput) {
     observationOutput.receipt = {
@@ -623,16 +620,16 @@ function traverseRootPath(
 function getPathKindSync(
   absolutePath: string,
   preserveFinalSymlink: boolean,
-): { exists: boolean; kind: ResolvedRootPathKind } {
+): ResolvedRootPathKind {
   try {
     const operationPath = pathForWindowsFilesystem(absolutePath);
     const stat = preserveFinalSymlink
       ? fs.lstatSync(operationPath)
       : fs.statSync(operationPath);
-    return { exists: true, kind: toResolvedKind(stat) };
+    return toResolvedKind(stat);
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      return { exists: false, kind: "missing" };
+      return "missing";
     }
     throw error;
   }
