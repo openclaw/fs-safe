@@ -36,6 +36,8 @@ mod staged_symlink;
 use fs_safe_archive_core::tar_meter;
 #[cfg(unix)]
 mod unix;
+#[cfg(target_os = "linux")]
+mod linux_open;
 #[cfg(windows)]
 mod windows;
 mod windows_security;
@@ -243,10 +245,12 @@ pub fn open_beneath(
         .and_then(|()| platform::open_beneath(root_fd, &rel_path, flags))
         .map(|fd| OpenBeneathResult {
             fd,
-            containment: if cfg!(target_os = "linux") {
-                "kernel-atomic".to_owned()
-            } else {
-                "best-effort".to_owned()
+            containment: {
+                #[cfg(target_os = "linux")]
+                let atomic = linux_open::openat2_available();
+                #[cfg(not(target_os = "linux"))]
+                let atomic = false;
+                if atomic { "kernel-atomic" } else { "best-effort" }.to_owned()
             },
         });
     into_napi(env, result)

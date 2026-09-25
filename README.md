@@ -10,7 +10,7 @@
 
 Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
-Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and defends against `..`, symlink swaps, hardlink aliases, and TOCTOU rename races. The exact containment strength is reported per mechanism: Linux native opens are kernel-atomic; macOS, Windows, and JavaScript paths are best-effort.
+Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and defends against `..`, symlink swaps, hardlink aliases, and TOCTOU rename races. The exact containment strength is reported per mechanism: Linux `openat2` opens are kernel-atomic; guarded Linux fallback, macOS, Windows, and JavaScript paths are best-effort.
 
 ```ts
 import { root } from "@openclaw/fs-safe";
@@ -45,7 +45,7 @@ The same idea has landed in other languages. Go [added `os.Root` and `OpenInRoot
 | `path.resolve().startsWith()` | string check only | – | – | – | – |
 | [`write-file-atomic`](https://www.npmjs.com/package/write-file-atomic) | – | ✓ | – | – | – |
 | Go [`os.Root`](https://go.dev/blog/osroot) / Rust [`cap-std`](https://github.com/bytecodealliance/cap-std) | ✓ | platform | ✓ | ✓ | – |
-| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux atomic; others best-effort** | **✓ (ZIP/TAR/gzip/zstd/bzip2)** |
+| **`@openclaw/fs-safe`** | **✓** | **✓** | **✓** | **Linux openat2 atomic; others best-effort** | **✓ (ZIP/TAR/gzip/zstd/bzip2)** |
 
 ## Not a sandbox
 
@@ -96,8 +96,11 @@ tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
 and policy ownership model.
 
 Open results report the mechanism's containment class as `"kernel-atomic"` or
-`"best-effort"`. Linux native `openBeneath()` is kernel-atomic; macOS, Windows,
-and guarded JavaScript results are best-effort. See the [security model](docs/security-model.md#containment-guarantees-by-platform) before using that fact in higher-level policy.
+`"best-effort"`. Linux native `openBeneath()` is kernel-atomic when `openat2`
+is available. Older kernels and syscall-filtered containers use a guarded
+descriptor-relative walk reporting best-effort; nested no-clobber moves keep
+atomic `renameat2(RENAME_NOREPLACE)`. macOS, Windows, and guarded JavaScript
+results are best-effort. See [Linux compatibility](docs/native.md#linux-without-openat2). See the [security model](docs/security-model.md#containment-guarantees-by-platform) before using that fact in higher-level policy.
 
 ## Migrating from the Python helper
 
