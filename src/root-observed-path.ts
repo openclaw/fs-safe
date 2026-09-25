@@ -21,7 +21,6 @@ import { errorCauseOptions, fileNotFoundError, outsideWorkspaceError } from "./r
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 export type PinnedObservedPath = {
-  rootReal: string;
   resolved: string;
   receipt?: RootPathObservationReceipt;
 };
@@ -82,7 +81,6 @@ export async function resolvePinnedObservedPathInRoot(
     // A receipt is emitted only for the straight traversal whose lexical and
     // canonical cursors stayed identical and inside the checked boundary.
     return {
-      rootReal: resolved.rootCanonicalPath,
       resolved: resolved.canonicalPath,
       receipt: observed.receipt,
     };
@@ -90,7 +88,6 @@ export async function resolvePinnedObservedPathInRoot(
   const relativeResolved = path.relative(resolved.rootCanonicalPath, resolved.canonicalPath);
   if (relativeResolved === "" || relativeResolved === ".") {
     return {
-      rootReal: resolved.rootCanonicalPath,
       resolved: resolved.canonicalPath,
     };
   }
@@ -105,7 +102,6 @@ export async function resolvePinnedObservedPathInRoot(
   });
   if (!admittedCanonicalPath) throw outsideWorkspaceError();
   return {
-    rootReal: resolved.rootCanonicalPath,
     resolved: admittedCanonicalPath.path,
   };
 }

@@ -17,7 +17,6 @@ export type WindowsOwnerSummary = Omit<PermissionFailureFields & {
   daclPresent?: boolean;
   aces?: WindowsOwnerAce[];
   aclError?: string;
-  remote?: boolean;
   trusted?: boolean;
 }, never>;
 
@@ -128,7 +127,6 @@ export async function inspectWindowsOwner(params: {
       sid: ownerSid,
       currentUserSid,
       ...parseWindowsAclFacts(parsed),
-      remote,
       trusted: !remote && (ownerSid === currentUserSid || TRUSTED_OWNER_SIDS.has(ownerSid)),
     };
   } catch (err) {

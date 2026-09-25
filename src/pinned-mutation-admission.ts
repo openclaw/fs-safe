@@ -217,7 +217,6 @@ function advanceAuthorizedDirectory(
 
 export async function preparePinnedWriteMutationAdmission(params: {
   rootReal: string;
-  rootWithSep: string;
   rootIdentity?: RootBoundaryIdentity;
   resolvedTargetPath: string;
   defaultRelativeParentPath: string;
