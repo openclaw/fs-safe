@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { realpathSync } from "../src/realpath.js";
 import { readSecureFile } from "../src/secure-file.js";
 
 const { tempRoot } = useTempDirs();
@@ -28,6 +29,70 @@ describe("secure file inspection failures", () => {
     const denied = Object.assign(new Error("open denied"), { code: "EACCES" });
     vi.spyOn(fs, "open").mockRejectedValueOnce(denied);
     await expect(readSecureFile({ filePath })).rejects.toBe(denied);
+  });
+
+  it.each([
+    { allowInsecure: false, failure: undefined, failClose: false },
+    { allowInsecure: true, failure: undefined, failClose: false },
+    { allowInsecure: false, failure: new Error("descriptor unavailable"), failClose: true },
+    { allowInsecure: true, failure: new Error("descriptor unavailable"), failClose: true },
+  ])("closes before a permission fd getter's microtask ($allowInsecure, $failClose)", async ({
+    allowInsecure, failure, failClose,
+  }) => {
+    const root = await tempRoot("fs-safe-secure-permission-fd-");
+    const filePath = path.join(root, "secret");
+    await fs.writeFile(filePath, "secret", { mode: 0o600 });
+    const events: string[] = [];
+    let inspectPermissions = false;
+    const realpath = realpathSync.native;
+    vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+      const resolved = realpath(...args);
+      if (args[0] === root) inspectPermissions = true;
+      return resolved;
+    });
+    const realOpen = fs.open.bind(fs);
+    let opened: fs.FileHandle | undefined;
+    let closeReceiver: unknown;
+    let close: ReturnType<typeof vi.spyOn> | undefined;
+    let read: ReturnType<typeof vi.spyOn> | undefined;
+    let readFile: ReturnType<typeof vi.spyOn> | undefined;
+    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      const handle = opened = await realOpen(...args);
+      const descriptor = handle.fd;
+      Object.defineProperty(handle, "fd", {
+        configurable: true,
+        get() {
+          if (inspectPermissions) {
+            events.push("fd");
+            queueMicrotask(() => events.push("microtask"));
+            throw failure;
+          }
+          return descriptor;
+        },
+      });
+      const realClose = handle.close;
+      close = vi.spyOn(handle, "close").mockImplementation(function (this: fs.FileHandle) {
+        closeReceiver = this;
+        events.push("close");
+        Reflect.deleteProperty(handle, "fd");
+        return realClose.call(this).then(() => {
+          if (failClose) throw new Error("close failed");
+        });
+      });
+      read = vi.spyOn(handle, "read");
+      readFile = vi.spyOn(handle, "readFile");
+      return handle;
+    });
+
+    await expect(readSecureFile({
+      filePath, trust: { trustedDirs: [root] }, permissions: { allowInsecure },
+    })).rejects.toBe(failure);
+    expect(events).toEqual(["fd", "close", "microtask"]);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(closeReceiver).toBe(opened);
+    expect(opened?.fd).toBe(-1);
+    expect(read).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   itPosix("classifies an ELOOP open race as a symlink refusal", async () => {

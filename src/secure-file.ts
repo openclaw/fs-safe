@@ -271,11 +271,10 @@ function inspectOpenedPermissions(stat: Stats, platform: NodeJS.Platform): Permi
 
 async function assertSecurePermissions(
   options: SecureFileReadOptions,
-  stat: Stats,
-  realPath: string,
-  identity: Pick<BigIntStats, "dev" | "ino">,
+  opened: Awaited<ReturnType<typeof openSecureHandle>>,
   fd: number,
 ): Promise<PermissionCheck | undefined> {
+  const { pathStat: stat, realPath, identity } = opened;
   if (options.permissions?.allowInsecure) {
     return undefined;
   }
@@ -376,13 +375,7 @@ export async function readSecureFile(
   const opened = await openSecureHandle(options, maxBytes);
   try {
     assertTrustedDirs(options, opened.realPath);
-    const permissions = await assertSecurePermissions(
-      options,
-      opened.pathStat,
-      opened.realPath,
-      opened.identity,
-      opened.handle.fd,
-    );
+    const permissions = await assertSecurePermissions(options, opened, opened.handle.fd);
     const buffer = await readHandleWithTimeout(
       opened.handle,
       options.io?.timeoutMs,
