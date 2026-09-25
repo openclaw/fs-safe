@@ -1194,7 +1194,7 @@ jobs:
       - name: Test Windows descriptor ACL admission with required native binding
         env:
           FS_SAFE_NATIVE_MODE: require
-        run: pnpm test test/secure-file-windows-descriptor.test.ts test/secure-file-windows-native.test.ts
+        run: pnpm test test/secure-file-windows-descriptor.test.ts test/secure-file-windows-native.test.ts test/owner-dacl-batch.windows.test.ts
 
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'

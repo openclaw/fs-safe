@@ -183,6 +183,15 @@ export async function registerPaths({
       for (const sid of [result.ownerSid, result.currentUserSid]) assert.match(sid, /^s-\d+-\d+(?:-\d+)+$/i);
     },
   });
+  const ownerBatchPaths = [input, w, input];
+  add("readOwnerAndDaclBatch", () => a.readOwnerAndDaclBatch(ownerBatchPaths), {
+    divisor: 100,
+    skip: typeof a.readOwnerAndDaclBatch !== "function"
+      ? "Not exported by this explicitly selected older comparison build."
+      : process.platform !== "win32" ? "Windows owner and DACL inspection requires Windows." : undefined,
+    before: () => ownerBatchPaths.map(target => a.readOwnerAndDacl(target)),
+    after: (result, expected) => assert.deepEqual(result, expected),
+  });
   const privateDirectory = path.join(w, "private-dir");
   add("createPrivateDirectory", () => a.createPrivateDirectory(privateDirectory), {
     skip: process.platform !== "win32" ? "Windows private-directory creation requires Windows." : undefined,
