@@ -37,7 +37,8 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     await owner.reconcile();
     const count = hints.length;
     await fs.writeFile(path.join(dir, "a/b/tree/skill.md"), "later edit");
-    await owner.reconcile();
+    if (mode === "poll") await owner.reconcile();
+    else await expect.poll(() => hints.length).toBeGreaterThan(count);
     expect(hints.length).toBeGreaterThan(count);
     await owner.close();
     expect(owner.health()).toMatchObject({ state: "closed", directories: 0, workers: 0 });
@@ -134,12 +135,17 @@ it("fences superseded target updates, including the readiness microtask", async 
 it("delivers real edits without explicit reconciliation", async () => {
   await fs.mkdir(path.join(dir, "tree"));
   const hints: WatchDirty[] = [];
-  const owner = own(watch(await root(dir), { scopes, onDirty: hint => { hints.push(hint); } }));
+  const admitted = await root(dir);
+  const owner = own(watch(admitted, { scopes, onDirty: hint => { hints.push(hint); } }));
   await owner.ready;
   hints.length = 0;
   await fs.writeFile(path.join(dir, "tree/skill.md"), "real event");
-  await expect.poll(() => hints.some(hint => hint.reason === "event")).toBe(true);
-  expect(hints.some(hint => hint.changes?.some(change => change.path === path.join("tree", "skill.md")))).toBe(true);
+  // Coalesced/native-unknown filenames legitimately invalidate the whole scope.
+  // Still require a timely relevant hint, with no manual scan or longer budget.
+  await expect.poll(() => hints.some(hint => hint.changes === undefined
+    ? hint.scopes.some(scope => scope.path === "tree")
+    : hint.changes.some(change => change.path === path.join("tree", "skill.md")))).toBe(true);
+  await expect(admitted.readText("tree/skill.md")).resolves.toBe("real event");
   expect(owner.health().pendingInvalidations).toBeLessThanOrEqual(1);
 });
 
@@ -184,7 +190,9 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
   await fs.mkdir(outside);
   let swapped = false;
   let restored = false;
+  let inject: ((batch: { hints: Array<{ directory: string; name: string | null; event: string }>; overflow: boolean }) => void) | undefined;
   __setFsSafeTestHooksForTest({
+    afterWatchBackendCreated: (_root, emit) => { inject = emit; },
     beforeWatchRegistration: async name => {
       if (name !== watched || swapped) return;
       swapped = true;
@@ -205,7 +213,14 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
   expect(restored).toBe(true);
   hints.length = 0;
   await fs.writeFile(path.join(outside, "private-outside-name"), "outside");
-  await expect.poll(() => hints.length).toBeGreaterThan(0);
+  // Linux’s inode watcher exercises the real misbinding. Root-recursive Windows
+  // need not misbind at all; inject the same untrusted normalized payload there
+  // (and on every host) rather than requiring an outside event to exist.
+  if (process.platform === "linux") await expect.poll(() => hints.length).toBeGreaterThan(0);
+  expect(inject).toBeTypeOf("function");
+  const beforeInjection = hints.length;
+  inject!({ overflow: false, hints: [{ directory: "tree", name: "private-outside-name", event: "rename" }] });
+  await expect.poll(() => hints.length).toBeGreaterThan(beforeInjection);
   expect(hints.flatMap(hint => hint.changes?.map(change => change.path) ?? [])).not.toContain(path.join("tree", "private-outside-name"));
   await fs.writeFile(path.join(watched, "admitted-name"), "inside");
   await owner.reconcile();

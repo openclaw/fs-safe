@@ -4,6 +4,9 @@ import type { FileIdentityStat } from "./file-identity.js";
 export type FsSafeTestHooks = {
   beforeWatchRegistration?: (directoryPath: string) => Promise<void> | void;
   afterWatchRegistration?: (directoryPath: string) => Promise<void> | void;
+  afterWatchBackendCreated?: (rootPath: string, emit: (batch: {
+    hints: Array<{ directory: string; name: string | null; event: string }>; overflow: boolean;
+  }) => void) => void;
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;

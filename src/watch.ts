@@ -6,6 +6,7 @@ import { assertRootIdentityCurrent } from "./root-context.js";
 import { rootHandleContext } from "./root-handle-context.js";
 import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { getFsSafeTestHooks } from "./test-hooks.js";
 import { admittedNativeChanges } from "./watch-alias.js";
 import { changedEntries, guardedHintChanges } from "./watch-hints.js";
 import { NodeWatchBackend, type NodeWatchBatch, type NodeWatchHint } from "./watch-node.js";
@@ -176,7 +177,15 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     for (let pass = 0; pass < maxPasses; pass++) {
       check(g);
       if (mode === "node" && !backend && g.scopes.length) {
-        backend = new NodeWatchBackend(batch => onHint(g, batch), error => { if (current === g && !g.abort.signal.aborted) lose(error, "watch"); }, options.persistent !== false, maxPendingPaths);
+        const candidate = new NodeWatchBackend(batch => {
+          if (backend === candidate) onHint(g, batch);
+        }, error => { if (backend === candidate && current === g && !g.abort.signal.aborted) lose(error, "watch"); }, options.persistent !== false, maxPendingPaths);
+        backend = candidate;
+        const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
+          if (backend === candidate) onHint(g, batch);
+        });
+        assertSynchronousCallbackResult(hookResult, "afterWatchBackendCreated");
+        check(g);
       }
       const before = revision;
       let next: WatchSnapshot;

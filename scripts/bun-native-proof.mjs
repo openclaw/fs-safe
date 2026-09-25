@@ -69,6 +69,7 @@ if (scenario === "all") {
   const { createSecretFileAtomic, writeSecretFileAtomic } = await load("secret.js");
   const { acquireFileLock } = await load("file-lock.js");
   const { sha256File } = await load("durability.js");
+  const { watch } = await load("watch.js");
   assert.equal(addonLoads.length, 0, "public imports must not load the addon");
   configureFsSafeNative({ mode });
   const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "fs-bun-")));
@@ -88,6 +89,25 @@ if (scenario === "all") {
       assert.equal(safeRealpathSync(path.join(directory, "ordinary")), path.join(directory, "ordinary"));
       await assert.rejects(() => safe.write("../escape", "forbidden"), { code: "outside-workspace" });
       checks.push("ordinary Root read/write and confinement");
+      for (const watchMode of ["node", "poll"]) {
+        const hints = [];
+        const observer = watch(safe, { mode: watchMode,
+          scopes: [{ path: "watch-tree", kind: "tree" }],
+          onDirty(hint) { hints.push(hint); },
+        });
+        try {
+          await observer.ready;
+          fs.mkdirSync(path.join(directory, "watch-tree"), { recursive: true });
+          fs.writeFileSync(path.join(directory, "watch-tree", "file"), watchMode);
+          await observer.reconcile();
+          assert.equal(observer.health().state, "ready");
+          assert.ok(hints.length > 0);
+          assert.equal(await safe.readText("watch-tree/file"), watchMode);
+        } finally { await observer.close(); }
+        assert.equal(observer.health().workers, 0);
+        assert.equal(observer.health().directories, 0);
+        checks.push("watch " + watchMode + " readiness/reconciliation/joined close");
+      }
       const hashed = await sha256File(path.join(directory, "ordinary"));
       assert.deepEqual(hashed, { bytes: Buffer.byteLength("ordinary payload"),
         digest: createHash("sha256").update("ordinary payload").digest("hex") });
