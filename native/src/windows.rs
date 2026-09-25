@@ -353,25 +353,61 @@ fn rename_nt_error(status: i32, operation: &str) -> napi::Error<String> {
     rename_win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
+/// # Safety
+/// `T` must be the fixed-size output record for `class`, with a size fitting u32.
+/// Every bit pattern written by the OS must be valid T.
+#[inline(always)]
+pub(crate) unsafe fn query_file_information<T: Copy + Default>(
+    handle: HANDLE,
+    class: windows_sys::Win32::Storage::FileSystem::FILE_INFO_BY_HANDLE_CLASS,
+) -> std::result::Result<T, u32> {
+    let mut info = T::default();
+    // SAFETY: the caller admits the record layout, bit validity and class pairing.
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            class,
+            (&mut info as *mut T).cast(),
+            size_of::<T>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(unsafe { GetLastError() });
+    }
+    Ok(info)
+}
+
+/// # Safety
+/// `T` must be the initialized fixed-size input record for `class`, with a size
+/// fitting u32. The API may read it only for the duration of this call.
+#[inline(always)]
+pub(crate) unsafe fn set_file_information<T>(
+    handle: HANDLE,
+    class: windows_sys::Win32::Storage::FileSystem::FILE_INFO_BY_HANDLE_CLASS,
+    info: &T,
+) -> std::result::Result<(), u32> {
+    // SAFETY: the caller admits the class/layout pair; the borrowed record stays live.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            handle,
+            class,
+            (info as *const T).cast(),
+            size_of::<T>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(unsafe { GetLastError() });
+    }
+    Ok(())
+}
+
 fn handle_attribute_tag_information(
     handle: HANDLE,
     operation: &str,
 ) -> NativeResult<FILE_ATTRIBUTE_TAG_INFO> {
-    // SAFETY: info is a valid output buffer for the supplied class.
-    let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
-    let ok = unsafe {
-        GetFileInformationByHandleEx(
-            handle,
-            FileAttributeTagInfo,
-            (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
-            size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
-        )
-    };
-    if ok == 0 {
-        // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(unsafe { GetLastError() }, operation));
-    }
-    Ok(info)
+    // SAFETY: FILE_ATTRIBUTE_TAG_INFO is the fixed-size integer record for this class.
+    unsafe { query_file_information(handle, FileAttributeTagInfo) }
+        .map_err(|code| win_error(code, operation))
 }
 
 pub(crate) fn handle_is_reparse(handle: HANDLE) -> NativeResult<bool> {
@@ -865,34 +901,31 @@ fn file_identity_error(code: u32) -> napi::Error<String> {
 pub(crate) fn handle_file_identity(handle: HANDLE) -> NativeResult<HandleFileIdentity> {
     // FILE_ID_INFO is available in the supported SDK; filesystems that cannot
     // supply it fail closed rather than falling back to a narrower identity.
-    let mut info: FILE_ID_INFO = unsafe { zeroed() };
-    if unsafe {
-        GetFileInformationByHandleEx(
-            handle,
-            FileIdInfo,
-            (&mut info as *mut FILE_ID_INFO).cast(),
-            size_of::<FILE_ID_INFO>() as u32,
-        )
-    } == 0
-    {
-        return Err(file_identity_error(unsafe { GetLastError() }));
-    }
+    // SAFETY: FILE_ID_INFO is the fixed-size integer record for this class.
+    let info: FILE_ID_INFO = unsafe { query_file_information(handle, FileIdInfo) }
+        .map_err(file_identity_error)?;
     Ok(HandleFileIdentity {
         volume_serial_number: info.VolumeSerialNumber,
         file_id: info.FileId.Identifier,
     })
 }
 
-fn guarded_handle_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
-    // SAFETY: info is a valid output buffer for this API.
+#[inline(always)]
+pub(crate) fn query_handle_information(
+    handle: HANDLE,
+) -> std::result::Result<BY_HANDLE_FILE_INFORMATION, u32> {
+    // SAFETY: this SDK integer record is zero-valid and sized for the API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "inspect owned directory identity",
-        ));
+        // Capture the thread-local error before invoking any caller policy.
+        return Err(unsafe { GetLastError() });
     }
     Ok(info)
+}
+
+fn guarded_handle_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
+    query_handle_information(handle)
+        .map_err(|code| win_error(code, "inspect owned directory identity"))
 }
 
 fn identity_from_handle_information(
@@ -1016,18 +1049,8 @@ const OWNED_DELETE_FLAGS: u32 = FILE_DISPOSITION_FLAG_DELETE
 
 fn set_delete_disposition(handle: HANDLE, flags: u32) -> std::result::Result<(), u32> {
     let info = FILE_DISPOSITION_INFO_EX { Flags: flags };
-    let ok = unsafe {
-        SetFileInformationByHandle(
-            handle,
-            FileDispositionInfoEx,
-            (&info as *const FILE_DISPOSITION_INFO_EX).cast(),
-            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
-        )
-    };
-    if ok == 0 {
-        return Err(unsafe { GetLastError() });
-    }
-    Ok(())
+    // SAFETY: FILE_DISPOSITION_INFO_EX is the initialized record for this class.
+    unsafe { set_file_information(handle, FileDispositionInfoEx, &info) }
 }
 
 pub(crate) fn mark_handle_for_deletion(handle: HANDLE) -> NativeResult<()> {
@@ -1151,15 +1174,8 @@ pub fn remove_owned_tree(
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     let handle = root_handle(fd)?;
     assert_not_reparse(handle)?;
-    // SAFETY: info is a valid output buffer for this API.
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "inspect file identity",
-        ));
-    }
+    let info = query_handle_information(handle)
+        .map_err(|code| win_error(code, "inspect file identity"))?;
     let is_directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
     let size = ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64;
     let ino = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
@@ -1663,6 +1679,63 @@ mod tests {
     #[test]
     fn maps_access_denied_to_node_filesystem_eperm() {
         assert_eq!(win_error(ERROR_ACCESS_DENIED, "test").status, "EPERM");
+    }
+
+    #[test]
+    fn fixed_information_helpers_capture_raw_errors_before_caller_mapping() {
+        use windows_sys::Win32::Foundation::{ERROR_INVALID_HANDLE, SetLastError};
+
+        unsafe { SetLastError(ERROR_ACCESS_DENIED) };
+        let legacy = query_handle_information(INVALID_HANDLE_VALUE)
+            .err().expect("invalid handle must fail the legacy query");
+        unsafe { SetLastError(ERROR_FILE_NOT_FOUND) };
+        // SAFETY: the output type matches FileIdInfo; the invalid handle must be rejected.
+        let extended = unsafe { query_file_information::<FILE_ID_INFO>(INVALID_HANDLE_VALUE, FileIdInfo) }
+            .err().expect("invalid handle must fail the fixed-record query");
+        unsafe { SetLastError(ERROR_DISK_FULL) };
+        let disposition = FILE_DISPOSITION_INFO_EX { Flags: 0 };
+        // SAFETY: the input type matches FileDispositionInfoEx and remains live.
+        let setter = unsafe {
+            set_file_information(INVALID_HANDLE_VALUE, FileDispositionInfoEx, &disposition)
+        }.unwrap_err();
+        unsafe { SetLastError(ERROR_SHARING_VIOLATION) };
+        assert_eq!([legacy, extended, setter], [ERROR_INVALID_HANDLE; 3]);
+        assert_eq!(
+            guarded_handle_information(INVALID_HANDLE_VALUE).err().unwrap().reason,
+            format!("inspect owned directory identity failed with Windows error {ERROR_INVALID_HANDLE}"),
+        );
+    }
+
+    #[test]
+    fn fixed_information_helpers_preserve_records_and_borrowed_handles() {
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_BASIC_INFO, FILE_END_OF_FILE_INFO, FileBasicInfo, FileEndOfFileInfo,
+        };
+
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "fs-safe-fixed-information-{}-{nonce}", std::process::id(),
+        ));
+        let file = OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap();
+        let handle = file.as_raw_handle();
+        let identity = handle_file_identity(handle).unwrap();
+        // SAFETY: FILE_BASIC_INFO is the fixed-size integer record for FileBasicInfo.
+        let basic: FILE_BASIC_INFO = unsafe { query_file_information(handle, FileBasicInfo) }.unwrap();
+        assert!(basic.CreationTime > 0);
+        let eof = FILE_END_OF_FILE_INFO { EndOfFile: 37 };
+        // SAFETY: both initialized input records match their respective information classes.
+        unsafe {
+            set_file_information(handle, FileEndOfFileInfo, &eof).unwrap();
+            set_file_information(handle, FileBasicInfo, &basic).unwrap();
+        }
+        let info = query_handle_information(handle).unwrap();
+        let attributes = handle_attribute_tag_information(handle, "test fixed record").unwrap();
+        assert_eq!((info.nFileSizeHigh, info.nFileSizeLow), (0, 37));
+        assert_eq!(info.dwFileAttributes, attributes.FileAttributes);
+        assert_eq!(handle_file_identity(handle).unwrap(), identity);
+        assert_eq!(file.metadata().unwrap().len(), 37);
+        drop(file);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

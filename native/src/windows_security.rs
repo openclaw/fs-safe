@@ -217,11 +217,11 @@ mod windows {
         WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, DELETE as DELETE_ACCESS, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
+        DELETE as DELETE_ACCESS, FILE_ADD_SUBDIRECTORY, FILE_ALL_ACCESS,
         FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD,
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_OPENED,
         FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE, FILE_TYPE_DISK,
-        FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, GetFileInformationByHandle,
+        FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA,
         GetFileType, GetFinalPathNameByHandleW, READ_CONTROL, VOLUME_NAME_GUID, WRITE_DAC, WRITE_OWNER,
     };
     use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
@@ -235,7 +235,7 @@ mod windows {
         windows::{
             HandleFileIdentity, OwnedHandle, duplicate_handle, handle_attributes,
             handle_file_identity, mark_handle_for_deletion, nt_create_directory_relative,
-            open_existing_handle, root_handle,
+            open_existing_handle, query_handle_information, root_handle,
         },
     };
 
@@ -1039,10 +1039,8 @@ mod windows {
         handle: HANDLE,
         expected_links: u32,
     ) -> NativeResult<HandleFileIdentity> {
-        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-        if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-            return Err(win_error(unsafe { GetLastError() }, "inspect private file"));
-        }
+        let info = query_handle_information(handle)
+            .map_err(|code| win_error(code, "inspect private file"))?;
         if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err(native_error(
                 "ELOOP",
@@ -1471,6 +1469,19 @@ mod windows {
         };
 
         use super::*;
+
+        #[test]
+        fn private_file_information_retains_security_error_mapping() {
+            use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE, INVALID_HANDLE_VALUE};
+
+            let error = private_file_identity(INVALID_HANDLE_VALUE, 1).unwrap_err();
+            assert_eq!(error.status, "EIO");
+            assert_eq!(
+                error.reason,
+                format!("inspect private file failed with Windows error {ERROR_INVALID_HANDLE}"),
+            );
+            assert_eq!(win_error(ERROR_ACCESS_DENIED, "inspect private file").status, "EACCES");
+        }
 
         fn temp_root(label: &str) -> PathBuf {
             let base = fs::canonicalize(std::env::temp_dir()).unwrap();
