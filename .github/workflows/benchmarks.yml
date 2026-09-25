@@ -1,308 +1,216 @@
 name: benchmarks
 
 on:
-  pull_request:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
-      method_audit:
-        description: Run the complete callable-method matrix
+      build_only:
+        description: Require the fixed PR670 build and untimed installed qualification
         type: boolean
-        default: false
-      platform:
-        description: Method-audit platform
-        type: choice
-        options: ["all", "linux", "macos", "windows"]
-        default: "all"
+        default: true
       compare_ref:
-        description: Optional baseline Git ref for the same runner and harness
+        description: Exact reviewed baseline commit
         type: string
-        default: ""
+        required: true
       candidate_ref:
-        description: Optional exact 40-hex candidate commit for a reproducible study
+        description: Exact reviewed candidate commit
         type: string
-        default: ""
-      iterations:
-        description: Method-audit iterations
-        type: string
-        default: "20"
-      samples:
-        description: Method-audit samples
-        type: string
-        default: "5"
-      filter:
-        description: Optional method-name substring for a focused audit
-        type: string
-        default: ""
-      order:
-        description: Baseline/candidate measurement order
-        type: choice
-        options: ["baseline-candidate", "abba", "baab"]
-        default: "baseline-candidate"
-      blocks:
-        description: Number of complete measurement-order blocks
-        type: string
-        default: "1"
-      native_mode:
-        description: Native mode selection
-        type: choice
-        options: ["both", "off", "require"]
-        default: "both"
-      node_version:
-        description: Node.js version for the method audit
-        type: choice
-        options: ["22", "24"]
-        default: "24"
-      control:
-        description: Build control for baseline/candidate measurements
-        type: choice
-        options: ["rebuild", "same-artifact"]
-        default: "rebuild"
-      timeout_minutes:
-        description: Method-audit job timeout
-        type: choice
-        options: ["45", "90", "120"]
-        default: "45"
+        required: true
       expected_harness_sha:
-        description: Optional exact reviewed workflow commit expected to supply the harness
+        description: Exact reviewed workflow commit
         type: string
-        default: ""
+        required: true
 
 permissions:
   contents: read
 
 jobs:
-  prepare_method_audit:
-    if: github.event_name == 'workflow_dispatch' && inputs.method_audit
-    name: Prepare method audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  prepare-common-root:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_only
+    name: Assemble common baseline root with pinned released WASM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-      harness_sha: ${{ steps.plan.outputs.harness_sha }}
-      candidate_sha: ${{ steps.plan.outputs.candidate_sha }}
-      baseline_sha: ${{ steps.plan.outputs.baseline_sha }}
-      has_baseline: ${{ steps.plan.outputs.has_baseline }}
-      baseline_build_required: ${{ steps.plan.outputs.baseline_build_required }}
-      node_version: ${{ steps.plan.outputs.node_version }}
-      timeout_minutes: ${{ steps.plan.outputs.timeout_minutes }}
-      control_kind: ${{ steps.plan.outputs.control_kind }}
-      plan_file_sha256: ${{ steps.plan.outputs.plan_file_sha256 }}
-    defaults:
-      run:
-        shell: bash
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      root_sha256: ${{ steps.assemble.outputs.root_sha256 }}
+      manifest_sha256: ${{ steps.assemble.outputs.manifest_sha256 }}
+      proof_sha256: ${{ steps.assemble.outputs.proof_sha256 }}
+    env:
+      PAIR_HARNESS_SHA: ${{ github.workflow_sha }}
+      PAIR_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+      PAIR_BASELINE_INPUT: ${{ inputs.compare_ref }}
+      PAIR_CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
     steps:
-      - name: Configure byte-exact checkouts
+      - name: Validate exact reviewed input refs
+        shell: bash
         run: |
-          # checkout v7 has no line-ending input; configure Git before checkout.
+          set -euo pipefail
+          [[ "$PAIR_EXPECTED_HARNESS_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PAIR_EXPECTED_HARNESS_SHA" = "$PAIR_HARNESS_SHA" ]]
+          [[ "$PAIR_BASELINE_INPUT" = "554fd1c3c3e5f5adc127dcdf416d859a724703f7" ]]
+          [[ "$PAIR_CANDIDATE_INPUT" = "95269878a1a6254f28977e373d979a6b254cf733" ]]
           git config --global core.autocrlf false
           git config --global core.eol lf
-      - name: Check out reviewed harness history
+      - name: Check out reviewed preparation harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
           path: harness
-      - name: Validate and resolve method-audit plan
-        id: plan
-        env:
-          METHOD_PLATFORM: ${{ inputs.platform }}
-          METHOD_COMPARE_REF: ${{ inputs.compare_ref }}
-          METHOD_CANDIDATE_REF: ${{ inputs.candidate_ref }}
-          METHOD_ITERATIONS: ${{ inputs.iterations }}
-          METHOD_SAMPLES: ${{ inputs.samples }}
-          METHOD_FILTER: ${{ inputs.filter }}
-          METHOD_ORDER: ${{ inputs.order }}
-          METHOD_BLOCKS: ${{ inputs.blocks }}
-          METHOD_NATIVE_MODE: ${{ inputs.native_mode }}
-          METHOD_NODE_VERSION: ${{ inputs.node_version }}
-          METHOD_CONTROL: ${{ inputs.control }}
-          METHOD_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
-          METHOD_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
-          METHOD_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          METHOD_EVENT_SHA: ${{ github.sha }}
-          METHOD_WORKFLOW_REF: ${{ github.workflow_ref }}
+          persist-credentials: false
+      - name: Check out baseline with release source history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 554fd1c3c3e5f5adc127dcdf416d859a724703f7
+          fetch-depth: 0
+          path: baseline
+          persist-credentials: false
+      - name: Check out candidate for source correspondence
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 95269878a1a6254f28977e373d979a6b254cf733
+          path: candidate
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+      - name: Set up exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Install frozen compiler dependencies without lifecycle scripts
+        timeout-minutes: 3
+        working-directory: baseline
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Assemble and strictly compare the common root
+        id: assemble
+        timeout-minutes: 8
+        shell: bash
         run: |
-          node "$GITHUB_WORKSPACE/harness/benchmarks/method-audit-evidence.mjs" prepare \
-            --harness-root "$GITHUB_WORKSPACE/harness" \
-            --output "$RUNNER_TEMP/method-audit-plan.json"
-      - name: Upload resolved method-audit plan
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/harness/scripts/windows-info-proof/prepare-root.mjs"             "$GITHUB_WORKSPACE/baseline" "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/common-root-output"
+      - name: Upload exact common root and preparation receipts
+        id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: method-audit-plan
-          path: ${{ runner.temp }}/method-audit-plan.json
+          name: windows-info-common-root-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/common-root-output/
           if-no-files-found: error
+          retention-days: 7
+      - name: Preserve preparation diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-info-common-root-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preparation-data/
+          if-no-files-found: warn
+          retention-days: 7
 
-  method-audit:
-    needs: prepare_method_audit
-    name: Method audit (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ fromJSON(needs.prepare_method_audit.outputs.timeout_minutes) }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare_method_audit.outputs.matrix) }}
+  windows-native-pair:
+    needs: prepare-common-root
+    permissions:
+      contents: read
+      actions: read
+    if: github.event_name == 'workflow_dispatch' && inputs.build_only
+    name: Windows fixed-record pair (build and installed qualification; no timing)
+    runs-on: fs-safe-windows-16core
+    timeout-minutes: 120
     defaults:
       run:
-        shell: bash
+        shell: pwsh
     env:
-      HARNESS_ROOT: ${{ github.workspace }}/harness
-      CANDIDATE_ROOT: ${{ github.workspace }}/candidate
-      BASELINE_ROOT: ${{ github.workspace }}/baseline
-      REPORT_ROOT: ${{ github.workspace }}/artifacts/method-audit
-      METHOD_MATRIX_PLATFORM: ${{ matrix.platform }}
-      EXPECTED_PLAN_FILE_HASH: ${{ needs.prepare_method_audit.outputs.plan_file_sha256 }}
+      PAIR_HARNESS_SHA: ${{ github.workflow_sha }}
+      PAIR_EXPECTED_HARNESS_SHA: ${{ inputs.expected_harness_sha }}
+      PAIR_BASELINE_INPUT: ${{ inputs.compare_ref }}
+      PAIR_CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+      RUSTUP_TOOLCHAIN: 1.98.1
+      COMMON_ROOT_SHA256: ${{ needs.prepare-common-root.outputs.root_sha256 }}
+      COMMON_ROOT_MANIFEST_SHA256: ${{ needs.prepare-common-root.outputs.manifest_sha256 }}
+      COMMON_ROOT_PROOF_SHA256: ${{ needs.prepare-common-root.outputs.proof_sha256 }}
+      COMMON_ROOT_ARTIFACT_ID: ${{ needs.prepare-common-root.outputs.artifact_id }}
+      COMMON_ROOT_ARTIFACT_DIGEST: ${{ needs.prepare-common-root.outputs.artifact_digest }}
     steps:
-      - name: Configure byte-exact checkouts
-        env:
-          METHOD_RUNNER_TEMP: ${{ runner.temp }}
+      - name: Validate fixed source inputs and configure byte-exact checkout
         run: |
-          if [[ -z "$METHOD_RUNNER_TEMP" ]]; then
-            echo "runner temp directory is unavailable" >&2
-            exit 2
-          fi
-          printf 'PLAN_PATH=%s/method-audit-plan/method-audit-plan.json\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
-          printf 'EVIDENCE_ROOT=%s/method-audit-evidence\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
-          # checkout v7 has no line-ending input; configure Git before checkout.
+          $ErrorActionPreference = 'Stop'
+          if ($env:PAIR_EXPECTED_HARNESS_SHA -cnotmatch '^[0-9a-f]{40}$' -or $env:PAIR_EXPECTED_HARNESS_SHA -cne $env:PAIR_HARNESS_SHA) { throw 'Exact reviewed workflow commit required' }
+          if ($env:PAIR_BASELINE_INPUT -cne '554fd1c3c3e5f5adc127dcdf416d859a724703f7' -or $env:PAIR_CANDIDATE_INPUT -cne '95269878a1a6254f28977e373d979a6b254cf733') { throw 'Only the fixed reviewed native pair is allowed' }
           git config --global core.autocrlf false
           git config --global core.eol lf
-      - name: Download resolved method-audit plan
+      - name: Check out reviewed build harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: harness
+          persist-credentials: false
+      - name: Check out exact baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 554fd1c3c3e5f5adc127dcdf416d859a724703f7
+          path: baseline
+          persist-credentials: false
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 95269878a1a6254f28977e373d979a6b254cf733
+          path: candidate
+          persist-credentials: false
+      - name: Verify Windows CI runner
+        uses: ./harness/.github/actions/verify-windows-ci-runner
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+      - name: Set up exact Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+      - name: Install exact Rust toolchain
+        timeout-minutes: 15
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Rust installation failed' }
+      - name: Bind common artifact to this reviewed workflow run
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GH_REPOSITORY -cne 'openclaw/fs-safe' -or $env:COMMON_ROOT_ARTIFACT_ID -cnotmatch '^[1-9][0-9]*$') { throw 'Common artifact identity invalid' }
+          foreach ($value in @($env:COMMON_ROOT_ARTIFACT_DIGEST,$env:COMMON_ROOT_SHA256,$env:COMMON_ROOT_MANIFEST_SHA256,$env:COMMON_ROOT_PROOF_SHA256)) {
+            if ($value -cnotmatch '^[0-9a-f]{64}$') { throw 'Common artifact digest absent or invalid' }
+          }
+          $headers = @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'; 'X-GitHub-Api-Version'='2022-11-28' }
+          $artifact = Invoke-RestMethod -Uri "$env:GH_API_URL/repos/$env:GH_REPOSITORY/actions/artifacts/$env:COMMON_ROOT_ARTIFACT_ID" -Headers $headers -TimeoutSec 60
+          if ([string]$artifact.id -cne $env:COMMON_ROOT_ARTIFACT_ID -or $artifact.expired -or $artifact.name -cne "windows-info-common-root-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" -or [string]$artifact.workflow_run.id -cne $env:GITHUB_RUN_ID -or $artifact.workflow_run.head_sha -cne $env:PAIR_HARNESS_SHA -or $artifact.digest -cne "sha256:$env:COMMON_ROOT_ARTIFACT_DIGEST" -or $artifact.size_in_bytes -gt 8388608) { throw 'Common artifact metadata does not match this preparation' }
+          $receipt = [ordered]@{ id=[string]$artifact.id; name=$artifact.name; digest=$artifact.digest; bytes=$artifact.size_in_bytes; runId=[string]$artifact.workflow_run.id; harnessSha=$artifact.workflow_run.head_sha; attempt=$env:GITHUB_RUN_ATTEMPT }
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'windows-info-common-root-transport.json'),($receipt | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+      - name: Download the one exact common-root artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: method-audit-plan
-          path: ${{ runner.temp }}/method-audit-plan
-      - name: Check out reviewed harness
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare_method_audit.outputs.harness_sha }}
-          fetch-depth: 1
-          persist-credentials: false
-          path: harness
-      - name: Check out resolved candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare_method_audit.outputs.candidate_sha }}
-          fetch-depth: 1
-          persist-credentials: false
-          path: candidate
-      - name: Check out resolved baseline
-        if: needs.prepare_method_audit.outputs.has_baseline == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare_method_audit.outputs.baseline_sha }}
-          fetch-depth: 1
-          persist-credentials: false
-          path: baseline
-      - name: Reserve fixed baseline path
-        if: needs.prepare_method_audit.outputs.has_baseline != 'true'
-        run: mkdir -p "$BASELINE_ROOT"
-      - name: Verify reviewed harness before measured builds
-        run: |
-          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" verify-harness \
-            --plan "$PLAN_PATH" \
-            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
-            --harness-root "$HARNESS_ROOT"
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 12.4.2
-          run_install: false
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ needs.prepare_method_audit.outputs.node_version }}
-      - name: Add portable TAR parser target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Set up portable archive LLVM
-        uses: ./harness/.github/actions/setup-archive-llvm
-      - name: Install reviewed harness dependencies
-        run: pnpm --dir "$HARNESS_ROOT" install --frozen-lockfile
-      - name: Build candidate
-        run: |
-          pnpm --dir "$CANDIDATE_ROOT" install --frozen-lockfile
-          pnpm --dir "$CANDIDATE_ROOT" build
-          pnpm --dir "$CANDIDATE_ROOT" native:build
-      - name: Build baseline
-        if: needs.prepare_method_audit.outputs.baseline_build_required == 'true'
-        run: |
-          pnpm --dir "$BASELINE_ROOT" install --frozen-lockfile
-          pnpm --dir "$BASELINE_ROOT" build
-          pnpm --dir "$BASELINE_ROOT" native:build
-      - name: Snapshot measured installations
-        run: |
-          mkdir -p "$EVIDENCE_ROOT"
-          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" snapshot \
-            --plan "$PLAN_PATH" \
-            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
-            --harness-root "$HARNESS_ROOT" \
-            --candidate-root "$CANDIDATE_ROOT" \
-            --baseline-root "$BASELINE_ROOT" \
-            --output "$EVIDENCE_ROOT/before.json"
-      - name: Measure and finalize evidence
-        env:
-          # Git Bash rewrites leading-slash arguments for native programs.
-          # Preserve filter bytes even though the validated plan supplies argv directly.
-          MSYS2_ARG_CONV_EXCL: "*"
-        run: |
-          node "$HARNESS_ROOT/benchmarks/method-audit-evidence.mjs" measure \
-            --plan "$PLAN_PATH" \
-            --expected-plan-file-hash "$EXPECTED_PLAN_FILE_HASH" \
-            --before "$EVIDENCE_ROOT/before.json" \
-            --harness-root "$HARNESS_ROOT" \
-            --candidate-root "$CANDIDATE_ROOT" \
-            --baseline-root "$BASELINE_ROOT" \
-            --output-root "$REPORT_ROOT"
-      - name: Upload method measurements
+          artifact-ids: ${{ needs.prepare-common-root.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-info-common-root-input
+          merge-multiple: true
+      - name: Build exact native pair and prove installed NTFS/ReFS contracts
+        timeout-minutes: 90
+        run: ./harness/scripts/windows-info-proof/supervisor.ps1
+      - name: Ensure owned VHD is dismounted and removed
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: method-audit-${{ matrix.platform }}-${{ github.run_id }}
-          path: ${{ env.REPORT_ROOT }}/
-          if-no-files-found: warn
-
-  benchmark:
-    name: Node 22 benchmarks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 12.4.2
-          run_install: false
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Add portable TAR parser target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Set up portable archive LLVM
-        uses: ./.github/actions/setup-archive-llvm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm build
-
-      - name: Benchmark
-        env:
-          FS_SAFE_BENCHMARK_SAMPLES: ${{ github.event_name == 'schedule' && '3' || '1' }}
+        timeout-minutes: 5
         run: |
-          mkdir -p dist/benchmarks
-          pnpm benchmark -- --json dist/benchmarks/results.json --markdown dist/benchmarks/summary.md
-
-      - name: Upload benchmark results
+          if (Test-Path -LiteralPath './harness/scripts/windows-info-proof/supervisor.ps1') {
+            ./harness/scripts/windows-info-proof/supervisor.ps1 -CleanupOnly
+          }
+      - name: Upload native pair and receipts
+        if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fs-safe-benchmark-${{ github.run_id }}
-          path: dist/benchmarks/
+          name: windows-info-pair-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fs-safe-windows-info-proof/artifacts/
+          if-no-files-found: warn
+          retention-days: 7

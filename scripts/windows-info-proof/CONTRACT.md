@@ -1,0 +1,54 @@
+# PR670 fixed Windows packet
+
+This task-owned proof branch contains no timing job. It is materialization only until the parent reviews the frozen tree and explicitly authorizes one dispatch. Product inputs are exact baseline `554fd1c3c3e5f5adc127dcdf416d859a724703f7` and candidate `95269878a1a6254f28977e373d979a6b254cf733`; their trees are pinned in `contract.json`. The source allowlist is exactly the three reviewed native modules. The workflow and original source/toolchain/VHD owners derive from qualified harness `f201873574098154822658bf9ffc8f88577e97a6`. No held candidate binary, result or timing is an input.
+
+No generated root tarball is tracked in this proof branch. A bounded Linux CI preparation job checks out exact baseline 554, compiles its TS/declarations with the pinned existing TypeScript 7.0.2 compiler, invokes the repository's Windows asset copier, and packs with its npm result normalizer and `npm pack --ignore-scripts`. This is the parent's explicit types/assets-only assembly exception: the ordinary prepack command would rebuild WASM and is not used. No native or WASM build runs in that job.
+
+Only the WASM member of the publicly published 0.19.0 package is a common binary input. The canonical registry tar is pinned at `f47db7d77056d8a202019a8cd791accfd6893816a34ea41027d41699fd0153f3`; its WASM is `182fc2e1ac12dfa06c4fc20d8e097b46b8481be1b5860a18aad16586d114dc94`, 461,974 bytes, mode 0755. Release provenance binds the tar's SHA-512 subject to release workflow run 36063685775/attempt 1, tag v0.19.0 and commit b7beb3e. The complete 100-file WASM input scope—both archive trees, scripts, Cargo manifests/lock, tracked .cargo scope, LLVM setup action and release workflow—has identical Git objects from b7 to 554. There is no claim of equal compiler execution or equal WASM bytes. The original baseline e467 artifact has a different WASM (`3ec636dd…`, 461,990 bytes); it is preserved and never relabeled.
+
+`baseline-root.json` retains the original e467 package's 587 member byte/mode records. The fresh common root must match every one exactly except the explicitly admitted published WASM member. The source comparison also proves all root TS/assets/build inputs identical from 554 to 952. The preparation records the new tar's actual SHA/origin, compiler and pack mechanics, source inventories and release provenance. It uploads only the generated common tar, manifest and preparation proof as a single Actions artifact. The Windows job is dependency-gated, needs only contents/actions read permission, binds artifact ID/digest/run/harness identity, validates all three payload hashes, and rechecks the strict root member comparison before use. The exact same new common-root hash is used for both native roles. Every installed consumer re-hashes all 587 members; no published-root JS and no Linux addon is used.
+
+## Bun contract fixed before execution
+
+Bun 1.4.2 tag commit is `744846f844374847c902b5e7fd59b4342a51ef99`; its Windows x64 ZIP is SHA-256 `ce4c17497b2f29712a99d3d53f028de28cd42e3bacb8589599e7f000e49b6405`, 39,807,510 bytes. Relevant upstream source blobs were independently matched to that Git tree during materialization:
+
+- [`src/sys/lib.rs:3539`](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/sys/lib.rs#L3539) routes Windows `open` to `sys_uv::open`.
+- [`src/sys/sys_uv.rs:81`](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/sys/sys_uv.rs#L81) opens through libuv.
+- [`src/runtime/node/node_fs.rs:1144`](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/runtime/node/node_fs.rs#L1144) converts file descriptors to JavaScript with `FdJsc::to_js`; its synchronous open path is at line5768, asynchronous libuv completion at5782.
+- [`src/sys_jsc/fd_jsc.rs:76`](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/sys_jsc/fd_jsc.rs#L76) makes a descriptor libuv-owned before returning the JavaScript int32. Lines30–35 also state that JS-visible Windows fds are libuv/CRT descriptors. The explicitly different raw-HANDLE conversion is not used by this packet.
+- [`src/sys/fd.rs:217`](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/sys/fd.rs#L217) converts a system handle through the host `uv_open_osfhandle` owner.
+- [`src/symbols.def`](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/symbols.def) exports all six names consumed by fs-safe: `uv_get_osfhandle`, `uv_open_osfhandle`, `uv_req_size`, `uv_fs_close`, `uv_fs_req_cleanup`, `uv_err_name`.
+
+The packet requires those real executable exports and successful borrowed/returned descriptor witnesses under both Node and Bun. It uses runtime `fs.openSync` descriptors and addon `openBeneath` results only, with the corresponding runtime/native close owner. No raw HANDLE is converted to a JS descriptor, and the fixture's C# handles never cross into the product. Missing bridges or failed Bun witnesses are failures, never expected-unsupported cases. Bun runs with `--no-install`.
+
+## Finite cases and changed-call coverage
+
+Each role/runtime/filesystem lane has the ten common cases listed below. NTFS adds one case and ReFS adds three: `(10+1)×4 + (10+3)×4 = 96` cases in eight lanes, once each. There is no adaptive retry or skip. Each lane has its own external installed consumer and exclusive fixture root.
+
+| Case | Contract and changed mechanism |
+| --- | --- |
+| borrowed-file | Legacy fstat plus attribute-tag query; exact regular-file size/content, readable caller fd and unchanged cursor/identity. |
+| borrowed-directory | Legacy directory observation, fstat and opened-parent attribute admission; exact bigint identity and retained parent. |
+| native-open-close | Attribute admission followed by actual host reading/stat of the returned fd and native-owner close; borrowed parent survives. |
+| missing-and-reparse | ENOENT on absence; reparse rejection through NTSTATUS→EIO or admitted-handle→ELOOP, with exact selected code equal between roles; outside sentinel untouched. |
+| private-protect-verify | Full FILE_ID_INFO and private legacy query; full identity syntax and successful inherited-private-file protection/verification plus public atomic secret creation/readback, unchanged content and borrowed fd. |
+| private-identity-and-links | Wrong full parent identity and changed hardlink count reject EIO through current private admission; both aliases remain unchanged before fixture cleanup. |
+| owned-remove-async / owned-remove-sync | Guarded legacy identity, attribute queries and disposition setter; nested tree/junction-leaf removal preserves outside target and caller descriptors. |
+| owned-replaced-root | Name substitution is preserved with the original retained descriptor/name intact. |
+| invalid-descriptors | Negative/closed descriptors reject EBADF before query dispatch; these are not credited as raw GetLastError tests. |
+| ntfs-clone-unsupported | Native probe is null and public clone-always rejects `unsupported-platform` before publication, preserving source. This follows current `copy.ts:materializeTree` and Windows `is_refs`; no byte-copy fallback is permitted. |
+| refs-sparse-clone | Actual `refs` admission, empty/nested metadata, legacy/basic getters, basic/EOF setters and delete/publish paths. Logical size2GiB+4097, three16-byte markers, mtime equality, physical extent sharing and CoW independence. Raw extent and marker facts retained. |
+| refs-live-writer-conflict | Live writable runtime fd causes EBUSY; source/borrowed fd preserved and partial destination removed through the disposition setter. |
+| refs-named-stream-rejection | ENOTSUP is the documented lossy-content rejection, not a capability skip; named stream/source remain and partial destination is absent. |
+
+The existing CI owner already ran all24 required contexts at candidate 952, including the three new Windows native regressions and ordinary EPERM/full-identity ENOTSUP tests. This packet does not rerun broad checks or Cargo suites. Exact raw invalid-HANDLE capture and private EACCES policy remain those CI-owned tests. Installed cases do not fabricate raw API errors or replace native methods with adapters.
+
+## Bounds, provenance and cleanup
+
+`contract.json` is the authoritative numeric census/cap file: Linux preparation 15min and 8MiB artifact cap; Windows job120min, body90min, native build30min per role, dependency/consumer install180sec, installed worker150sec, fixture helper30sec; at most128 concurrently observed owned processes,200 direct N-API calls per lane, one outstanding native operation,13 cases,64 fixture entries and1MiB ordinary fixture bytes. Sparse data has at most two2GiB+4097 files per ReFS lane, each at most16MiB allocated and their total within40MiB. Only48 source-marker bytes and16 CoW bytes are written; the whole sparse payload is never read or byte-copied by the harness. Fixtures use one uniquely owned16GiB dynamic VHD. Public registry data downloads have a 60sec/2MiB metadata bound; root/native/Bun archives have explicit member, compressed and expanded bounds; output is limited per step and per artifact set.
+
+A fresh task-owner receipt binds run, attempt, root and creation time before commands. Cleanup validates it and the original VHD receipt before killing owned processes or mutating a disk; matching older processes are not consumed. The existing disk identity/non-boot/non-system checks remain. Each bounded command retains its process handle, PID/start identity, exact executable/argument array, terminal exit and separate operation/cleanup failures. Streams settle before descriptor disposal. Worker fd owners consume before close and are drained before reporting. Final ReFS disposal belongs to the supervisor after child settlement.
+
+Supervisor and workflow cleanup have distinct receipts, so the latter cannot overwrite the former's process history. Final artifact sealing follows workflow cleanup. Missing/incomplete worker reports remain unknown partial execution; they are not relabeled as zero product calls. Uncertain cleanup, a missing required witness, changed inputs/toolchain, unexpected fallback, or an output/copy/process cap violation blocks success.
+
+Both DLLs are fresh release/LTO builds with common remap flags, separate targets, pinned Rust/Node/pnpm/Bun/MSVC/SDK and before/between/after toolchain hashes. Native tar bytes are matched to the actual DLL, Windows PE architecture is checked, generated native declarations are compared byte-for-byte, and dumpbin headers/imports/exports/symbols/unwind/disassembly plus executable-section hashes are retained. No diagnostic rebuild or compiler retuning is introduced. Only whole-binary byte identity earns automatic `BYTE_IDENTICAL`; any difference requires parent code-generation review. No performance result or acceptance is computed.

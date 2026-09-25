@@ -3,3 +3,4 @@ self-hosted-runner:
     - crabbox
     - openclaw
     - fs-safe
+    - fs-safe-windows-16core

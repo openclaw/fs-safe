@@ -1,0 +1,152 @@
+{
+  "schema": 2,
+  "baseline": {
+    "commit": "554fd1c3c3e5f5adc127dcdf416d859a724703f7",
+    "tree": "e706e7116955f2e6079f8f8f6d74878d3a052d99"
+  },
+  "candidate": {
+    "commit": "95269878a1a6254f28977e373d979a6b254cf733",
+    "tree": "13f4639eccc051e5d0648aaab0e4d191cae63e8f"
+  },
+  "changedFiles": [
+    "native/src/clone_windows.rs",
+    "native/src/windows.rs",
+    "native/src/windows_security.rs"
+  ],
+  "nodeVersion": "v24.21.0",
+  "nodeSha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+  "bunVersion": "1.4.2",
+  "bunSource": "744846f844374847c902b5e7fd59b4342a51ef99",
+  "bunArchiveUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-windows-x64.zip",
+  "bunArchiveSha256": "ce4c17497b2f29712a99d3d53f028de28cd42e3bacb8589599e7f000e49b6405",
+  "bunArchiveBytes": 39807510,
+  "rustVersion": "1.98.1",
+  "rustCommit": "48a229ceaefd4985c50990b14116b6d856af0985",
+  "msvc": "14.51.36231",
+  "windowsSdk": "10.0.26100.0",
+  "bridgeExports": [
+    "uv_get_osfhandle",
+    "uv_open_osfhandle",
+    "uv_req_size",
+    "uv_fs_close",
+    "uv_fs_req_cleanup",
+    "uv_err_name"
+  ],
+  "commonCases": [
+    "borrowed-file",
+    "borrowed-directory",
+    "native-open-close",
+    "missing-and-reparse",
+    "private-protect-verify",
+    "private-identity-and-links",
+    "owned-remove-async",
+    "owned-remove-sync",
+    "owned-replaced-root",
+    "invalid-descriptors"
+  ],
+  "ntfsCases": [
+    "ntfs-clone-unsupported"
+  ],
+  "refsCases": [
+    "refs-sparse-clone",
+    "refs-live-writer-conflict",
+    "refs-named-stream-rejection"
+  ],
+  "roles": [
+    "baseline",
+    "candidate"
+  ],
+  "runtimes": [
+    "node",
+    "bun"
+  ],
+  "filesystems": [
+    "NTFS",
+    "ReFS"
+  ],
+  "laneCount": 8,
+  "caseCount": 96,
+  "caps": {
+    "jobMinutes": 120,
+    "bodyMinutes": 90,
+    "buildSeconds": 1800,
+    "installSeconds": 180,
+    "workerSeconds": 150,
+    "fixtureSeconds": 30,
+    "maxActiveOwnedProcesses": 128,
+    "maxNativeCallsPerLane": 200,
+    "maxCasesPerLane": 13,
+    "maxRootArchiveBytes": 1048576,
+    "maxRootMembers": 600,
+    "maxRootExpandedBytes": 8388608,
+    "maxRootMemberBytes": 4194304,
+    "maxNativeArchiveBytes": 33554432,
+    "maxNativeMembers": 2,
+    "maxNativeExpandedBytes": 67108864,
+    "maxBunExpandedBytes": 134217728,
+    "maxBunMembers": 8,
+    "maxArtifactBytes": 536870912,
+    "maxStepLogBytes": 67108864,
+    "maxFixtureEntries": 64,
+    "maxFixtureAllocatedBytes": 41943040,
+    "sparseLogicalBytes": 2147487745,
+    "vhdMiB": 16384,
+    "maxOutstandingNativeOperations": 1,
+    "maxOwnedFixtureHelpersPerLane": 8,
+    "maxFixtureStdoutBytes": 16384,
+    "cleanupSeconds": 20,
+    "maxSparseFileAllocatedBytes": 16777216,
+    "maxOrdinaryFixtureBytes": 1048576,
+    "linuxPreparationMinutes": 15,
+    "typescriptSeconds": 300,
+    "packSeconds": 120,
+    "publicDataDownloadSeconds": 60,
+    "maxPublicMetadataBytes": 2097152,
+    "maxPreparationArtifactBytes": 8388608
+  },
+  "expected": {
+    "bridge": "all six exports and actual descriptor witnesses must succeed for both runtimes",
+    "NTFS": "common cases pass; public clone always rejects unsupported-platform without publication",
+    "ReFS": "common and all clone cases pass; actual refs capability and block sharing required",
+    "invalidDescriptor": "EBADF entry admission; not credited as raw GetLastError capture",
+    "missing": "ENOENT",
+    "reparse": "EIO from NTSTATUS mapping or ELOOP from admitted-handle reparse guard; exact selected code must match roles",
+    "privateMismatch": "EIO without mutation",
+    "ownedRemoval": "removed; replacement case preserved",
+    "cloneLiveWriter": "EBUSY, unchanged source and absent destination",
+    "cloneNamedStream": "ENOTSUP, unchanged source and absent destination"
+  },
+  "timing": false,
+  "automaticRetry": false,
+  "originalBaselineRootSha256": "e467a13198720078aa8155914d2573692d2c5408fb35544496da66bc118f4f55",
+  "publishedWasm": {
+    "releaseCommit": "b7beb3e429973ce023a7e78faccf5f58adbcc934",
+    "releaseTag": "v0.19.0",
+    "releaseWorkflow": ".github/workflows/release.yml",
+    "releaseInvocation": "https://github.com/openclaw/fs-safe/actions/runs/36063685775/attempts/1",
+    "registryMetadataUrl": "https://registry.npmjs.org/@openclaw%2ffs-safe/0.19.0",
+    "registryAttestationsUrl": "https://registry.npmjs.org/-/npm/v1/attestations/@openclaw%2ffs-safe@0.19.0",
+    "tarUrl": "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.19.0.tgz",
+    "tarSha256": "f47db7d77056d8a202019a8cd791accfd6893816a34ea41027d41699fd0153f3",
+    "sha256": "182fc2e1ac12dfa06c4fc20d8e097b46b8481be1b5860a18aad16586d114dc94",
+    "bytes": 461974,
+    "mode": 493,
+    "member": "package/dist/archive-parser.wasm"
+  },
+  "wasmInputScopes": [
+    "archive-core",
+    "archive-wasm",
+    "scripts",
+    ".cargo",
+    ".github/actions/setup-archive-llvm",
+    ".github/workflows/release.yml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "native/Cargo.toml",
+    "native/build.rs",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "tsconfig.json"
+  ]
+}
