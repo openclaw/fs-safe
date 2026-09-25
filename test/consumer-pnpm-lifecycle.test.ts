@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -39,9 +39,17 @@ it.each(["pnpm.js", "pnpm.cjs", "pnpm.mjs"])("runs the %s lifecycle script throu
   expect(JSON.parse(output)).toEqual(["argument with spaces"]);
 });
 
-it.each(["pnpm-native", "pnpm-native.exe"])("accepts the %s native Corepack lifecycle executable", (name) => {
+it.each(["pnpm-native", "pnpm-native.exe"])("recognizes the %s native Corepack lifecycle header", (name) => {
   const cli = join(temporary(), name);
-  copyFileSync(process.execPath, cli);
+  // This checks header classification; the real CLI execution is covered above.
+  const header = Buffer.alloc(4);
+  const descriptor = openSync(process.execPath, "r");
+  try {
+    expect(readSync(descriptor, header, 0, header.length, 0)).toBe(header.length);
+  } finally {
+    closeSync(descriptor);
+  }
+  writeFileSync(cli, header);
   expect(resolvePnpmCommand(cli)).toEqual([realpathSync(cli)]);
 });
 
