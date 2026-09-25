@@ -95,12 +95,17 @@ recorded `publication`, and a cleanup receipt when applicable. Publication is
 does not rule out a committed remote rename whose response was lost. Only
 pre-dispatch rejection leaves publication `not-published`. After an indeterminate
 result, this owner cannot publish again or remove the possibly published name.
+If inspecting a native rename error itself fails, publication is likewise
+`indeterminate`; the original thrown value remains the reported cause.
 
 Cleanup records `temporaryBasename`, `publication`, `resources`
 (`closed` or `close-failed`), and `status` (`removed`, `name-absent`,
 `preserved`, `failed`, or `not-needed`). Failure closes every retained handle
 once and aggregates cleanup/close errors. A failed explicit recovery unlink is
 reported to its caller and is not converted into successful recovery by cleanup.
+Thrown values whose error metadata cannot be inspected are reported as
+`helper-failed` with the original value as `cause`; cleanup and recovery still
+cache their terminal error without retrying callbacks or descriptor closes.
 
 ## Limits
 

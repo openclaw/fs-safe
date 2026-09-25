@@ -27,8 +27,13 @@ function basename(name: string): void {
 }
 
 function failure(error: unknown, details: StagedSymlinkFailureDetails): FsSafeError {
-  const code = error instanceof FsSafeError ? error.code
-    : (error as NodeJS.ErrnoException)?.code === "EEXIST" ? "already-exists" : "helper-failed";
+  let code: FsSafeError["code"] = "helper-failed";
+  try {
+    code = error instanceof FsSafeError ? error.code
+      : (error as NodeJS.ErrnoException)?.code === "EEXIST" ? "already-exists" : "helper-failed";
+  } catch {
+    // Uninspectable error metadata must not interrupt terminal settlement.
+  }
   return new FsSafeError(code, `staged symlink ${details.phase} failed`, { cause: error, details });
 }
 
@@ -117,7 +122,11 @@ class NativeStagedSymlink implements StagedSymlink {
       try {
         this.#binding.publishStagedSymlink(this.#parentFd, this.#receipt.temporaryBasename, this.#linkFd, name);
       } catch (error) {
-        if (classifyNativeRenameFailure(error) === "indeterminate") {
+        let outcome = "indeterminate";
+        try { outcome = classifyNativeRenameFailure(error); } catch {
+          // Unreadable diagnostics cannot prove that the rename was uncommitted.
+        }
+        if (outcome === "indeterminate") {
           this.#publication = Object.freeze({ status: "indeterminate", basename: name, overwrite: false });
         }
         throw error;
@@ -154,7 +163,11 @@ class NativeStagedSymlink implements StagedSymlink {
     try {
       if (!this.#matches(name)) return "preserved";
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return "name-absent";
+      let missing = false;
+      try { missing = (error as NodeJS.ErrnoException)?.code === "ENOENT"; } catch {
+        // Even a failed errno inspection must retain the original cause.
+      }
+      if (missing) return "name-absent";
       throw error;
     }
     assertAuthority(this.#assertion);
