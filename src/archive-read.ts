@@ -28,7 +28,7 @@ import {
   createZipIntegrityTransform,
   normalizeZipIntegrityError,
 } from "./archive-zip-integrity.js";
-import { isZipSymlinkEntry, zipEntryKind, type ZipEntry } from "./archive-zip-entry.js";
+import { zipEntryMetadata, type ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -131,10 +131,11 @@ async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number,
   if (!entry || entry.dir) {
     throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
   }
-  if (isZipSymlinkEntry(entry)) {
+  const kind = zipEntryMetadata(entry).kind;
+  if (kind === "symlink") {
     throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
-  if (zipEntryKind(entry) !== "file") throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
+  if (kind !== "file") throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
   const integrity = createZipIntegrityTransform(entry);
   const stream: NodeJS.ReadableStream =
     typeof entry.nodeStream === "function"

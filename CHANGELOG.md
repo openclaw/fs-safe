@@ -12,6 +12,7 @@
 
 - **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
 - **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
+- Portable ZIP entry reads reject decoder entries replaced after preflight before invoking the payload reader.
 
 ## 0.19.0 - 2026-09-24
 

@@ -2,6 +2,7 @@ import {
   createTarEntryPlanner,
   createArchiveEntrySelector,
   resolveArchiveFilteredEntryPolicy,
+  resolveArchiveEntryMode,
   type ExtractArchiveOptions,
   type StagedArchiveExtractOptions,
   createArchiveEntryPlanner,
@@ -40,9 +41,7 @@ import { withStagedArchivePublication, type ArchivePublicationEntry } from "./ar
 import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
 import { admittedZipEntries } from "./archive-zip-loader.js";
 import {
-  zipEntryKind,
-  zipEntryDeclaredSize,
-  zipEntryMode,
+  zipEntryMetadata,
   type ZipEntry,
 } from "./archive-zip-entry.js";
 import {
@@ -204,14 +203,18 @@ async function extractZip(params: StagedArchiveExtractOptions): Promise<void> {
     const acceptedEntries: ArchivePublicationEntry[] = [];
     for (const entry of entries) {
       deadline.check();
-      const entryKind = zipEntryKind(entry);
-      const relPath = select({ path: entry.name, kind: entryKind, size: zipEntryDeclaredSize(entry) });
+      const { kind: entryKind, size, mode: archivedMode } = zipEntryMetadata(entry);
+      const relPath = select({ path: entry.name, kind: entryKind, size });
       if (relPath === null) continue;
       if (entryKind === "symlink") {
         throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
       }
       if (entryKind === "other") continue;
-      const mode = zipEntryMode(entry, params.entryModes);
+      const mode = resolveArchiveEntryMode({
+        kind: entry.dir ? "directory" : "file",
+        archivedMode,
+        policy: params.entryModes,
+      });
       acceptedEntries.push({ path: relPath, kind: entry.dir ? "directory" : "file", mode });
       const outPath = path.join(stagingDir, relPath);
       await preparePrivateArchiveOutputPath({
