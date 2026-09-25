@@ -53,7 +53,9 @@ function commandChild() {
 beforeEach(() => {
   Object.defineProperty(process, "platform", { ...platform, value: "win32" });
   // node:path keeps its host implementation when process.platform is simulated.
-  vi.spyOn(path, "isAbsolute").mockImplementation(path.win32.isAbsolute);
+  if (platform.value !== "win32") {
+    vi.spyOn(path, "isAbsolute").mockImplementation(path.win32.isAbsolute);
+  }
   configureFsSafeNative({ mode: "off" });
   __resetNativeFallbackWarningsForTest();
   vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
