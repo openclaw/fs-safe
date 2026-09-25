@@ -59,12 +59,12 @@ describe("consumer registry fixture", () => {
   });
 
   it("does not inherit registry, auth, workspace, runtime injection, or proxy settings", () => {
-    for (const name of ["NPM_TOKEN", "NODE_AUTH_TOKEN", "NODE_PATH", "NODE_OPTIONS", "npm_config_registry", "HTTPS_PROXY", "PNPM_HOME"]) {
+    for (const name of ["NPM_TOKEN", "NODE_AUTH_TOKEN", "NODE_PATH", "NODE_OPTIONS", "NODE_ENV", "VITEST", "npm_config_registry", "HTTPS_PROXY", "PNPM_HOME"]) {
       vi.stubEnv(name, "not-for-consumer");
     }
     const directory = temporary();
     const env = isolatedConsumerEnv(directory);
-    for (const name of ["NPM_TOKEN", "NODE_AUTH_TOKEN", "NODE_PATH", "NODE_OPTIONS", "npm_config_registry", "HTTPS_PROXY", "PNPM_HOME"]) {
+    for (const name of ["NPM_TOKEN", "NODE_AUTH_TOKEN", "NODE_PATH", "NODE_OPTIONS", "NODE_ENV", "VITEST", "npm_config_registry", "HTTPS_PROXY", "PNPM_HOME"]) {
       expect(env[name]).toBeUndefined();
     }
     expect(env.HOME).toBe(directory);

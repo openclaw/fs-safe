@@ -244,13 +244,18 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           ...suffixExpected,
         }));
         writeFileSync(join(directory, "probe.mjs"), readFileSync(new URL("./consumer-install-probe.mjs", import.meta.url)));
-        await run([process.execPath, join(directory, "probe.mjs")], [], directory, env);
+        // Only this test probe enables guarded hooks; installs and other probes
+        // retain the isolated production environment. Never weaken the hook guard.
+        await run([process.execPath, join(directory, "probe.mjs")], [], directory, { ...env, NODE_ENV: "test" });
         const installed = readJson(join(directory, "installed.json"));
         writeFileSync(join(directory, "fixture.txt"), "abc");
         async function hash(mode, missing = false) {
           return run([process.execPath], ["--input-type=module", "--eval", hashScript, mode, missing ? "missing" : "present"], directory, env);
         }
-        const cases = { omitted, nativePackages: installed.nativePackages, cloneMetadata: installed.cloneMetadata };
+        assert.deepEqual(installed.watchRecovery, {
+          registrationError: "ENOENT", failedClose: "resolved", recoveredNativeEdit: true, workersAfterClose: 0,
+        }, "installed recovery proof must execute and survive receipt collection");
+        const cases = { omitted, nativePackages: installed.nativePackages, cloneMetadata: installed.cloneMetadata, watchRecovery: installed.watchRecovery };
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");
