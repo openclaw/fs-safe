@@ -96,6 +96,12 @@ if (scenario === "all") {
           onDirty(hint) { hints.push(hint); },
         });
         try {
+          if (watchMode === "node") {
+            await assert.rejects(observer.ready, error => error.code === "helper-unavailable" && error.details?.operation === "watch");
+            assert.equal(observer.health().mode, "node");
+            assert.equal(observer.health().state, "unavailable");
+            assert.equal(hints.length, 0);
+          } else {
           await observer.ready;
           fs.mkdirSync(path.join(directory, "watch-tree"), { recursive: true });
           fs.writeFileSync(path.join(directory, "watch-tree", "file"), watchMode);
@@ -103,10 +109,11 @@ if (scenario === "all") {
           assert.equal(observer.health().state, "ready");
           assert.ok(hints.length > 0);
           assert.equal(await safe.readText("watch-tree/file"), watchMode);
+          }
         } finally { await observer.close(); }
         assert.equal(observer.health().workers, 0);
         assert.equal(observer.health().directories, 0);
-        checks.push("watch " + watchMode + " readiness/reconciliation/joined close");
+        checks.push(watchMode === "node" ? "watch node refused without worker or implicit fallback" : "watch poll readiness/reconciliation/joined close");
       }
       const hashed = await sha256File(path.join(directory, "ordinary"));
       assert.deepEqual(hashed, { bytes: Buffer.byteLength("ordinary payload"),

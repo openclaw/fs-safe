@@ -6,10 +6,12 @@ import { assertRootIdentityCurrent } from "./root-context.js";
 import { rootHandleContext } from "./root-handle-context.js";
 import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { pinDirectoryOwned, pinnedDirectoryProcPath, type PinnedDirectory } from "./directory-durability.js";
+import { createDirectoryReceiptFromIdentity } from "./directory-receipt.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { admittedNativeChanges } from "./watch-alias.js";
 import { changedEntries, guardedHintChanges } from "./watch-hints.js";
-import { NodeWatchBackend, type NodeWatchBatch, type NodeWatchHint } from "./watch-node.js";
+import { assertNativeWatchSupported, NodeWatchBackend, type NodeWatchBatch, type NodeWatchHint } from "./watch-node.js";
 import { sameEntries, scanWatch, watchScopes, type DirectoryIdentity, type WatchSnapshot } from "./watch-scan.js";
 import type { WatchChange, WatchDirty, WatchFailure, WatchHealth, WatchOptions, WatchScope, WatchSubscription } from "./watch-types.js";
 export type * from "./watch-types.js";
@@ -64,6 +66,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let active: Promise<void> | undefined;
   let backend: NodeWatchBackend | undefined;
   const registered = new Map<string, DirectoryIdentity>();
+  const directoryPins = new Set<PinnedDirectory>();
   let observedDirectories = 0;
   let snapshot: WatchSnapshot | undefined;
   let resetRequested = false;
@@ -128,10 +131,16 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const retireBackend = async () => {
     const old = backend;
-    if (!old) { registered.clear(); observedDirectories = 0; return; }
-    try { await old.close(); }
-    catch (error) { retainRetirement(error); throw error; }
-    finally { if (backend === old) { backend = undefined; registered.clear(); observedDirectories = 0; } }
+    try { await old?.close(); }
+    catch (error) { retainRetirement(error); }
+    // A proc-fd watch must never outlive its descriptor owner: detach/join first,
+    // then release every pin, including an acquisition interrupted before add.
+    for (const pin of directoryPins) {
+      try { await pin.close(); } catch (error) { retainRetirement(error); }
+    }
+    directoryPins.clear();
+    if (backend === old) { backend = undefined; registered.clear(); observedDirectories = 0; }
+    if (retirementFailure) throw retirementFailure.error;
   };
   const lose = (error: unknown, operation: WatchFailure["operation"] = "scan") => {
     if (terminal || failure !== undefined) return;
@@ -175,6 +184,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const observe = async (g: Generation) => {
     check(g);
+    if (mode === "node") assertNativeWatchSupported();
     if (resetRequested) {
       await retireBackend(); check(g);
       snapshot = undefined; resetRequested = false;
@@ -211,19 +221,37 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       let next: WatchSnapshot;
       try {
         next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries }, g.abort.signal,
-          async (name, identity) => {
+          async (name, identity, guard) => {
             check(g);
             // A native recursive Root owns no descendant registrations to retire.
             // The scanner still independently guards/bounds every directory.
-            if (name && backend?.recursiveRoot) return;
             const existing = registered.get(name);
             if (existing && (existing.dev !== identity.dev || existing.ino !== identity.ino)) throw restart;
-            if (existing) return;
+            const acquire = !existing && !(name && backend?.recursiveRoot);
             // Admission budget includes registrations from the previous scan.
-            if (registered.size >= maxDirectories) throw restart;
-            await backend?.add(path.join(context.rootReal, name), name);
+            if (acquire && registered.size >= maxDirectories) throw restart;
+            let watchPath = path.join(context.rootReal, name);
+            if (acquire && backend && process.platform === "linux") {
+              // Reuse the exact guarded observation, never recapture pathname authority.
+              const receipt = createDirectoryReceiptFromIdentity(guard.dir, guard.realPath, guard.stat);
+              let pin: PinnedDirectory;
+              try { pin = await pinDirectoryOwned(receipt, { label: "watch directory", onCleanupFailure: retainRetirement }); }
+              catch (cause) {
+                if (cause instanceof FsSafeError) throw cause;
+                throw new FsSafeError("helper-failed", "watch directory pin failed", { cause, details: { operation: "watch", code: (cause as NodeJS.ErrnoException | null)?.code } });
+              }
+              directoryPins.add(pin);
+              check(g);
+              try { watchPath = await pinnedDirectoryProcPath(pin); }
+              catch (cause) { throw new FsSafeError("helper-unavailable", "verified watch descriptor namespace is unavailable", { cause, details: { operation: "watch" } }); }
+            }
             check(g);
-            registered.set(name, identity);
+            await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
+            check(g);
+            if (acquire) await backend?.add(watchPath, name);
+            await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+            check(g);
+            if (acquire) registered.set(name, identity);
           }, retainRetirement);
         check(g);
         if ([...registered.keys()].some(name => !next.directories.has(name))) throw restart;

@@ -8,7 +8,7 @@ import { watch } from "../src/watch.js";
 const state = vi.hoisted(() => ({ created: 0, closed: 0, physical: [] as string[] }));
 // Isolate owner bookkeeping from the OS. Real recursive runtime and parser
 // qualification lives in watch.test/native-paths/worker-program and hosted CI.
-vi.mock("../src/watch-node.js", () => ({ NodeWatchBackend: class {
+vi.mock("../src/watch-node.js", () => ({ assertNativeWatchSupported() {}, nativeWatchSupported: true, NodeWatchBackend: class {
   readonly recursiveRoot = true;
   private closing?: Promise<void>;
   constructor() { state.created++; }

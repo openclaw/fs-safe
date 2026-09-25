@@ -4,6 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
+import { inspectDirectoryProcFd, inspectDirectoryProcFdSync } from "./directory-proc-fd.js";
 
 export type DirectoryModeChecks = {
   check?: () => void;
@@ -151,15 +152,7 @@ export async function pinNodeDirectoryForMode(
     };
     const procPath = `/proc/self/fd/${handle.fd}`;
     const assertProcAuthority = async () => {
-      // Authenticate the fd namespace, not the followed target's filesystem.
-      // This trusts host mount-namespace integrity, not privileged mount replacement.
-      const namespace = await fs.statfs("/proc/self/fd", { bigint: true });
-      if (namespace.type !== 0x9fa0n) {
-        throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
-      }
-      const opened = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), expected);
-      const followed = await inspectFileIdentity(() => fsSync.statSync(procPath, { bigint: true }), expected);
-      assertOwnedDirectory(opened, followed);
+      const { opened, followed } = await inspectDirectoryProcFd(handle.fd, expected);
       assertOwner(opened);
       assertOwner(followed);
     };
@@ -237,12 +230,7 @@ export function pinNodeDirectoryForModeSync(
   };
   const procPath = `/proc/self/fd/${fd}`;
   const assertProcAuthority = () => {
-    if (fsSync.statfsSync("/proc/self/fd", { bigint: true }).type !== 0x9fa0n) {
-      throw new FsSafeError("path-mismatch", "directory mode requires a trusted procfs fd namespace");
-    }
-    const opened = inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), expected);
-    const followed = inspectFileIdentitySync(() => fsSync.statSync(procPath, { bigint: true }), expected);
-    assertOwnedDirectory(opened, followed);
+    const { opened, followed } = inspectDirectoryProcFdSync(fd, expected);
     assertOwner(opened);
     assertOwner(followed);
   };

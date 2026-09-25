@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
-import { NodeWatchBackend } from "../src/watch-node.js";
+import { nativeWatchSupported, NodeWatchBackend } from "../src/watch-node.js";
 
 // Controlled resource-exhaustion injection; never change the host's limits.
 vi.mock("node:worker_threads", () => ({
@@ -9,7 +9,7 @@ vi.mock("node:worker_threads", () => ({
   },
 }));
 
-it("retains watch provenance when worker acquisition itself exhausts resources", () => {
+it.skipIf(!nativeWatchSupported)("retains watch provenance when worker acquisition itself exhausts resources", () => {
   let caught: unknown;
   try { new NodeWatchBackend(() => {}, () => {}, true, 2); }
   catch (error) { caught = error; }

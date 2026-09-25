@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchDirty, type WatchSubscription } from "../src/watch.js";
+import { nativeWatchSupported } from "../src/watch-node.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 let dir: string;
@@ -19,9 +20,11 @@ afterEach(async () => {
 });
 function own(owner: WatchSubscription) { owners.push(owner); return owner; }
 const scopes = [{ path: "tree", kind: "tree" as const }];
+const portableMode = nativeWatchSupported ? "node" : "poll";
 
 describe.each(["node", "poll"] as const)("watch %s", mode => {
-  it.each([0, 1, 2])("recovers missing descendants and observes later edits (fresh owner %s)", async () => {
+  const modeIt = it.skipIf(mode === "node" && !nativeWatchSupported);
+  modeIt.each([0, 1, 2])("recovers missing descendants and observes later edits (fresh owner %s)", async () => {
     const hints: WatchDirty[] = [];
     const admitted = await root(dir);
     let backends = 0;
@@ -54,7 +57,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     await owner.close();
     expect(owner.health()).toMatchObject({ state: "closed", directories: 0, workers: 0 });
   });
-  it("never repins a replacement authority Root", async () => {
+  modeIt("never repins a replacement authority Root", async () => {
     const admitted = path.join(dir, "authority");
     await fs.mkdir(admitted);
     const owner = own(watch(await root(admitted), { mode, scopes: [{ path: "", kind: "tree" }], onDirty() {} }));
@@ -66,7 +69,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     await expect(owner.close()).resolves.toBeUndefined();
     expect(owner.health().error).toMatchObject({ code: "path-mismatch" });
   });
-  it("uses directory-only registrations and respects depth/exclusions", async () => {
+  modeIt("uses directory-only registrations and respects depth/exclusions", async () => {
     await fs.mkdir(path.join(dir, "tree/child/deep"), { recursive: true });
     await fs.mkdir(path.join(dir, "tree/ignored"));
     await Promise.all(Array.from({ length: 100 }, (_, i) => fs.writeFile(path.join(dir, "tree", String(i)), "x")));
@@ -77,7 +80,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     expect(owner.health().workers).toBe(mode === "node" ? 1 : 0);
     expect(owner.health().scannedEntries).toBeGreaterThan(100);
   });
-  it("rejects partial admission when the entry budget is exhausted", async () => {
+  modeIt("rejects partial admission when the entry budget is exhausted", async () => {
     await fs.writeFile(path.join(dir, "one"), "1");
     await fs.writeFile(path.join(dir, "two"), "2");
     const owner = own(watch(await root(dir), { mode, scopes: [{ path: "", kind: "tree" }], maxEntries: 1, onDirty() {} }));
@@ -87,7 +90,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     await expect(owner.close()).resolves.toBeUndefined();
     expect(owner.health().error).toMatchObject({ code: "too-large" });
   });
-  it("observes symlink entries without adopting their targets", async () => {
+  modeIt("observes symlink entries without adopting their targets", async () => {
     await fs.mkdir(path.join(dir, "target"));
     await fs.symlink(path.join(dir, "target"), path.join(dir, "link"), process.platform === "win32" ? "junction" : "dir");
     const owner = own(watch(await root(dir), { mode, scopes: [{ path: "link", kind: "tree" }], onDirty() {} }));
@@ -96,7 +99,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     const invalid = own(watch(await root(dir), { mode, scopes: [{ path: "link/file", kind: "entry" }], onDirty() {} }));
     await expect(invalid.ready).rejects.toMatchObject({ code: "symlink" });
   });
-  it("keeps literal tilde names and rejects escaping scope inputs", async () => {
+  modeIt("keeps literal tilde names and rejects escaping scope inputs", async () => {
     await fs.mkdir(path.join(dir, "~"));
     const admitted = await root(dir);
     const owner = own(watch(admitted, { mode, scopes: [{ path: "~", kind: "tree" }], onDirty() {} }));
@@ -112,7 +115,7 @@ it("joins a held scan and prevents late acquisition when close races startup", a
   const barrier = new Promise<void>(resolve => { entered = resolve; });
   const held = new Promise<void>(resolve => { release = resolve; });
   __setFsSafeTestHooksForTest({ beforeWatchRegistration: async () => { entered(); await held; } });
-  const owner = own(watch(await root(dir), { scopes, onDirty() {} }));
+  const owner = own(watch(await root(dir), { mode: portableMode, scopes, onDirty() {} }));
   await barrier;
   let closed = false;
   const closing = owner.close().then(() => { closed = true; });
@@ -127,14 +130,14 @@ it("joins a held scan and prevents late acquisition when close races startup", a
 it("permits synchronous retirement during initial dirty publication", async () => {
   const admitted = await root(dir);
   let owner!: WatchSubscription;
-  owner = own(watch(admitted, { scopes, onDirty() { void owner.close(); } }));
+  owner = own(watch(admitted, { mode: portableMode, scopes, onDirty() { void owner.close(); } }));
   await expect(owner.ready).rejects.toMatchObject({ name: "AbortError" });
   await owner.close();
   expect(owner.health().state).toBe("closed");
 });
 it("fences superseded target updates, including the readiness microtask", async () => {
   const hints: WatchDirty[] = [];
-  const owner = own(watch(await root(dir), { scopes, onDirty: hint => { hints.push(hint); } }));
+  const owner = own(watch(await root(dir), { mode: portableMode, scopes, onDirty: hint => { hints.push(hint); } }));
   await owner.ready;
   const superseded = owner.update([{ path: "old", kind: "tree" }]);
   const latest = owner.update([{ path: "new", kind: "tree" }]);
@@ -145,7 +148,7 @@ it("fences superseded target updates, including the readiness microtask", async 
   await owner.close();
   await expect(owner.update(scopes)).rejects.toMatchObject({ name: "AbortError" });
 });
-it("delivers real edits without explicit reconciliation", async () => {
+it.skipIf(!nativeWatchSupported)("delivers real edits without explicit reconciliation", async () => {
   await fs.mkdir(path.join(dir, "tree"));
   const hints: WatchDirty[] = [];
   const admitted = await root(dir);
@@ -179,7 +182,7 @@ it("does not treat children of an exact directory entry as selected changes", as
 });
 
 
-it("does not publish filenames from a watched directory moved outside its Root", async () => {
+it.skipIf(!nativeWatchSupported)("does not publish filenames from a watched directory moved outside its Root", async () => {
   const authority = path.join(dir, "authority");
   await fs.mkdir(path.join(authority, "tree"), { recursive: true });
   const hints: WatchDirty[] = [];
@@ -194,7 +197,7 @@ it("does not publish filenames from a watched directory moved outside its Root",
 });
 
 
-it("quarantines raw filenames after a registration swap-and-restore", async () => {
+it.skipIf(!nativeWatchSupported)("quarantines raw filenames after a registration swap-and-restore", async () => {
   const authority = path.join(dir, "authority");
   const watched = path.join(authority, "tree");
   const saved = path.join(authority, "saved");
@@ -227,10 +230,14 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
   expect(restored).toBe(true);
   hints.length = 0;
   await fs.writeFile(path.join(outside, "private-outside-name"), "outside");
-  // Linux’s inode watcher exercises the real misbinding. Root-recursive Windows/macOS
-  // need not misbind at all; inject the same untrusted normalized payload there
-  // (and on every host) rather than requiring an outside event to exist.
-  if (process.platform === "linux") await expect.poll(() => hints.length).toBeGreaterThan(0);
+  // Linux descriptor binding must prevent the old outside-inode misbinding.
+  // This bounded negative window is not a startup delay for any positive test.
+  if (process.platform === "linux") {
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(hints).toEqual([]);
+  }
+  // Separately exercise publication defense against an injected stale payload;
+  // injection is not evidence that a real outside edit reached this observer.
   expect(inject).toBeTypeOf("function");
   const beforeInjection = hints.length;
   inject!({ overflow: false, hints: [{ directory: "tree", name: "private-outside-name", event: "rename" }] });

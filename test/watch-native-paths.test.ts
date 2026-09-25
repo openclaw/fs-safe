@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { nativeWatchSupported } from "../src/watch-node.js";
 import { root } from "../src/root.js";
 import { watch, type WatchDirty, type WatchSubscription } from "../src/watch.js";
 
@@ -11,7 +12,7 @@ beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-watch
 afterEach(async () => { await owner?.close(); await fs.rm(dir, { recursive: true, force: true }); });
 
 for (const name of ["deep/nested/file", "deep/nested/é.md", "literal\\directory:part/nested/file:part"]) {
-  it.skipIf(process.platform === "win32" && name.includes(":"))("observes native same-metadata edit: " + name, async () => {
+  it.skipIf(!nativeWatchSupported)("observes native same-metadata edit: " + name, async () => {
     const absolute = path.join(dir, name);
     await fs.mkdir(path.dirname(absolute), { recursive: true });
     await fs.writeFile(absolute, "before");

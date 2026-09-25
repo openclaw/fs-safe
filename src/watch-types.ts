@@ -37,7 +37,8 @@ export type WatchHealth = Readonly<{
 }>;
 export type WatchOptions = {
   scopes: readonly WatchScope[];
-  /** No implicit fallback. Node uses an owned, joined worker. Default: node. */
+  /** No implicit fallback. Native node mode requires Linux Node.js and verified
+   * procfs; other runtimes must explicitly select poll. Default: node. */
   mode?: "node" | "poll";
   /** Guarded metadata reconciliation interval. Default: 30000 (node), 1000 (poll). */
   intervalMs?: number;

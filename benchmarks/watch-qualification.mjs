@@ -29,6 +29,11 @@ try {
     const beforeRss = process.memoryUsage().rss;
     const observer = watch(admitted, { mode, intervalMs: 30_000, scopes: [{ path: "", kind: "tree" }], onDirty() { changes++; } });
     try {
+      if (mode === "node" && (process.platform !== "linux" || process.versions.bun || process.versions.deno)) {
+        await assert.rejects(observer.ready, error => error.code === "helper-unavailable");
+        results.push({ mode, status: "unsupported", workers: observer.health().workers });
+        continue;
+      }
       await observer.ready;
       const startupMs = performance.now() - started;
       const resources = observer.health();

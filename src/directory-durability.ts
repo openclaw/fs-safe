@@ -14,6 +14,8 @@ import {
   ownDirectoryReceipt,
 } from "./directory-receipt.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectDirectoryProcFd } from "./directory-proc-fd.js";
+import { createSuppressedError } from "./suppressed-error.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 
@@ -113,6 +115,15 @@ async function assertOpenDirectoryCurrent(
   await assertDirectoryReceiptCurrent(receipt, label);
 }
 
+const procPaths = new WeakMap<PinnedDirectory, () => Promise<string>>();
+
+/** Internal borrowed path: retain the genuine pin until its native user joins. */
+export async function pinnedDirectoryProcPath(pin: PinnedDirectory): Promise<string> {
+  const resolve = procPaths.get(pin);
+  if (!resolve) throw new FsSafeError("path-mismatch", "directory pin is not owned");
+  return await resolve();
+}
+
 class PinnedDirectoryImpl implements PinnedDirectory {
   readonly receipt: DirectoryReceipt;
   readonly #authority: DirectoryReceipt;
@@ -125,6 +136,15 @@ class PinnedDirectoryImpl implements PinnedDirectory {
     this.#authority = receipt;
     this.receipt = copyRetainedDirectoryReceipt(receipt);
     this.#label = label;
+    procPaths.set(this, async () => {
+      const check = () => {
+        if (this.#closed) throw new FsSafeError("path-mismatch", "directory pin is closed");
+      };
+      check();
+      const observation = await inspectDirectoryProcFd(this.#handle.fd, directoryReceiptAuthority(this.#authority).identity);
+      check();
+      return observation.path;
+    });
   }
 
   async assertCurrent(): Promise<void> {
@@ -162,6 +182,14 @@ export async function pinDirectory(
   directory: string | DirectoryReceipt<Stats | BigIntStats>,
   options: { label?: string } = {},
 ): Promise<PinnedDirectory> {
+  return await pinDirectoryOwned(directory, { label: options.label });
+}
+
+/** Internal acquisition that reports cleanup failure before ownership transfers. */
+export async function pinDirectoryOwned(
+  directory: string | DirectoryReceipt<Stats | BigIntStats>,
+  options: { label?: string; onCleanupFailure?: (error: unknown) => void } = {},
+): Promise<PinnedDirectory> {
   const label = options.label ?? "directory";
   const receipt =
     typeof directory === "string"
@@ -173,7 +201,13 @@ export async function pinDirectory(
     await assertOpenDirectoryCurrent(handle, receipt, label);
     return new PinnedDirectoryImpl(handle, receipt, label);
   } catch (error) {
-    await handle.close().catch(() => undefined);
+    try { await handle.close(); }
+    catch (closeError) {
+      if (options.onCleanupFailure) {
+        options.onCleanupFailure(closeError);
+        throw createSuppressedError(closeError, error, "directory pin admission and close failed");
+      }
+    }
     throw error;
   }
 }

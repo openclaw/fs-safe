@@ -3,6 +3,16 @@ import { FsSafeError } from "./errors.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { nativeRecursiveWatchPlatform, nodeWatchProgram } from "./watch-worker.js";
 
+// Other Node platforms reopen pathnames; Bun resolves proc-fd inputs back to
+// names before registration. Neither route currently preserves a retained pin.
+export const nativeWatchSupported = process.platform === "linux" && process.release.name === "node"
+  && !process.versions.bun && !process.versions.deno;
+export function assertNativeWatchSupported(): void {
+  if (!nativeWatchSupported) throw new FsSafeError("helper-unavailable",
+    "descriptor-bound native observation requires Node.js on Linux; select polling explicitly",
+    { details: { operation: "watch", platform: process.platform, runtime: process.versions.bun ? "bun" : "node" } });
+}
+
 export type NodeWatchHint = { directory: string; name: string | null; event: string };
 export type NodeWatchBatch = { hints: NodeWatchHint[]; overflow: boolean };
 
@@ -20,6 +30,7 @@ export class NodeWatchBackend {
   private closeReject?: (error: unknown) => void;
 
   constructor(onDirty: (batch: NodeWatchBatch) => void, onError: (error: unknown) => void, persistent: boolean, maxPendingPaths: number) {
+    assertNativeWatchSupported();
     try {
       this.worker = new Worker(nodeWatchProgram, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths, recursiveRoot: this.recursiveRoot, platform: process.platform } });
     } catch (cause) {

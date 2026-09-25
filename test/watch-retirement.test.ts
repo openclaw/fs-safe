@@ -5,7 +5,7 @@ import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchSubscription } from "../src/watch.js";
-import { NodeWatchBackend } from "../src/watch-node.js";
+import { nativeWatchSupported, NodeWatchBackend } from "../src/watch-node.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 let dir: string;
@@ -22,15 +22,25 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 function own(owner: WatchSubscription) { owners.push(owner); return owner; }
+function failNativeRegistration() {
+  const send = Worker.prototype.postMessage;
+  let injected = false;
+  // Fault the actual native add command; a retained pin now prevents the old
+  // pathname-removal fixture from making fs.watch itself see ENOENT.
+  return vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (this: Worker, message, transfer) {
+    if (!injected && message?.type === "add") {
+      injected = true;
+      message = { ...message, path: path.join(dir, "missing-native-target") };
+    }
+    return send.call(this, message, transfer);
+  });
+}
 
-it("joins failed real registration, then permits a new owner to observe a later edit", async () => {
+it.skipIf(!nativeWatchSupported)("joins failed real registration, then permits a new owner to observe a later edit", async () => {
   const authority = path.join(dir, "authority");
-  const saved = path.join(dir, "saved");
   await fs.mkdir(authority);
   const admitted = await root(authority);
-  __setFsSafeTestHooksForTest({ beforeWatchRegistration: async name => {
-    if (name === admitted.rootReal) await fs.rename(authority, saved);
-  } });
+  const fault = failNativeRegistration();
   const failed = own(watch(admitted, { scopes, onDirty() {} }));
   const observationError = await failed.ready.catch(error => error);
   expect(observationError).toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
@@ -40,8 +50,7 @@ it("joins failed real registration, then permits a new owner to observe a later 
   await expect(closing).resolves.toBeUndefined();
   expect(failed.health()).toMatchObject({ state: "closed", workers: 0, directories: 0, error: observationError, failure: { operation: "watch", code: "ENOENT" } });
   await expect(failed.update(scopes)).rejects.toMatchObject({ name: "AbortError" });
-  __setFsSafeTestHooksForTest();
-  await fs.rename(saved, authority);
+  fault.mockRestore();
   let hints = 0;
   const recovered = own(watch(admitted, { scopes, onDirty() { hints++; } }));
   await recovered.ready;
@@ -52,7 +61,7 @@ it("joins failed real registration, then permits a new owner to observe a later 
   await recovered.close();
 });
 
-it("rejects a real-worker termination request failure, joins exit and never rearms", async () => {
+it.skipIf(!nativeWatchSupported)("rejects a real-worker termination request failure, joins exit and never rearms", async () => {
   const owner = own(watch(await root(dir), { scopes, onDirty() {} }));
   await owner.ready;
   const terminationError = new Error("termination request failed");
@@ -71,15 +80,13 @@ it("rejects a real-worker termination request failure, joins exit and never rear
 });
 
 
-it("keeps an automatic retirement failure after the failed backend has been removed", async () => {
+it.skipIf(!nativeWatchSupported)("keeps an automatic retirement failure after the failed backend has been removed", async () => {
   const authority = path.join(dir, "authority");
   await fs.mkdir(authority);
   const admitted = await root(authority);
   const terminationError = new Error("failed-observer termination request");
   vi.spyOn(Worker.prototype, "terminate").mockRejectedValueOnce(terminationError);
-  __setFsSafeTestHooksForTest({ beforeWatchRegistration: async name => {
-    if (name === admitted.rootReal) await fs.rename(authority, path.join(dir, "saved"));
-  } });
+  failNativeRegistration();
   const owner = own(watch(admitted, { scopes, onDirty() {} }));
   const observationError = await owner.ready.catch(error => error);
   expect(observationError).toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
@@ -91,7 +98,7 @@ it("keeps an automatic retirement failure after the failed backend has been remo
   expect(owner.health()).toMatchObject({ state: "closed", failure: { operation: "close" }, error: { error: terminationError, suppressed: observationError } });
 });
 
-it("does not rearm an update after the first generation retirement fails", async () => {
+it.skipIf(!nativeWatchSupported)("does not rearm an update after the first generation retirement fails", async () => {
   let created = 0;
   __setFsSafeTestHooksForTest({ afterWatchBackendCreated: () => { created++; } });
   const owner = own(watch(await root(dir), { scopes, onDirty() {} }));
@@ -106,7 +113,7 @@ it("does not rearm an update after the first generation retirement fails", async
   expect(owner.health()).toMatchObject({ state: "closed", workers: 0 });
 });
 
-it("retains worker errors occurring after detach acknowledgement during join", async () => {
+it.skipIf(!nativeWatchSupported)("retains worker errors occurring after detach acknowledgement during join", async () => {
   const backend = new NodeWatchBackend(() => {}, () => {}, true, 2);
   const terminate = Worker.prototype.terminate;
   const joinError = new Error("worker failed during join");
@@ -119,7 +126,7 @@ it("retains worker errors occurring after detach acknowledgement during join", a
   await expect(backend.add(dir, "")).rejects.toMatchObject({ name: "AbortError" });
 });
 
-it("owns failed close-command transport and still joins the worker", async () => {
+it.skipIf(!nativeWatchSupported)("owns failed close-command transport and still joins the worker", async () => {
   const backend = new NodeWatchBackend(() => {}, () => {}, true, 2);
   // No registration is admitted in this fault fixture, including on runtimes
   // whose shared driver needs an explicit detach message to release watches.

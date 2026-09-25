@@ -13,10 +13,17 @@ export async function registerWatch({ api, workspace, register, contract }) {
   const initial = api.watch(root, { mode: "poll", scopes, onDirty() {} });
   try { contract("WatchSubscription", initial); await initial.ready; }
   finally { await initial.close(); }
+  const native = process.platform === "linux" && !process.versions.bun && !process.versions.deno;
   for (const mode of ["node", "poll"]) {
-    register("watch/" + mode + "-lifecycle", async () => {
+    const unavailable = mode === "node" && !native;
+    register("watch/" + mode + (unavailable ? "-unavailable" : "-lifecycle"), async () => {
       const owner = api.watch(root, { mode, scopes, onDirty() {} });
       try {
+        if (unavailable) {
+          await assert.rejects(owner.ready, error => error.code === "helper-unavailable");
+          assert.equal(owner.health().state, "unavailable");
+          return;
+        }
         await owner.ready;
         await owner.update([{ path: "file", kind: "entry" }]);
         await owner.reconcile();
@@ -24,7 +31,7 @@ export async function registerWatch({ api, workspace, register, contract }) {
       } finally { await owner.close(); }
       await owner[Symbol.asyncDispose]();
       assert.equal(owner.health().workers, 0);
-    }, { covers: ["watch", "WatchSubscription.update", "WatchSubscription.reconcile", "WatchSubscription.health", "WatchSubscription.close", "WatchSubscription.[Symbol.asyncDispose]"],
-      workloadSemantics: "One isolated subscription, entry update, guarded reconciliation and joined retirement; no throughput-win claim." });
+    }, { covers: unavailable ? ["watch", "WatchSubscription.health", "WatchSubscription.close"] : ["watch", "WatchSubscription.update", "WatchSubscription.reconcile", "WatchSubscription.health", "WatchSubscription.close", "WatchSubscription.[Symbol.asyncDispose]"],
+      workloadSemantics: unavailable ? "Unsupported native route refusal and joined close; not observation throughput." : "One isolated subscription, entry update, guarded reconciliation and joined retirement; no throughput-win claim." });
   }
 }

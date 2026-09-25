@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchSubscription } from "../src/watch.js";
-import { NodeWatchBackend } from "../src/watch-node.js";
+import { nativeWatchSupported, NodeWatchBackend } from "../src/watch-node.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "../src/config.js";
 let dir: string;
@@ -20,6 +20,7 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 const scopes = [{ path: "", kind: "tree" as const }];
+const portableMode = nativeWatchSupported ? "node" : "poll";
 async function inotifyState() {
   const descriptors = await fs.readdir("/proc/self/fd");
   const state = { descriptors: 0, watches: 0 };
@@ -32,9 +33,9 @@ async function inotifyState() {
   }
   return state;
 }
-it.skipIf(process.platform !== "linux")("joins the worker and releases every owned inotify watch", async () => {
+it.skipIf(!nativeWatchSupported)("joins the worker and releases every owned inotify watch", async () => {
   const before = await inotifyState();
-  const owner = watch(await root(dir), { scopes, onDirty() {} }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: portableMode, scopes, onDirty() {} }); owners.push(owner);
   await owner.ready;
   const during = await inotifyState();
   expect(during.watches).toBe(before.watches + 1);
@@ -48,14 +49,14 @@ it.skipIf(process.platform !== "linux")("joins the worker and releases every own
   expect(owner.health().workers).toBe(0);
 });
 it("enrolls and joins close before startup", async () => {
-  const owner = watch(await root(dir), { scopes, onDirty() { throw new Error("late callback"); } }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: portableMode, scopes, onDirty() { throw new Error("late callback"); } }); owners.push(owner);
   const closing = owner.close();
   await expect(owner.ready).rejects.toMatchObject({ name: "AbortError" });
   await closing;
   expect(owner.health()).toMatchObject({ state: "closed", directories: 0, workers: 0 });
 });
 it("retains callback failures and rejects asynchronous callbacks", async () => {
-  const owner = watch(await root(dir), { scopes, onDirty: async () => {} }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: portableMode, scopes, onDirty: async () => {} }); owners.push(owner);
   await expect(owner.ready).rejects.toMatchObject({ code: "helper-failed" });
   expect(owner.health().failure?.operation).toBe("callback");
   const first = owner.close();
@@ -63,7 +64,7 @@ it("retains callback failures and rejects asynchronous callbacks", async () => {
   await expect(first).resolves.toBeUndefined();
   expect(owner.health().error).toMatchObject({ code: "helper-failed" });
 });
-it("reports watch acquisition errors separately from successful joined close", async () => {
+it.skipIf(!nativeWatchSupported)("reports watch acquisition errors separately from successful joined close", async () => {
   const errors: unknown[] = [];
   const backend = new NodeWatchBackend(() => {}, error => { errors.push(error); }, true, 2);
   try {
@@ -73,11 +74,11 @@ it("reports watch acquisition errors separately from successful joined close", a
     await expect(backend.close()).resolves.toBeUndefined();
   }
 });
-it("honors native-off while providing Node observation", async () => {
+it.skipIf(!nativeWatchSupported)("honors native-off while providing Node observation", async () => {
   const previous = getFsSafeNativeConfig();
   configureFsSafeNative({ mode: "off" });
   try {
-    const owner = watch(await root(dir), { scopes, onDirty() {} }); owners.push(owner);
+    const owner = watch(await root(dir), { mode: portableMode, scopes, onDirty() {} }); owners.push(owner);
     await owner.ready;
     expect(owner.health()).toMatchObject({ mode: "node", state: "ready" });
     expect(getFsSafeNativeConfig().mode).toBe("off");
@@ -93,12 +94,12 @@ it("bounds churn instead of ever declaring partial readiness", async () => {
       await fs.mkdir(name);
     }
   } });
-  const owner = watch(await root(dir), { scopes: [{ path: "tree", kind: "tree" }], maxPasses: 3, onDirty() {} }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: portableMode, scopes: [{ path: "tree", kind: "tree" }], maxPasses: 3, onDirty() {} }); owners.push(owner);
   await expect(owner.ready).rejects.toMatchObject({ code: "timeout" });
   expect(owner.health().state).toBe("unavailable");
   expect(i).toBe(3);
 });
-it("bounds worker and callback queues under a burst", async () => {
+it.skipIf(!nativeWatchSupported)("bounds worker and callback queues under a burst", async () => {
   const events: { reason: string; count: number | undefined }[] = [];
   const owner = watch(await root(dir), { scopes, maxPendingPaths: 2, onDirty: hint => { events.push({ reason: hint.reason, count: hint.changes?.length }); } }); owners.push(owner);
   await owner.ready;
@@ -111,7 +112,7 @@ it("bounds worker and callback queues under a burst", async () => {
 });
 
 it("cannot reopen when a scope accessor closes during target admission", async () => {
-  const owner = watch(await root(dir), { scopes, onDirty() {} }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: portableMode, scopes, onDirty() {} }); owners.push(owner);
   await owner.ready;
   const update = owner.update([{ get path() { void owner.close(); return "next"; }, kind: "entry" }]);
   await expect(update).rejects.toMatchObject({ name: "AbortError" });
@@ -128,12 +129,12 @@ it("retains an undefined exclusion failure instead of treating it as success", a
   expect(owner.health().error).toMatchObject({ code: "helper-failed" });
 });
 
-it.skipIf(process.platform !== "linux")("closing one owner leaves a shared-runtime peer live without leaked watches", async () => {
+it.skipIf(!nativeWatchSupported)("closing one owner leaves a shared-runtime peer live without leaked watches", async () => {
   const before = await inotifyState();
   const admitted = await root(dir);
   let hints = 0;
-  const first = watch(admitted, { scopes, onDirty() {} }); owners.push(first);
-  const peer = watch(admitted, { scopes, onDirty() { hints++; } }); owners.push(peer);
+  const first = watch(admitted, { mode: portableMode, scopes, onDirty() {} }); owners.push(first);
+  const peer = watch(admitted, { mode: portableMode, scopes, onDirty() { hints++; } }); owners.push(peer);
   await Promise.all([first.ready, peer.ready]);
   await first.close();
   expect((await inotifyState()).watches).toBe(before.watches + 1);

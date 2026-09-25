@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 // Copied into each external consumer; all package resolution starts there.
@@ -164,64 +165,88 @@ const { watch } = await import("@openclaw/fs-safe/watch");
 const { root: watchRoot } = await import("@openclaw/fs-safe/root");
 const watchDirectory = join(consumer, "watch-proof");
 mkdirSync(watchDirectory);
+const nativeWatchExpected = process.platform === "linux" && process.release.name === "node" && !process.versions.bun && !process.versions.deno;
+const watchModes = [];
 for (const nativeMode of expected.omitted ? ["auto", "off"] : ["auto", "off", "require"]) {
   configureFsSafeNative({ mode: nativeMode });
   for (const mode of ["node", "poll"]) {
     const hints = [];
     const owner = watch(await watchRoot(watchDirectory), {
-      mode, scopes: [{ path: "missing/file", kind: "entry" }],
-      onDirty: hint => { hints.push(hint); },
+      mode, scopes: [{ path: "missing/file", kind: "entry" }], onDirty: hint => { hints.push(hint); },
     });
+    const unavailable = mode === "node" && !nativeWatchExpected;
     try {
-      await owner.ready;
-      mkdirSync(join(watchDirectory, "missing"), { recursive: true });
-      writeFileSync(join(watchDirectory, "missing/file"), nativeMode + mode);
-      await owner.reconcile();
-      assert.equal(owner.health().state, "ready");
-      assert.equal(owner.health().mode, mode);
-      assert.ok(hints.length >= 1);
-      assert.equal(owner.health().directories, mode === "node" ? (["win32", "darwin"].includes(process.platform) ? 1 : 2) : 0);
+      if (unavailable) {
+        await assert.rejects(owner.ready, error => error.code === "helper-unavailable" && error.details?.operation === "watch");
+        assert.equal(owner.health().mode, "node");
+        assert.equal(owner.health().state, "unavailable");
+        assert.equal(hints.length, 0);
+      } else {
+        await owner.ready;
+        mkdirSync(join(watchDirectory, "missing"), { recursive: true });
+        writeFileSync(join(watchDirectory, "missing/file"), nativeMode + mode);
+        await owner.reconcile();
+        assert.equal(owner.health().state, "ready");
+        assert.equal(owner.health().mode, mode);
+        assert.ok(hints.length >= 1);
+        assert.equal(owner.health().directories, mode === "node" ? 2 : 0);
+      }
     } finally { await owner.close(); }
     assert.equal(owner.health().workers, 0);
     assert.equal(owner.health().directories, 0);
+    watchModes.push({ nativePolicy: nativeMode, mode, status: unavailable ? "unavailable" : "ready", workersAfterClose: 0 });
   }
 }
 
-
-// A failed observation must not poison successful retirement or consumer retry.
-// This runs against the actual installed tarball, including omitted optionals.
+// Fault injection is explicit and isolated to this consumer process. Require a
+// real OS add failure for native observation; portable polling uses Root loss.
 configureFsSafeNative({ mode: "off" });
-const { __setFsSafeTestHooksForTest } = await import("@openclaw/fs-safe/test-hooks");
 const recoveryPath = join(watchDirectory, "recovery");
-const savedPath = join(watchDirectory, "retired-recovery");
+const savedPath = join(watchDirectory, "recovery-displaced");
 mkdirSync(recoveryPath);
 const recoveryRoot = await watchRoot(recoveryPath);
-__setFsSafeTestHooksForTest({ beforeWatchRegistration(name) {
-  if (name === recoveryRoot.rootReal) renameSync(recoveryPath, savedPath);
-} });
-const failedWatch = watch(recoveryRoot, { scopes: [{ path: "", kind: "tree" }], onDirty() {} });
+const recoveryMode = nativeWatchExpected ? "node" : "poll";
+const postMessage = Worker.prototype.postMessage;
+let failedAddInjected = false;
+if (nativeWatchExpected) Worker.prototype.postMessage = function (command, ...args) {
+  if (!failedAddInjected && command?.type === "add") {
+    failedAddInjected = true;
+    command = { ...command, path: join(recoveryPath, "missing-native-target") };
+  }
+  return postMessage.call(this, command, ...args);
+};
+const failedWatch = watch(recoveryRoot, { mode: recoveryMode, scopes: [{ path: "", kind: "tree" }], onDirty() {} });
+if (!nativeWatchExpected) renameSync(recoveryPath, savedPath);
+const expectedError = nativeWatchExpected ? "ENOENT" : "path-mismatch";
 try {
-  await assert.rejects(failedWatch.ready, error => error.details?.operation === "watch" && error.details?.code === "ENOENT");
+  await assert.rejects(failedWatch.ready, error => (nativeWatchExpected ? error.details?.code : error.code) === expectedError);
+  assert.equal(failedAddInjected, nativeWatchExpected);
 } finally {
-  __setFsSafeTestHooksForTest();
+  Worker.prototype.postMessage = postMessage;
   await failedWatch.close();
+  if (!nativeWatchExpected) renameSync(savedPath, recoveryPath);
 }
 assert.equal(failedWatch.health().workers, 0);
 assert.equal(failedWatch.health().directories, 0);
-assert.equal(failedWatch.health().error.details.code, "ENOENT");
-renameSync(savedPath, recoveryPath);
+assert.equal(nativeWatchExpected ? failedWatch.health().error.details.code : failedWatch.health().error.code, expectedError);
 let recoveryHints = 0;
-const recoveredWatch = watch(recoveryRoot, { scopes: [{ path: "", kind: "tree" }], onDirty() { recoveryHints++; } });
+const recoveredWatch = watch(recoveryRoot, { mode: recoveryMode, intervalMs: nativeWatchExpected ? 30_000 : 20,
+  scopes: [{ path: "", kind: "tree" }], onDirty() { recoveryHints++; } });
 try {
   await recoveredWatch.ready;
   recoveryHints = 0;
   writeFileSync(join(recoveryPath, "later"), "recovered");
   const deadline = Date.now() + 5000;
   while (!recoveryHints && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-  assert.ok(recoveryHints > 0, "new subscription must observe a later native edit without manual reconciliation");
+  assert.ok(recoveryHints > 0, "new subscription must observe a later edit without manual reconciliation");
   assert.equal(await recoveryRoot.readText("later"), "recovered");
 } finally { await recoveredWatch.close(); }
 assert.equal(recoveredWatch.health().workers, 0);
 const installed = JSON.parse(readFileSync("installed.json", "utf8"));
-installed.watchRecovery = { registrationError: "ENOENT", failedClose: "resolved", recoveredNativeEdit: true, workersAfterClose: 0 };
+installed.watchModes = watchModes;
+installed.watchRecovery = {
+  mode: recoveryMode, faultInjection: nativeWatchExpected ? "missing-native-path" : "moved-authority",
+  observationError: expectedError, failureOperation: failedWatch.health().failure.operation,
+  failedClose: "resolved", recoveredEdit: true, recoveredNativeEdit: nativeWatchExpected, workersAfterClose: 0,
+};
 writeFileSync("installed.json", JSON.stringify(installed));

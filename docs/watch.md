@@ -11,6 +11,7 @@ import { watch } from "@openclaw/fs-safe/watch";
 
 const admitted = await root("/trusted/workspace");
 const observer = watch(admitted, {
+  mode: "poll", // Portable choice; native "node" mode requires Linux Node.js.
   scopes: [
     { path: "config.json", kind: "entry" },
     { path: "skills", kind: "tree", depth: 8 },
@@ -44,9 +45,9 @@ The subscription reuses the Root’s exact admitted identity; it never obtains n
 authority from its public pathname fields.
 
 A missing descendant is observable through its existing ancestors **inside that
-Root**. Linux registers selected ancestor directories non-recursively; macOS
-and Windows retain one native recursive Root registration. Only relevant
-descendants are traversed by guarded reconciliation. A missing authority Root
+Root**. The qualified Linux Node backend registers selected ancestor directories
+non-recursively through retained directory descriptors. Explicit polling uses
+only guarded reconciliation; only relevant descendants are traversed. A missing authority Root
 cannot be opened. Admit an appropriate stable ancestor explicitly before constructing the subscription. If the admitted
 Root disappears or is replaced, observation fails; it never climbs above the
 Root or repins its replacement.
@@ -94,15 +95,16 @@ directory registrations have been accepted and two bounded, guarded metadata
 scans agree within the pass budget. There is no successful partially admitted
 ready result. Replacement of a physically registered directory retires the old
 backend before reacquisition; exact directory identities detect stale registrations.
-On native-recursive platforms, descendant inventory changes do not replace the
-physical Root registration. Each scan still revalidates every traversed directory
-and the pinned Root; logical inventory is not a physical registration receipt.
+Each scan revalidates every traversed directory and the pinned Root; logical
+inventory is not a physical registration receipt. Polling has no native
+registration to reacquire.
 
 **Ready is not continuous coverage.** A worker command reply orders our commands,
-not the OS event stream. In particular it does not flush macOS FSEvents or prove
-that a runtime’s asynchronous native startup has finished. Path-based registration
-plus before/after identity checks cannot prove binding during swap-and-restore.
-Operation-local listing guards are never retained as continuous-coverage receipts.
+not the OS event stream. Directory pins protect registration identity, not a
+complete event history or permanent pathname membership. Pathname-only transports
+(including Darwin FSEvents) are deferred rather than treating before/after scans
+as binding proof. Operation-local listing guards are never retained as
+continuous-coverage receipts.
 
 Periodic guarded metadata reconciliation and explicit `reconcile()` supply a
 boundary independent of event delivery. Concurrent requests coalesce. Metadata
@@ -124,15 +126,22 @@ fallback or infinite retry occurs.
 ## Modes, budgets and lifetime
 
 - `mode: "node"` (default): one owned Node worker per subscription with
-  directory-only `fs.watch` registrations. Linux uses non-recursive registrations;
-  macOS and Windows use one native recursive registration at the admitted Root.
-  There are no per-file watches. Keeping that Root registration through descendant
-  inventory changes avoids incremental Darwin FSEvents stream reconfiguration
-  and Windows child handles that prevent ancestor moves. Raw recursive hints
-  may cover unselected descendants; guarded scope reconciliation filters them
-  before publication. Darwin slash paths preserve literal backslashes/colons;
-  Windows separators retain their distinct validation. Neither case nor Unicode
-  spelling is folded into authority.
+  directory-only `fs.watch` registrations. Linux uses non-recursive registrations
+  through verified proc-fd paths backed by retained, exact-identity directory pins;
+  missing or untrusted procfs fails closed without pathname fallback.
+  Native mode is currently supported only by Node.js on Linux; other platforms
+  and runtimes, including Bun, fail readiness with `helper-unavailable` and
+  `failure.operation: "watch"`, without allocating a worker or silently polling.
+  There are no per-file watches. Linux retains one directory descriptor per
+  registration until detach/join completes, so descriptor limits remain a real
+  admission constraint. A pin prevents adoption of a different symlink target
+  during registration; it does not prove continuous path membership after moves.
+  Pathname-based Darwin/Windows native transports are deferred until a
+  handle-bound route can preserve the same registration authority. Bun 1.4.2
+  canonicalizes proc-fd inputs back into pathnames before adding its watcher,
+  so it is not a qualified descriptor-bound native route either. Select
+  `mode: "poll"` explicitly on these runtimes; do not catch and ignore close
+  failures to implement an implicit fallback.
   Default guarded reconciliation interval: 30,000 ms.
 - `mode: "poll"`: no watch worker; explicit guarded metadata polling, default
   interval 1,000 ms. It does not hash file content.
@@ -192,10 +201,11 @@ Application-owned asynchronous work is not joined by this subscription.
 
 ## Native availability and backend selection
 
-The watch transport does not require the optional Rust addon. Existing guarded
+The supported Linux Node watch transport does not require the optional Rust addon. Existing guarded
 Root/listing operations retain their normal native policy; observation never
 rewrites `off` to `auto` or changes `require`. Native-disabled/missing-addon and
-Bun behavior must be distinguished from native-enabled package validation.
+Bun polling and native-refusal behavior must be distinguished from qualified
+Linux Node native observation and from native-addon package validation.
 
 Rust notify 8.2.0 was evaluated first. Its released Linux and Windows event-loop
 implementations discard worker join handles, so dropping the watcher does not

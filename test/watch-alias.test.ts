@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { nativeWatchSupported } from "../src/watch-node.js";
 import { root } from "../src/root.js";
 import { watch, type WatchDirty, type WatchSubscription } from "../src/watch.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
@@ -12,7 +13,7 @@ beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-watch
 afterEach(async () => { await Promise.allSettled(owners.map(owner => owner.close())); await fs.rm(dir, { recursive: true, force: true }); });
 
 describe.each(["node", "poll"] as const)("filesystem scope spelling (%s)", mode => {
-  it("uses real filesystem lookup for exact entries and prefix scopes", async () => {
+  it.skipIf(mode === "node" && !nativeWatchSupported)("uses real filesystem lookup for exact entries and prefix scopes", async () => {
     await fs.mkdir(path.join(dir, "MixedDir"));
     await fs.writeFile(path.join(dir, "MixedDir/Entry.TXT"), "before");
     const actual = await fs.lstat(path.join(dir, "MixedDir/Entry.TXT"), { bigint: true });
@@ -52,7 +53,7 @@ it.skipIf(process.platform !== "win32")("does not merge case-distinct entries on
   await fs.writeFile(path.join(dir, "entry"), "selected");
   await fs.writeFile(path.join(dir, "ENTRY"), "distinct");
   const hints: WatchDirty[] = [];
-  const owner = watch(await root(dir), { scopes: [{ path: "entry", kind: "entry" }], onDirty: hint => { hints.push(hint); } }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: "poll", scopes: [{ path: "entry", kind: "entry" }], onDirty: hint => { hints.push(hint); } }); owners.push(owner);
   await owner.ready; hints.length = 0;
   await fs.writeFile(path.join(dir, "ENTRY"), "other edit");
   await owner.reconcile();
@@ -62,7 +63,7 @@ it.skipIf(process.platform !== "win32")("does not merge case-distinct entries on
   expect(hints.some(hint => hint.changes?.some(change => change.path === "entry"))).toBe(true);
 }, 20_000);
 
-it.skipIf(process.platform !== "win32")("observes an exact Windows short-name alias without lexical hint loss", async () => {
+it.skipIf(process.platform !== "win32")("observes an exact Windows short-name alias through explicit polling", async () => {
   const long = path.join(dir, "LongFileNameForWatch.txt");
   await fs.writeFile(long, "before");
   const assigned = spawnSync(resolveWindowsSystemCommand("fsutil.exe"), ["file", "setshortname", long, "WATCH~1.TXT"], { encoding: "utf8", timeout: 10_000, windowsHide: true });
@@ -72,7 +73,7 @@ it.skipIf(process.platform !== "win32")("observes an exact Windows short-name al
   const short = await fs.lstat(path.join(dir, "WATCH~1.TXT"), { bigint: true });
   expect([short.dev, short.ino]).toEqual([expected.dev, expected.ino]);
   const hints: WatchDirty[] = [];
-  const owner = watch(await root(dir), { scopes: [{ path: "WATCH~1.TXT", kind: "entry" }], onDirty: hint => { hints.push(hint); } }); owners.push(owner);
+  const owner = watch(await root(dir), { mode: "poll", intervalMs: 20, scopes: [{ path: "WATCH~1.TXT", kind: "entry" }], onDirty: hint => { hints.push(hint); } }); owners.push(owner);
   await owner.ready; hints.length = 0;
   await fs.writeFile(long, "later real edit");
   await expect.poll(() => hints.length).toBeGreaterThan(0);

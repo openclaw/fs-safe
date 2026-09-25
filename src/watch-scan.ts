@@ -4,7 +4,6 @@ import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { assertRootIdentityCurrent, assertValidRootRelativePath, resolvePathInRoot, type RootContext } from "./root-context.js";
 import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, openRootDirectoryListing, type RootDirectoryObservationGuard } from "./root-directory-list.js";
-import { getFsSafeTestHooks } from "./test-hooks.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
 import type { DirEntry } from "./types.js";
@@ -47,7 +46,7 @@ export async function scanWatch(
   scopes: readonly WatchScope[],
   options: Pick<WatchOptions, "exclude"> & { maxEntries: number; maxDirectories: number },
   signal: AbortSignal,
-  register: (name: string, identity: DirectoryIdentity) => Promise<void>,
+  register: (name: string, identity: DirectoryIdentity, guard: RootDirectoryObservationGuard) => Promise<void>,
   onCleanupFailure?: (error: unknown) => void,
 ): Promise<WatchSnapshot> {
   const result: WatchSnapshot = { entries: new Map(), directories: new Map(), targets: new Map(), scanned: 0 };
@@ -77,10 +76,7 @@ export async function scanWatch(
     const identity = { dev: guard.stat.dev, ino: guard.stat.ino };
     result.directories.set(relative, identity);
     guards.set(relative, guard);
-    await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
-    signal.throwIfAborted();
-    await register(relative, identity);
-    await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+    await register(relative, identity, guard);
     signal.throwIfAborted();
     await assertRootDirectoryObservationGuard(root, guard);
     return guard;
