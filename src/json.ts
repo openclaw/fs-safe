@@ -28,19 +28,16 @@ async function readRegularFileWithRetry(
   filePath: string,
   maxBytes?: number,
 ): Promise<Buffer> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < READ_RETRY_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       return (await readRegularFile({ filePath, maxBytes })).buffer;
     } catch (err) {
-      lastErr = err;
       if (!isRetryableReadError(err) || attempt === READ_RETRY_MAX_ATTEMPTS - 1) {
         throw err;
       }
       await sleep(READ_RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
     }
   }
-  throw lastErr;
 }
 
 async function readRegularFileIfExistsWithRetry(
@@ -165,6 +162,14 @@ export class JsonFileReadError extends Error {
     this.name = "JsonFileReadError";
     this.filePath = filePath;
     this.reason = reason;
+  }
+}
+
+function parseJsonFile<T>(filePath: string, raw: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    throw new JsonFileReadError(filePath, "parse", err);
   }
 }
 
@@ -333,11 +338,7 @@ export async function readJson<T>(filePath: string, options: ReadJsonOptions = {
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);
   }
-  try {
-    return JSON.parse(raw) as T;
-  } catch (err) {
-    throw new JsonFileReadError(filePath, "parse", err);
-  }
+  return parseJsonFile<T>(filePath, raw);
 }
 
 export async function readJsonIfExists<T>(
@@ -357,11 +358,7 @@ export async function readJsonIfExists<T>(
     }
     throw new JsonFileReadError(filePath, "read", err);
   }
-  try {
-    return JSON.parse(raw) as T;
-  } catch (err) {
-    throw new JsonFileReadError(filePath, "parse", err);
-  }
+  return parseJsonFile<T>(filePath, raw);
 }
 
 export function readJsonSync<T = unknown>(
@@ -374,11 +371,7 @@ export function readJsonSync<T = unknown>(
   } catch (err) {
     throw new JsonFileReadError(filePath, "read", err);
   }
-  try {
-    return JSON.parse(raw) as T;
-  } catch (err) {
-    throw new JsonFileReadError(filePath, "parse", err);
-  }
+  return parseJsonFile<T>(filePath, raw);
 }
 
 export type WriteJsonOptions = Pick<
