@@ -179,38 +179,58 @@ function Toolchain-Snapshot {
     return [ordered]@{ rustc=(& rustc --version --verbose)-join "`n"; cargo=(& cargo --version).Trim(); node=(& node --version).Trim(); pnpm=(& pnpm.cmd --version).Trim(); bun=(& $bunExe --version).Trim(); msvc=$env:VCToolsVersion; windowsSdk=$env:WindowsSDKVersion; files=$files }
 }
 
+function Complete-BunOperation($failure, [object[]]$resources) {
+    $cleanupFailures=[Collections.Generic.List[Exception]]::new()
+    foreach ($resource in $resources) {
+        if ($null -eq $resource) { continue }
+        try { $resource.Dispose() } catch { $cleanupFailures.Add($_.Exception) }
+    }
+    if ($cleanupFailures.Count) {
+        if ($failure) { $cleanupFailures.Insert(0,$failure.Exception) }
+        throw [AggregateException]::new('Bun operation or resource cleanup failed.', $cleanupFailures.ToArray())
+    }
+    if ($failure) { throw $failure }
+}
+
+function Copy-BunStream([IO.Stream]$source, [string]$destination, [long]$maximumBytes, [string]$capMessage,
+    [switch]$Async, [Threading.CancellationToken]$cancellationToken = [Threading.CancellationToken]::None) {
+    $file=$null; $failure=$null; $total=0L
+    try {
+        $file=[IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $buffer=[byte[]]::new(65536)
+        while ($true) {
+            $length=if ($Async) { $source.ReadAsync($buffer,0,$buffer.Length,$cancellationToken).GetAwaiter().GetResult() } else { $source.Read($buffer,0,$buffer.Length) }
+            if ($length -eq 0) { break }
+            $total+=$length; if ($total -gt $maximumBytes) { throw $capMessage }
+            $file.Write($buffer,0,$length)
+        }
+    } catch { $failure=$_ }
+    finally { Complete-BunOperation $failure @($file,$source) }
+    return $total
+}
+
 function Prepare-Bun {
     $archive=Join-Path $root 'bun.zip'
     $client=[Net.Http.HttpClient]::new(); $cancellation=[Threading.CancellationTokenSource]::new(180000)
+    $response=$null; $failure=$null
     try {
         $response=$client.GetAsync($contract.bunArchiveUrl, [Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cancellation.Token).GetAwaiter().GetResult()
         $response.EnsureSuccessStatusCode() | Out-Null
-        $bunInputStream=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult(); $file=[IO.File]::CreateNew($archive)
-        try {
-            $buffer=[byte[]]::new(65536); $total=0
-            while (($length=$bunInputStream.ReadAsync($buffer,0,$buffer.Length,$cancellation.Token).GetAwaiter().GetResult()) -gt 0) {
-                $total+=$length; if ($total -gt $contract.bunArchiveBytes) { throw 'Bun download cap exceeded' }
-                $file.Write($buffer,0,$length)
-            }
-        } finally { $file.Dispose(); $bunInputStream.Dispose(); $response.Dispose() }
+        $bunInputStream=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        Copy-BunStream $bunInputStream $archive $contract.bunArchiveBytes 'Bun download cap exceeded' -Async -CancellationToken $cancellation.Token | Out-Null
         if ((Get-Item -LiteralPath $archive).Length -ne $contract.bunArchiveBytes -or (Hash $archive) -cne $contract.bunArchiveSha256) { throw 'Bun archive pin mismatch' }
-    } finally { $cancellation.Dispose(); $client.Dispose() }
+    } catch { $failure=$_ }
+    finally { Complete-BunOperation $failure @($response,$cancellation,$client) }
     $directory=Join-Path $root 'bun'; New-Item -ItemType Directory -Path $directory | Out-Null
-    $zip=[IO.Compression.ZipFile]::OpenRead($archive)
+    $zip=[IO.Compression.ZipFile]::OpenRead($archive); $failure=$null
     try {
         if ($zip.Entries.Count -gt $contract.caps.maxBunMembers) { throw 'Bun ZIP member cap exceeded' }
         $entries=@($zip.Entries | Where-Object { !$_.FullName.EndsWith('/') })
         if ($entries.Count -ne 1 -or $entries[0].FullName -cne 'bun-windows-x64/bun.exe' -or $entries[0].Length -gt $contract.caps.maxBunExpandedBytes) { throw 'Bun ZIP contents differ from admitted package' }
-        $bunInputStream=$entries[0].Open(); $file=[IO.File]::CreateNew((Join-Path $directory 'bun.exe'))
-        try {
-            $buffer=[byte[]]::new(65536); $total=0
-            while (($length=$bunInputStream.Read($buffer,0,$buffer.Length)) -gt 0) {
-                $total+=$length; if ($total -gt $contract.caps.maxBunExpandedBytes) { throw 'Bun extraction cap exceeded' }
-                $file.Write($buffer,0,$length)
-            }
-            if ($total -ne $entries[0].Length) { throw 'Bun expanded length mismatch' }
-        } finally { $bunInputStream.Dispose(); $file.Dispose() }
-    } finally { $zip.Dispose() }
+        $total=Copy-BunStream ($entries[0].Open()) (Join-Path $directory 'bun.exe') $contract.caps.maxBunExpandedBytes 'Bun extraction cap exceeded'
+        if ($total -ne $entries[0].Length) { throw 'Bun expanded length mismatch' }
+    } catch { $failure=$_ }
+    finally { Complete-BunOperation $failure @($zip) }
     return Join-Path $directory 'bun.exe'
 }
 try {
