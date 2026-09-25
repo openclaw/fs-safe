@@ -28,7 +28,7 @@ import {
   isNotFoundPathError,
   isSymlinkOpenError,
 } from "./path.js";
-import { readOpenedFileSafely, type ReadResult } from "./read-opened-file.js";
+import { readAndCloseOpenedFile, type ReadResult } from "./read-opened-file.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
@@ -636,11 +636,7 @@ async function readFileInRoot(
   params: RootReadParams & { relativePath: string },
 ): Promise<ReadResult> {
   const opened = await openFileInRoot(root, params);
-  try {
-    return await readOpenedFileSafely({ opened, maxBytes: params.maxBytes });
-  } finally {
-    await opened.handle.close().catch(() => {});
-  }
+  return await readAndCloseOpenedFile({ opened, maxBytes: params.maxBytes });
 }
 
 export async function readLocalFileSafely(params: {
@@ -649,11 +645,7 @@ export async function readLocalFileSafely(params: {
 }): Promise<ReadResult> {
   const maxBytes = normalizeMaxBytes(params.maxBytes);
   const opened = await openLocalFileSafely({ filePath: params.filePath });
-  try {
-    return await readOpenedFileSafely({ opened, maxBytes });
-  } finally {
-    await opened.handle.close().catch(() => {});
-  }
+  return await readAndCloseOpenedFile({ opened, maxBytes });
 }
 
 export async function openLocalFileSafely(params: { filePath: string }): Promise<OpenResult> {

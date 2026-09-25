@@ -16,25 +16,29 @@ type OpenedFile = Omit<ReadResult & {
   handle: FileHandle;
 }, "buffer">;
 
-export async function readOpenedFileSafely(params: {
+export async function readAndCloseOpenedFile(params: {
   opened: OpenedFile;
   maxBytes?: number;
 }): Promise<ReadResult> {
-  const maxBytes = normalizeMaxBytes(params.maxBytes);
-  if (maxBytes !== undefined && params.opened.stat.size > maxBytes) {
-    throw new FsSafeError(
-      "too-large",
-      `file exceeds limit of ${maxBytes} bytes (got ${params.opened.stat.size})`,
-    );
+  try {
+    const maxBytes = normalizeMaxBytes(params.maxBytes);
+    if (maxBytes !== undefined && params.opened.stat.size > maxBytes) {
+      throw new FsSafeError(
+        "too-large",
+        `file exceeds limit of ${maxBytes} bytes (got ${params.opened.stat.size})`,
+      );
+    }
+    const buffer =
+      maxBytes === undefined
+        ? await params.opened.handle.readFile()
+        : await readFileHandleBounded(params.opened.handle, maxBytes);
+    return {
+      buffer,
+      containment: params.opened.containment,
+      realPath: params.opened.realPath,
+      stat: params.opened.stat,
+    };
+  } finally {
+    await params.opened.handle.close().catch(() => {});
   }
-  const buffer =
-    maxBytes === undefined
-      ? await params.opened.handle.readFile()
-      : await readFileHandleBounded(params.opened.handle, maxBytes);
-  return {
-    buffer,
-    containment: params.opened.containment,
-    realPath: params.opened.realPath,
-    stat: params.opened.stat,
-  };
 }
