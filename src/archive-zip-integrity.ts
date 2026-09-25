@@ -1,9 +1,6 @@
 import { Transform } from "node:stream";
 import { ArchiveFormatError } from "./archive-errors.js";
-import {
-  zipEntryMetadata,
-  type ZipEntry,
-} from "./archive-zip-entry.js";
+import type { AdmittedZipEntry } from "./archive-zip-entry.js";
 
 import { updateCrc32 } from "./archive-crc32.js";
 
@@ -17,8 +14,8 @@ export function normalizeZipIntegrityError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function createZipIntegrityTransform(entry: ZipEntry): Transform {
-  const { crc32: expectedCrc32, size: expectedSize } = zipEntryMetadata(entry);
+export function createZipIntegrityTransform(record: AdmittedZipEntry): Transform {
+  const { entry, crc32: expectedCrc32, size: expectedSize } = record;
 
   let actualCrc32 = 0;
   let actualSize = 0;

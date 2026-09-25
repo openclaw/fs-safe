@@ -215,6 +215,10 @@ Extraction and bounded reads retain the admitted CRC and size independently of
 mutable decoder objects, so later decoder changes cannot redefine the expected
 payload integrity. Public preflight archives retain ordinary JSZip mutation
 and entry-reading behavior.
+Portable bounded reads select the admitted canonical name and reject a selected
+decoder entry that no longer belongs to that archive and name before reading its
+payload. Extraction retains the admitted names and physical order independently
+of later changes to the decoder's public `files` object.
 
 Within one ZIP entry, identical local and central name bytes reuse the same
 decoded validation. Unicode Path admission is shared only when both the raw names

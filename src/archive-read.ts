@@ -23,12 +23,11 @@ import {
 import { isGzipBuffer } from "./archive-gzip-tail.js";
 import { inspectTar, replayTar } from "./archive-tar-stream.js";
 import type { AdmittedTarMember } from "./archive-tar-wasm.js";
-import { loadAdmittedZipArchive } from "./archive-zip-loader.js";
+import { loadAdmittedZipArchive, assertZipEntryBinding } from "./archive-zip-loader.js";
 import {
   createZipIntegrityTransform,
   normalizeZipIntegrityError,
 } from "./archive-zip-integrity.js";
-import { zipEntryMetadata, type ZipEntry } from "./archive-zip-entry.js";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -117,26 +116,18 @@ async function readArchiveInput(archivePath: string): Promise<Buffer> {
 }
 
 async function readZipEntry(buffer: Buffer, entryPath: string, maxBytes: number, admitted: ZipDirectoryEntry[]): Promise<Buffer> {
-  const archive = await loadAdmittedZipArchive(buffer, admitted);
-  let entry: ZipEntry | undefined;
-  // JSZip keys retain some aliases and may use Unicode Path metadata. Scan the
-  // effective entries once, after raw ZIP admission has rejected collisions.
-  for (const candidate of Object.values(archive.files) as ZipEntry[]) {
-    if (canonicalEntryPath(candidate.name) !== entryPath) continue;
-    if (entry) {
-      throw new ArchiveSecurityError("entry-path", `archive contains duplicate entry path: ${formatErrorDetail(entryPath)}`);
-    }
-    entry = candidate;
-  }
-  if (!entry || entry.dir) {
+  const { archive, entries } = await loadAdmittedZipArchive(buffer, admitted);
+  const record = entries.get(entryPath);
+  if (!record || record.entry.dir) {
     throw new Error(`archive entry not found: ${formatErrorDetail(entryPath)}`);
   }
-  const kind = zipEntryMetadata(entry).kind;
+  assertZipEntryBinding(archive, record, entryPath);
+  const { entry, kind } = record;
   if (kind === "symlink") {
     throw new Error(`archive entry is a link: ${formatErrorDetail(entryPath)}`);
   }
   if (kind !== "file") throw new Error(`archive entry is not a file: ${formatErrorDetail(entryPath)}`);
-  const integrity = createZipIntegrityTransform(entry);
+  const integrity = createZipIntegrityTransform(record);
   const stream: NodeJS.ReadableStream =
     typeof entry.nodeStream === "function"
       ? entry.nodeStream()

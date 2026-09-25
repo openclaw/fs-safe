@@ -38,12 +38,8 @@ import {
   preparePrivateArchiveOutputPath,
 } from "./archive-staging.js";
 import { withStagedArchivePublication, type ArchivePublicationEntry } from "./archive-merge.js";
-import { loadZipArchiveWithPreflight } from "./archive-zip-preflight.js";
-import { admittedZipEntries } from "./archive-zip-loader.js";
-import {
-  zipEntryMetadata,
-  type ZipEntry,
-} from "./archive-zip-entry.js";
+import { loadZipArchiveWithAdmission } from "./archive-zip-preflight.js";
+import type { AdmittedZipEntry, ZipEntry } from "./archive-zip-entry.js";
 import {
   createZipIntegrityTransform,
   normalizeZipIntegrityError,
@@ -126,14 +122,14 @@ async function readZipEntryStream(entry: ZipEntry): Promise<NodeJS.ReadableStrea
 }
 
 async function writeZipFileEntry(params: {
-  entry: ZipEntry;
+  record: AdmittedZipEntry;
   outPath: string;
   budget: ZipExtractBudget;
   deadline: ExtractionDeadline;
 }): Promise<void> {
   params.deadline.check();
   params.budget.startEntry();
-  const readable = await readZipEntryStream(params.entry);
+  const readable = await readZipEntryStream(params.record.entry);
   const destinationPath = params.outPath;
 
   let tempHandle: FileHandle | null = null;
@@ -157,7 +153,7 @@ async function writeZipFileEntry(params: {
           await pipeline(
             readable,
             createExtractBudgetTransform({ onChunkBytes: params.budget.addBytes }),
-            createZipIntegrityTransform(params.entry),
+            createZipIntegrityTransform(params.record),
             writable,
             { signal: params.deadline.signal },
           );
@@ -192,22 +188,21 @@ async function extractZip(params: StagedArchiveExtractOptions): Promise<void> {
   deadline.check();
   const buffer = await fs.readFile(params.archivePath, { signal: deadline.signal });
   deadline.check();
-  const zip = await waitForDeadline(loadZipArchiveWithPreflight(buffer, limits), deadline);
+  const { entries } = await waitForDeadline(loadZipArchiveWithAdmission(buffer, limits), deadline);
   deadline.check();
-  const entries = admittedZipEntries(zip);
-  assertArchiveEntryCountWithinLimit(entries.length, limits);
+  assertArchiveEntryCountWithinLimit(entries.size, limits);
   const budget = createByteBudgetTracker(limits);
 
   await withStagedArchivePublication({ ...params, destinationGuard }, async (stagingDir) => {
     const { select } = createArchiveEntrySelector({ ...params, rootDir: stagingDir });
     const acceptedEntries: ArchivePublicationEntry[] = [];
-    for (const entry of entries) {
+    for (const record of entries.values()) {
       deadline.check();
-      const { kind: entryKind, size, mode: archivedMode } = zipEntryMetadata(entry);
-      const relPath = select({ path: entry.name, kind: entryKind, size });
+      const { entry, kind: entryKind, size, mode: archivedMode } = record;
+      const relPath = select({ path: record.name, kind: entryKind, size });
       if (relPath === null) continue;
       if (entryKind === "symlink") {
-        throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${entry.name}`);
+        throw new ArchiveSecurityError("entry-link", `zip entry is a link: ${record.name}`);
       }
       if (entryKind === "other") continue;
       const mode = resolveArchiveEntryMode({
@@ -222,12 +217,12 @@ async function extractZip(params: StagedArchiveExtractOptions): Promise<void> {
         destinationRealDir: stagingDir,
         relPath,
         outPath,
-        originalPath: entry.name,
+        originalPath: record.name,
         isDirectory: entry.dir,
         deadline,
       });
       if (!entry.dir) {
-        await writeZipFileEntry({ entry, outPath, budget, deadline });
+        await writeZipFileEntry({ record, outPath, budget, deadline });
       }
     }
     return acceptedEntries;

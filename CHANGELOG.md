@@ -14,6 +14,7 @@
 - **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
 - Portable ZIP entry reads reject decoder entries replaced after preflight before invoking the payload reader.
 - Portable ZIP extraction and entry reads verify payloads against the admitted CRC and size even if in-process decoder state changes after preflight.
+- Portable ZIP reads reject decoder entries substituted from another archive or renamed after admission, while extraction retains its admitted names and physical order.
 
 ## 0.19.0 - 2026-09-24
 
