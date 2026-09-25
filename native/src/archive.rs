@@ -1085,7 +1085,7 @@ mod tests {
         ] {
             let input = Buffer::from(bytes);
             let pointer = input.as_ptr();
-            let mut open = OpenTarBufferTask { buffer: Some(input), format, limits: limits(10).tar, cancelled: Arc::new(AtomicBool::new(false)) };
+            let mut open = OpenTarBufferTask { buffer: Some(input), format, limits: limits(10), cancelled: Arc::new(AtomicBool::new(false)) };
             let reader = open.compute().unwrap();
             let mut task = ReadTarBufferTask { data: Arc::clone(&reader.data), index: 1, max_bytes: 3, cancelled: Arc::new(AtomicBool::new(false)) };
             drop(reader);
@@ -1263,7 +1263,7 @@ mod tests {
         let path = temp_path("tar");
         std::fs::write(&path, fixture_tar()).unwrap();
         let mut bounded = limits(10);
-        bounded.tar.max_manifest_bytes = 3;
+        bounded.max_manifest_bytes = 3;
         let error = inspect_tar(
             path.to_str().unwrap(),
             ArchiveFormat::Tar,
@@ -1279,7 +1279,7 @@ mod tests {
             "missing",
             1024,
             Arc::new(AtomicBool::new(false)),
-            limits(1).tar,
+            limits(1),
         )
         .unwrap_err();
         assert!(error.reason.contains("archive-entry-count-exceeds-limit"));
@@ -1327,7 +1327,7 @@ mod tests {
         let cancelled = Arc::new(AtomicBool::new(false));
         let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let source = CancelOnRawRead { inner, cancelled: Arc::clone(&cancelled), reads: Arc::clone(&reads) };
-        let mut reader = open_tar_source(source, format, cancelled, limits(10).tar, file_backed).unwrap();
+        let mut reader = open_tar_source(source, format, cancelled, limits(10), file_backed).unwrap();
         for _ in 0..2 {
             let error = reader.read(&mut [0; 512]).unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::Other);
@@ -1395,7 +1395,7 @@ mod tests {
             (ArchiveFormat::TarBzip2, bzip(&raw)),
         ] {
             let cancelled = Arc::new(AtomicBool::new(false));
-            let mut reader = open_tar_source(Cursor::new(bytes), format, Arc::clone(&cancelled), limits(10).tar, false).unwrap();
+            let mut reader = open_tar_source(Cursor::new(bytes), format, Arc::clone(&cancelled), limits(10), false).unwrap();
             assert_eq!(reader.read(&mut [0; 512]).unwrap(), 512);
             cancelled.store(true, Ordering::Relaxed);
             let error = reader.read(&mut [0; 512]).unwrap_err();
@@ -1422,7 +1422,7 @@ mod tests {
             let truncated = valid[..valid.len() - 1].to_vec();
             for (bytes, accepted) in [(valid, true), (corrupt, false), (truncated, false)] {
                 let cancelled = || Arc::new(AtomicBool::new(false));
-                let reader = open_tar_source(Cursor::new(bytes.as_slice()), format, cancelled(), limits(10).tar, false).unwrap();
+                let reader = open_tar_source(Cursor::new(bytes.as_slice()), format, cancelled(), limits(10), false).unwrap();
                 let path = temp_path("tar-concatenation");
                 std::fs::write(&path, &bytes).unwrap();
                 let results = [
@@ -1488,7 +1488,7 @@ mod tests {
             let mut bytes = vec![0_u8; length];
             bytes[length - 1] = u8::from(nonzero);
             let mut input = Cursor::new(bytes);
-            let result = drain_tar_metadata(&mut TarMetadataMeter::new(&mut input, limits(10).tar));
+            let result = drain_tar_metadata(&mut TarMetadataMeter::new(&mut input, limits(10)));
             assert_eq!(input.position(), length as u64);
             if nonzero {
                 let error = result.unwrap_err();
