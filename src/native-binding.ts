@@ -231,12 +231,7 @@ export interface NativeBinding {
   renameNoReplace(...args: NativeTwoPathArgs): void;
   /** Identity-fenced retained-directory rename capability. */
   renameNoReplaceWithIdentity?(
-    sourceRootFd: number,
-    sourceRelPath: string,
-    targetRootFd: number,
-    targetRelPath: string,
-    expectedSourceDev: bigint,
-    expectedSourceIno: bigint,
+    ...args: [...paths: NativeTwoPathArgs, expectedSourceDev: bigint, expectedSourceIno: bigint]
   ): void;
   renameReplace(...args: NativeTwoPathArgs): void;
   sha256File(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
