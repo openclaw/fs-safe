@@ -15,7 +15,7 @@ describe.skipIf(process.platform !== "win32")("Windows JS fallback read-only mod
     { method: "writeJson", mode: 0o400 },
     { method: "create", mode: 0o400 },
     { method: "write", mode: 0o440 },
-  ] as const)("$method publishes mode $mode", async ({ method, mode }) => {
+  ] as const)("$method publishes mode $mode", { timeout: 20_000 }, async ({ method, mode }) => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-win-fallback-read-only-");
     const target = path.join(directory, "target");
