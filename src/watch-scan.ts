@@ -48,6 +48,7 @@ export async function scanWatch(
   options: Pick<WatchOptions, "exclude"> & { maxEntries: number; maxDirectories: number },
   signal: AbortSignal,
   register: (name: string, identity: DirectoryIdentity) => Promise<void>,
+  onCleanupFailure?: (error: unknown) => void,
 ): Promise<WatchSnapshot> {
   const result: WatchSnapshot = { entries: new Map(), directories: new Map(), targets: new Map(), scanned: 0 };
   const guards = new Map<string, RootDirectoryObservationGuard>();
@@ -89,7 +90,7 @@ export async function scanWatch(
     walked.set(relative, depth);
     const guard = await directory(relative);
     const listing = await openRootDirectoryListing(root, guard.realPath, {
-      order: "filesystem", snapshot: false, signal, exactIdentity: true, admitEntry: () => { examined(); return true; },
+      order: "filesystem", snapshot: false, signal, exactIdentity: true, onCleanupFailure, admitEntry: () => { examined(); return true; },
     });
     let failed = false;
     let operationError: unknown;

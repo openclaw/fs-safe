@@ -60,16 +60,17 @@ it("retains callback failures and rejects asynchronous callbacks", async () => {
   expect(owner.health().failure?.operation).toBe("callback");
   const first = owner.close();
   expect(owner.close()).toBe(first);
-  await expect(first).rejects.toMatchObject({ code: "helper-failed" });
+  await expect(first).resolves.toBeUndefined();
+  expect(owner.health().error).toMatchObject({ code: "helper-failed" });
 });
-it("reports watch acquisition errors separately and keeps them on joined close", async () => {
+it("reports watch acquisition errors separately from successful joined close", async () => {
   const errors: unknown[] = [];
   const backend = new NodeWatchBackend(() => {}, error => { errors.push(error); }, true, 2);
   try {
     await expect(backend.add(path.join(dir, "absent"), "")).rejects.toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
     expect(errors).toHaveLength(1);
   } finally {
-    await expect(backend.close()).rejects.toMatchObject({ details: { operation: "watch", code: "ENOENT" } });
+    await expect(backend.close()).resolves.toBeUndefined();
   }
 });
 it("honors native-off while providing Node observation", async () => {
@@ -123,7 +124,8 @@ it("retains an undefined exclusion failure instead of treating it as success", a
   const owner = watch(await root(dir), { mode: "poll", scopes, onDirty() {}, exclude() { throw undefined; } }); owners.push(owner);
   await expect(owner.ready).rejects.toMatchObject({ code: "helper-failed", details: { operation: "callback" } });
   expect(owner.health()).toMatchObject({ state: "unavailable", failure: { operation: "callback" } });
-  await expect(owner.close()).rejects.toMatchObject({ code: "helper-failed" });
+  await expect(owner.close()).resolves.toBeUndefined();
+  expect(owner.health().error).toMatchObject({ code: "helper-failed" });
 });
 
 it.skipIf(process.platform !== "linux")("closing one owner leaves a shared-runtime peer live without leaked watches", async () => {

@@ -98,6 +98,7 @@ export class NodeWatchBackend {
   private failure?: unknown;
   private readonly exited: Promise<void>;
   private closeReply?: (errors: Array<{ message: string; code?: string }>) => void;
+  private closeReject?: (error: unknown) => void;
 
   constructor(onDirty: (batch: NodeWatchBatch) => void, onError: (error: unknown) => void, persistent: boolean, maxPendingPaths: number) {
     try {
@@ -113,12 +114,15 @@ export class NodeWatchBackend {
       }), onError);
       resolve();
     }));
-    this.worker.on("error", error => this.fail(error, onError));
+    this.worker.on("error", error => {
+      if (this.stopped) this.closeReject?.(error);
+      else this.fail(error, onError);
+    });
     this.worker.on("message", message => {
       if (message.type === "closed") { this.closeReply?.(message.errors); return; }
       if (message.type === "error") {
         this.fail(new FsSafeError("helper-failed", "directory watch failed", {
-          details: { code: message.code, operation: this.stopped ? "close" : "watch" },
+          details: { code: message.code, operation: "watch" },
           cause: new Error(message.message),
         }), onError);
       } else if (this.stopped) { return;
@@ -171,7 +175,9 @@ export class NodeWatchBackend {
     for (const waiter of this.pending.values()) waiter.reject(new DOMException("Watch closed", "AbortError"));
     this.pending.clear();
     let acknowledged = false;
+    const closeErrors = new Set<unknown>();
     const detached = new Promise<void>((resolve, reject) => {
+      this.closeReject = error => { closeErrors.add(error); reject(error); };
       this.closeReply = errors => {
         acknowledged = true;
         if (errors.length) reject(new FsSafeError("helper-failed", "watch detach failed", {
@@ -183,27 +189,30 @@ export class NodeWatchBackend {
     this.worker.ref();
     // Enroll shutdown before posting to a possibly reentrant worker transport.
     this.closing = Promise.resolve().then(async () => {
-      let closeError: unknown;
       try {
         await Promise.race([detached, this.exited.then(() => {
           if (!acknowledged) throw new FsSafeError("helper-failed", "watch worker exited before detach acknowledgement");
         })]);
-      } catch (error) { closeError = error; }
+      } catch (error) { closeErrors.add(error); }
       try { await this.worker.terminate(); }
-      catch (error) { closeError = closeError === undefined ? error : createSuppressedError(error, closeError, "watch detach and join failed"); }
+      catch (error) { closeErrors.add(error); }
       // Detach closes the port too, so even a failed termination request must
       // still join actual worker exit before relinquishing ownership.
       await this.exited;
       this.closeReply = undefined;
+      this.closeReject = undefined;
       this.registrations = 0;
-      if (this.failure !== undefined) {
-        if (closeError !== undefined) throw createSuppressedError(closeError, this.failure, "watch observation and retirement failed");
-        throw this.failure;
+      // Observation loss does not turn successful physical retirement into a
+      // cleanup failure. Keep it supplementary only when retirement also fails.
+      if (closeErrors.size) {
+        const errors = [...closeErrors];
+        const closeError = errors.slice(1).reduce((prior, error) => createSuppressedError(error, prior, "watch detach and join failed"), errors[0]);
+        if (this.failure !== undefined) throw createSuppressedError(closeError, this.failure, "watch observation and retirement failed");
+        throw closeError;
       }
-      if (closeError !== undefined) throw closeError;
     });
     try { this.worker.postMessage({ type: "close" }); }
-    catch (error) { this.fail(error, () => {}); void this.worker.terminate(); }
+    catch (error) { this.closeReject?.(error); }
     return this.closing;
   }
 }

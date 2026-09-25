@@ -52,7 +52,8 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     await fs.mkdir(admitted);
     await expect(owner.reconcile()).rejects.toMatchObject({ code: "path-mismatch" });
     expect(owner.health().state).toBe("unavailable");
-    await expect(owner.close()).rejects.toMatchObject({ code: "path-mismatch" });
+    await expect(owner.close()).resolves.toBeUndefined();
+    expect(owner.health().error).toMatchObject({ code: "path-mismatch" });
   });
   it("uses directory-only registrations and respects depth/exclusions", async () => {
     await fs.mkdir(path.join(dir, "tree/child/deep"), { recursive: true });
@@ -72,7 +73,8 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     await expect(owner.ready).rejects.toMatchObject({ code: "too-large" });
     expect(owner.health().state).toBe("unavailable");
     expect(owner.health().failure?.operation).toBe("scan");
-    await expect(owner.close()).rejects.toMatchObject({ code: "too-large" });
+    await expect(owner.close()).resolves.toBeUndefined();
+    expect(owner.health().error).toMatchObject({ code: "too-large" });
   });
   it("observes symlink entries without adopting their targets", async () => {
     await fs.mkdir(path.join(dir, "target"));

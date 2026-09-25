@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
@@ -186,3 +186,42 @@ for (const nativeMode of expected.omitted ? ["auto", "off"] : ["auto", "off", "r
     assert.equal(owner.health().directories, 0);
   }
 }
+
+
+// A failed observation must not poison successful retirement or consumer retry.
+// This runs against the actual installed tarball, including omitted optionals.
+configureFsSafeNative({ mode: "off" });
+const { __setFsSafeTestHooksForTest } = await import("@openclaw/fs-safe/test-hooks");
+const recoveryPath = join(watchDirectory, "recovery");
+const savedPath = join(watchDirectory, "retired-recovery");
+mkdirSync(recoveryPath);
+const recoveryRoot = await watchRoot(recoveryPath);
+__setFsSafeTestHooksForTest({ beforeWatchRegistration(name) {
+  if (name === recoveryRoot.rootReal) renameSync(recoveryPath, savedPath);
+} });
+const failedWatch = watch(recoveryRoot, { scopes: [{ path: "", kind: "tree" }], onDirty() {} });
+try {
+  await assert.rejects(failedWatch.ready, error => error.details?.operation === "watch" && error.details?.code === "ENOENT");
+} finally {
+  __setFsSafeTestHooksForTest();
+  await failedWatch.close();
+}
+assert.equal(failedWatch.health().workers, 0);
+assert.equal(failedWatch.health().directories, 0);
+assert.equal(failedWatch.health().error.details.code, "ENOENT");
+renameSync(savedPath, recoveryPath);
+let recoveryHints = 0;
+const recoveredWatch = watch(recoveryRoot, { scopes: [{ path: "", kind: "tree" }], onDirty() { recoveryHints++; } });
+try {
+  await recoveredWatch.ready;
+  recoveryHints = 0;
+  writeFileSync(join(recoveryPath, "later"), "recovered");
+  const deadline = Date.now() + 5000;
+  while (!recoveryHints && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(recoveryHints > 0, "new subscription must observe a later native edit without manual reconciliation");
+  assert.equal(await recoveryRoot.readText("later"), "recovered");
+} finally { await recoveredWatch.close(); }
+assert.equal(recoveredWatch.health().workers, 0);
+const installed = JSON.parse(readFileSync("installed.json", "utf8"));
+installed.watchRecovery = { registrationError: "ENOENT", failedClose: "resolved", recoveredNativeEdit: true, workersAfterClose: 0 };
+writeFileSync("installed.json", JSON.stringify(installed));

@@ -60,7 +60,8 @@ export type WatchSubscription = {
   /** Re-observe independently of hints. Coalesces concurrent requests. */
   reconcile(): Promise<void>;
   health(): WatchHealth;
-  /** Stop admission synchronously, then join all owned work. Terminal/idempotent. */
+  /** Terminal/idempotent. Join owned work; reject retirement/cleanup failures,
+   * not prior observation failures (which remain in health). */
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };

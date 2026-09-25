@@ -160,6 +160,23 @@ A Node `FSWatcher` close event alone is insufficient: Node schedules that event
 on the next tick rather than exposing a native-loop join. No `add()` can reopen
 a retired subscription. Close failures remain rejected on repeated calls.
 
+Observation and retirement have separate outcomes. A rejected `ready`,
+`reconcile()` or callback is retained in health, but does **not** make a
+successfully joined `close()` reject. After successful close, a consumer may
+create a new subscription beneath still-valid admitted authority. Never swallow
+all close errors to implement retry: failure to detach, terminate/join, or clean
+up a scan is a retirement failure, even if observation already failed or the
+reported worker count is zero. A failure during generation retirement remains
+sticky; no later update can rearm the owner or erase that first failed cleanup.
+
+If both outcomes fail, close rejects a `SuppressedError`-shaped value: `error`
+is the retirement failure and `suppressed` retains the observation failure.
+Multiple cleanup failures are retained the same way. Health keeps this context
+and labels retirement failure as `failure.operation: "close"`; otherwise its
+original observation error/provenance survives successful close. The `closed`
+state means the owner is terminal and its work has settled, not that retirement
+succeeded: await the close promise to distinguish success from failure.
+
 Callbacks must be synchronous; returning a thenable is rejected. Callbacks may
 synchronously call `close()` or `update()` without awaiting inside the callback.
 Application-owned asynchronous work is not joined by this subscription.

@@ -299,6 +299,8 @@ export type RootDirectoryListingOptions = {
   metadataBatchSize?: number;
   /** Internal exact metadata lane, supported by streaming filesystem order. */
   exactIdentity?: boolean;
+  /** Internal owner receives cleanup failures, including acquisition rollback. */
+  onCleanupFailure?: (error: unknown) => void;
   admitEntry(): boolean;
 };
 
@@ -334,7 +336,8 @@ export async function openRootDirectoryListing(
   const close = async () => {
     const owned = handle;
     handle = undefined;
-    await owned?.close();
+    try { await owned?.close(); }
+    catch (error) { options.onCleanupFailure?.(error); throw error; }
   };
   try {
     await assertCurrent();

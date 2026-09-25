@@ -58,6 +58,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let terminal = false;
   let failure: unknown;
   let failureInfo: WatchFailure | undefined;
+  let retirementFailure: { error: unknown } | undefined;
+  const retirementErrors = new Set<unknown>();
   let closing: Promise<void> | undefined;
   let active: Promise<void> | undefined;
   let backend: NodeWatchBackend | undefined;
@@ -72,17 +74,32 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
   type Generation = typeof current;
+  const combinedFailure = () => {
+    if (!retirementFailure) return failure;
+    const error = retirementFailure.error;
+    if (failure === undefined || error === failure || (error as { suppressed?: unknown } | null)?.suppressed === failure) return error;
+    return createSuppressedError(error, failure, "watch observation and retirement failed");
+  };
+  const retainRetirement = (error: unknown) => {
+    if (retirementErrors.has(error)) return;
+    retirementErrors.add(error);
+    retirementFailure = { error: retirementFailure
+      ? createSuppressedError(error, retirementFailure.error, "watch retirement failed more than once") : error };
+  };
   const health = (): WatchHealth => Object.freeze({
     state, generation: current.id, mode, directories: backend?.directoryCount() ?? 0,
     observedDirectories: registered.size,
     workers: backend ? 1 : 0, scannedEntries, reconciliations,
     pendingInvalidations: pendingHint ? 1 : 0,
-    ...(failure === undefined ? {} : { error: failure, failure: failureInfo }),
+    ...(failure === undefined && !retirementFailure ? {} : {
+      error: combinedFailure(), failure: retirementFailure ? Object.freeze({ operation: "close" as const }) : failureInfo,
+    }),
   });
   const check = (g: Generation) => {
     g.abort.signal.throwIfAborted();
     if (terminal || current !== g) throw retired();
     if (failure !== undefined) throw failure;
+    if (retirementFailure) throw retirementFailure.error;
   };
   const clearTimers = () => {
     clearTimeout(timer); clearTimeout(hintTimer);
@@ -112,10 +129,12 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     const old = backend;
     if (!old) { registered.clear(); return; }
     try { await old.close(); }
+    catch (error) { retainRetirement(error); throw error; }
     finally { if (backend === old) { backend = undefined; registered.clear(); } }
   };
   const lose = (error: unknown, operation: WatchFailure["operation"] = "scan") => {
     if (terminal || failure !== undefined) return;
+    if (error === undefined) error = new FsSafeError("helper-failed", "watch operation failed without an error value", { details: { operation } });
     retain(error);
     const details = error instanceof FsSafeError ? error.details : undefined;
     const code = details?.code ?? (error as { code?: unknown } | null)?.code;
@@ -201,7 +220,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
             await backend?.add(path.join(context.rootReal, name), name);
             check(g);
             registered.set(name, identity);
-          });
+          }, retainRetirement);
         check(g);
         if ([...registered.keys()].some(name => !next.directories.has(name))) throw restart;
         // IPC ordering only, NOT an OS stream flush or coverage receipt.
@@ -258,7 +277,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         } catch (error) {
           waiter.reject(error);
           if (!g.abort.signal.aborted && current === g && !terminal) lose(error);
-          try { await retireBackend(); } catch (closeError) { retain(closeError); }
+          try { await retireBackend(); } catch (closeError) { retainRetirement(closeError); }
         }
         if (current === g) break;
         await retireBackend();
@@ -292,10 +311,10 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     void stopped?.catch(() => {});
     closing = Promise.resolve().then(async () => {
       await active;
-      try { await stopped; } catch (error) { retain(error); }
-      try { await retireBackend(); } catch (error) { retain(error); }
+      try { await stopped; } catch (error) { retainRetirement(error); }
+      try { await retireBackend(); } catch (error) { retainRetirement(error); }
       state = "closed";
-      if (failure !== undefined) throw failure;
+      if (retirementFailure) throw combinedFailure();
     });
     void closing.catch(() => {});
     return closing;
@@ -323,7 +342,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       state = "starting";
       // If idle, retire the old worker before the next scan can admit anything.
       if (!active) {
-        active = retireBackend().catch(lose).finally(() => {
+        active = retireBackend().catch(error => lose(error, "close")).finally(() => {
           active = undefined; snapshot = undefined; pump();
         });
       }
