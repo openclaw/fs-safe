@@ -28,6 +28,7 @@ import type {
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { realpathSync } from "./realpath.js";
+import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 
@@ -286,7 +287,7 @@ async function listGuardedDirectoryPath(
 
 export type RootDirectoryListing = {
   assertCurrent(): Promise<void>;
-  next(): Promise<{ kind: "entry"; entry: DirEntry } | { kind: "limit"; name: string } | undefined>;
+  next(): Promise<{ kind: "entry"; entry: DirEntry; identity?: ExactStatIdentity } | { kind: "limit"; name: string } | undefined>;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
@@ -296,6 +297,8 @@ export type RootDirectoryListingOptions = {
   snapshot: boolean;
   maxNames?: number;
   metadataBatchSize?: number;
+  /** Internal exact metadata lane, supported by streaming filesystem order. */
+  exactIdentity?: boolean;
   admitEntry(): boolean;
 };
 
@@ -304,6 +307,7 @@ export async function openRootDirectoryListing(
   directory: string,
   options: RootDirectoryListingOptions,
 ): Promise<RootDirectoryListing> {
+  if (options.exactIdentity && options.order !== "filesystem") throw new TypeError("exact entry identities require filesystem order");
   const admitted = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
     throw normalizeDirectoryError(error);
   });
@@ -436,9 +440,13 @@ export async function openRootDirectoryListing(
         if (name === undefined) return;
         if (!options.admitEntry()) return { kind: "limit", name };
         // The stream's post-read fence is also the pre-stat fence in this owned operation.
-        const stat = fsSync.lstatSync(path.join(guard.realPath, name));
+        const pathname = path.join(guard.realPath, name);
+        const observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint
+          ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : undefined;
+        const stat = observed?.stat ?? fsSync.lstatSync(pathname);
         await assertCurrent();
-        return { kind: "entry", entry: { name, ...pathStatFromStats(stat) } };
+        const entry = { name, ...pathStatFromStats(stat) };
+        return observed ? { kind: "entry", entry, identity: observed.identity } : { kind: "entry", entry };
       } catch (error) {
         throw normalizeDirectoryError(error);
       }

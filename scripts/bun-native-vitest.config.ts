@@ -9,6 +9,7 @@ export default {
     ...config.test,
     include: [
       "test/realpath.test.ts",
+      "test/watch*.test.ts",
       "test/relative-publication.test.ts",
       "test/replace-directory-authority.test.ts",
       "test/replace-directory-retained-admission.test.ts",

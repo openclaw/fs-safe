@@ -1403,4 +1403,5 @@ jobs:
             release-artifacts/manifest.json
             release-artifacts/consumer-proof.json
             release-artifacts/windows-native-pe.json
+            release-artifacts/*.tgz
           if-no-files-found: error

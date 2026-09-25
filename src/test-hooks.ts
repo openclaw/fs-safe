@@ -2,6 +2,8 @@ import type { FileHandle } from "node:fs/promises";
 import type { FileIdentityStat } from "./file-identity.js";
 
 export type FsSafeTestHooks = {
+  beforeWatchRegistration?: (directoryPath: string) => Promise<void> | void;
+  afterWatchRegistration?: (directoryPath: string) => Promise<void> | void;
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;

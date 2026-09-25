@@ -154,3 +154,35 @@ mkdirSync(destDir);
 await extractArchive({ archivePath, destDir, timeoutMs: 10000 });
 assert.equal(readFileSync(join(destDir, "雪.txt"), "utf8"), "TAR");
 assert.equal((await readArchiveEntry(archivePath, "雪.txt", { maxBytes: 3 })).toString(), "TAR");
+
+
+// The actual installed subpath works with omitted optionals and native-off.
+const watchModule = require.resolve("@openclaw/fs-safe/watch");
+insideConsumer(watchModule);
+assert.equal(createHash("sha256").update(readFileSync(watchModule)).digest("hex"), expected.watchCompiledHash);
+const { watch } = await import("@openclaw/fs-safe/watch");
+const { root: watchRoot } = await import("@openclaw/fs-safe/root");
+const watchDirectory = join(consumer, "watch-proof");
+mkdirSync(watchDirectory);
+for (const nativeMode of expected.omitted ? ["auto", "off"] : ["auto", "off", "require"]) {
+  configureFsSafeNative({ mode: nativeMode });
+  for (const mode of ["node", "poll"]) {
+    const hints = [];
+    const owner = watch(await watchRoot(watchDirectory), {
+      mode, scopes: [{ path: "missing/file", kind: "entry" }],
+      onDirty: hint => { hints.push(hint); },
+    });
+    try {
+      await owner.ready;
+      mkdirSync(join(watchDirectory, "missing"), { recursive: true });
+      writeFileSync(join(watchDirectory, "missing/file"), nativeMode + mode);
+      await owner.reconcile();
+      assert.equal(owner.health().state, "ready");
+      assert.equal(owner.health().mode, mode);
+      assert.ok(hints.length >= 1);
+      assert.equal(owner.health().directories, mode === "node" ? 2 : 0);
+    } finally { await owner.close(); }
+    assert.equal(owner.health().workers, 0);
+    assert.equal(owner.health().directories, 0);
+  }
+}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `@openclaw/fs-safe/watch`: bounded advisory observation of admitted Root-relative entries and trees, guarded reconciliation, explicit polling, generation-fenced target updates, and terminal joined shutdown. Notifications do not establish continuous coverage or authorize reads.
+
 ## 0.19.0 - 2026-09-24
 
 ### Highlights

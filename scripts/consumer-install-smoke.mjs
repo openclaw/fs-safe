@@ -238,6 +238,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
             .update(readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url)))
             .digest("hex"),
           manager: { name: manager, version },
+          watchCompiledHash: sha256(join("dist", "watch.js")),
           windowsSecurity: windowsSecurityExpected,
           creation: creationExpected,
           ...suffixExpected,

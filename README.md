@@ -274,6 +274,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
+| `@openclaw/fs-safe/watch` | [advisory Root-relative observation](docs/watch.md), bounded reconciliation, explicit polling, and joined close |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/copy` | directory copying with `clone: "auto"`, `"always"`, or `"never"`; native APFS, Btrfs, ReFS, XFS, and ZFS cloning, portable byte copying, and clone metadata; see [directory copying](docs/copy.md) |
 | `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, gzip/zstd/bzip2 support, and bounded entry reads |

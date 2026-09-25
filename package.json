@@ -95,6 +95,10 @@
       "types": "./dist/file-lock.d.ts",
       "default": "./dist/file-lock.js"
     },
+    "./watch": {
+      "types": "./dist/watch.d.ts",
+      "default": "./dist/watch.js"
+    },
     "./walk": {
       "types": "./dist/walk.d.ts",
       "default": "./dist/walk.js"
@@ -136,6 +140,7 @@
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:methods": "node benchmarks/runner.mjs",
+    "benchmark:watch": "node benchmarks/watch-qualification.mjs",
     "benchmark:publish": "pnpm build && node scripts/bench-publish.mjs",
     "build": "node scripts/prepack-build.mjs",
     "lint:file-size": "node scripts/check-file-size.mjs",
