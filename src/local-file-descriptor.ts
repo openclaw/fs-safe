@@ -56,14 +56,14 @@ export async function openLocalFileDescriptor(
     }
     // Only an initial lookup failure falls through; a failed re-inspection aborts.
   }
-  if (preOpenStat) {
-    await fsSafeTestHooks?.afterPreOpenLstat?.(filePath);
+  if (preOpenStat && fsSafeTestHooks) {
+    await fsSafeTestHooks.afterPreOpenLstat?.(filePath);
   }
 
   const openFlags = (options?.symlinks === "follow-within-root"
     ? OPEN_READ_FOLLOW_FLAGS
     : OPEN_READ_FLAGS) | (options?.readWrite ? fsSync.constants.O_RDWR : 0);
-  await fsSafeTestHooks?.beforeOpen?.(filePath, openFlags);
+  if (fsSafeTestHooks) await fsSafeTestHooks.beforeOpen?.(filePath, openFlags);
   let handle: FileHandle;
   try {
     handle = await fs.open(filePath, openFlags).catch((error: unknown) =>
@@ -80,7 +80,7 @@ export async function openLocalFileDescriptor(
   }
 
   try {
-    await fsSafeTestHooks?.afterOpen?.(filePath, handle);
+    if (fsSafeTestHooks) await fsSafeTestHooks.afterOpen?.(filePath, handle);
     const stat = fsSync.fstatSync(handle.fd);
     if (!stat.isFile()) {
       throw new FsSafeError("not-file", "not a file");

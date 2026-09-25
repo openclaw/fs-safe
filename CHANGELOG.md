@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid unused test-hook scheduling during ordinary file opens and reads while preserving supplied hooks and filesystem checks.
+
 ## 0.19.0 - 2026-09-24
 
 ### Highlights
