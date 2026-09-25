@@ -30,7 +30,7 @@ export async function admittedNativeChanges(
     let guard: RootDirectoryObservationGuard | undefined;
     let expected = after.directories.get(parent);
     if (!expected) {
-      // Windows observes from one Root handle, so it can report descendants of
+      // Native recursion observes one Root handle and may report descendants of
       // unselected/entry-only directories. Admit a parent alias by exact identity,
       // not by lowercasing, and do not turn unselected descendants into events.
       try {

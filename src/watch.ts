@@ -63,7 +63,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let closing: Promise<void> | undefined;
   let active: Promise<void> | undefined;
   let backend: NodeWatchBackend | undefined;
-  let registered = new Map<string, DirectoryIdentity>();
+  const registered = new Map<string, DirectoryIdentity>();
+  let observedDirectories = 0;
   let snapshot: WatchSnapshot | undefined;
   let resetRequested = false;
   let scannedEntries = 0;
@@ -88,7 +89,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const health = (): WatchHealth => Object.freeze({
     state, generation: current.id, mode, directories: backend?.directoryCount() ?? 0,
-    observedDirectories: registered.size,
+    observedDirectories,
     workers: backend ? 1 : 0, scannedEntries, reconciliations,
     pendingInvalidations: pendingHint ? 1 : 0,
     ...(failure === undefined && !retirementFailure ? {} : {
@@ -127,10 +128,10 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const retireBackend = async () => {
     const old = backend;
-    if (!old) { registered.clear(); return; }
+    if (!old) { registered.clear(); observedDirectories = 0; return; }
     try { await old.close(); }
     catch (error) { retainRetirement(error); throw error; }
-    finally { if (backend === old) { backend = undefined; registered.clear(); } }
+    finally { if (backend === old) { backend = undefined; registered.clear(); observedDirectories = 0; } }
   };
   const lose = (error: unknown, operation: WatchFailure["operation"] = "scan") => {
     if (terminal || failure !== undefined) return;
@@ -212,6 +213,9 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries }, g.abort.signal,
           async (name, identity) => {
             check(g);
+            // A native recursive Root owns no descendant registrations to retire.
+            // The scanner still independently guards/bounds every directory.
+            if (name && backend?.recursiveRoot) return;
             const existing = registered.get(name);
             if (existing && (existing.dev !== identity.dev || existing.ino !== identity.ino)) throw restart;
             if (existing) return;
@@ -230,6 +234,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         await retryChurn(error);
         continue;
       }
+      observedDirectories = next.directories.size;
       scannedEntries = next.scanned;
       reconciliations++;
       if (sameEntries(prior, next) && before === revision) {

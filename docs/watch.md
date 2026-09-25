@@ -44,9 +44,10 @@ The subscription reuses the Root’s exact admitted identity; it never obtains n
 authority from its public pathname fields.
 
 A missing descendant is observable through its existing ancestors **inside that
-Root**. Those ancestors are registered non-recursively; only relevant descendants
-are traversed. A missing authority Root cannot be opened. Admit an appropriate
-stable ancestor explicitly before constructing the subscription. If the admitted
+Root**. Linux registers selected ancestor directories non-recursively; macOS
+and Windows retain one native recursive Root registration. Only relevant
+descendants are traversed by guarded reconciliation. A missing authority Root
+cannot be opened. Admit an appropriate stable ancestor explicitly before constructing the subscription. If the admitted
 Root disappears or is replaced, observation fails; it never climbs above the
 Root or repins its replacement.
 
@@ -91,8 +92,11 @@ only for known detail, never for whole-scope loss.
 Construction returns immediately. `ready` resolves only after all selected
 directory registrations have been accepted and two bounded, guarded metadata
 scans agree within the pass budget. There is no successful partially admitted
-ready result. Descendant replacement retires the old backend before reacquisition
-and reconciliation; exact directory identities detect stale registrations.
+ready result. Replacement of a physically registered directory retires the old
+backend before reacquisition; exact directory identities detect stale registrations.
+On native-recursive platforms, descendant inventory changes do not replace the
+physical Root registration. Each scan still revalidates every traversed directory
+and the pinned Root; logical inventory is not a physical registration receipt.
 
 **Ready is not continuous coverage.** A worker command reply orders our commands,
 not the OS event stream. In particular it does not flush macOS FSEvents or prove
@@ -120,17 +124,22 @@ fallback or infinite retry occurs.
 ## Modes, budgets and lifetime
 
 - `mode: "node"` (default): one owned Node worker per subscription with
-  directory-only `fs.watch` registrations. Linux/macOS use non-recursive
-  registrations; Windows uses one native recursive registration at the admitted
-  Root rather than child handles that prevent ancestor moves. No per-file watches.
-  Windows may receive hints from unselected descendants, which guarded scope
-  reconciliation filters before publication.
+  directory-only `fs.watch` registrations. Linux uses non-recursive registrations;
+  macOS and Windows use one native recursive registration at the admitted Root.
+  There are no per-file watches. Keeping that Root registration through descendant
+  inventory changes avoids incremental Darwin FSEvents stream reconfiguration
+  and Windows child handles that prevent ancestor moves. Raw recursive hints
+  may cover unselected descendants; guarded scope reconciliation filters them
+  before publication. Darwin slash paths preserve literal backslashes/colons;
+  Windows separators retain their distinct validation. Neither case nor Unicode
+  spelling is folded into authority.
   Default guarded reconciliation interval: 30,000 ms.
 - `mode: "poll"`: no watch worker; explicit guarded metadata polling, default
   interval 1,000 ms. It does not hash file content.
 - `intervalMs` must be 20 through 2,147,483,647 ms. The next interval starts after
   reconciliation settles; slow scans do not produce a zero-delay timer loop.
-- `maxDirectories`: 4,096 by default. `maxEntries`: 100,000 examined entries per
+- `maxDirectories`: 4,096 by default; bounds scanned inventory even when only
+  one native Root registration is owned. `maxEntries`: 100,000 examined entries per
   pass, including explicit component lookups. Native alias verification adds at
   most one guarded entry lookup per bounded pending hint. Both must be positive
   safe integers no larger than 1,000,000.

@@ -21,25 +21,36 @@ function own(owner: WatchSubscription) { owners.push(owner); return owner; }
 const scopes = [{ path: "tree", kind: "tree" as const }];
 
 describe.each(["node", "poll"] as const)("watch %s", mode => {
-  it("recovers missing higher/intermediate descendants and observes a later edit", async () => {
+  it.each([0, 1, 2])("recovers missing descendants and observes later edits (fresh owner %s)", async () => {
     const hints: WatchDirty[] = [];
-    const owner = own(watch(await root(dir), { scopes: [{ path: "a/b/tree", kind: "tree" }], mode, onDirty: hint => { hints.push(hint); } }));
+    const admitted = await root(dir);
+    let backends = 0;
+    __setFsSafeTestHooksForTest({ afterWatchBackendCreated: () => { backends++; } });
+    const owner = own(watch(admitted, { scopes: [{ path: "a/b/tree", kind: "tree" }], mode, onDirty: hint => { hints.push(hint); } }));
     await owner.ready;
     expect(owner.health().state).toBe("ready");
     await fs.mkdir(path.join(dir, "a/b/tree"), { recursive: true });
     await fs.writeFile(path.join(dir, "a/b/tree/skill.md"), "first");
     await owner.reconcile();
     expect(owner.health().observedDirectories).toBe(4);
-    await fs.rename(path.join(dir, "a"), path.join(dir, "old"));
-    await owner.reconcile();
-    expect(owner.health().observedDirectories).toBe(1);
-    await fs.mkdir(path.join(dir, "a/b/tree"), { recursive: true });
-    await owner.reconcile();
-    const count = hints.length;
-    await fs.writeFile(path.join(dir, "a/b/tree/skill.md"), "later edit");
-    if (mode === "poll") await owner.reconcile();
-    else await expect.poll(() => hints.length).toBeGreaterThan(count);
-    expect(hints.length).toBeGreaterThan(count);
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await fs.rename(path.join(dir, "a"), path.join(dir, "old" + cycle));
+      await owner.reconcile();
+      expect(owner.health().observedDirectories).toBe(1);
+      await fs.mkdir(path.join(dir, "a/b/tree"), { recursive: true });
+      await owner.reconcile();
+      expect(owner.health().observedDirectories).toBe(4);
+      if (mode === "node" && (process.platform === "darwin" || process.platform === "win32")) {
+        expect(owner.health().directories).toBe(1);
+        expect(backends).toBe(1); // Virtual descendant churn must not restart the native Root stream.
+      }
+      const count = hints.length;
+      await fs.writeFile(path.join(dir, "a/b/tree/skill.md"), "later edit " + cycle);
+      if (mode === "poll") await owner.reconcile();
+      else await expect.poll(() => hints.length).toBeGreaterThan(count);
+      expect(hints.length).toBeGreaterThan(count);
+      await expect(admitted.readText("a/b/tree/skill.md")).resolves.toBe("later edit " + cycle);
+    }
     await owner.close();
     expect(owner.health()).toMatchObject({ state: "closed", directories: 0, workers: 0 });
   });
@@ -62,7 +73,7 @@ describe.each(["node", "poll"] as const)("watch %s", mode => {
     const owner = own(watch(await root(dir), { mode, scopes: [{ path: "tree", kind: "tree", depth: 2 }], exclude: entry => entry.path.endsWith("ignored"), onDirty() {} }));
     await owner.ready;
     expect(owner.health().observedDirectories).toBe(3);
-    expect(owner.health().directories).toBe(mode === "node" ? (process.platform === "win32" ? 1 : 3) : 0);
+    expect(owner.health().directories).toBe(mode === "node" ? (["win32", "darwin"].includes(process.platform) ? 1 : 3) : 0);
     expect(owner.health().workers).toBe(mode === "node" ? 1 : 0);
     expect(owner.health().scannedEntries).toBeGreaterThan(100);
   });
@@ -216,7 +227,7 @@ it("quarantines raw filenames after a registration swap-and-restore", async () =
   expect(restored).toBe(true);
   hints.length = 0;
   await fs.writeFile(path.join(outside, "private-outside-name"), "outside");
-  // Linux’s inode watcher exercises the real misbinding. Root-recursive Windows
+  // Linux’s inode watcher exercises the real misbinding. Root-recursive Windows/macOS
   // need not misbind at all; inject the same untrusted normalized payload there
   // (and on every host) rather than requiring an outside event to exist.
   if (process.platform === "linux") await expect.poll(() => hints.length).toBeGreaterThan(0);

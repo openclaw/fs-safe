@@ -26,9 +26,13 @@ describe.each(["node", "poll"] as const)("filesystem scope spelling (%s)", mode 
     expect(tree.health().observedDirectories).toBe(aliases ? 2 : 1);
     hints.length = 0;
     await fs.writeFile(path.join(dir, "MixedDir/Entry.TXT"), "actual edit");
-    await entry.reconcile();
+    if (aliases && mode === "node") {
+      await expect.poll(() => hints.some(hint => hint.changes === undefined
+        || hint.changes.some(change => change.path === path.join("mixeddir", "entry.txt")))).toBe(true);
+      await expect((await root(dir)).readText("mixeddir/entry.txt")).resolves.toBe("actual edit");
+    } else await entry.reconcile();
     if (aliases) {
-      expect(hints.some(hint => hint.changes?.some(change => change.path === path.join("mixeddir", "entry.txt")))).toBe(true);
+      expect(hints.some(hint => hint.changes === undefined || hint.changes.some(change => change.path === path.join("mixeddir", "entry.txt")))).toBe(true);
     } else {
       expect(hints).toEqual([]);
       await fs.mkdir(path.join(dir, "mixeddir"));

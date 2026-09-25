@@ -26,7 +26,7 @@ export type WatchHealth = Readonly<{
   mode: "node" | "poll";
   /** Registered directories, not a portable kernel-watch count. */
   directories: number;
-  /** Bounded directory inventory; polling has no physical registrations. */
+  /** Last completed guarded directory inventory, separate from physical registrations. */
   observedDirectories: number;
   workers: number;
   scannedEntries: number;

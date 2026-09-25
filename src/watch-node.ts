@@ -1,95 +1,14 @@
 import { Worker } from "node:worker_threads";
 import { FsSafeError } from "./errors.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { nativeRecursiveWatchPlatform, nodeWatchProgram } from "./watch-worker.js";
 
 export type NodeWatchHint = { directory: string; name: string | null; event: string };
 export type NodeWatchBatch = { hints: NodeWatchHint[]; overflow: boolean };
 
-// Fixed program, no interpolated paths/code. It only registers advisory directory
-// hints; all path admission and authoritative observation stay in guarded scans.
-const program = String.raw`
-(async () => {
-// Dynamic imports work with both CommonJS and inherited --input-type=module.
-// Keep inherited runtime/security flags intact rather than clearing execArgv.
-const { parentPort, workerData } = await import('node:worker_threads');
-const { watch } = await import('node:fs');
-const watches = new Map();
-let outstanding = false;
-let hints = new Map();
-let overflow = false;
-let failed = false;
-let closing = false;
-const closeErrors = [];
-function send() {
-  if (closing || failed || outstanding || (!overflow && hints.size === 0)) return;
-  outstanding = true;
-  parentPort.postMessage({ type: 'dirty', hints: [...hints.values()], overflow });
-  hints.clear();
-  overflow = false;
-}
-function dirty(directory, event, name) {
-  if (closing || failed) return;
-  if (workerData.recursiveRoot && typeof name === 'string') {
-    const parts = name.replaceAll(String.fromCharCode(92), '/').split('/');
-    if (name.includes(String.fromCharCode(0)) || parts.some(part => !part || part === '.' || part === '..' || part.includes(':'))) {
-      directory = ''; name = null;
-    } else {
-      name = parts.pop(); directory = parts.join(String.fromCharCode(92));
-    }
-  }
-  if (!overflow) {
-    if (hints.size >= workerData.maxPendingPaths) { hints.clear(); overflow = true; }
-    else {
-      const key = JSON.stringify([directory, name]);
-      const prior = hints.get(key);
-      hints.set(key, { directory, event: prior?.event === "rename" ? "rename" : event, name });
-    }
-  }
-  send();
-}
-function failure(error) {
-  if (closing) { closeErrors.push({ message: error.message, code: error.code }); return; }
-  if (failed) return;
-  failed = true;
-  parentPort.postMessage({ type: 'error', message: error.message, code: error.code });
-}
-parentPort.on('message', command => {
-  if (command.type === 'close') {
-    if (closing) return;
-    closing = true;
-    // Bun's watch manager is process-global. Detach our registrations explicitly;
-    // a joined JS worker does not own the runtime's shared driver descriptor.
-    for (const handle of watches.values()) {
-      try { handle.close(); }
-      catch (error) { closeErrors.push({ message: error.message, code: error.code }); }
-    }
-    watches.clear(); hints.clear();
-    parentPort.postMessage({ type: 'closed', errors: closeErrors });
-    parentPort.close();
-    return;
-  }
-  if (closing) return;
-  if (command.type === 'ack') {
-    outstanding = false;
-    send();
-    return;
-  }
-  if (failed) return;
-  try {
-    if (command.type === 'add') {
-      const handle = watch(command.path, { recursive: workerData.recursiveRoot }, (event, name) => dirty(command.relative, event, name));
-      watches.set(command.path, handle);
-      handle.on('error', failure);
-    }
-    parentPort.postMessage({ type: 'reply', id: command.id });
-  } catch (error) { failure(error); }
-});
-})();
-`;
-
 export class NodeWatchBackend {
   private readonly worker: Worker;
-  private readonly recursiveRoot = process.platform === "win32";
+  readonly recursiveRoot = nativeRecursiveWatchPlatform(process.platform);
   private registrations = 0;
   private nextId = 0;
   private pending = new Map<number, { resolve(): void; reject(error: unknown): void }>();
@@ -102,7 +21,7 @@ export class NodeWatchBackend {
 
   constructor(onDirty: (batch: NodeWatchBatch) => void, onError: (error: unknown) => void, persistent: boolean, maxPendingPaths: number) {
     try {
-      this.worker = new Worker(program, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths, recursiveRoot: this.recursiveRoot } });
+      this.worker = new Worker(nodeWatchProgram, { eval: true, name: "fs-safe-watch", workerData: { maxPendingPaths, recursiveRoot: this.recursiveRoot, platform: process.platform } });
     } catch (cause) {
       throw new FsSafeError("helper-failed", "watch worker could not start", {
         cause, details: { operation: "watch", code: (cause as NodeJS.ErrnoException | null)?.code },
@@ -159,9 +78,9 @@ export class NodeWatchBackend {
   }
   async add(path: string, relative: string): Promise<void> {
     if (this.stopped || this.failure !== undefined) throw this.failure ?? new DOMException("Watch closed", "AbortError");
-    // ReadDirectoryChangesW already covers the admitted subtree. Holding child
-    // directory watches prevents ancestor moves on Windows; never use Node’s
-    // recursive Linux implementation (which creates per-file registrations).
+    // Native Windows/Darwin recursion already covers the admitted subtree. Child
+    // registrations block Windows ancestor moves and asynchronously restart the
+    // Darwin FSEvents stream. Linux recursion would create per-file watches.
     if (this.recursiveRoot && relative !== "") return;
     await this.command("add", path, relative);
     this.registrations++;
