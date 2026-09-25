@@ -144,6 +144,11 @@ export interface NativeBinding {
     signal?: AbortSignal,
   ): Promise<void>;
   // POSIX-only direct-child staging; the matching Windows binary omits these methods.
+  openStagedSymlink?(parentFd: number, basename: string): number;
+  stagedSymlinkTarget?(parentFd: number, basename: string, linkFd: number): string;
+  stagedSymlinkMatches?(parentFd: number, basename: string, linkFd: number): boolean;
+  publishStagedSymlink?(parentFd: number, basename: string, linkFd: number, destination: string): void;
+  removeStagedSymlink?(parentFd: number, basename: string, linkFd: number): "removed" | "name-absent" | "preserved";
   createStagedFile?(parentFd: number, basename: string): number;
   stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;
   removeStagedFile?(

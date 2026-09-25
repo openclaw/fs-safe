@@ -20,6 +20,12 @@ export {
 export {
   stageFileInDirectory,
 } from "./native-staged-file.js";
+export { retainSymlinkInDirectory } from "./native-staged-symlink.js";
+export type {
+  StagedSymlink, StagedSymlinkExpected, StagedSymlinkReceipt, PublishedSymlinkReceipt,
+  StagedSymlinkPublication, StagedSymlinkRemoval, StagedSymlinkCleanupReceipt,
+  StagedSymlinkFailureDetails,
+} from "./staged-symlink-types.js";
 export type {
   StagedFile,
   StagedFileReceipt,
