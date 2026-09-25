@@ -84,7 +84,9 @@ reports the escape. Use `require` when hostile concurrent mutation is in scope.
 
 Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
 ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
-a normal install receives only its matching binary. There are no postinstall
+a normal install receives only its matching binary. Linux GNU x64/arm64 bindings
+support [glibc 2.28 or newer](docs/install.md#supported-native-platforms), including
+RHEL 8-family systems. There are no postinstall
 steps, runtime downloads, or consumer Rust builds. On a platform without a
 published binding, or when optional dependencies are omitted, `auto` silently retains lexical and canonical root
 checks, no-follow opens, guarded temp+rename writes, and post-write identity
