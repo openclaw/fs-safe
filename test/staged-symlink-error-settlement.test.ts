@@ -118,24 +118,31 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
     it.each(cases)(`${phase} settles and caches $label`, async ({ create, site, code }) => {
       const cause = create();
       let armed = false;
-      const authority = vi.fn(() => {
+      let authorityCalls = 0;
+      // Vitest mocks inspect thrown prototypes; plain injection preserves hostile values.
+      const authority = () => {
+        authorityCalls += 1;
         if (armed && site === "authority") throw cause;
-      });
+      };
       const { directory, expected, owner, assertClosedOnce } = await fixture(authority);
+      const matches = binding!.stagedSymlinkMatches!;
+      const unlink = binding!.removeStagedSymlink!;
+      let matchCalls = 0;
+      let removeCalls = 0;
       try {
         const publication = phase === "remove-published" ? await owner.publish("slot") : undefined;
         const name = publication ? "slot" : "stage";
-        const matches = binding!.stagedSymlinkMatches!;
-        const match = vi.spyOn(binding!, "stagedSymlinkMatches").mockImplementation((...args) => {
+        binding!.stagedSymlinkMatches = (...args) => {
+          matchCalls += 1;
           if (armed && site === "match") throw cause;
           return matches(...args);
-        });
-        const unlink = binding!.removeStagedSymlink!;
-        const remove = vi.spyOn(binding!, "removeStagedSymlink").mockImplementation((...args) => {
+        };
+        binding!.removeStagedSymlink = (...args) => {
+          removeCalls += 1;
           if (armed && site === "unlink") throw cause;
           return unlink(...args);
-        });
-        authority.mockClear();
+        };
+        authorityCalls = 0;
         armed = true;
         const first = await rejection(publication ? owner.removePublished() : owner.cleanup());
         const error = assertWrapped(first.error, cause, code);
@@ -152,9 +159,9 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
           expect(Object.isFrozen(error.details?.cleanup)).toBe(true);
           assertClosedOnce();
         }
-        expect(authority).toHaveBeenCalledTimes(site === "match" ? 0 : 1);
-        expect(match).toHaveBeenCalledTimes(site === "unlink" ? 2 : 1);
-        expect(remove).toHaveBeenCalledTimes(site === "unlink" ? 1 : 0);
+        expect(authorityCalls).toBe(site === "match" ? 0 : 1);
+        expect(matchCalls).toBe(site === "unlink" ? 2 : 1);
+        expect(removeCalls).toBe(site === "unlink" ? 1 : 0);
         expect(identity(directory, name)).toEqual({ dev: expected.dev, ino: expected.ino });
         expect(fs.readlinkSync(path.join(directory, name))).toBe("runtime");
         expect(fs.readdirSync(directory).sort()).toEqual(["runtime", name].sort());
@@ -178,9 +185,9 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
           const disposal = await rejection(owner[Symbol.asyncDispose]());
           expect(disposal.error === error).toBe(true);
         }
-        expect(authority).toHaveBeenCalledTimes(site === "match" ? 0 : 1);
-        expect(match).toHaveBeenCalledTimes(site === "unlink" ? 2 : 1);
-        expect(remove).toHaveBeenCalledTimes(site === "unlink" ? 1 : 0);
+        expect(authorityCalls).toBe(site === "match" ? 0 : 1);
+        expect(matchCalls).toBe(site === "unlink" ? 2 : 1);
+        expect(removeCalls).toBe(site === "unlink" ? 1 : 0);
         assertClosedOnce();
         expect(identity(directory, name)).toEqual(foreign);
         expect(identity(directory, "original")).toEqual({ dev: expected.dev, ino: expected.ino });
@@ -188,7 +195,11 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
         expect(fs.readFileSync(path.join(directory, "runtime", "sentinel"), "utf8")).toBe("untouched");
       } finally {
         armed = false;
-        await owner.cleanup().catch(() => {});
+        try { await owner.cleanup().catch(() => {}); }
+        finally {
+          binding!.stagedSymlinkMatches = matches;
+          binding!.removeStagedSymlink = unlink;
+        }
       }
     });
   }
@@ -196,20 +207,23 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
   for (const timing of ["before", "after"] as const) {
     it.each(hostileErrors)(`publish settles hostile error metadata: $label ${timing} native rename`, async ({ create }) => {
       const cause = create();
-      const authority = vi.fn(() => {});
+      let authorityCalls = 0;
+      const authority = () => { authorityCalls += 1; };
       const { directory, expected, owner, assertClosedOnce } = await fixture(authority);
       const nativePublish = binding!.publishStagedSymlink!;
       let armed = true;
-      const publish = vi.spyOn(binding!, "publishStagedSymlink").mockImplementation((...args) => {
-        if (!armed) return nativePublish(...args);
-        if (timing === "after") nativePublish(...args);
-        throw cause;
-      });
-      const match = vi.spyOn(binding!, "stagedSymlinkMatches");
-      const target = vi.spyOn(binding!, "stagedSymlinkTarget");
-      const remove = vi.spyOn(binding!, "removeStagedSymlink");
-      authority.mockClear();
+      let publishCalls = 0;
       try {
+        binding!.publishStagedSymlink = (...args) => {
+          publishCalls += 1;
+          if (!armed) return nativePublish(...args);
+          if (timing === "after") nativePublish(...args);
+          throw cause;
+        };
+        const match = vi.spyOn(binding!, "stagedSymlinkMatches");
+        const target = vi.spyOn(binding!, "stagedSymlinkTarget");
+        const remove = vi.spyOn(binding!, "removeStagedSymlink");
+        authorityCalls = 0;
         const first = await rejection(owner.publish("slot"));
         const error = assertWrapped(first.error, cause, "helper-failed");
         const publication = error.details?.publication;
@@ -242,8 +256,8 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
         const disposal = await rejection(owner[Symbol.asyncDispose]());
         const disposalError = assertWrapped(disposal.error, undefined, "not-removable");
         expect(disposalError.details?.cleanup === cleanup).toBe(true);
-        expect(authority).toHaveBeenCalledTimes(1);
-        expect(publish).toHaveBeenCalledTimes(1);
+        expect(authorityCalls).toBe(1);
+        expect(publishCalls).toBe(1);
         expect(match).toHaveBeenCalledTimes(2);
         expect(target).toHaveBeenCalledTimes(2);
         expect(remove).not.toHaveBeenCalled();
@@ -254,7 +268,8 @@ describe.runIf(supported && !!binding)("retained symlink error settlement", () =
         expect(fs.readFileSync(path.join(directory, "runtime", "sentinel"), "utf8")).toBe("untouched");
       } finally {
         armed = false;
-        await owner.cleanup().catch(() => {});
+        try { await owner.cleanup().catch(() => {}); }
+        finally { binding!.publishStagedSymlink = nativePublish; }
       }
     });
   }
