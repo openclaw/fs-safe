@@ -211,6 +211,10 @@ loading, including failure. Public preflight still returns ordinary JSZip entry
 objects, with directory keys ending in `/` and recognizable symlink type bits.
 Compressed data is retained even for declared-zero entries, so an empty-size
 claim cannot bypass payload-size or CRC verification during extraction or reads.
+Extraction and bounded reads retain the admitted CRC and size independently of
+mutable decoder objects, so later decoder changes cannot redefine the expected
+payload integrity. Public preflight archives retain ordinary JSZip mutation
+and entry-reading behavior.
 
 Within one ZIP entry, identical local and central name bytes reuse the same
 decoded validation. Unicode Path admission is shared only when both the raw names
