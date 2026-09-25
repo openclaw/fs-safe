@@ -10,6 +10,7 @@
 
 ### Fixes
 
+- **Windows ACL batch memory:** bound encoded fallback results during collection and reject oversized batches with `too-large` before querying later paths, avoiding retention of every descriptor graph while preserving duplicate observations and earlier query failures.
 - **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
 - **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
 

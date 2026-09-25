@@ -237,6 +237,14 @@ unconfirmed child can still be reading after rejection; the operation returns
 no facts and owns no output files or artifact cleanup. Neither timing out nor
 receiving a successful kill request is reported as confirmed exit.
 
+The PowerShell fallback encodes and budgets each result while collecting it,
+instead of retaining every descriptor graph until the entire batch finishes.
+An encoded response that would exceed 16 MiB rejects with `too-large` before
+inspecting later paths. A query failure observed earlier retains its original
+error, and no partial facts are returned. Duplicate paths remain independent
+observations. This bounds accumulated encoded results, not total process memory:
+the current descriptor and row, decoded input, and runtime overhead still exist.
+
 Batch observations are point-in-time pathname facts, not a snapshot or a
 retained filesystem capability. The caller still owns ancestry trust, principal
 policy and authorization for subsequent operations. Existing singular queries
