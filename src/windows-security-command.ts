@@ -136,13 +136,11 @@ type CommandFailureReceipt = {
 };
 
 class WindowsSecurityCommandError extends PermissionCommandError {
-  override readonly timedOut: boolean;
   readonly creationOutcome?: "unconfirmed";
   readonly processExitConfirmed: boolean;
 
-  constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, timedOut: boolean) {
+  constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, override readonly timedOut: boolean) {
     super(file, durationMs, receipt);
-    this.timedOut = timedOut;
     this.creationOutcome = receipt.creationOutcome;
     this.processExitConfirmed = receipt.processExitConfirmed;
     if (timedOut) this.message = `Windows permission inspection timed out after ${DEFAULT_PERMISSION_EXEC_TIMEOUT_MS}ms`;
