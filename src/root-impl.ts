@@ -272,14 +272,12 @@ export interface Root {
 }
 
 export class RootHandle implements Root {
-  private readonly context: RootContext;
   readonly rootDir: string;
   readonly rootReal: string;
   readonly rootWithSep: string;
   readonly defaults: RootDefaults;
 
-  constructor(context: RootContext, defaults: RootDefaults = {}) {
-    this.context = context;
+  constructor(private readonly context: RootContext, defaults: RootDefaults = {}) {
     this.rootDir = context.rootDir;
     this.rootReal = context.rootReal;
     this.rootWithSep = context.rootWithSep;
