@@ -134,6 +134,16 @@ when the matching package is absent, incompatible, or disabled.
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
 before deploying with native mode `require` or native-only features.
 
+### Older Linux kernels and seccomp
+
+The native addon supports kernels without `openat2` (before Linux 5.6) and
+containers returning `ENOSYS` or probe-time `EPERM` for that syscall. Beneath
+opens use a guarded no-follow component walk and report `best-effort`.
+Nested no-clobber moves retain atomic `renameat2(RENAME_NOREPLACE)` and exact
+identity checks; keep native mode enabled. Strict bounded cleanup still
+requires `openat2` with `RESOLVE_NO_XDEV` and reports `helper-unavailable`
+without it. See [Linux capability behavior and limits](native.md#linux-without-openat2).
+
 ### Windows security fallback
 
 Windows raw owner/DACL inspection, private-directory creation, and secure-file
