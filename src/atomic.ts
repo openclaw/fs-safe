@@ -4,6 +4,7 @@ export {
   type ReplaceFileAtomicFileSystem,
   type ReplaceFileAtomicOptions,
   type ReplaceFileAtomicResult,
+  type ReplaceFileAtomicDestinationState,
   type ReplaceFileAtomicSyncFileSystem,
   type ReplaceFileAtomicSyncOptions,
 } from "./replace-file.js";

@@ -4,6 +4,7 @@ import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-node.js";
+import type { AtomicMutation } from "./replace-file-mutation.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open" | "writeFile">;
 type SyncTempFileSystem = Pick<
@@ -74,6 +75,7 @@ export async function pinDirectoryForMode(params: {
   dirPath: string;
   /** Compatibility for best-effort directory modes; admission and close still fail closed. */
   ignoreChmodError?: boolean;
+  mutation?: AtomicMutation;
 }): Promise<DirectoryModeOwner | undefined> {
   // Node does not enforce POSIX directory modes on Windows, and its directory
   // descriptors are not consistently openable. mkdir(mode) remains the only
@@ -94,7 +96,10 @@ export async function pinDirectoryForMode(params: {
           : await inspectFileIdentity(async () => assertDirectory(await handle.stat({ bigint: true }), params.dirPath), expected);
         return Number(opened.mode & 0o7777n);
       },
-      chmod: (mode) => handle.chmod(mode),
+      chmod: (mode) => {
+        params.mutation?.assert();
+        return handle.chmod(mode);
+      },
       close: () => handle.close(),
       ignoreChmodError: params.ignoreChmodError,
     });
@@ -122,6 +127,7 @@ export function applyDirectoryModeSync(params: {
   dirPath: string;
   mode: number;
   fchmodSync?: SyncFchmod;
+  mutation?: AtomicMutation;
 }): void {
   if (process.platform === "win32") {
     return;
@@ -132,6 +138,7 @@ export function applyDirectoryModeSync(params: {
   try {
     inspectFileIdentitySync(() => assertDirectory(params.fsModule.fstatSync(fd, { bigint: true }), params.dirPath), expected);
     // chmod ignores file-type bits; mask so raw stat modes are tolerated.
+    params.mutation?.assert();
     params.fchmodSync?.(fd, params.mode & 0o7777);
   } finally {
     params.fsModule.closeSync(fd);
@@ -145,7 +152,9 @@ export async function writeTempFile(params: {
   mode: number;
   sync: boolean;
   onIdentity?: (identity: BigIntStats) => void;
+  mutation?: AtomicMutation;
 }): Promise<{ handle: FileHandle; identity: BigIntStats }> {
+  params.mutation?.assert();
   const handle = await params.fsModule.open(params.tempPath, "wx", params.mode);
   try {
     // Custom adapters retain their async-only metadata contract.
@@ -153,6 +162,7 @@ export async function writeTempFile(params: {
       ? syncFs.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true });
     const identity = await inspectFileIdentity(inspect);
     params.onIdentity?.(identity);
+    params.mutation?.assert();
     await params.fsModule.writeFile(handle, params.content);
     await handle.chmod(params.mode);
     if (params.sync) {
@@ -177,10 +187,12 @@ export function writeTempFileSync(params: Omit<
   fsModule: SyncTempFileSystem;
   fchmodSync?: SyncFchmod;
 }): { fd: number; identity: BigIntStats } {
+  params.mutation?.assert();
   const fd = params.fsModule.openSync(params.tempPath, "wx", params.mode);
   try {
     const identity = inspectFileIdentitySync(() => params.fsModule.fstatSync(fd, { bigint: true }));
     params.onIdentity?.(identity);
+    params.mutation?.assert();
     params.fsModule.writeFileSync(fd, params.content);
     params.fchmodSync?.(fd, params.mode);
     if (params.sync) {

@@ -68,7 +68,10 @@ fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kin
 
 `walk()` is the incremental, root-bounded recursive scan. It supports entry and
 depth budgets, cancellation, and `symlinkPolicy: "skip" |
-"follow-within-root"`. With an entry budget, sorted walks prepare small metadata
+"follow-within-root" | "include"`. Include mode returns links as
+`{ relativePath, kind: "symlink", size }` without resolving or entering their
+targets, including dangling and outside-root links. `size` describes the link,
+not its target. With an entry budget, sorted walks prepare small metadata
 batches within the remaining budget; unbounded sorted walks reuse the full
 directory snapshot.
 The default `order: "sorted"` enumerates and sorts each directory's names;
@@ -92,6 +95,8 @@ Directory reads remain fail-fast by default. With
 `{ relativePath, kind: "directory-error", size: 0, error }` and continues with
 the remaining tree. That policy also covers identity-check failures after an
 awaited filter, while callback failures always reject.
+In include mode, a directory that becomes a symlink before descent is a
+`path-mismatch` directory error; it is never silently omitted or followed.
 See [Directory walking](walk.md) for the pure-Node guarantees and the contrast
 with the standalone best-effort walkers.
 

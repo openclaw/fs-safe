@@ -2,7 +2,10 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { replaceFileAtomic, type ReplaceFileAtomicFileSystem } from "../src/replace-file.js";
+import {
+  replaceFileAtomic, replaceFileAtomicSync,
+  type ReplaceFileAtomicDestinationState, type ReplaceFileAtomicFileSystem,
+} from "../src/replace-file.js";
 import { sha256Hex } from "../src/file-identity.js";
 import { AsyncAtomicTempOwner } from "../src/replace-file-temp-owner.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -39,7 +42,7 @@ function expectClosed(fd: number): void {
   expect(() => fsSync.fstatSync(fd)).toThrow();
 }
 
-describe("async atomic temp handle ownership", () => {
+describe("atomic temp handle ownership", () => {
   it.each(CLOSE_FAILURES)("consumes the previous handle before a rejected publication close ($label)", async ({ failure: closeFailure }) => {
     const directory = await tempRoot("fs-safe-atomic-published-close-owner-");
     const tempPath = path.join(directory, "owned-temp");
@@ -120,7 +123,8 @@ describe("async atomic temp handle ownership", () => {
     expectClosed(fd);
   });
 
-  it.each(CLOSE_FAILURES)("does not retry an adapter handle after public publication adopts a new inode ($label)", async ({ failure: closeFailure }) => {
+  it.each(CLOSE_FAILURES.flatMap(failure => [false, true].map(synchronous => ({ ...failure, synchronous }))))(
+    "retains the publication receipt and closes adopted handles once ($label, sync=$synchronous)", async ({ failure: closeFailure, synchronous }) => {
     const directory = await tempRoot("fs-safe-atomic-published-close-public-");
     const target = path.join(directory, "target");
     const content = "replacement";
@@ -129,6 +133,8 @@ describe("async atomic temp handle ownership", () => {
     let publishedCloses = 0;
     let tempFd: number | undefined;
     let publishedFd: number | undefined;
+    let publishedIdentity: fsSync.BigIntStats | undefined;
+    const receipts: ReplaceFileAtomicDestinationState[] = [];
 
     const adapterOpen: typeof fs.open = async (...args: Parameters<typeof fs.open>) => {
       const handle = await open(...args);
@@ -137,6 +143,7 @@ describe("async atomic temp handle ownership", () => {
         rejectCloseAfterRelease(handle, closeFailure, () => { tempCloses += 1; });
       } else if (String(args[0]) === target) {
         publishedFd = handle.fd;
+        publishedIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
         countClose(handle, () => { publishedCloses += 1; });
       }
       return handle;
@@ -152,18 +159,46 @@ describe("async atomic temp handle ownership", () => {
       },
     };
 
-    await expect(replaceFileAtomic({
+    const options = {
       filePath: target,
       content,
-      fileSystem,
-      renameIdentity: "verify-content-with-lock",
-    })).rejects.toBe(closeFailure);
+      renameIdentity: "verify-content-with-lock" as const,
+      onDestinationState: (receipt: ReplaceFileAtomicDestinationState) => { receipts.push(receipt); },
+    };
+    const run = async () => {
+      if (!synchronous) return await replaceFileAtomic({ ...options, fileSystem });
+      return replaceFileAtomicSync({ ...options, fileSystem: {
+        ...fsSync,
+        openSync(candidate, flags, mode) {
+          const fd = fsSync.openSync(candidate, flags, mode);
+          if (flags === "wx") tempFd = fd;
+          else if (String(candidate) === target) {
+            publishedFd = fd;
+            publishedIdentity = fsSync.fstatSync(fd, { bigint: true });
+          }
+          return fd;
+        },
+        closeSync(fd) {
+          fsSync.closeSync(fd);
+          if (fd === tempFd) { tempCloses++; throw closeFailure; }
+          if (fd === publishedFd) publishedCloses++;
+        },
+        renameSync(from, to) {
+          fsSync.copyFileSync(from, to);
+          fsSync.unlinkSync(from);
+        },
+      } });
+    };
+    await expect(run()).rejects.toBe(closeFailure);
 
     expect(tempCloses).toBe(1);
     expect(publishedCloses).toBe(1);
     expectClosed(tempFd!);
     expectClosed(publishedFd!);
     await expect(fs.readFile(target, "utf8")).resolves.toBe(content);
+    expect(receipts).toEqual([{
+      state: "published", path: target, dev: publishedIdentity!.dev, ino: publishedIdentity!.ino,
+    }]);
     expect((await fs.readdir(directory)).filter((name) => name.startsWith(".fs-safe-replace.")))
       .toEqual([]);
   });
