@@ -239,6 +239,13 @@ For tests that need a private temp workspace, [`withTempWorkspace`](temp.md) mak
 
 ## Repo test shards
 
+On macOS, after building the native addon, run the native watch cleanup allocation
+regression with `MallocStackLogging=1 node --expose-gc scripts/watch-cleanup-leak-proof.mjs`.
+It compares `leaks` results before and after 100 and 1,000 subscription cycles,
+requiring zero growth in leaked allocations. Allocation stacks are saved under
+`.artifacts/watch-cleanup-leaks`. The native macOS CI lane runs this short proof;
+the full stress campaign remains manual.
+
 Run the full local gate before handoff:
 
 ```sh
