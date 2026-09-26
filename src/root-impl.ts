@@ -67,7 +67,7 @@ import {
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import type { DirEntry, PathStat } from "./types.js";
-import { walkRoot, type RootWalkEntry, type RootWalkOptions } from "./root-walk.js";
+import { walkRoot, type RootWalkEntry, type RootWalkOptions, type RootWalkSymlinkPolicy } from "./root-walk.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { removePathInRootFallback, validateRemoveOptions } from "./root-remove.js";
 import { serializePathWrite } from "./write-queue.js";
@@ -269,7 +269,7 @@ export interface Root {
     toRelative: string,
     options?: RootMoveOptions,
   ): Promise<void>;
-  walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry>;
+  walk<Policy extends RootWalkSymlinkPolicy>(relativePath: string, options: RootWalkOptions<Policy>): AsyncIterableIterator<RootWalkEntry<Policy>>;
 }
 
 export class RootHandle implements Root {
@@ -566,7 +566,8 @@ export class RootHandle implements Root {
       symlinks: options.symlinks ?? this.defaults.symlinks,
     });
   }
-  walk(relativePath: string, options: RootWalkOptions): AsyncIterableIterator<RootWalkEntry> {
+  walk<Policy extends RootWalkSymlinkPolicy>(relativePath: string, options: RootWalkOptions<Policy>): AsyncIterableIterator<RootWalkEntry<Policy>>;
+  walk(relativePath: string, options: RootWalkOptions | RootWalkOptions<"include"> | RootWalkOptions<RootWalkSymlinkPolicy>): AsyncIterableIterator<RootWalkEntry<RootWalkSymlinkPolicy>> {
     assertValidRootRelativePath(relativePath);
     return walkRoot({
       rootReal: this.context.rootReal,

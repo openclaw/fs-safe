@@ -6,38 +6,55 @@ import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-d
 import type { DirEntry, PathStat } from "./types.js";
 import { createSuppressedError } from "./suppressed-error.js";
 
-export type RootWalkSymlinkPolicy = "skip" | "follow-within-root";
+export type RootWalkSymlinkPolicy = "skip" | "follow-within-root" | "include";
+type LegacyRootWalkSymlinkPolicy = Exclude<RootWalkSymlinkPolicy, "include">;
 export type RootWalkLimitBehavior = "truncate" | "throw";
 export type RootWalkDirectoryErrorBehavior = "throw" | "skip-and-report";
 export type RootWalkEntryFilterResult = "include" | "skip" | "skip-subtree";
-export type RootWalkDataEntryKind = "file" | "directory" | "other";
-export type RootWalkEntryKind = RootWalkDataEntryKind | "directory-error" | "truncated";
+export type RootWalkDataEntryKind<Policy extends RootWalkSymlinkPolicy = LegacyRootWalkSymlinkPolicy> =
+  "file" | "directory" | "other" | ("include" extends Policy ? "symlink" : never);
+export type RootWalkEntryKind<Policy extends RootWalkSymlinkPolicy = LegacyRootWalkSymlinkPolicy> =
+  RootWalkDataEntryKind<Policy> | "directory-error" | "truncated";
 
-export type RootWalkDataEntry = {
+type WalkEntryOfKind<Kind extends RootWalkDataEntryKind<RootWalkSymlinkPolicy>> = {
   relativePath: string;
-  kind: RootWalkDataEntryKind;
+  kind: Kind;
   size: number;
 };
 
-export type RootWalkEntry =
-  | RootWalkDataEntry
+export type RootWalkDataEntry<Policy extends RootWalkSymlinkPolicy = LegacyRootWalkSymlinkPolicy> =
+  | WalkEntryOfKind<RootWalkDataEntryKind>
+  | ("include" extends Policy ? WalkEntryOfKind<"symlink"> : never);
+
+export type RootWalkEntry<Policy extends RootWalkSymlinkPolicy = LegacyRootWalkSymlinkPolicy> =
+  | RootWalkDataEntry<Policy>
   | { relativePath: string; kind: "truncated"; size: 0 }
   | { relativePath: string; kind: "directory-error"; size: 0; error: unknown };
 
-export type RootWalkEntryFilter = (
-  entry: RootWalkDataEntry,
+export type RootWalkEntryFilter<Policy extends RootWalkSymlinkPolicy = LegacyRootWalkSymlinkPolicy> = (
+  entry: RootWalkDataEntry<Policy>,
 ) => RootWalkEntryFilterResult | Promise<RootWalkEntryFilterResult>;
 
-export type RootWalkOptions = {
+export type RootWalkOptions<Policy extends RootWalkSymlinkPolicy = LegacyRootWalkSymlinkPolicy> = {
   maxDepth?: number;
   maxEntries?: number;
   order?: "sorted" | "filesystem";
-  symlinkPolicy: RootWalkSymlinkPolicy;
+  symlinkPolicy: Policy;
   signal?: AbortSignal;
   limitBehavior?: RootWalkLimitBehavior;
-  entryFilter?: RootWalkEntryFilter;
+  entryFilter?: RootWalkEntryFilter<Policy>;
   onDirectoryError?: RootWalkDirectoryErrorBehavior;
 };
+
+type AnyRootWalkOptions = RootWalkOptions | RootWalkOptions<"include"> | RootWalkOptions<RootWalkSymlinkPolicy>;
+type AnyRootWalkEntry = RootWalkEntry<RootWalkSymlinkPolicy>;
+
+function filterEntry(options: AnyRootWalkOptions, entry: RootWalkDataEntry<RootWalkSymlinkPolicy>) {
+  if (entry.kind === "symlink") {
+    return options.symlinkPolicy === "include" ? options.entryFilter?.(entry) ?? "include" : "skip";
+  }
+  return options.entryFilter?.(entry) ?? "include";
+}
 
 type RootWalkCapability = {
   rootReal: string;
@@ -70,9 +87,9 @@ function limitEntry(relativePath: string): RootWalkEntry {
 export async function* walkRoot(
   root: RootWalkCapability,
   relativePath: string,
-  options: RootWalkOptions,
-): AsyncGenerator<RootWalkEntry> {
-  if (!(["skip", "follow-within-root"] as const).includes(options.symlinkPolicy)) {
+  options: AnyRootWalkOptions,
+): AsyncGenerator<AnyRootWalkEntry> {
+  if (!(["skip", "follow-within-root", "include"] as const).includes(options.symlinkPolicy)) {
     throw new TypeError(`invalid root walk symlink policy: ${String(options.symlinkPolicy)}`);
   }
   if (options.order !== undefined && !(["sorted", "filesystem"] as const).includes(options.order)) {
@@ -118,20 +135,23 @@ export async function* walkRoot(
     return { relativePath: directory, kind: "directory-error", size: 0, error };
   };
 
-  async function* visit(directory: string, depth: number): AsyncGenerator<RootWalkEntry> {
+  async function* visit(directory: string, depth: number): AsyncGenerator<AnyRootWalkEntry> {
     options.signal?.throwIfAborted();
     let listing: RootDirectoryListing;
     try {
       const expandedDirectory = depth === 0 ? await expandRelativePathWithHome(directory) : directory;
-      const skipChildSymlinks = depth > 0 && options.symlinkPolicy === "skip";
+      const noFollowChildSymlinks = depth > 0 && options.symlinkPolicy !== "follow-within-root";
       const resolvedDirectory = await resolveRootPath({
         absolutePath: path.resolve(root.rootReal, expandedDirectory),
         rootPath: root.rootReal,
         rootCanonicalPath: root.rootReal,
         boundaryLabel: "root walk",
-        policy: skipChildSymlinks ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
+        policy: noFollowChildSymlinks ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
       });
-      if (skipChildSymlinks && resolvedDirectory.kind === "symlink") return;
+      if (noFollowChildSymlinks && resolvedDirectory.kind === "symlink") {
+        if (options.symlinkPolicy === "skip") return;
+        throw new FsSafeError("path-mismatch", `root walk directory became a symlink: ${directory}`);
+      }
       if (!resolvedDirectory.exists || resolvedDirectory.kind !== "directory") {
         throw new FsSafeError(
           "not-file",
@@ -187,10 +207,8 @@ export async function* walkRoot(
         const entry = next.entry;
         let kind = entryKind(entry);
         let size = entry.size;
-        if (kind === "symlink") {
-          if (options.symlinkPolicy === "skip") {
-            continue;
-          }
+        if (kind === "symlink" && options.symlinkPolicy === "skip") continue;
+        if (kind === "symlink" && options.symlinkPolicy === "follow-within-root") {
           const resolved = await resolveRootPath({
             absolutePath: path.resolve(root.rootReal, child),
             rootPath: root.rootReal,
@@ -205,8 +223,8 @@ export async function* walkRoot(
           size = target.size;
         }
 
-        const walkEntry: RootWalkDataEntry = { relativePath: child, kind, size };
-        let filterResult = options.entryFilter?.(walkEntry) ?? "include";
+        const walkEntry: RootWalkDataEntry<RootWalkSymlinkPolicy> = { relativePath: child, kind, size };
+        let filterResult = filterEntry(options, walkEntry);
         if (typeof filterResult !== "string") {
           filterResult = (await filterResult) ?? "include";
           options.signal?.throwIfAborted();
