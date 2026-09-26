@@ -6,8 +6,8 @@ import { suffixWindowsReservedDeviceName } from "./filename.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import {
   assertSafePathSegment,
+  isSafePathSegment,
   normalizeSafePathSegment,
-  sanitizeSafePathSegment,
   trimHyphenEdges,
 } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -104,7 +104,8 @@ export function sanitizeTempFileName(fileName: string): string {
   const suffixed = suffixWindowsReservedDeviceName(
     normalizeSafePathSegment(path.basename(fileName)),
   );
-  return sanitizeSafePathSegment(suffixed) ?? "download.bin";
+  // The suffix only inserts "_", so this value is already normalized.
+  return isSafePathSegment(suffixed, { allowDotPrefix: true }) ? suffixed : "download.bin";
 }
 
 export function buildRandomTempFilePath(params: {

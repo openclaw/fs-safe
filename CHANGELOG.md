@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- **Temporary filename sanitization:** skip duplicate normalization after reserved-device suffixing while preserving filename admission and fallback rules.
+
 ## 0.20.0 - 2026-09-25
 
 ### Highlights
