@@ -208,14 +208,20 @@ export class AsyncAtomicTempOwner extends AtomicTempOwner<FileHandle> {
     fsModule: AsyncOwnerFileSystem,
     pathname: string,
     expectedHash?: string,
+    onVerified?: (identity: BigIntStats) => void,
   ): Promise<void> {
+    let identityCurrent = false;
     try {
       await this.assertCurrent(fsModule, pathname);
-      return;
+      identityCurrent = true;
     } catch (error) {
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
         throw error;
       }
+    }
+    if (identityCurrent) {
+      onVerified?.(this.identity);
+      return;
     }
 
     let published: FileHandle | undefined;
@@ -245,6 +251,7 @@ export class AsyncAtomicTempOwner extends AtomicTempOwner<FileHandle> {
       if (sha256Hex(await published.readFile()) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
+      onVerified?.(identity);
       const previousHandle = this.takeResource();
       await previousHandle?.close();
       this.resource = published;
@@ -320,14 +327,20 @@ export class SyncAtomicTempOwner extends AtomicTempOwner<number> {
     fsModule: SyncOwnerFileSystem,
     pathname: string,
     expectedHash?: string,
+    onVerified?: (identity: BigIntStats) => void,
   ): void {
+    let identityCurrent = false;
     try {
       this.assertCurrent(fsModule, pathname);
-      return;
+      identityCurrent = true;
     } catch (error) {
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
         throw error;
       }
+    }
+    if (identityCurrent) {
+      onVerified?.(this.identity);
+      return;
     }
 
     let publishedFd: number | undefined;
@@ -355,6 +368,7 @@ export class SyncAtomicTempOwner extends AtomicTempOwner<number> {
       if (sha256Hex(fsModule.readFileSync(publishedFd)) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }
+      onVerified?.(identity);
       const previousFd = this.takeResource()!;
       fsModule.closeSync(previousFd);
       this.resource = publishedFd;

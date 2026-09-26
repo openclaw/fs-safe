@@ -6,6 +6,9 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { readOwnedCopySource, readOwnedCopySourceSync } from "./replace-file-copy-source.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { hasErrorCode } from "./file-cleanup.js";
+import { writeAtomicDestination, writeAtomicDestinationSync } from "./replace-file-buffer.js";
+import { AtomicMutation } from "./replace-file-mutation.js";
+import { captureAtomicDestination, captureAtomicDestinationSync } from "./replace-file-destination.js";
 
 export type ReplaceFileDestinationHardlinkPolicy = "reject";
 export type ReplaceFileCopyFallbackRestorePolicy = "restore-original" | "none";
@@ -92,6 +95,7 @@ async function openPinnedDestination(
   dest: string,
   admission: DestinationAdmission,
   hardlinks?: ReplaceFileDestinationHardlinkPolicy,
+  mutation?: AtomicMutation,
 ): Promise<FileHandle | null> {
   let preview: Stats | null;
   try {
@@ -106,6 +110,7 @@ async function openPinnedDestination(
     throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${dest}`);
   }
 
+  mutation?.assert();
   const handle = await fsModule.open(dest, admission === "restore" ? OPEN_READ_WRITE_FLAGS : OPEN_READ_FLAGS);
   try {
     if (fsModule === fs) inspectPinnedDestinationSync(syncFs, handle.fd, dest, admission, hardlinks);
@@ -130,6 +135,7 @@ function openPinnedDestinationSync(
   dest: string,
   admission: DestinationAdmission,
   hardlinks?: ReplaceFileDestinationHardlinkPolicy,
+  mutation?: AtomicMutation,
 ): number | null {
   let preview: Stats;
   try {
@@ -143,6 +149,7 @@ function openPinnedDestinationSync(
     throw new FsSafeError("symlink", `Refusing copy fallback through symlink destination: ${dest}`);
   }
 
+  mutation?.assert();
   const fd = fsModule.openSync(dest, admission === "restore" ? OPEN_READ_WRITE_FLAGS : OPEN_READ_FLAGS);
   try {
     inspectPinnedDestinationSync(fsModule, fd, dest, admission, hardlinks);
@@ -202,28 +209,6 @@ function readRestoreSnapshotSync(fsModule: SyncFallbackFs, fd: number, maxBytes:
   }, restoreReadOptions(stat, maxBytes));
 }
 
-async function writeAll(handle: FileHandle, data: Buffer): Promise<void> {
-  await handle.truncate(0);
-  let written = 0;
-  while (written < data.length) {
-    const result = await handle.write(data, written, data.length - written, written);
-    if (result.bytesWritten === 0) throw new Error("Copy fallback write made no progress");
-    written += result.bytesWritten;
-  }
-  await handle.truncate(data.length);
-}
-
-function writeAllSync(fsModule: SyncFallbackFs, fd: number, data: Buffer): void {
-  fsModule.ftruncateSync(fd, 0);
-  let written = 0;
-  while (written < data.length) {
-    const bytesWritten = fsModule.writeSync(fd, data, written, data.length - written, written);
-    if (bytesWritten === 0) throw new Error("Copy fallback write made no progress");
-    written += bytesWritten;
-  }
-  fsModule.ftruncateSync(fd, data.length);
-}
-
 function restoreFailure(
   writeError: unknown,
   cleanup: ReplaceFileAtomicRestoreCleanup,
@@ -249,21 +234,27 @@ async function replacePinnedWithRestore(
   replacement: Buffer,
   maxRestoreBytes: number,
   replacementMode: number,
+  destination: Awaited<ReturnType<typeof captureAtomicDestination>> | undefined,
+  mutation: AtomicMutation,
 ): Promise<void> {
   const originalStat = fsModule === fs ? syncFs.fstatSync(handle.fd) : await handle.stat();
   const originalMode = originalStat.mode;
   const original = await readRestoreSnapshot(handle, maxRestoreBytes, originalStat);
   try {
-    await writeAll(handle, replacement);
+    await writeAtomicDestination(handle, replacement, destination?.beforeWrite, destination?.assertBeforeMutation, destination?.writing);
+    if (destination) await destination.verify();
     await handle.chmod(replacementMode);
     await handle.sync();
   } catch (writeError) {
+    mutation.rethrowRefusal();
     try {
-      await writeAll(handle, original);
+      await writeAtomicDestination(handle, original, destination?.beforeWrite, destination?.assertBeforeMutation, destination?.writing);
+      if (destination) await destination.verify();
       await handle.chmod(originalMode);
       await handle.sync();
       throw restoreFailure(writeError, "restored");
     } catch (restoreError) {
+      mutation.rethrowRefusal();
       if (restoreError instanceof FsSafeError && restoreError.details?.cleanup === "restored") {
         throw restoreError;
       }
@@ -279,21 +270,27 @@ function replacePinnedWithRestoreSync(
   maxRestoreBytes: number,
   replacementMode: number,
   fchmodSync?: (fd: number, mode: number) => void,
+  destination?: ReturnType<typeof captureAtomicDestinationSync>,
+  mutation?: AtomicMutation,
 ): void {
   const originalStat = fsModule.fstatSync(fd);
   const originalMode = originalStat.mode;
   const original = readRestoreSnapshotSync(fsModule, fd, maxRestoreBytes, originalStat);
   try {
-    writeAllSync(fsModule, fd, replacement);
+    writeAtomicDestinationSync(fsModule, fd, replacement, destination?.beforeWrite, destination?.writing);
+    destination?.verify();
     fchmodSync?.(fd, replacementMode);
     fsModule.fsyncSync(fd);
   } catch (writeError) {
+    mutation?.rethrowRefusal();
     try {
-      writeAllSync(fsModule, fd, original);
+      writeAtomicDestinationSync(fsModule, fd, original, destination?.beforeWrite, destination?.writing);
+      destination?.verify();
       fchmodSync?.(fd, originalMode);
       fsModule.fsyncSync(fd);
       throw restoreFailure(writeError, "restored");
     } catch (restoreError) {
+      mutation?.rethrowRefusal();
       if (restoreError instanceof FsSafeError && restoreError.details?.cleanup === "restored") {
         throw restoreError;
       }
@@ -311,7 +308,9 @@ export async function copyFallbackReplace(params: {
   maxRestoreBytes?: number;
   expectedSourceIdentity?: BigIntStats;
   sync: boolean;
+  mutation?: AtomicMutation;
 }): Promise<void> {
+  const mutation = params.mutation ?? new AtomicMutation({});
   const source = await readOwnedCopySource({
     fsModule: params.fsModule,
     src: params.src,
@@ -320,6 +319,8 @@ export async function copyFallbackReplace(params: {
   const { replacement } = source;
   let destHandle: FileHandle | null = null;
   let closeRequiredForSuccess = false;
+  let completed = false;
+  let destination: Awaited<ReturnType<typeof captureAtomicDestination>> | undefined;
   try {
     if (params.restore === "restore-original") {
       const pinned = await openPinnedDestination(
@@ -327,15 +328,19 @@ export async function copyFallbackReplace(params: {
         params.dest,
         "restore",
         params.destinationHardlinks,
+        mutation,
       );
       if (pinned) {
         destHandle = pinned;
+        if (mutation.active) destination = await captureAtomicDestination(params.fsModule, pinned, params.dest, mutation, params.destinationHardlinks === "reject");
         await replacePinnedWithRestore(
           params.fsModule,
           destHandle,
           replacement,
           params.maxRestoreBytes!,
           source.mode,
+          destination,
+          mutation,
         );
       }
     }
@@ -357,26 +362,39 @@ export async function copyFallbackReplace(params: {
           params.dest,
           params.destinationHardlinks,
         );
+        mutation.assert();
         await params.fsModule.rm(params.dest, { force: true });
+        mutation.removed(params.dest);
       }
+      mutation.assert();
       destHandle = await params.fsModule.open(
         params.dest,
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
-      await destHandle.writeFile(replacement);
+      if (mutation.active) {
+        destination = await captureAtomicDestination(params.fsModule, destHandle, params.dest, mutation, params.destinationHardlinks === "reject");
+        destination.writing();
+        await writeAtomicDestination(destHandle, replacement, destination.beforeWrite, destination.assertBeforeMutation);
+        await destination.verify();
+      } else {
+        await destHandle.writeFile(replacement);
+      }
       await destHandle.chmod(source.mode);
       if (params.sync) {
         await destHandle.sync();
       }
       closeRequiredForSuccess = !params.sync;
     }
+    if (destination) await destination.verify();
+    destination?.published();
+    completed = true;
   } finally {
     if (destHandle) {
       try {
         await destHandle.close();
       } catch (closeError) {
-        if (closeRequiredForSuccess) {
+        if (closeRequiredForSuccess && completed) {
           throw closeError;
         }
       }
@@ -391,6 +409,7 @@ export function copyFallbackReplaceSync(params: Omit<
   fsModule: SyncFallbackFs;
   fchmodSync?: (fd: number, mode: number) => void;
 }): void {
+  const mutation = params.mutation ?? new AtomicMutation({});
   const source = readOwnedCopySourceSync({
     fsModule: params.fsModule,
     src: params.src,
@@ -399,6 +418,8 @@ export function copyFallbackReplaceSync(params: Omit<
   const { replacement } = source;
   let destFd: number | undefined;
   let closeRequiredForSuccess = false;
+  let completed = false;
+  let destination: ReturnType<typeof captureAtomicDestinationSync> | undefined;
   try {
     if (params.restore === "restore-original") {
       const pinned = openPinnedDestinationSync(
@@ -406,9 +427,11 @@ export function copyFallbackReplaceSync(params: Omit<
         params.dest,
         "restore",
         params.destinationHardlinks,
+        mutation,
       );
       if (pinned !== null) {
         destFd = pinned;
+        if (mutation.active) destination = captureAtomicDestinationSync(params.fsModule, pinned, params.dest, mutation, params.destinationHardlinks === "reject");
         replacePinnedWithRestoreSync(
           params.fsModule,
           destFd,
@@ -416,6 +439,8 @@ export function copyFallbackReplaceSync(params: Omit<
           params.maxRestoreBytes!,
           source.mode,
           params.fchmodSync,
+          destination,
+          mutation,
         );
       }
     }
@@ -436,26 +461,35 @@ export function copyFallbackReplaceSync(params: Omit<
           params.dest,
           params.destinationHardlinks,
         );
+        mutation.assert();
         params.fsModule.rmSync(params.dest, { force: true });
+        mutation.removed(params.dest);
       }
+      mutation.assert();
       destFd = params.fsModule.openSync(
         params.dest,
         OPEN_WRITE_EXCLUSIVE_FLAGS,
         source.mode & 0o777,
       );
-      writeAllSync(params.fsModule, destFd, replacement);
+      if (mutation.active) destination = captureAtomicDestinationSync(params.fsModule, destFd, params.dest, mutation, params.destinationHardlinks === "reject");
+      destination?.writing();
+      writeAtomicDestinationSync(params.fsModule, destFd, replacement, destination?.beforeWrite);
+      destination?.verify();
       params.fchmodSync?.(destFd, source.mode);
       if (params.sync) {
         params.fsModule.fsyncSync(destFd);
       }
       closeRequiredForSuccess = !params.sync;
     }
+    destination?.verify();
+    destination?.published();
+    completed = true;
   } finally {
     if (destFd !== undefined) {
       try {
         params.fsModule.closeSync(destFd);
       } catch (closeError) {
-        if (closeRequiredForSuccess) {
+        if (closeRequiredForSuccess && completed) {
           throw closeError;
         }
       }

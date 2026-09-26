@@ -369,6 +369,12 @@ await replaceFileAtomic({
 
 `replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation; custom sync adapters using `mode` or `preserveExistingMode` provide the optional descriptor-bound `fchmodSync` operation.
 
+Both variants accept `assertBeforeMutation` for revocable caller authority and
+`onDestinationState` for observed removal, partial-write, and publication facts.
+The observer receives exact bigint identities from retained descriptors, including
+when later completion fails. These facts do not authorize rollback; the caller
+still owns current authority and content checks. See [atomic write authority](docs/atomic.md#atomic-write-authority-and-destination-state).
+
 ## External outputs
 
 Use `writeExternalFileWithinRoot()` when a browser download, renderer, media
