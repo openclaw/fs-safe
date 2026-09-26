@@ -65,6 +65,7 @@ await fs.remove("notes/archive/today.txt");
 | [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for private JSON/text state at 0600 under 0700 dirs. |
 | [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
 | [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
+| [`watch`](watch.md) | Guarded filesystem observation with advisory native hints and polling. |
 | [`walkDirectory` / `Root.walk`](walk.md) | Standalone inventories plus root-bounded pruning, budgets, and partial-error reporting. |
 | [`Root.entries`](entries.md) | Guarded nonrecursive entries, bounded name collection, and caller-owned symlink validation. |
 | [`extractArchive`](archive.md) | Policy-driven ZIP/TAR extraction with clamp/filter, metadata/path-depth, link, count, and byte limits. |

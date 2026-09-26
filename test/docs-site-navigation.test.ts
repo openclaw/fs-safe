@@ -109,7 +109,8 @@ describe("docs site navigation", () => {
     expect(result.stdout).toContain("built docs site:");
     for (const [page, section, prev, next] of [
       ["entries", "Root API", "writing", "walk"],
-      ["walk", "Root API", "entries", "path-scope"],
+      ["walk", "Root API", "entries", "watch"],
+      ["watch", "Root API", "walk", "path-scope"],
       ["staged-file", "Atomic &amp; temp", "atomic", "staged-symlink"],
       ["staged-symlink", "Atomic &amp; temp", "staged-file", "durability"],
       ["durability", "Atomic &amp; temp", "staged-symlink", "output"],

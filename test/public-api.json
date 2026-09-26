@@ -529,6 +529,22 @@
       ],
       "errorCodes": {}
     },
+    "./watch": {
+      "runtime": [
+        "watch"
+      ],
+      "types": [
+        "WatchChange",
+        "WatchEntry",
+        "WatchFailure",
+        "WatchHealth",
+        "WatchInvalidation",
+        "WatchOptions",
+        "WatchScope",
+        "WatchSubscription"
+      ],
+      "errorCodes": {}
+    },
     "./walk": {
       "runtime": [
         "walkDirectory",

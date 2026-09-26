@@ -112,6 +112,10 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void): number;
+  watchAdd?(id: number, root: string, relative: string, rootDev: bigint, rootIno: bigint, dev: bigint, ino: bigint): void;
+  watchUnregister?(id: number): void;
+  watchThreadCount?(): number;
   /** Internal: consumes only a descriptor returned by this binding. */
   closeOwnedFd(fd: number): void;
   /** Internal Darwin-only synchronous inspection; the caller retains its fd. */

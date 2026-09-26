@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, one shared Rust inotify hub on Linux, portable polling, scope replacement, and joined close. Thanks @vincentkoc.
+
 ### Fixes
 
 - **Linux user namespaces:** allow private temp workspaces beneath unmapped ancestors, including systemd user services with `PrivateUsers=true`, while rechecking UID/GID mappings, retaining ancestor permission checks, and warning once about unverifiable host ownership. Supplied workspace roots must be effective-user-owned and not group/world writable; use a private per-user root instead of shared `/tmp`.

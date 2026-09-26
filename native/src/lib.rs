@@ -6,6 +6,8 @@ use napi_derive::napi;
 mod archive;
 mod archive_gzip;
 mod task;
+#[cfg(target_os = "linux")]
+mod watch;
 mod fast_file;
 mod clone_tree;
 mod clone_metadata;
