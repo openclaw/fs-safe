@@ -28,6 +28,9 @@ beforeAll(async () => {
   eventFixtures = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "watch-events-fixture-")));
   await fs.mkdir(path.join(eventFixtures, "latency"));
   await fs.mkdir(path.join(eventFixtures, "burst"));
+  await fs.mkdir(path.join(eventFixtures, "scopes/tree/child/deep"), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.join(eventFixtures, "symlinks/target"), { recursive: true });
+  await fs.symlink(path.join(eventFixtures, "symlinks/target"), path.join(eventFixtures, "symlinks/link"), process.platform === "win32" ? "junction" : "dir");
   await fs.writeFile(path.join(eventFixtures, "latency/file"), "before");
   // FSEvents can coalesce creation and a later edit under a pre-subscription event ID.
   if (process.platform === "darwin") await new Promise(resolve => setTimeout(resolve, 3000));
@@ -46,37 +49,41 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
   const test = it.skipIf(mode === "events" && !eventsAvailable);
   beforeEach(() => { if (mode === "events") executedEventCases++; });
   test("observes entry vs tree, depth and directory metadata", async () => {
-    await fs.mkdir(path.join(dir, "tree/child/deep"), { recursive: true, mode: 0o700 });
+    const location = mode === "events" ? path.join(eventFixtures, "scopes") : dir;
+    if (mode === "poll") await fs.mkdir(path.join(location, "tree/child/deep"), { recursive: true, mode: 0o700 });
     const changes: WatchInvalidation[] = [];
-    const owner = own(watch(await root(dir), { mode, scopes: [{ path: "tree/", kind: "entry" }], onInvalidate: value => { changes.push(value); } }));
+    const owner = own(watch(await root(location), { mode, scopes: [{ path: "tree/", kind: "entry" }], onInvalidate: value => { changes.push(value); } }));
     await owner.ready;
     expect(changes).toEqual([{ reason: "reconcile", changes: undefined }]);
     changes.length = 0;
-    await fs.writeFile(path.join(dir, "tree/child/file"), "x");
+    await fs.writeFile(path.join(location, "tree/child/file"), "x");
     await owner.reconcile();
     // Slow event catch-up may invalidate every scope, even for child-only activity.
     expect(changes.every(value => value.reason === "overflow" && value.changes === undefined)).toBe(true);
     await owner.setScopes([{ path: "tree", kind: "tree", depth: 1 }]);
     expect(changes.at(-1)).toEqual({ reason: "reconcile", changes: undefined });
     changes.length = 0;
-    await fs.writeFile(path.join(dir, "tree/top"), "x");
+    await fs.writeFile(path.join(location, "tree/top"), "x");
     await owner.reconcile();
     expect(changes.some(value => (value.reason === "overflow" && value.changes === undefined) || value.changes?.some(change => change.path === path.join("tree", "top")))).toBe(true);
     if (process.platform !== "win32") {
       await owner.setScopes([{ path: "", kind: "entry" }]); changes.length = 0;
-      await fs.chmod(dir, 0o750); await owner.reconcile();
+      await fs.chmod(location, 0o750); await owner.reconcile();
       expect(changes.some(value => (value.reason === "overflow" && value.changes === undefined) || value.changes?.some(change => change.path === ""))).toBe(true);
     }
   }, 30_000);
   test("does not follow symlink entries and rejects symbolic parents", async () => {
-    await fs.mkdir(path.join(dir, "target"));
-    await fs.symlink(path.join(dir, "target"), path.join(dir, "link"), process.platform === "win32" ? "junction" : "dir");
+    const location = mode === "events" ? path.join(eventFixtures, "symlinks") : dir;
+    if (mode === "poll") {
+      await fs.mkdir(path.join(location, "target"));
+      await fs.symlink(path.join(location, "target"), path.join(location, "link"), process.platform === "win32" ? "junction" : "dir");
+    }
     const changes: WatchInvalidation[] = [];
-    const owner = own(watch(await root(dir), { mode, scopes: [{ path: "link", kind: "tree" }], onInvalidate: v => { changes.push(v); } }));
+    const owner = own(watch(await root(location), { mode, scopes: [{ path: "link", kind: "tree" }], onInvalidate: v => { changes.push(v); } }));
     await owner.ready; changes.length = 0;
-    await fs.writeFile(path.join(dir, "target/file"), "private"); await owner.reconcile();
+    await fs.writeFile(path.join(location, "target/file"), "private"); await owner.reconcile();
     expect(changes.every(value => value.reason === "overflow" && value.changes === undefined)).toBe(true);
-    const invalid = own(watch(await root(dir), { mode, scopes: [{ path: "link/file", kind: "entry" }], onInvalidate() {} }));
+    const invalid = own(watch(await root(location), { mode, scopes: [{ path: "link/file", kind: "entry" }], onInvalidate() {} }));
     await expect(invalid.ready).rejects.toMatchObject({ code: "symlink" });
   }, 30_000);
   test("fails observation without adopting a replacement Root", async () => {
