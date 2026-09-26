@@ -1,3 +1,4 @@
+import { registerRetainedFile } from "./retained-file.mjs";
 import { registerWatch } from "./watch.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -152,6 +153,7 @@ try {
   cleanup = await registerCore(context);
   await registerPaths(context);
   await registerLifecycle(context);
+  registerRetainedFile(context);
   await registerDarwinClone(context);
   await registerArchives(context);
   await registerBroad(context);
