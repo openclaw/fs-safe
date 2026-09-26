@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
 import { watchBinding } from "../src/watch-native.js";
@@ -15,7 +15,7 @@ let executedEventCases = 0;
 let latencyProof = false;
 afterAll(() => {
   if (requiredEvents) {
-    expect(executedEventCases).toBe(6);
+    expect(executedEventCases).toBe(5);
     expect(latencyProof).toBe(true);
     console.log(JSON.stringify({ proof: "watch-events-suite", platform: process.platform, mode: "events", cases: executedEventCases }));
   }
@@ -36,44 +36,50 @@ let owners: WatchSubscription[];
 beforeEach(async () => { dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "watch-"))); owners = []; if (process.platform === "darwin" && dir.includes("/claude-501/")) throw new Error("watch fixtures must use normal os.tmpdir()"); });
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
+  vi.restoreAllMocks();
   await Promise.all(owners.map(owner => owner.close()));
   await fs.rm(dir, { recursive: true, force: true });
 });
 function own(owner: WatchSubscription) { owners.push(owner); return owner; }
 
+it("reconciles entry vs tree, depth and directory metadata without native hints", async () => {
+  await fs.mkdir(path.join(dir, "tree/child/deep"), { recursive: true, mode: 0o700 });
+  const changes: WatchInvalidation[] = [];
+  const owner = own(watch(await root(dir), { mode: "poll", scopes: [{ path: "tree/", kind: "entry" }], onInvalidate: value => { changes.push(value); } }));
+  await owner.ready;
+  expect(changes).toEqual([{ reason: "reconcile", changes: undefined }]);
+  changes.length = 0;
+  await fs.writeFile(path.join(dir, "tree/child/file"), "x");
+  await owner.reconcile();
+  expect(changes).toHaveLength(0);
+  await owner.setScopes([{ path: "tree", kind: "tree", depth: 1 }]);
+  expect(changes.at(-1)).toEqual({ reason: "reconcile", changes: undefined });
+  changes.length = 0;
+  await fs.writeFile(path.join(dir, "tree/top"), "x");
+  await owner.reconcile();
+  expect(changes.some(value => value.changes?.some(change => change.path === path.join("tree", "top")))).toBe(true);
+  if (process.platform !== "win32") {
+    await owner.setScopes([{ path: "", kind: "entry" }]); changes.length = 0;
+    await fs.chmod(dir, 0o750); await owner.reconcile();
+    expect(changes.some(value => value.changes?.some(change => change.path === ""))).toBe(true);
+  }
+}, 30_000);
+it("does not follow symlink entries while reconciling", async () => {
+  await fs.mkdir(path.join(dir, "target"));
+  await fs.symlink(path.join(dir, "target"), path.join(dir, "link"), process.platform === "win32" ? "junction" : "dir");
+  const changes: WatchInvalidation[] = [];
+  const owner = own(watch(await root(dir), { mode: "poll", scopes: [{ path: "link", kind: "tree" }], onInvalidate: v => { changes.push(v); } }));
+  await owner.ready; changes.length = 0;
+  await fs.writeFile(path.join(dir, "target/file"), "private"); await owner.reconcile();
+  expect(changes).toHaveLength(0);
+}, 30_000);
+
 describe.each(["events", "poll"] as const)("watch %s", mode => {
   const test = it.skipIf(mode === "events" && !eventsAvailable);
   beforeEach(() => { if (mode === "events") executedEventCases++; });
-  test("observes entry vs tree, depth and directory metadata", async () => {
-    await fs.mkdir(path.join(dir, "tree/child/deep"), { recursive: true, mode: 0o700 });
-    const changes: WatchInvalidation[] = [];
-    const owner = own(watch(await root(dir), { mode, scopes: [{ path: "tree/", kind: "entry" }], onInvalidate: value => { changes.push(value); } }));
-    await owner.ready;
-    expect(changes).toEqual([{ reason: "reconcile", changes: undefined }]);
-    changes.length = 0;
-    await fs.writeFile(path.join(dir, "tree/child/file"), "x");
-    await owner.reconcile();
-    expect(changes).toHaveLength(0);
-    await owner.setScopes([{ path: "tree", kind: "tree", depth: 1 }]);
-    expect(changes.at(-1)).toEqual({ reason: "reconcile", changes: undefined });
-    changes.length = 0;
-    await fs.writeFile(path.join(dir, "tree/top"), "x");
-    await owner.reconcile();
-    expect(changes.some(value => value.changes?.some(change => change.path === path.join("tree", "top")))).toBe(true);
-    if (process.platform !== "win32") {
-      await owner.setScopes([{ path: "", kind: "entry" }]); changes.length = 0;
-      await fs.chmod(dir, 0o750); await owner.reconcile();
-      expect(changes.some(value => value.changes?.some(change => change.path === ""))).toBe(true);
-    }
-  }, 30_000);
-  test("does not follow symlink entries and rejects symbolic parents", async () => {
+  test("rejects symbolic parents", async () => {
     await fs.mkdir(path.join(dir, "target"));
     await fs.symlink(path.join(dir, "target"), path.join(dir, "link"), process.platform === "win32" ? "junction" : "dir");
-    const changes: WatchInvalidation[] = [];
-    const owner = own(watch(await root(dir), { mode, scopes: [{ path: "link", kind: "tree" }], onInvalidate: v => { changes.push(v); } }));
-    await owner.ready; changes.length = 0;
-    await fs.writeFile(path.join(dir, "target/file"), "private"); await owner.reconcile();
-    expect(changes).toHaveLength(0);
     const invalid = own(watch(await root(dir), { mode, scopes: [{ path: "link/file", kind: "entry" }], onInvalidate() {} }));
     await expect(invalid.ready).rejects.toMatchObject({ code: "symlink" });
   }, 30_000);
@@ -200,12 +206,17 @@ it.skipIf(!eventsAvailable)("shares one hub, delivers real events under one seco
   await peer.close(); expect(native.watchThreadCount!()).toBe(0);
 });
 
-it.skipIf(!eventsAvailable)("turns overflow and unadmitted names into whole-scope invalidations", async () => {
+it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("turns overflow and unadmitted names into whole-scope invalidations (%s)", async kind => {
+  const native = getNativeBinding()!;
+  const register = native.watchRegister!;
+  // Exercise hint admission independently of OS coalescing and queue pressure.
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit) => register(root, limit, () => {}));
   let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
   __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
   const changes: WatchInvalidation[] = [];
-  const owner = own(watch(await root(dir), { mode: "events", scopes, onInvalidate: v => { changes.push(v); } }));
+  const owner = own(watch(await root(dir), { mode: "events", scopes: [{ path: "", kind }], onInvalidate: v => { changes.push(v); } }));
   await owner.ready; changes.length = 0;
+  await fs.writeFile(path.join(dir, "child"), "changed during overflow");
   emit({ overflow: true, hints: [] }); await owner.reconcile();
   expect(changes).toEqual([{ reason: "overflow", changes: undefined }]); changes.length = 0;
   emit({ overflow: false, hints: [{ directory: "", name: "unadmitted-private-name", event: "rename" }] });
