@@ -22,10 +22,11 @@ substitutions; the compatible JavaScript fallback has the narrower race
 contract documented below.
 
 On POSIX, workspace creation verifies the supplied root and its canonical
-ancestors before creating a child. Each existing directory must be owned by the
-effective user or root. Group/world-writable directories must also have the
-sticky bit, so ordinary system temp directories remain usable without changing
-their modes. Foreign-owned directories and non-sticky writable ancestors reject
+ancestors before creating a child. The supplied root must be owned by the
+effective user and must not be group/world writable, even with the sticky bit.
+Use a private per-user directory rather than supplying a shared `/tmp` directly.
+Ancestors must be owned by the effective user or root; group/world-writable
+ancestors must have the sticky bit. Foreign-owned directories and non-sticky writable ancestors reject
 with `not-owned` or `insecure-permissions`; unavailable effective-user identity
 rejects with `permission-unverified`. Existing supplied directories keep their
 permissions. Missing root components are created at `0o700` and initialized
@@ -33,6 +34,25 @@ from their first exact security snapshot; if a restrictive umask changes that
 mode, correction uses a verified directory descriptor.
 An initial mode-descriptor admission error is preserved if closing that rejected
 descriptor also fails; close failures after successful admission remain reportable.
+
+On Linux, non-identity `/proc/self/uid_map` and `/proc/self/gid_map` evidence
+permits ancestors whose UID and GID equal unmapped kernel overflow IDs,
+provided the same ancestor mode checks pass.
+These owners are classified as **unmapped**, not verified root owners:
+[Linux maps all unmapped owners to overflow IDs](https://man7.org/linux/man-pages/man7/user_namespaces.7.html).
+Supporting systemd user services with `PrivateUsers=true` therefore trusts the
+host directory hierarchy against unmapped host peers who own an ancestor and
+can rename it. Sticky world-writable ancestors remain admitted because host
+`/tmp` and `PrivateTmp` appear unmapped under `PrivateUsers`; refusing them would
+disable the default system-temp layout even with a private per-user leaf root.
+An unmapped host owner of such a sticky ancestor could rename its children,
+but a normal host's `/tmp` is root-owned by construction. Mapped foreign owners
+still reject, and this exception never applies to the supplied root or newly
+created workspace. Both maps and mapped-owner exclusions are checked afresh
+whenever admission relies on unmapped ownership, including identity replay;
+unavailable namespace evidence leaves admission unchanged.
+The first admitted unmapped ancestor emits `FS_SAFE_UNMAPPED_TEMP_ANCESTOR`
+through Node's warning event. The warning contains no caller paths.
 
 For an already existing canonical root, discovery retains only its immutable
 exact identity. Cleanup-parent retention is provisional: after any native

@@ -167,6 +167,11 @@ pnpm check
 This runs the filesystem boundary checks, build, tests, and package
 tarball/import validation.
 
+The native watch lane requires events on Linux, macOS, and Windows and reports
+actual edit latency. Run `FS_SAFE_TEST_SERIAL=1 pnpm check` to isolate local timing
+checks from the other filesystem stress suites. Watch fixtures use normal OS
+temporary storage; session scratch trees may suppress macOS filesystem events.
+
 ### Method benchmarks
 
 `pnpm benchmark:methods` measures the callable library surface against synthetic

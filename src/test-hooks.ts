@@ -2,6 +2,10 @@ import type { FileHandle } from "node:fs/promises";
 import type { FileIdentityStat } from "./file-identity.js";
 
 export type FsSafeTestHooks = {
+  beforeWatchRegistration?: (path: string) => void | Promise<void>;
+  afterWatchRegistration?: (path: string) => void | Promise<void>;
+  afterWatchBackendCreated?: (root: string, emit: (batch: import("./watch-native.js").NativeWatchBatch) => void, nativeEvent?: (path: string, flags: number) => void) => void;
+
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
   beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
   afterOpen?: (filePath: string, handle: FileHandle) => Promise<void> | void;

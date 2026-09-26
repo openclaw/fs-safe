@@ -95,6 +95,10 @@
       "types": "./dist/file-lock.d.ts",
       "default": "./dist/file-lock.js"
     },
+    "./watch": {
+      "types": "./dist/watch.d.ts",
+      "default": "./dist/watch.js"
+    },
     "./walk": {
       "types": "./dist/walk.d.ts",
       "default": "./dist/walk.js"

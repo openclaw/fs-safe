@@ -466,7 +466,7 @@ pub(crate) fn nt_open_relative_with_sharing(
         path,
         desired_access,
         disposition,
-        options,
+        options | FILE_SYNCHRONOUS_IO_NONALERT,
         reparse_policy,
         share_access,
         null_mut(),
@@ -523,7 +523,7 @@ fn nt_open_relative_with_security_descriptor(
             share_access,
             disposition,
             // FILE_OPEN_REPARSE_POINT opens the final entry itself without reparsing.
-            options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
+            options | FILE_OPEN_REPARSE_POINT,
             null(),
             0,
         )
@@ -556,7 +556,7 @@ pub(crate) fn nt_create_directory_relative(
         name,
         DELETE_ACCESS | READ_CONTROL | FILE_WRITE_ATTRIBUTES,
         FILE_CREATE,
-        FILE_DIRECTORY_FILE,
+        FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
         ReparsePolicy::Reject,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         security_descriptor,

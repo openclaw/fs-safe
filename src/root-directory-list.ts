@@ -28,6 +28,7 @@ import type {
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { realpathSync } from "./realpath.js";
+import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 
@@ -225,14 +226,7 @@ export async function listDirectoryPath(
 ): Promise<string[] | DirEntry[]> {
   let guard: RootDirectoryObservationGuard | RootPathDirectoryObservationGuard;
   if (receipt) {
-    if (receipt.kind !== "directory" || receipt.targetPath !== directory ||
-      receipt.directoryGuard.dir !== directory ||
-      receipt.target !== receipt.directoryGuard ||
-      (!isNativeDirectoryObservationGuard(receipt.directoryGuard) &&
-        !receipt.directoryGuard.stat.isDirectory())) {
-      throw new FsSafeError("path-mismatch", "directory observation receipt does not match target");
-    }
-    guard = receipt.directoryGuard;
+    guard = directoryGuardFromReceipt(directory, receipt);
   } else {
     try {
       guard = await createRootDirectoryObservationGuard(root, directory);
@@ -241,6 +235,20 @@ export async function listDirectoryPath(
     }
   }
   return await listGuardedDirectoryPath(root, guard, withFileTypes, receipt);
+}
+
+function directoryGuardFromReceipt(
+  directory: string,
+  receipt: RootPathObservationReceipt,
+): RootPathDirectoryObservationGuard {
+  if (receipt.kind !== "directory" || receipt.targetPath !== directory ||
+    receipt.directoryGuard.dir !== directory ||
+    receipt.target !== receipt.directoryGuard ||
+    (!isNativeDirectoryObservationGuard(receipt.directoryGuard) &&
+      !receipt.directoryGuard.stat.isDirectory())) {
+    throw new FsSafeError("path-mismatch", "directory observation receipt does not match target");
+  }
+  return receipt.directoryGuard;
 }
 
 function listGuardedDirectoryPath(
@@ -286,7 +294,7 @@ async function listGuardedDirectoryPath(
 
 export type RootDirectoryListing = {
   assertCurrent(): Promise<void>;
-  next(): Promise<{ kind: "entry"; entry: DirEntry } | { kind: "limit"; name: string } | undefined>;
+  next(): Promise<{ kind: "entry"; entry: DirEntry; identity?: ExactStatIdentity } | { kind: "limit"; name: string } | undefined>;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
@@ -296,6 +304,10 @@ export type RootDirectoryListingOptions = {
   snapshot: boolean;
   maxNames?: number;
   metadataBatchSize?: number;
+  /** Internal exact metadata lane, supported by streaming filesystem order. */
+  exactIdentity?: boolean;
+  /** Internal owner receives cleanup failures, including acquisition rollback. */
+  onCleanupFailure?: (error: unknown) => void;
   admitEntry(): boolean;
 };
 
@@ -303,19 +315,27 @@ export async function openRootDirectoryListing(
   root: RootContext,
   directory: string,
   options: RootDirectoryListingOptions,
+  receipt?: RootPathObservationReceipt,
 ): Promise<RootDirectoryListing> {
-  const admitted = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
-    throw normalizeDirectoryError(error);
-  });
-  // Retain exact admission identities; metadata rechecks can use numeric Stats
-  // only when every identity component is losslessly representable.
-  const guard = extendDirectoryObservationGuard({
-    stat: admitted.stat,
-    identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
-  }, admitted.dir, admitted.realPath);
+  if (options.exactIdentity && options.order !== "filesystem") throw new TypeError("exact entry identities require filesystem order");
+  let guard: RootPathDirectoryObservationGuard;
+  if (receipt) {
+    guard = directoryGuardFromReceipt(directory, receipt);
+  } else {
+    const admitted = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
+      throw normalizeDirectoryError(error);
+    });
+    // Retain exact admission identities; metadata rechecks can use numeric Stats
+    // only when every identity component is losslessly representable.
+    guard = extendDirectoryObservationGuard({
+      stat: admitted.stat,
+      identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
+    }, admitted.dir, admitted.realPath);
+  }
   const assertCurrent = async () => {
     options.signal?.throwIfAborted();
-    await assertRootDirectoryObservationGuard(root, guard);
+    if (receipt) assertRootPathObservationReceiptCurrent(root, receipt);
+    else await assertRootDirectoryObservationGuard(root, guard);
     options.signal?.throwIfAborted();
   };
   let handle: Dir | undefined;
@@ -330,7 +350,8 @@ export async function openRootDirectoryListing(
   const close = async () => {
     const owned = handle;
     handle = undefined;
-    await owned?.close();
+    try { await owned?.close(); }
+    catch (error) { options.onCleanupFailure?.(error); throw error; }
   };
   try {
     await assertCurrent();
@@ -338,7 +359,7 @@ export async function openRootDirectoryListing(
       // A one-entry buffer keeps the truncation lookahead independent of width.
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
     } else if (options.snapshot) {
-      snapshot = await listGuardedDirectoryPath(root, guard, true);
+      snapshot = await listGuardedDirectoryPath(root, guard, true, receipt);
     } else if (options.maxNames !== undefined) {
       names = [];
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
@@ -436,9 +457,13 @@ export async function openRootDirectoryListing(
         if (name === undefined) return;
         if (!options.admitEntry()) return { kind: "limit", name };
         // The stream's post-read fence is also the pre-stat fence in this owned operation.
-        const stat = fsSync.lstatSync(path.join(guard.realPath, name));
+        const pathname = path.join(guard.realPath, name);
+        const observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint
+          ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : undefined;
+        const stat = observed?.stat ?? fsSync.lstatSync(pathname);
         await assertCurrent();
-        return { kind: "entry", entry: { name, ...pathStatFromStats(stat) } };
+        const entry = { name, ...pathStatFromStats(stat) };
+        return observed ? { kind: "entry", entry, identity: observed.identity } : { kind: "entry", entry };
       } catch (error) {
         throw normalizeDirectoryError(error);
       }

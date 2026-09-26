@@ -1,3 +1,4 @@
+import { registerWatch } from "./watch.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -158,6 +159,7 @@ try {
   registerLockOwnershipParsing(context);
   await registerScaling(context);
   await registerCollections(context);
+  await registerWatch(context);
   registerSyncStoreDirectoryModes(context);
   const guest = registerGuest(context);
   const covered = new Set(cases.flatMap((c) => c.covers));

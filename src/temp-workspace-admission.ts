@@ -30,6 +30,7 @@ type ExactDirectoryObservation = Readonly<{
   dev: bigint;
   ino: bigint;
   uid: bigint;
+  gid: bigint;
   mode: bigint;
   directory: boolean;
   symbolicLink: boolean;
@@ -39,6 +40,7 @@ type DirectorySnapshot = {
   identity: ExactIdentity;
   numericIdentity: NumericIdentity | undefined;
   realPath: string;
+  privateDirectory: boolean;
 };
 type InspectedDirectorySnapshot = { entry: DirectorySnapshot; stat: BigIntStats };
 export type TempWorkspaceRootAdmission = {
@@ -81,6 +83,7 @@ function copyExactDirectoryObservation(stat: BigIntStats): ExactDirectoryObserva
     dev: stat.dev,
     ino: stat.ino,
     uid: stat.uid,
+    gid: stat.gid,
     mode: stat.mode,
     directory: stat.isDirectory(),
     symbolicLink: stat.isSymbolicLink(),
@@ -92,15 +95,16 @@ function snapshotFromExactObservation(
   uid: number | undefined,
   realPath: string,
   stat: ExactDirectoryObservation,
+  privateDirectory = false,
 ): DirectorySnapshot {
   if (stat.symbolicLink || !stat.directory) {
     throw new FsSafeError("not-file", "temp workspace root component must be a real directory");
   }
-  assertTrustedTempWorkspaceDirectory(stat, uid);
+  assertTrustedTempWorkspaceDirectory(stat, uid, privateDirectory);
   const identity = Object.freeze({ dev: stat.dev, ino: stat.ino });
   // Retain copied immutable scalars, never a mutable Stats object supplied by
   // an observation hook. Every later permission check uses a fresh snapshot.
-  return Object.freeze({ dir, identity, numericIdentity: safeNumericIdentity(stat), realPath });
+  return Object.freeze({ dir, identity, numericIdentity: safeNumericIdentity(stat), realPath, privateDirectory });
 }
 
 function canonicalTempWorkspacePath(dir: string): string {
@@ -114,10 +118,11 @@ function snapshot(
   dir: string,
   uid: number | undefined,
   realPath = canonicalTempWorkspacePath(dir),
+  privateDirectory = false,
 ): InspectedDirectorySnapshot {
   const stat = inspectDirectoryIdentitySync(dir);
   const observation = copyExactDirectoryObservation(stat);
-  return { entry: snapshotFromExactObservation(dir, uid, realPath, observation), stat };
+  return { entry: snapshotFromExactObservation(dir, uid, realPath, observation, privateDirectory), stat };
 }
 
 function hasCompleteExactIdentity(stat: ExactDirectoryObservation): boolean {
@@ -157,7 +162,7 @@ function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats 
 
 function assertSnapshot(entry: DirectorySnapshot, uid: number | undefined): void {
   const stat = inspectSnapshotIdentity(entry);
-  assertTrustedTempWorkspaceDirectory(stat, uid);
+  assertTrustedTempWorkspaceDirectory(stat, uid, entry.privateDirectory);
   assertCanonicalRoot(entry);
 }
 
@@ -165,13 +170,14 @@ function snapshotMissingRootComponent(
   parent: DirectorySnapshot,
   dir: string,
   ownerUid: number | undefined,
+  privateDirectory: boolean,
 ): InspectedDirectorySnapshot {
   if (parent.dir !== parent.realPath) {
     assertSnapshot(parent, ownerUid);
-    return snapshot(dir, ownerUid);
+    return snapshot(dir, ownerUid, undefined, privateDirectory);
   }
   const current = inspectSnapshotIdentity(parent);
-  assertTrustedTempWorkspaceDirectory(current, ownerUid);
+  assertTrustedTempWorkspaceDirectory(current, ownerUid, parent.privateDirectory);
   let realPath: string;
   try {
     realPath = canonicalTempWorkspacePath(dir);
@@ -182,17 +188,17 @@ function snapshotMissingRootComponent(
   }
   if (path.dirname(realPath) !== parent.realPath) {
     assertCanonicalRoot(parent);
-    return snapshot(dir, ownerUid);
+    return snapshot(dir, ownerUid, undefined, privateDirectory);
   }
   // The child's canonical parent confirms the same parent name at this phase.
   // Its exact non-symlink/owner observation still precedes mode initialization.
-  return snapshot(dir, ownerUid, realPath);
+  return snapshot(dir, ownerUid, realPath, privateDirectory);
 }
 
 function assertChain(chain: DirectorySnapshot[], uid: number | undefined): void {
   for (const entry of chain) {
     const current = inspectSnapshotIdentity(entry);
-    assertTrustedTempWorkspaceDirectory(current, uid);
+    assertTrustedTempWorkspaceDirectory(current, uid, entry.privateDirectory);
   }
   const last = chain[chain.length - 1]!;
   assertCanonicalRoot(last);
@@ -227,7 +233,7 @@ function associateTempWorkspaceRoot(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace cleanup parent must be a real directory");
   }
-  assertTrustedTempWorkspaceDirectory(stat, ownerUid);
+  assertTrustedTempWorkspaceDirectory(stat, ownerUid, entry.privateDirectory);
 }
 
 function discoverMissingTempWorkspaceAncestor(
@@ -293,14 +299,15 @@ function rootPlan(rootDir: string): {
   const existingCanonicalRoot = missing.length === 0 && observedAncestor === ancestor &&
     !initial.symbolicLink && initial.directory && hasCompleteExactIdentity(initial);
   if (existingCanonicalRoot) {
-    const discovery = snapshotFromExactObservation(ancestor, ownerUid, ancestor, initial);
+    const discovery = snapshotFromExactObservation(ancestor, ownerUid, ancestor, initial, true);
     return {
       admission: canonicalRootAdmission(discovery, ownerUid),
       missing,
       ownerUid,
     };
   }
-  const chain = canonicalAncestry(ancestor).map((dir) => snapshot(dir, ownerUid, dir).entry);
+  const chain = canonicalAncestry(ancestor).map((dir) =>
+    snapshot(dir, ownerUid, dir, missing.length === 0 && dir === ancestor).entry);
   // Missing-component creation needs a replay before its first mutation. When
   // the complete root already exists through an alias, retain the historical
   // guarded route because discovery and mutation use different path spellings.
@@ -364,10 +371,10 @@ function canonicalRootAdmission(
       const ancestry = canonicalAncestry(discovery.dir);
       const candidate = ancestry.map((dir, index) => {
         if (!TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY || index !== ancestry.length - 1) {
-          return snapshot(dir, ownerUid, dir).entry;
+          return snapshot(dir, ownerUid, dir, index === ancestry.length - 1 && discovery.privateDirectory).entry;
         }
         const current = inspectSnapshotIdentity(discovery);
-        assertTrustedTempWorkspaceDirectory(current, ownerUid);
+        assertTrustedTempWorkspaceDirectory(current, ownerUid, discovery.privateDirectory);
         return discovery;
       });
       const current = candidate[candidate.length - 1]!;
@@ -411,7 +418,7 @@ export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorks
   const { admission, chain, missing, ownerUid } = rootPlan(rootDir);
   if (admission) return admission;
   const guardedChain = chain!;
-  for (const segment of missing) {
+  for (const [index, segment] of missing.entries()) {
     const parentEntry = guardedChain[guardedChain.length - 1]!;
     const parent = rootAdmission(guardedChain, ownerUid);
     const dir = path.join(parent.dir, segment);
@@ -424,7 +431,7 @@ export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorks
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    const observed = snapshotMissingRootComponent(parentEntry, dir, ownerUid);
+    const observed = snapshotMissingRootComponent(parentEntry, dir, ownerUid, index === missing.length - 1);
     if (created) {
       const modeInitialization = admitTempWorkspaceChild(dir, observed.stat, parent, 0o700);
       if (modeInitialization) await modeInitialization;
@@ -438,7 +445,7 @@ export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAd
   const { admission, chain, missing, ownerUid } = rootPlan(rootDir);
   if (admission) return admission;
   const guardedChain = chain!;
-  for (const segment of missing) {
+  for (const [index, segment] of missing.entries()) {
     const parentEntry = guardedChain[guardedChain.length - 1]!;
     const parent = rootAdmission(guardedChain, ownerUid);
     const dir = path.join(parent.dir, segment);
@@ -451,7 +458,7 @@ export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAd
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    const observed = snapshotMissingRootComponent(parentEntry, dir, ownerUid);
+    const observed = snapshotMissingRootComponent(parentEntry, dir, ownerUid, index === missing.length - 1);
     if (created) admitTempWorkspaceChildSync(dir, observed.stat, parent, 0o700);
     guardedChain.push(observed.entry);
   }

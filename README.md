@@ -279,6 +279,7 @@ contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are
 | `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
 | `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
 | `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
+| [`@openclaw/fs-safe/watch`](docs/watch.md) | Guarded observation with native event hints, bounded scans, and joined close |
 | `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
 | `@openclaw/fs-safe/copy` | directory copying with `clone: "auto"`, `"always"`, or `"never"`; native APFS, Btrfs, ReFS, XFS, and ZFS cloning, portable byte copying, and clone metadata; see [directory copying](docs/copy.md) |
 | `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, gzip/zstd/bzip2 support, and bounded entry reads |
@@ -367,6 +368,12 @@ await replaceFileAtomic({
 ```
 
 `replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation; custom sync adapters using `mode` or `preserveExistingMode` provide the optional descriptor-bound `fchmodSync` operation.
+
+Both variants accept `assertBeforeMutation` for revocable caller authority and
+`onDestinationState` for observed removal, partial-write, and publication facts.
+The observer receives exact bigint identities from retained descriptors, including
+when later completion fails. These facts do not authorize rollback; the caller
+still owns current authority and content checks. See [atomic write authority](docs/atomic.md#atomic-write-authority-and-destination-state).
 
 ## External outputs
 
@@ -559,7 +566,8 @@ Check `scan.truncated` before treating the result as complete, and `scan.failedD
 `walkDirectory()` accepts asynchronous `include` and `descend` callbacks through `AsyncWalkDirectoryOptions`, so a marker lookup can prune a directory before its children are read. Decisions remain serial and retain the options object as their `this` receiver; `walkDirectorySync()` and its options remain synchronous. See [Directory walking](docs/walk.md) for callback timing, JavaScript result compatibility, and error handling.
 
 For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
-It supports entry/depth budgets, in-root symlink following, cancellation, and a
+It supports entry/depth budgets, including links without following their targets,
+in-root symlink following, cancellation, and a
 truncation marker (or typed error) when a budget is reached. Its `entryFilter`
 accepts `"include"`, `"skip"`, or `"skip-subtree"`, directly or through a Promise.
 After an awaited decision resolves, the walk rechecks cancellation and the
