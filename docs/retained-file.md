@@ -37,6 +37,15 @@ are rejected. A full opaque native volume/file ID is included in the receipt;
 no native handle or numeric descriptor is exposed. Receipts are immutable facts,
 not transferable authority.
 
+## Public types
+
+- `RetainFileInDirectoryOptions`: immutable admission inputs and synchronous authority.
+- `RetainedFileExpected`: exact producer identity, write generation and expected digest.
+- `RetainedFileAdmission`: a retained `RetainedFile` or a refusal/settlement result.
+- `RetainedFileReceipt`: immutable admitted facts, never reusable authority.
+- `RetainedFileResult`: separate disposition, namespace, resources and persistence facts.
+- `RetainedFileIssue`: phase, native code/message and optional original authority cause.
+
 ## Admission and mutation custody
 
 The directory's ancestry is opened component by component without following
