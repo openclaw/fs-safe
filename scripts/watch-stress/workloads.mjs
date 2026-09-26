@@ -3,7 +3,7 @@ import { resources, percentile, trend } from "./metrics.mjs";
 import { writeFileSync } from "node:fs";
 
 // Exactly 10,000 awaited mutations, covering files and directory identities.
-export async function burst(f, batch) {
+export async function burst(f, batch, onMutation) {
   for (let n = 0; n < 1000; n++) {
     const a = path.join(f.directory, `burst-${n % 32}`), b = a + "-moved";
     await fs.mkdir(a);
@@ -24,6 +24,7 @@ export async function burst(f, batch) {
       await fs.rm(path.join(b, "child"), { recursive: true });
       await fs.rmdir(b);
     }
+    onMutation?.();
   }
   return 10_000;
 }

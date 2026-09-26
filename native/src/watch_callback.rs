@@ -8,6 +8,11 @@ use std::ptr::null_mut;
 struct Payload {
     batch: WatchBatch,
     notify: Notify,
+    _lifetime: super::memory::PayloadLifetime,
+}
+
+unsafe extern "C" fn finalized(_: sys::napi_env, _: *mut c_void, _: *mut c_void) {
+    super::memory::tsfn_destroyed();
 }
 
 pub(super) struct Callback(sys::napi_threadsafe_function);
@@ -68,7 +73,7 @@ impl Callback {
                 1,
                 1,
                 null_mut(),
-                None,
+                Some(finalized),
                 null_mut(),
                 Some(deliver),
                 &mut raw,
@@ -77,13 +82,14 @@ impl Callback {
         if status != sys::Status::napi_ok {
             return Err(native_error("EIO", "create watch callback"));
         }
+        super::memory::tsfn_created();
         Ok(Self(raw))
     }
     pub fn send(&mut self, batch: WatchBatch, notify: Notify) -> bool {
         if self.0.is_null() {
             return false;
         }
-        let status = enqueue(Payload { batch, notify }, |payload| unsafe {
+        let status = enqueue(Payload { batch, notify, _lifetime: Default::default() }, |payload| unsafe {
             sys::napi_call_threadsafe_function(self.0, payload, sys::ThreadsafeFunctionCallMode::nonblocking)
         });
         // napi_closing revokes this thread's permit. Never touch that TSFN again.

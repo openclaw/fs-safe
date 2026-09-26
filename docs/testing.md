@@ -263,6 +263,42 @@ workspace reads that bypass pinned file descriptors.
 
 `pnpm check` also runs `pnpm lint:file-size`. New source and test files should stay under 500 lines. Existing larger files have explicit budgets in `scripts/check-file-size.mjs`; do not increase those budgets as part of unrelated work.
 
+## Watch memory diagnosis
+
+Build the native addon and package from the same revision, then run each control
+in a fresh Node process on a disposable machine:
+
+```sh
+node --expose-gc scripts/watch-memory.mjs --arm events --minutes 60 --output .artifacts/events
+node --expose-gc scripts/watch-memory.mjs --arm none --minutes 30 --output .artifacts/none
+node --expose-gc scripts/watch-memory.mjs --arm poll --minutes 30 --output .artifacts/poll
+node --expose-gc scripts/watch-memory.mjs --arm lifecycle --minutes 30 --output .artifacts/lifecycle
+node --expose-gc scripts/watch-memory.mjs --arm steady --minutes 30 --output .artifacts/steady
+```
+
+`events` and `poll` combine low-rate edits, a 10,000-operation burst every fifth
+minute, and subscription cycling. `steady` omits cycling; `lifecycle` omits
+writes. `none` drives the same writer and consumer cache using explicit synthetic
+invalidations, without constructing subscriptions. That arm is an allocation
+control, not evidence of watcher correctness. Every arm checks its consumer
+cache against an independent filesystem walk at each checkpoint.
+
+The diagnostic runner emits JSONL to stdout and `memory.jsonl` in its output
+directory. Each minute includes all five `process.memoryUsage()` fields before
+and after collection, V8 heap-space capacity, Linux `smaps_rollup`, operation and
+guarded-read counts, and live/created/destroyed native watch allocations.
+`--gc none` measures the same workload without forced collection. `--snapshots`
+writes V8 snapshots at minutes 5 and 30; use a separate run because snapshots
+perturb memory usage. On macOS, `--tools` saves `vmmap --summary` and `leaks`
+reports at minutes 5, 30, and 60. `--smoke` is a short calibration, explicitly
+marked in output; it is not a duration-qualified soak.
+
+The native allocation getter is internal and requires `NODE_ENV=test` or
+`VITEST=true`; the runner sets the former. After close, it requires no live
+registrations, pending sets, callback payloads, or thread-safe functions.
+Diagnostic success establishes correctness and retirement; it does not classify
+an RSS curve as a leak or automatically approve a memory budget.
+
 ## See also
 
 - [Security model](security-model.md) — what the boundary is supposed to defend; design tests around the same threats.
