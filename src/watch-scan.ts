@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
@@ -18,6 +19,10 @@ export function watchScopes(input: readonly WatchScope[]): readonly WatchScope[]
     if (typeof suppliedPath !== "string" || path.isAbsolute(suppliedPath)) throw new FsSafeError("invalid-path", "watch scopes must be relative");
     validatePinnedRelativePath(suppliedPath);
     assertValidRootRelativePath(suppliedPath);
+    if (process.platform === "win32" && suppliedPath.split(/[\\/]/).some(component => component !== "." &&
+      (component.endsWith(".") || component.endsWith(" ") || isWindowsReservedDeviceName(component)))) {
+      throw new FsSafeError("invalid-path", "watch scopes must use literal Windows names");
+    }
     if (suppliedKind !== "entry" && suppliedKind !== "tree") throw new TypeError("invalid watch scope kind");
     const depth = suppliedDepth ?? 32;
     if (!Number.isSafeInteger(depth) || depth < 0 || depth > 128) throw new RangeError("watch depth must be between 0 and 128");

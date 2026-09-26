@@ -39,7 +39,8 @@ A `tree` also observes descendants to its depth (default 32, maximum 128).
 Depth zero observes only the entry. The empty string and `.` select the Root;
 trailing separators are accepted and normalized after validation. Scopes are
 literal names, never globs or home expansion. Absolute paths, traversal, NULs,
-and platform namespace aliases reject. Filesystem identity determines ordinary
+and platform namespace aliases reject. Windows scopes also reject reserved
+device components and trailing dots/spaces that Win32 would silently alias. Filesystem identity determines ordinary
 case/Unicode aliases; names are not compared by lowercasing.
 
 Symlinks are observed as entries and never followed. A symbolic parent fails
