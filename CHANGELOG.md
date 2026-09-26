@@ -10,6 +10,13 @@
 
 ### Fixes
 
+- **Trash containment:** admit the moved entry by its real parent and retain the parent guard through mutation, including dangling and outward-pointing symlinks. Thanks @SebTardif. ([#611](https://github.com/openclaw/fs-safe/pull/611))
+- **Symlink parent checks:** inspect raw parent segments before dotdot normalization, including guarded regular-file appends. Thanks @SebTardif. ([#615](https://github.com/openclaw/fs-safe/pull/615))
+- **Safe path segments:** reject Windows reserved device names consistently across platforms while preserving device-safe temporary filename sanitization. Thanks @SebTardif. ([#612](https://github.com/openclaw/fs-safe/pull/612))
+- **Relative escape checks:** recognize either Windows separator and nested escapes while preserving contained dotdot paths and literal POSIX backslashes. Thanks @SebTardif. ([#614](https://github.com/openclaw/fs-safe/pull/614))
+- **Lock exit cleanup:** leave raw sidecars in place when Windows reports an unknown device or inode, while preserving token-owned cleanup with known descriptor/path identity drift. Thanks @SebTardif. ([#617](https://github.com/openclaw/fs-safe/pull/617))
+- **Linux native compatibility:** build GNU x64/arm64 bindings for glibc 2.28 and newer, restoring native operations on RHEL 8-family systems; reject release artifacts that require newer GLIBC symbols. ([#548](https://github.com/openclaw/fs-safe/issues/548))
+- **Older Linux kernels:** fall back to guarded no-follow native parent resolution when `openat2` is absent or blocked by seccomp, retaining nested no-clobber moves, exact identity checks, explicit `best-effort` containment, and fail-closed bounded cleanup. ([#572](https://github.com/openclaw/fs-safe/issues/572), [#511](https://github.com/openclaw/fs-safe/issues/511))
 - **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
 - **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
 - Portable ZIP entry reads reject decoder entries replaced after preflight before invoking the payload reader.

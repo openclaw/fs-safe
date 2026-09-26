@@ -62,7 +62,9 @@ const pending = await loadPendingJsonDurableQueueEntries({ queueDir, tempPrefix:
 
 `id` must be a single safe path segment: non-empty, not dot-prefixed, and made
 from letters, numbers, `_`, `-`, and `.`. Slashes, backslashes, NUL bytes, `.`,
-and `..` are rejected.
+`..`, and Windows reserved device names such as `CON`, `NUL`, and `COM1` are
+rejected on every platform so queue IDs remain portable. Temporary filenames
+continue to suffix reserved stems (for example, `CON.txt` becomes `CON_.txt`).
 
 Use `ackJsonDurableQueueEntry()` after durable processing succeeds and
 `moveJsonDurableQueueEntryToFailed()` when the caller wants to quarantine an

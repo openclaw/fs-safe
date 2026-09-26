@@ -258,10 +258,10 @@ function inspectAppendPath(filePath: string): BigIntStats {
 
 function prepareRegularAppend(filePath: string, rejectSymlinkParents: boolean | undefined): BigIntStats | undefined {
   if (rejectSymlinkParents === true) {
-    const resolvedDir = resolvePathPreservingWindowsRoot(path.dirname(filePath));
+    const unresolvedDir = path.dirname(filePath);
     assertNoSymlinkParentsSync({
-      rootDir: path.parse(resolvedDir).root,
-      targetPath: resolvedDir,
+      rootDir: path.parse(resolvePathPreservingWindowsRoot(unresolvedDir)).root,
+      targetPath: unresolvedDir,
       allowMissing: false,
       allowRootChildSymlink: true,
       requireDirectories: true,

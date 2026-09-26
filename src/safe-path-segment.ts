@@ -1,3 +1,4 @@
+import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
@@ -48,6 +49,8 @@ export function isSafePathSegment(
     !segment.includes("/") &&
     !segment.includes("\\") &&
     !segment.includes("\0") &&
+    // Segments are portable identifiers: CON.json and CON.<pid>.tmp name devices on Windows.
+    !isWindowsReservedDeviceName(segment) &&
     (options.allowDotPrefix === true || !segment.startsWith(".")) &&
     (options.allowDotPrefix === true
       ? SAFE_DOT_PREFIX_PATH_SEGMENT_PATTERN.test(segment)
@@ -70,13 +73,17 @@ export function assertSafePathSegment(
   return segment;
 }
 
-export function sanitizeSafePathSegment(value: string): string | undefined {
+export function normalizeSafePathSegment(value: string): string {
   const sanitized = value
     .trim()
     .replace(/[\\/]+/g, "-")
     .replace(/\0/g, "")
     .replace(/[^A-Za-z0-9._-]+/g, "-");
-  const trimmed = trimHyphenEdges(sanitized);
+  return trimHyphenEdges(sanitized);
+}
+
+export function sanitizeSafePathSegment(value: string): string | undefined {
+  const trimmed = normalizeSafePathSegment(value);
   return isSafePathSegment(trimmed, { allowDotPrefix: true }) ? trimmed : undefined;
 }
 

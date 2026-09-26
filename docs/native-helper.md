@@ -103,7 +103,7 @@ clone/copy/hash workers, POSIX canonicalization, and Windows security descriptor
 layer owns policy, retries, filters, budgets, modes, cleanup, error
 normalization, and the decision to fall back.
 
-- Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`. Direct-child no-replace renames borrow already-retained parent descriptors; deeper relative paths retain the guarded reopen. Owned-tree cleanup enumerates and unlinks through retained directory descriptors and rejects device crossings.
+- Linux uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS`, `renameat`, and `renameat2(RENAME_NOREPLACE)`. Without `openat2`, beneath opens use the [no-follow component walk](native.md#linux-without-openat2) with exact identity checks and report `best-effort`. Direct-child no-replace renames borrow already-retained parent descriptors; deeper relative paths retain the guarded reopen. Owned-tree cleanup still requires `openat2` with `RESOLVE_NO_XDEV` and fails closed when unavailable.
 - macOS 15.4 and newer prefer `O_RESOLVE_BENEATH`; older kernels resolve components with `O_NOFOLLOW` and restart in-root symlinks from the pinned root descriptor. Both routes use an `F_GETPATH` post-open escape detector and report `best-effort` because directory rename races are not atomic with that check. Direct-child no-replace renames borrow already-retained parents without another `F_GETPATH`; deeper paths retain the guarded reopen. Publication uses `renameat` for replacement and `renameatx_np(RENAME_EXCL)` for no-replace; owned-tree cleanup uses descriptor-relative `openat`/`unlinkat`.
 - Windows uses handle-relative `NtCreateFile`, rejects reparse points during root-bounded traversal, and uses `FileRenameInfoEx` with replacement selected explicitly by the TypeScript policy layer. The dedicated retained-directory `renameNoReplaceWithIdentity` primitive compares its required exact source receipt with the handle opened for rename before mutation. Its internal mismatch status is normalized to public `path-mismatch`; the legacy four-argument `renameNoReplace` export and its other callers are unchanged. Owned trees are deleted through exact opened handles with `FileDispositionInfoEx`; symlink/reparse entries in owned trees are removed as leaves and never traversed. Descriptors crossing N-API are converted only by the host executable's paired `uv_get_osfhandle` and `uv_open_osfhandle` exports. A runtime without both exports is unsupported for these native operations; the binding never guesses a raw HANDLE or uses a foreign CRT descriptor table. Descriptor-producing operations also require that same host's synchronous libuv close and request-management APIs before exporting an owned descriptor.
 
@@ -139,11 +139,12 @@ for the exact difference.
 The guarded JavaScript mutation path is detection-based, not containment-atomic.
 If a same-privilege peer can replace a writable parent after its identity guard
 but before Node resolves a pathname mutation, the mutation can land outside the
-intended root before the post-operation guard throws. Select `require` rather
-than `auto` or `off` when that concurrent attacker is part of the threat model.
+intended root before the post-operation guard throws. Native `require` ensures the addon is present, but does not require a
+`kernel-atomic` resolver; inspect containment and use OS isolation when that
+concurrent attacker is part of the threat model.
 
 `openBeneath()` returns `{ fd, containment }`. `containment` is
-`"kernel-atomic"` for Linux `openat2` and `"best-effort"` for macOS and
+`"kernel-atomic"` for Linux `openat2` and `"best-effort"` for the Linux fallback, macOS and
 Windows. Public JavaScript root open/read/writable results also expose the
 field and report `"best-effort"`; the label reports mechanism, not policy.
 
