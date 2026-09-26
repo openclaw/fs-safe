@@ -4,12 +4,15 @@
 
 ### Features
 
+- Expose the existing pre-publication hook and staging-prefix options through `writeTextAtomic`, preserving atomic replacement's validation and identity checks.
 - **Retained symlink publication:** `retainSymlinkInDirectory()` on the advanced surface holds an explicitly identified POSIX symlink through exact-slot no-replace publication and explicit recovery, preserving observed foreign replacements and uncertain outcomes.
 
 - **Batched Windows ACL facts:** add `readOwnerAndDaclBatch()` to inspect ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Existing synchronous inspection remains unchanged.
 
 ### Fixes
 
+- **Windows ACL batch memory:** bound encoded fallback results during collection and reject oversized batches with `too-large` before querying later paths, avoiding retention of every descriptor graph while preserving duplicate observations and earlier query failures.
+- **Trash containment:** admit the moved entry by its real parent and retain the parent guard through mutation, including dangling and outward-pointing symlinks. Thanks @SebTardif. ([#611](https://github.com/openclaw/fs-safe/pull/611))
 - **Symlink parent checks:** inspect raw parent segments before dotdot normalization, including guarded regular-file appends. Thanks @SebTardif. ([#615](https://github.com/openclaw/fs-safe/pull/615))
 - **Safe path segments:** reject Windows reserved device names consistently across platforms while preserving device-safe temporary filename sanitization. Thanks @SebTardif. ([#612](https://github.com/openclaw/fs-safe/pull/612))
 - **Relative escape checks:** recognize either Windows separator and nested escapes while preserving contained dotdot paths and literal POSIX backslashes. Thanks @SebTardif. ([#614](https://github.com/openclaw/fs-safe/pull/614))
@@ -18,6 +21,9 @@
 - **Older Linux kernels:** fall back to guarded no-follow native parent resolution when `openat2` is absent or blocked by seccomp, retaining nested no-clobber moves, exact identity checks, explicit `best-effort` containment, and fail-closed bounded cleanup. ([#572](https://github.com/openclaw/fs-safe/issues/572), [#511](https://github.com/openclaw/fs-safe/issues/511))
 - **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
 - **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
+- Portable ZIP entry reads reject decoder entries replaced after preflight before invoking the payload reader.
+- Portable ZIP extraction and entry reads verify payloads against the admitted CRC and size even if in-process decoder state changes after preflight.
+- Portable ZIP reads reject decoder entries substituted from another archive or renamed after admission, while extraction retains its admitted names and physical order.
 
 ## 0.19.0 - 2026-09-24
 

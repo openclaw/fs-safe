@@ -12,13 +12,15 @@ $env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 
 Microsoft.PowerShell.Utility\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))
 if ($Operation -eq 'paths') {
+  $reply = $null
+  $limit = 16 * 1024 * 1024
   try {
     $inputStream = [Console]::OpenStandardInput()
     $inputBytes = [IO.MemoryStream]::new()
     try {
       $buffer = [byte[]]::new(8192)
       while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-        if ($inputBytes.Length + $read -gt 16 * 1024 * 1024) {
+        if ($inputBytes.Length + $read -gt $limit) {
           throw 'Windows security path batch exceeds the input budget'
         }
         $inputBytes.Write($buffer, 0, $read)
@@ -38,17 +40,48 @@ if ($Operation -eq 'paths') {
     if ($request.paths -isnot [array]) {
       throw 'Windows security paths must be a JSON array'
     }
-    $paths = [string[]]::new($request.paths.Length)
     for ($index = 0; $index -lt $request.paths.Length; $index++) {
       $value = $request.paths[$index]
       if ($value -isnot [string] -or $value.Length -eq 0 -or $value.IndexOf([char]0) -ge 0) {
         throw 'Windows security paths must be nonempty strings without NUL bytes'
       }
-      $paths[$index] = $value
     }
-    $reply = [FsSafeWindowsBridge]::ExecutePaths($paths)
   } catch {
     $reply = @{ ok = $false; code = 'EINVAL'; message = 'Invalid Windows security path batch' }
+  }
+  if ($null -eq $reply) {
+    $utf8 = [Console]::OutputEncoding
+    $prefix = '{"ok":true,"result":['
+    $suffix = ']}'
+    $bytes = $utf8.GetByteCount($prefix) + $utf8.GetByteCount($suffix)
+    $encoded = [Text.StringBuilder]::new($prefix)
+    $separator = ''
+    foreach ($pathname in $request.paths) {
+      try {
+        $reply = [FsSafeWindowsBridge]::Execute('path', $pathname)
+      } catch {
+        $reply = @{ ok = $false; code = 'EINVAL'; message = 'Invalid Windows security path batch' }
+      }
+      if (-not $reply.ok) { break }
+      $rowJson = Microsoft.PowerShell.Utility\ConvertTo-Json -InputObject ([ordered]@{ path = $pathname; security = $reply.result }) -Depth 8 -Compress
+      $reply = $null
+      $nextBytes = $bytes + $separator.Length + $utf8.GetByteCount($rowJson)
+      if ($nextBytes -gt $limit) {
+        $rowJson = $null
+        $reply = @{ ok = $false; code = 'too-large'; message = 'Windows security batch exceeded its output budget' }
+        break
+      }
+      [void]$encoded.Append($separator).Append($rowJson)
+      $bytes = $nextBytes
+      $separator = ','
+      $rowJson = $null
+    }
+    if ($null -eq $reply) {
+      [void]$encoded.Append($suffix)
+      [Console]::Write($encoded.ToString())
+      return
+    }
+    $encoded = $null
   }
 } else {
   $targetPath = [Environment]::GetEnvironmentVariable('FS_SAFE_WINDOWS_SECURITY_PATH')

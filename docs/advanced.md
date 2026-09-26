@@ -257,7 +257,7 @@ atomic replacement, use [`Root.write()`](writing.md).
 |---|---|---|
 | `createAsyncLock` | – | In-process async lock (separate from cross-process file locks). |
 | `withTimeout` | [timing.md](timing.md) | Wrap a promise with a timeout that raises `Error` by default, or an error supplied by `createError`. |
-| `movePathToTrash`, `MovePathToTrashOptions` | – | Best-effort move to the platform trash. |
+| `movePathToTrash`, `MovePathToTrashOptions` | – | Best-effort move to the platform trash. Allowed roots constrain the real parent of the moved entry, including symlinks; the referent is not moved. Parent identity is rechecked before mutation. |
 
 ## Stability
 
