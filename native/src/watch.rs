@@ -34,12 +34,15 @@ pub struct WatchBatch {
 #[path = "watch_callback.rs"]
 mod callback;
 use callback::Callback;
+#[path = "watch_memory.rs"]
+mod memory;
 #[derive(Default)]
 pub(super) struct Pending {
     paths: BTreeMap<(String, String), bool>,
     overflow: bool,
     limit: usize,
     error: Option<String>,
+    _lifetime: memory::PendingLifetime,
 }
 impl Pending {
     pub(super) fn overflow(&mut self) {
@@ -335,6 +338,16 @@ pub fn watch_unregister(env: Env, id: u32) -> Result<()> {
 #[napi]
 pub fn watch_thread_count() -> u32 {
     THREADS.load(Ordering::SeqCst)
+}
+#[napi]
+pub fn watch_memory_stats() -> Result<memory::WatchMemoryStats> {
+    if std::env::var("NODE_ENV").as_deref() != Ok("test")
+        && std::env::var("VITEST").as_deref() != Ok("true")
+    {
+        return Err(napi::Error::from_reason("watch memory statistics are test-only"));
+    }
+    let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok(memory::snapshot(slot.as_ref().map_or(0, |hub| hub.registrations as u32)))
 }
 #[cfg(target_os = "macos")]
 #[napi]

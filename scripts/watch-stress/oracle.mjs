@@ -49,7 +49,7 @@ export async function fixture(prefix = "fixture") {
 
 // This cache has exactly one source of refresh requests: onInvalidate.
 // Coalescing bounds consumer work without silently turning checkpoints into scans.
-export function observe(f, options = {}) {
+export function observe(f, options = {}, subscribe = watch) {
   let scopes = options.scopes ?? wholeTree;
   const cache = new Map();
   const metrics = { invalidations: 0, overflows: 0, wholeInvalidations: 0, consumerReadErrors: 0, checkpoints: 0 };
@@ -129,8 +129,8 @@ export function observe(f, options = {}) {
       if ((all || pending.size) && !unavailable && !callbackFailure) schedule();
     });
   }
-  const subscription = watch(f.capability, {
-    ...options, mode: "events", scopes,
+  const subscription = subscribe(f.capability, {
+    ...options, mode: options.mode ?? "events", scopes,
     onHealth(value) {
       if (value.state === "unavailable") { unavailable = true; all = false; pending.clear(); }
       diagnostics.lastHealth = { state: value.state, directories: value.directories };

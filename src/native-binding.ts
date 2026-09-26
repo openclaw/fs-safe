@@ -117,6 +117,7 @@ export interface NativeBinding {
   watchTestEvent?(id: number, path: string, flags: number): void;
   watchUnregister?(id: number): void;
   watchThreadCount?(): number;
+  watchMemoryStats?(): { registrations: number; pendingSets: number; payloadsLive: number; payloadsCreated: number; payloadsDestroyed: number; threadsafeFunctionsLive: number; threadsafeFunctionsCreated: number; threadsafeFunctionsDestroyed: number };
   /** Internal: consumes only a descriptor returned by this binding. */
   closeOwnedFd(fd: number): void;
   /** Internal Darwin-only synchronous inspection; the caller retains its fd. */
