@@ -1072,6 +1072,12 @@ jobs:
       - name: Prove bounded watch shutdown and process exit
         run: node scripts/watch-lifecycle-proof.mjs
 
+      - name: Bound native watch cleanup allocation growth
+        if: runner.os == 'macOS'
+        env:
+          MallocStackLogging: "1"
+        run: node --expose-gc scripts/watch-cleanup-leak-proof.mjs
+
       - name: Test creation modes under restrictive umask
         if: matrix.os == 'ubuntu-latest'
         shell: bash

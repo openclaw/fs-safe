@@ -2,7 +2,8 @@
 use crate::{NativeResult, native_error};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::c_void;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU32, Ordering},
@@ -138,7 +139,18 @@ static HUB: Mutex<Option<Hub>> = Mutex::new(None);
 static NEXT: AtomicU32 = AtomicU32::new(1);
 static THREADS: AtomicU32 = AtomicU32::new(0);
 thread_local! {
-    static CLEANUPS: std::cell::RefCell<HashMap<u32, napi::CleanupEnvHook<u32>>> = std::cell::RefCell::new(HashMap::new());
+    static CLEANUPS: std::cell::RefCell<HashSet<u32>> = std::cell::RefCell::new(HashSet::new());
+}
+// napi-rs 3.12's removal API leaves its boxed cleanup context allocated. Node
+// treats this data as opaque: the never-reused id needs no heap allocation.
+fn cleanup_data(id: u32) -> *mut c_void {
+    std::ptr::without_provenance_mut(id as usize)
+}
+unsafe extern "C" fn cleanup_env(data: *mut c_void) {
+    let id = data.addr() as u32;
+    if CLEANUPS.with(|hooks| hooks.borrow_mut().remove(&id)) {
+        let _ = unregister(id);
+    }
 }
 fn unavailable() -> napi::Error<String> {
     native_error("ENOTSUP", "native watch hub is unavailable")
@@ -266,22 +278,12 @@ fn register_impl(
     }
     hub.registrations += 1;
     drop(slot);
-    match env.add_env_cleanup_hook(id, |id| {
-        CLEANUPS.with(|hooks| {
-            hooks.borrow_mut().remove(&id);
-        });
-        let _ = unregister(id);
-    }) {
-        Ok(hook) => {
-            CLEANUPS.with(|hooks| {
-                hooks.borrow_mut().insert(id, hook);
-            });
-        }
-        Err(error) => {
-            unregister(id)?;
-            return Err(native_error("EIO", error));
-        }
+    let status = unsafe { napi::sys::napi_add_env_cleanup_hook(env.raw(), Some(cleanup_env), cleanup_data(id)) };
+    if status != napi::sys::Status::napi_ok {
+        unregister(id)?;
+        return Err(native_error("EIO", "install watch environment cleanup"));
     }
+    CLEANUPS.with(|hooks| hooks.borrow_mut().insert(id));
     Ok(id)
 }
 fn add_impl(id: u32, value: WatchDirectory) -> NativeResult<()> {
@@ -312,11 +314,13 @@ fn unregister(id: u32) -> NativeResult<()> {
     removed.and(joined)
 }
 fn unregister_impl(env: Env, id: u32) -> NativeResult<()> {
-    let hook = CLEANUPS.with(|hooks| hooks.borrow_mut().remove(&id));
-    if let Some(hook) = hook {
-        let removed = unregister(id);
-        env.remove_env_cleanup_hook(hook).map_err(|error| native_error("EIO", error))?;
-        removed?;
+    if CLEANUPS.with(|hooks| hooks.borrow().contains(&id)) {
+        let status = unsafe { napi::sys::napi_remove_env_cleanup_hook(env.raw(), Some(cleanup_env), cleanup_data(id)) };
+        if status != napi::sys::Status::napi_ok {
+            return Err(native_error("EIO", "remove watch environment cleanup"));
+        }
+        CLEANUPS.with(|hooks| hooks.borrow_mut().remove(&id));
+        unregister(id)?;
     }
     Ok(())
 }
