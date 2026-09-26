@@ -283,7 +283,6 @@ mod tests {
             relative: "child".into(),
             root_identity: identity(&root),
             identity: identity(&child),
-            recursive: false,
         };
         backend.add(1, &directory).unwrap();
         backend.add(2, &directory).unwrap();

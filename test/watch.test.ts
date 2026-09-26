@@ -146,7 +146,8 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     await owner.ready; await refresh;
     const end = performance.now() + 1500;
     let writes = 0;
-    while (performance.now() < end) {
+    // Contended runners must complete the workload as well as its minimum duration.
+    while (writes < 32 || performance.now() < end) {
       await fs.writeFile(path.join(dir, "file-0"), `edit-${++writes}`);
       await new Promise(resolve => setTimeout(resolve, 1));
     }
@@ -429,6 +430,9 @@ it("keeps reconcile requests alive across a fenced scope replacement", async () 
 });
 
 it.skipIf(!eventsAvailable)("preserves isolated event detail after the normal coalescing delay", async () => {
+  const native = getNativeBinding()!;
+  const register = native.watchRegister!;
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit) => register(root, limit, () => {}));
   await fs.writeFile(path.join(dir, "file"), "data");
   let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
   __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });

@@ -4,6 +4,12 @@ The types most callers reach for. Shared data shapes are exported from `@opencla
 
 For atomic replacement, `ReplaceFileAtomicFileSystem` and `ReplaceFileAtomicSyncFileSystem` are exported from `@openclaw/fs-safe/atomic`. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation. The synchronous type adds optional `fchmodSync(fd, mode)`; custom sync adapters that explicitly request `mode` or `preserveExistingMode` must implement it. See [Atomic writes](atomic.md#test-injection).
 
+`ReplaceFileAtomicDestinationState` is also exported from that subpath. It is a
+readonly union of `{ state: "removed", path }` and
+`{ state: "writing" | "published", path, dev: bigint, ino: bigint }`. Both atomic
+replacement option types accept synchronous `assertBeforeMutation` and
+`onDestinationState` callbacks. See [authority and destination state](atomic.md#atomic-write-authority-and-destination-state).
+
 ```ts
 import type {
   BasePathOptions,

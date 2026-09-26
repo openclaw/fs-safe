@@ -217,7 +217,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
         check(g);
         if (acquire) {
-          try { backend?.add(name, identity, g.scopes.some(scope => scope.path === name && scope.kind === "tree" && scope.depth! > 0)); }
+          try { backend?.add(name, identity); }
           catch (error) {
             if (snapshot || !fallBack(error)) throw error;
             await retireBackend(); check(g);

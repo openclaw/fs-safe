@@ -16,6 +16,9 @@ import assert from "node:assert/strict";
 import { lstatSync, mkdtempSync, realpathSync, rmSync, utimesSync, type BigIntStats, type Stats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  Root, RootWalkDataEntryKind, RootWalkEntry, RootWalkOptions, RootWalkSymlinkPolicy,
+} from "@openclaw/fs-safe";
 import { stageFileInDirectory } from "@openclaw/fs-safe/advanced";
 import {
   pinDirectory,
@@ -25,6 +28,35 @@ import {
   type DirectoryReceipt,
   type DirectorySyncOutcome,
 } from "@openclaw/fs-safe/durability";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type Expect<T extends true> = T;
+type WalkItem<T> = T extends AsyncIterable<infer Entry> ? Entry : never;
+type LegacyKinds = Expect<Equal<RootWalkDataEntryKind, "file" | "directory" | "other">>;
+type LegacyPolicies = Expect<Equal<RootWalkOptions["symlinkPolicy"], "skip" | "follow-within-root">>;
+
+export function rootWalkDeclarations(
+  scoped: Root,
+  legacyOptions: RootWalkOptions,
+  includeOptions: RootWalkOptions<"include">,
+  dynamicOptions: RootWalkOptions<RootWalkSymlinkPolicy>,
+) {
+  const legacy: AsyncIterableIterator<RootWalkEntry> = scoped.walk("", legacyOptions);
+  const skipped = scoped.walk("", { symlinkPolicy: "skip" });
+  const followed = scoped.walk("", { symlinkPolicy: "follow-within-root" });
+  const included = scoped.walk("", {
+    symlinkPolicy: "include",
+    entryFilter(entry) {
+      return entry.kind === "symlink" ? "skip" : "include";
+    },
+  });
+  const annotated: AsyncIterableIterator<RootWalkEntry<"include">> = scoped.walk("", includeOptions);
+  const dynamic: AsyncIterableIterator<RootWalkEntry<"include">> = scoped.walk("", dynamicOptions);
+  type SkipResult = Expect<Equal<WalkItem<typeof skipped>, RootWalkEntry>>;
+  type FollowResult = Expect<Equal<WalkItem<typeof followed>, RootWalkEntry>>;
+  type IncludeResult = Expect<Equal<WalkItem<typeof included>, RootWalkEntry<"include">>>;
+  return { legacy, skipped, followed, included, annotated, dynamic };
+}
 
 // Type-check the remaining input sites without requiring native staging support.
 export function remainingReceiptInputs(receipt: DirectoryReceipt<BigIntStats>) {
@@ -120,3 +152,4 @@ for (const [label, args] of [
 if (failures.length > 0) {
   throw new AggregateError(failures, "directory receipt installed-package proof failed");
 }
+console.log("Root.walk installed-package declaration compatibility passed");

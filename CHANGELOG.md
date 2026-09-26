@@ -5,9 +5,12 @@
 ### Features
 
 - **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, a shared Rust event hub using inotify, FSEvents, and ReadDirectoryChangesW on Linux/macOS/Windows, portable polling, first-scan readiness and bounded reconciliation that stay available under sustained writes, scope replacement, and joined close. Thanks @vincentkoc.
+- **Revocable atomic writes:** atomic replacement can recheck caller authority before new effects and report retained destination identities for partial writes and publication, without treating receipts as permission to roll back.
+- **Root walking:** `symlinkPolicy: "include"` reports links without following their targets, preserving sorted traversal, entry budgets, and the existing skip/follow result types. Directory-to-symlink substitutions fail before descent.
 
 ### Fixes
 
+- **Windows watching:** retain one recursive Root handle per subscription so directories containing watched scopes can be renamed without closing the watcher; document the Windows ancestor-rename restriction and polling escape hatch.
 - **Linux user namespaces:** allow private temp workspaces beneath unmapped ancestors, including systemd user services with `PrivateUsers=true`, while rechecking UID/GID mappings, retaining ancestor permission checks, and warning once about unverifiable host ownership. Supplied workspace roots must be effective-user-owned and not group/world writable; use a private per-user root instead of shared `/tmp`.
 
 ### Performance

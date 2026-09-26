@@ -107,11 +107,32 @@ Unreadable directories are skipped rather than throwing, but every skipped direc
 `Root.walk(rel, options)` is the root-bounded counterpart to these standalone
 inventory helpers. It yields `{ relativePath, kind, size }` incrementally and
 accepts `maxDepth`, `maxEntries`, `symlinkPolicy: "skip" |
-"follow-within-root"`, `order: "sorted" | "filesystem"`, and an `AbortSignal`. The default budget behavior yields
+"follow-within-root" | "include"`, `order: "sorted" | "filesystem"`, and an `AbortSignal`. The default budget behavior yields
 one `kind: "truncated"` marker and ends; pass `limitBehavior: "throw"` for a
 typed `FsSafeError("too-large")` instead.
 
 For followed symlinks, both `kind` and `size` describe the resolved target.
+With `symlinkPolicy: "include"`, links retain `kind: "symlink"` and their own
+size. Targets are neither resolved nor visited; dangling and outside-root links
+are included. Filters receive these entries, and links consume the same entry
+budget as other names. A directory replaced by a symlink after observation
+fails with `path-mismatch` before descent, or produces a `directory-error`
+entry when `onDirectoryError` is `"skip-and-report"`.
+The starting directory retains existing Root path resolution; include mode
+controls the entries beneath that directory.
+
+```ts
+for await (const entry of capability.walk("", { symlinkPolicy: "include" })) {
+  if (entry.kind === "symlink") reportLink(entry.relativePath);
+}
+```
+
+Existing skip/follow calls keep their result types without a symlink variant.
+For explicitly annotated include-mode values, use `RootWalkOptions<"include">`
+and `RootWalkEntry<"include">`. `RootWalkSymlinkPolicy` describes all
+three policies when the policy is selected dynamically; the unparameterized
+entry and options types retain their previous shapes. Use
+`RootWalkOptions<RootWalkSymlinkPolicy>` for a dynamically selected policy.
 
 The caller's starting path retains Root home shorthand: `~` and `~/dir` expand
 the home directory when iteration starts and must resolve inside the Root.

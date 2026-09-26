@@ -1,7 +1,6 @@
 use super::{Directory, Notify, Pending, SharedPending};
 use crate::windows::{
-    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, open_watch_directory,
-    win_error,
+    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, win_error,
 };
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::HashMap;
@@ -20,9 +19,7 @@ use windows_sys::Win32::System::IO::{
 const CAPACITY: usize = 65536;
 struct Anchor {
     owner: u32,
-    directory: String,
     identity: ExactFileIdentity,
-    recursive: bool,
     handle: OwnedHandle,
     overlapped: OVERLAPPED,
     buffer: Vec<u32>,
@@ -39,7 +36,7 @@ impl Anchor {
                 self.handle.0,
                 self.buffer.as_mut_ptr().cast(),
                 CAPACITY as u32,
-                i32::from(self.recursive),
+                1,
                 FILE_NOTIFY_CHANGE_FILE_NAME
                     | FILE_NOTIFY_CHANGE_DIR_NAME
                     | FILE_NOTIFY_CHANGE_ATTRIBUTES
@@ -101,11 +98,6 @@ fn read_error(code: u32) -> napi::Error<String> {
         win_error(code, "read directory changes")
     }
 }
-fn beneath(parent: &str, child: &str) -> bool {
-    parent.is_empty()
-        || child == parent
-        || child.strip_prefix(parent).is_some_and(|tail| tail.starts_with('\\'))
-}
 fn check(handle: &OwnedHandle, expected: ExactFileIdentity) -> NativeResult<()> {
     let ((dev, ino, directory), _) = handle_identity_and_size(handle.0)?;
     if !directory || handle_is_reparse(handle.0)? || u64::from(dev) != expected.dev || ino != expected.ino {
@@ -113,12 +105,7 @@ fn check(handle: &OwnedHandle, expected: ExactFileIdentity) -> NativeResult<()> 
     }
     Ok(())
 }
-fn open_anchor(
-    root: &str,
-    relative: &str,
-    root_identity: ExactFileIdentity,
-    identity: ExactFileIdentity,
-) -> NativeResult<OwnedHandle> {
+fn open_root(root: &str, identity: ExactFileIdentity) -> NativeResult<OwnedHandle> {
     crate::validate_windows_filesystem_path(root)?;
     if root.contains('\0') {
         return Err(native_error("EINVAL", "invalid watch root"));
@@ -130,12 +117,10 @@ fn open_anchor(
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OVERLAPPED,
         |code| win_error(code, "open watch root"),
     )?;
-    check(&root, root_identity)?;
-    let directory = if relative.is_empty() { root } else { open_watch_directory(root.0, relative)? };
-    check(&directory, identity)?;
-    Ok(directory)
+    check(&root, identity)?;
+    Ok(root)
 }
-fn decode(pending: &mut Pending, directory: &str, bytes: &[u8]) {
+fn decode(pending: &mut Pending, bytes: &[u8]) {
     let mut at = 0;
     loop {
         if at + 12 > bytes.len() {
@@ -164,8 +149,7 @@ fn decode(pending: &mut Pending, directory: &str, bytes: &[u8]) {
             pending.overflow();
             return;
         }
-        let relative = if directory.is_empty() { name } else { format!("{directory}\\{name}") };
-        let (parent, leaf) = relative.rsplit_once('\\').unwrap_or(("", &relative));
+        let (parent, leaf) = name.rsplit_once('\\').unwrap_or(("", &name));
         pending.push(parent.into(), leaf.into(), action != FILE_ACTION_MODIFIED as usize);
         if next == 0 {
             return;
@@ -195,35 +179,17 @@ impl Backend {
         Ok(())
     }
     pub fn add(&mut self, id: u32, directory: &Directory) -> NativeResult<()> {
-        let root = directory.root.as_str();
-        let relative = directory.relative.as_str();
-        let root_identity = directory.root_identity;
-        let identity = directory.identity;
-        let recursive = directory.recursive;
-
         let pending =
             self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?.clone();
-        if self.anchors.values().any(|a| {
-            a.owner == id
-                && ((a.identity == identity && (a.recursive || !recursive))
-                    || (a.recursive && a.directory != relative && beneath(&a.directory, relative)))
-        }) {
+        if let Some(anchor) = self.anchors.values().find(|anchor| anchor.owner == id) {
+            if anchor.identity != directory.root_identity {
+                return Err(native_error("ESTALE", "watch Root identity changed"));
+            }
             return Ok(());
         }
-        // Upgrade overlapping entry anchors to one recursive anchor without retaining redundant handles.
-        let replaced: Vec<_> = self
-            .anchors
-            .iter()
-            .filter(|(_, a)| {
-                a.owner == id
-                    && (a.directory == relative
-                        || a.identity == identity
-                        || (recursive && beneath(relative, &a.directory)))
-            })
-            .map(|(&key, _)| key)
-            .collect();
-        self.retire(&replaced)?;
-        let handle = open_anchor(root, relative, root_identity, identity)?;
+        // Retaining descendant directory handles blocks renaming their ancestors
+        // on Windows, even with DELETE sharing. Scope filtering stays in guarded JS scans.
+        let handle = open_root(&directory.root, directory.root_identity)?;
         let key = self.next;
         self.next = self
             .next
@@ -231,9 +197,7 @@ impl Backend {
             .ok_or_else(|| native_error("EOVERFLOW", "watch anchor identifiers exhausted"))?;
         let mut anchor = Box::new(Anchor {
             owner: id,
-            directory: relative.into(),
-            identity,
-            recursive,
+            identity: directory.root_identity,
             handle,
             overlapped: unsafe { zeroed() },
             buffer: vec![0; CAPACITY / 4],
@@ -293,7 +257,7 @@ impl Backend {
         if data.is_empty() {
             pending.overflow();
         } else {
-            decode(&mut pending, &anchor.directory, &data);
+            decode(&mut pending, &data);
         }
         true
     }
@@ -357,7 +321,7 @@ mod tests {
     fn malformed_and_empty_completions_lose_detail() {
         let mut pending = Pending { limit: 2, ..Pending::default() };
         for bytes in [&[][..], &[0; 12][..], &[255; 20][..]] {
-            decode(&mut pending, "", bytes);
+            decode(&mut pending, bytes);
             assert!(pending.take().unwrap().overflow);
         }
     }
