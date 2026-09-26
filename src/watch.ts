@@ -15,16 +15,12 @@ import type { WatchChange, WatchInvalidation, WatchFailure, WatchHealth, WatchOp
 export type * from "./watch-types.js";
 
 function deferred() {
-  let settled = false;
   let resolve!: () => void;
   let reject!: (error: unknown) => void;
   const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
   // Ownership exists even when a consumer closes without awaiting startup.
   void promise.catch(() => {});
-  return { promise, get settled() { return settled; },
-    resolve() { settled = true; resolve(); },
-    reject(error: unknown) { settled = true; reject(error); },
-  };
+  return { promise, resolve, reject };
 }
 function budget(value: number | undefined, fallback: number, name: string, max = 1_000_000): number {
   const result = value ?? fallback;
@@ -66,9 +62,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const registered = new Map<string, DirectoryIdentity>();
   let observedDirectories = 0;
   let snapshot: WatchSnapshot | undefined;
-  let resetRequested = false;
   let refreshBackend = false;
-  let pending = false;
   let pendingWaiter: ReturnType<typeof deferred> | undefined;
   let runningWaiter: ReturnType<typeof deferred> | undefined;
   let pendingHint = false;
@@ -76,6 +70,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
   type Generation = typeof current;
+  const needsPass = () => pendingHint || pendingWaiter !== undefined || !snapshot;
   const combinedFailure = () => {
     if (!retirementFailure) return failure;
     const error = retirementFailure.error;
@@ -102,7 +97,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const clearTimers = () => {
     clearTimeout(timer); clearTimeout(hintTimer);
-    timer = undefined; hintTimer = undefined; pending = false; pendingHint = false; pendingChanges = new Map();
+    timer = undefined; hintTimer = undefined; pendingHint = false; pendingChanges = new Map();
   };
   const notifyHealth = () => {
     try {
@@ -124,12 +119,12 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       failureInfo = Object.freeze({ operation: "close", error });
     } else if (error !== failure) failure = createSuppressedError(error, failure, "watch and retirement both failed");
   };
-  const retireBackend = async () => {
+  const retireBackend = () => {
     const old = backend;
-    try { await old?.close(); }
+    // Native close joins synchronously. Fence its owner before retiring registrations.
+    backend = undefined; registered.clear(); observedDirectories = 0;
+    try { old?.close(); }
     catch (error) { retainRetirement(error); }
-    if (backend === old) { backend = undefined; registered.clear(); observedDirectories = 0; }
-    if (retirementFailure) throw retirementFailure.error;
   };
   const lose = (error: unknown, operation: WatchFailure["operation"] = "scan") => {
     if (terminal || failure !== undefined) return;
@@ -144,8 +139,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     pendingWaiter = undefined; runningWaiter = undefined;
     clearTimers();
     state = "unavailable";
-    // Stop backend admission before notifying. Its join remains owned by active/close.
-    try { backend?.close(); } catch (error) { retainRetirement(error); }
+    retireBackend();
     try { notifyHealth(); } catch (callbackError) { retain(callbackError); }
   };
   const scheduleInterval = () => {
@@ -164,7 +158,6 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       pendingChanges.set(key, previous?.event === "rename" ? previous : hint);
     }
     pendingHint = true;
-    pending = true;
     if (hintTimer) return;
     hintTimer = setTimeout(() => {
       hintTimer = undefined;
@@ -183,11 +176,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const observe = async (g: Generation) => {
     check(g);
     if (selectionFailure !== undefined) throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { cause: selectionFailure, details: { operation: "watch" } });
-    if (refreshBackend) { await retireBackend(); check(g); refreshBackend = false; }
-    if (resetRequested) {
-      await retireBackend(); check(g);
-      snapshot = undefined; resetRequested = false;
-    }
+    if (refreshBackend) { retireBackend(); check(g); refreshBackend = false; }
     state = snapshot ? "reconciling" : "starting";
     notifyHealth();
     check(g);
@@ -220,7 +209,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
           try { backend?.add(name, identity); }
           catch (error) {
             if (snapshot || !fallBack(error)) throw error;
-            await retireBackend(); check(g);
+            retireBackend(); check(g);
           }
         }
         await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
@@ -267,13 +256,16 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     notifyHealth();
     check(g);
   };
-  const pump = () => {
+  const pump = (initialRetirementOperation?: "close") => {
     if (active || terminal || failure !== undefined) return;
     // Enroll before any callback. There is one active pass and one coalesced request.
     active = Promise.resolve().then(async () => {
+      if (initialRetirementOperation && retirementFailure) {
+        lose(retirementFailure.error, initialRetirementOperation);
+        return;
+      }
       do {
         const g = current;
-        pending = false;
         if (pendingWaiter) {
           // A scope replacement keeps reconcile requests alive until its baseline completes.
           const previous = runningWaiter;
@@ -288,16 +280,14 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         } catch (error) {
           g.waiter.reject(error);
           if (!g.abort.signal.aborted && current === g && !terminal) lose(error);
-          try { await retireBackend(); } catch (closeError) { retainRetirement(closeError); }
+          retireBackend();
         }
-        if (current !== g) {
-          await retireBackend(); snapshot = undefined; pending = true;
-        }
-      } while (pending && !terminal && failure === undefined);
+        if (current !== g && retirementFailure) throw retirementFailure.error;
+      } while (needsPass() && !terminal && failure === undefined);
     }).catch(lose).finally(() => {
       active = undefined;
       if (!terminal && failure === undefined) {
-        if (pending || !current.waiter.settled) pump(); else scheduleInterval();
+        if (needsPass()) pump(); else scheduleInterval();
       }
     });
   };
@@ -305,7 +295,6 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     if (terminal) return Promise.reject(retired());
     if (failure !== undefined) return Promise.reject(failure);
     clearTimeout(timer); timer = undefined;
-    pending = true;
     pendingWaiter ??= deferred();
     const result = pendingWaiter.promise;
     pump();
@@ -321,10 +310,9 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     clearTimers();
     options.signal?.removeEventListener("abort", abort);
     // Start physical stop immediately, without waiting behind an in-flight scan.
-    try { backend?.close(); } catch (error) { retainRetirement(error); }
+    retireBackend();
     closing = Promise.resolve().then(async () => {
       await active;
-      try { await retireBackend(); } catch (error) { retainRetirement(error); }
       state = "closed";
       if (retirementFailure) throw combinedFailure();
     });
@@ -348,16 +336,11 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       current.abort.abort(retired());
       current.waiter.reject(retired());
       current = next;
-      resetRequested = true;
-      try { backend?.close(); } catch (error) { retainRetirement(error); }
+      snapshot = undefined;
+      retireBackend();
       clearTimers();
       state = "starting";
-      // If idle, retire the old backend before the next scan can admit anything.
-      if (!active) {
-        active = retireBackend().catch(error => lose(error, "close")).finally(() => {
-          active = undefined; snapshot = undefined; pump();
-        });
-      }
+      pump("close");
       return next.waiter.promise;
     },
   };
