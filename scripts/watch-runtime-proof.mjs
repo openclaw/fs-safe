@@ -14,7 +14,7 @@ try {
     scopes: [{ path: "file", kind: "entry" }], onInvalidate: value => { invalidations.push(value); } });
   owners.push(owner);
   await owner.ready;
-  const expected = process.platform === "linux" && !process.versions.bun ? "events" : "poll";
+  const expected = ["linux", "darwin", "win32"].includes(process.platform) && !process.versions.bun ? "events" : "poll";
   assert.equal(owner.health().mode, expected);
   invalidations.length = 0;
   await fs.writeFile(path.join(directory, "file"), "runtime proof");

@@ -69,6 +69,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let observedDirectories = 0;
   let snapshot: WatchSnapshot | undefined;
   let resetRequested = false;
+  let refreshBackend = false;
   let revision = 0;
   let pendingHint = false;
   let pendingChanges: Map<string, NativeWatchHint> | undefined = new Map();
@@ -151,6 +152,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const onHint = (g: Generation, batch: NativeWatchBatch) => {
     if (terminal || current !== g || g.abort.signal.aborted || failure !== undefined) return;
+    if (batch.error === "ESTALE") refreshBackend = true;
+    else if (batch.error) { lose(new FsSafeError("helper-failed", "native watch failed", { details: { operation: "watch", code: batch.error } })); return; }
     if (batch.overflow) pendingChanges = undefined;
     else if (pendingChanges) for (const hint of batch.hints) {
       const key = JSON.stringify([hint.directory, hint.name]);
@@ -178,6 +181,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const observe = async (g: Generation) => {
     check(g);
     if (selectionFailure !== undefined) throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { cause: selectionFailure, details: { operation: "watch" } });
+    if (refreshBackend) { await retireBackend(); check(g); refreshBackend = false; }
     if (resetRequested) {
       await retireBackend(); check(g);
       snapshot = undefined; resetRequested = false;
@@ -206,7 +210,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
           backend = candidate;
           const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
             if (backend === candidate) onHint(g, batch);
-          });
+          }, (path, flags) => candidate.testEvent(path, flags));
           assertSynchronousCallbackResult(hookResult, "afterWatchBackendCreated");
         } catch (error) { if (!fallBack(error)) throw error; }
         check(g);
@@ -223,7 +227,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
             if (acquire && registered.size >= maxDirectories) throw restart;
             await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
             check(g);
-            if (acquire) backend?.add(name, identity);
+            if (acquire) backend?.add(name, identity, g.scopes.some(scope => scope.path === name && scope.kind === "tree" && scope.depth! > 0));
             await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
             check(g);
             if (acquire) registered.set(name, identity);

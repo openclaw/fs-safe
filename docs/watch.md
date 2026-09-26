@@ -67,8 +67,8 @@ the application.
 | Platform/runtime | `auto` | Event transport / limitation |
 | --- | --- | --- |
 | Node.js on Linux with addon | `events` | One shared Rust thread and inotify instance; a nonrecursive watch per distinct directory inode. |
-| macOS | `poll` | FSEvents qualification is deferred; `events` rejects. |
-| Windows | `poll` | Guarded overlapped ReadDirectoryChangesW and joined cancellation are not yet qualified; `events` rejects. |
+| Node.js on macOS with addon | `events` | One FSEvents stream per subscription on a shared serial dispatch queue. Pathname activity after a swap remains advisory. |
+| Node.js on Windows with addon | `events` | Guarded overlapped ReadDirectoryChangesW anchors on the shared IOCP hub; recursive for tree scopes. |
 | Bun / other unsupported runtimes | `poll` | TSFN lifetime and shutdown have not been qualified; `events` rejects. |
 | Missing/disabled addon | `poll` | `events` rejects with `FsSafeError("helper-unavailable")`. |
 
@@ -90,12 +90,20 @@ Nonblocking TSFN batches cannot block the hub on JavaScript, and per-owner
 pending detail and queued batches are bounded. The last removal stops and joins
 the native thread. No Worker threads, eval programs, or JS `fs.watch` are used.
 
-A future FSEvents backend needs pathname-based hints and one shared serial
-dispatch queue. Its residual is that activity can be observed after a pathname
-swap; names must remain private until guarded re-admission, and Root replacement
-must still fail. The prototype was exercised locally, but neither it nor an
-independent C FSEvents probe or Node recursive watcher delivered file edits on
-the qualification host. This version therefore makes no FSEvents latency claim.
+macOS uses FileEvents, NoDefer and WatchRoot with a 30 ms FSEvents latency.
+Absolute hints are reduced lexically against the admitted canonical Root;
+outside paths never become detail. Dropped/wrapped streams, RootChanged and
+Unmount trigger guarded reconciliation. Pathname hints can reflect activity
+after a swap, but the Root is never replaced and names require guarded admission.
+Removal synchronously stops, invalidates and releases the stream on its queue.
+
+Windows opens anchors through the existing guarded handle-relative path, then
+reopens the admitted object for overlapped I/O with READ/WRITE/DELETE sharing.
+Recursive anchors cover tree scopes and deduplicate descendant watches; entry
+ancestors use nonrecursive anchors. Completed 64 KiB buffers are copied and the
+read re-armed before names are examined. Zero-byte / enumeration-loss completions
+invalidate every scope. Cancellation waits for IOCP completion before closing
+the handle or freeing its buffer; there are no detached retirement waits.
 
 ## Budgets and lifecycle
 

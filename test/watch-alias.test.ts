@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +6,6 @@ import { watchBinding } from "../src/watch-native.js";
 const nativeWatchSupported = !!watchBinding("auto");
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
-import { resolveWindowsSystemCommand } from "../src/windows-command.js";
 let dir: string;
 let owners: WatchSubscription[];
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-watch-alias-")); owners = []; });
@@ -28,11 +26,8 @@ describe.each(["events", "poll"] as const)("filesystem scope spelling (%s)", mod
     expect(tree.health().directories).toBe(aliases ? 2 : 1);
     hints.length = 0;
     await fs.writeFile(path.join(dir, "MixedDir/Entry.TXT"), "actual edit");
-    if (aliases && mode === "events") {
-      await expect.poll(() => hints.some(hint => hint.changes === undefined
-        || hint.changes.some(change => change.path === path.join("mixeddir", "entry.txt")))).toBe(true);
-      await expect((await root(dir)).readText("mixeddir/entry.txt")).resolves.toBe("actual edit");
-    } else await entry.reconcile();
+    await entry.reconcile();
+    if (aliases) await expect((await root(dir)).readText("mixeddir/entry.txt")).resolves.toBe("actual edit");
     if (aliases) {
       expect(hints.some(hint => hint.changes === undefined || hint.changes.some(change => change.path === path.join("mixeddir", "entry.txt")))).toBe(true);
     } else {

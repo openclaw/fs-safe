@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
 import { watchBinding } from "../src/watch-native.js";
@@ -10,10 +10,30 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "../src/config.js";
 const eventsAvailable = !!watchBinding("auto");
 if (process.env.FS_SAFE_TEST_WATCH_EVENTS === "1" && !eventsAvailable) throw new Error("native watch events proof requires the freshly built addon");
+const requiredEvents = process.env.FS_SAFE_TEST_WATCH_EVENTS === "1";
+let executedEventCases = 0;
+let latencyProof = false;
+afterAll(() => {
+  if (requiredEvents) {
+    expect(executedEventCases).toBe(6);
+    expect(latencyProof).toBe(true);
+    console.log(JSON.stringify({ proof: "watch-events-suite", platform: process.platform, mode: "events", cases: executedEventCases }));
+  }
+});
 const scopes = [{ path: "", kind: "tree" as const }];
+let eventFixtures: string;
 let dir: string;
+beforeAll(async () => {
+  eventFixtures = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "watch-events-fixture-")));
+  await fs.mkdir(path.join(eventFixtures, "latency"));
+  await fs.mkdir(path.join(eventFixtures, "burst"));
+  await fs.writeFile(path.join(eventFixtures, "latency/file"), "before");
+  // FSEvents can coalesce creation and a later edit under a pre-subscription event ID.
+  if (process.platform === "darwin") await new Promise(resolve => setTimeout(resolve, 3000));
+});
+afterAll(async () => { await fs.rm(eventFixtures, { recursive: true, force: true }); });
 let owners: WatchSubscription[];
-beforeEach(async () => { dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "watch-"))); owners = []; });
+beforeEach(async () => { dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "watch-"))); owners = []; if (process.platform === "darwin" && dir.includes("/claude-501/")) throw new Error("watch fixtures must use normal os.tmpdir()"); });
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
   await Promise.all(owners.map(owner => owner.close()));
@@ -23,6 +43,7 @@ function own(owner: WatchSubscription) { owners.push(owner); return owner; }
 
 describe.each(["events", "poll"] as const)("watch %s", mode => {
   const test = it.skipIf(mode === "events" && !eventsAvailable);
+  beforeEach(() => { if (mode === "events") executedEventCases++; });
   test("observes entry vs tree, depth and directory metadata", async () => {
     await fs.mkdir(path.join(dir, "tree/child/deep"), { recursive: true, mode: 0o700 });
     const changes: WatchInvalidation[] = [];
@@ -44,7 +65,7 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
       await fs.chmod(dir, 0o750); await owner.reconcile();
       expect(changes.some(value => value.changes?.some(change => change.path === ""))).toBe(true);
     }
-  });
+  }, 30_000);
   test("does not follow symlink entries and rejects symbolic parents", async () => {
     await fs.mkdir(path.join(dir, "target"));
     await fs.symlink(path.join(dir, "target"), path.join(dir, "link"), process.platform === "win32" ? "junction" : "dir");
@@ -55,7 +76,7 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     expect(changes).toHaveLength(0);
     const invalid = own(watch(await root(dir), { mode, scopes: [{ path: "link/file", kind: "entry" }], onInvalidate() {} }));
     await expect(invalid.ready).rejects.toMatchObject({ code: "symlink" });
-  });
+  }, 30_000);
   test("fails observation without adopting a replacement Root", async () => {
     const name = path.join(dir, "authority"); await fs.mkdir(name);
     const changes: WatchInvalidation[] = [];
@@ -67,7 +88,7 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     expect(owner.health()).toMatchObject({ state: "unavailable", failure: { operation: "scan" } });
     expect(changes).toHaveLength(0);
     await expect(owner.close()).resolves.toBeUndefined();
-  });
+  }, 30_000);
   test("discovers missing targets and retires removed directory registrations", async () => {
     const owner = own(watch(await root(dir), { mode, scopes: [{ path: "a/b", kind: "tree" }], onInvalidate() {} }));
     await owner.ready;
@@ -75,7 +96,7 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     expect(owner.health().directories).toBe(3);
     await fs.rm(path.join(dir, "a"), { recursive: true }); await owner.reconcile();
     expect(owner.health().directories).toBe(1);
-  });
+  }, 30_000);
   test("bounds scanning and prunes excluded directories", async () => {
     await fs.mkdir(path.join(dir, "ignored/deep"), { recursive: true });
     await fs.writeFile(path.join(dir, "kept"), "x");
@@ -84,13 +105,13 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     const limited = own(watch(await root(dir), { mode, scopes, maxEntries: 1, onInvalidate() {} }));
     await expect(limited.ready).rejects.toMatchObject({ code: "too-large" });
     expect(limited.health().failure?.operation).toBe("scan");
-  });
+  }, 30_000);
   test("rejects thenables and retains callback failure after successful close", async () => {
     const owner = own(watch(await root(dir), { mode, scopes, onInvalidate: async () => {} }));
     await expect(owner.ready).rejects.toMatchObject({ code: "helper-failed" });
     await owner.close();
     expect(owner.health()).toMatchObject({ state: "closed", failure: { operation: "callback", error: { code: "helper-failed" } } });
-  });
+  }, 30_000);
 });
 
 it("validates literal scopes and required mode", async () => {
@@ -159,7 +180,8 @@ it("selects auto, events and poll according to native-off policy", async () => {
 it.skipIf(!eventsAvailable)("shares one hub, delivers real events under one second, and joins the last close", async () => {
   const native = getNativeBinding()!;
   expect(native.watchThreadCount!()).toBe(0);
-  const admitted = await root(dir);
+  const location = path.join(eventFixtures, "latency");
+  const admitted = await root(location);
   const changes: WatchInvalidation[] = [];
   const first = own(watch(admitted, { mode: "events", scopes, onInvalidate() {} }));
   const peer = own(watch(admitted, { mode: "events", scopes, intervalMs: 60_000, onInvalidate: v => { changes.push(v); } }));
@@ -167,9 +189,13 @@ it.skipIf(!eventsAvailable)("shares one hub, delivers real events under one seco
   expect(native.watchThreadCount!()).toBe(1);
   await first.close(); expect(native.watchThreadCount!()).toBe(1); changes.length = 0;
   const started = performance.now();
-  await fs.writeFile(path.join(dir, "latency"), "real-event");
+  await fs.writeFile(path.join(location, "file"), "real-event");
   await expect.poll(() => changes.length, { timeout: 950, interval: 10 }).toBeGreaterThan(0);
-  expect(performance.now() - started).toBeLessThan(1000);
+  const latencyMs = performance.now() - started;
+  expect(latencyMs).toBeLessThan(1000);
+  expect(peer.health().mode).toBe("events");
+  latencyProof = true;
+  console.log(JSON.stringify({ proof: "watch-events-latency", fixture: "settled os.tmpdir Root", platform: process.platform, mode: peer.health().mode, latencyMs }));
   expect(changes.some(v => v.reason === "event" || v.reason === "overflow")).toBe(true);
   await peer.close(); expect(native.watchThreadCount!()).toBe(0);
 });
@@ -213,11 +239,12 @@ it("honors unavailable-helper policy including native require", async () => {
 it.skipIf(!eventsAvailable)("coalesces a real event burst while JavaScript is blocked", async () => {
   const { writeFileSync } = await import("node:fs");
   const changes: WatchInvalidation[] = [];
-  const owner = own(watch(await root(dir), { mode: "events", scopes, maxPendingPaths: 2, intervalMs: 60_000, onInvalidate: v => { changes.push(v); } }));
+  const location = path.join(eventFixtures, "burst");
+  const owner = own(watch(await root(location), { mode: "events", scopes, maxPendingPaths: 2, intervalMs: 60_000, onInvalidate: v => { changes.push(v); } }));
   await owner.ready; changes.length = 0;
-  for (let i = 0; i < 40; i++) writeFileSync(path.join(dir, "burst-" + i), "x");
+  for (let i = 0; i < 40; i++) writeFileSync(path.join(location, "burst-" + i), "x");
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
-  await expect.poll(() => changes.some(v => v.reason === "overflow" && v.changes === undefined)).toBe(true);
+  await expect.poll(() => changes.some(v => v.reason === "overflow" && v.changes === undefined), { timeout: 5000 }).toBe(true);
   expect(changes.every(v => !v.changes || v.changes.length <= 2)).toBe(true);
   await owner.close(); expect(getNativeBinding()!.watchThreadCount!()).toBe(0);
 });

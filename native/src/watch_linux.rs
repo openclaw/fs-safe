@@ -1,4 +1,4 @@
-use super::SharedPending;
+use super::{Directory, SharedPending};
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -27,42 +27,31 @@ impl Backend {
         if fd < 0 {
             return Err(error("initialize inotify"));
         }
-        Ok(Self {
-            fd: unsafe { OwnedFd::from_raw_fd(fd) },
-            pending: HashMap::new(),
-            watches: HashMap::new(),
-        })
+        Ok(Self { fd: unsafe { OwnedFd::from_raw_fd(fd) }, pending: HashMap::new(), watches: HashMap::new() })
     }
     pub fn register(&mut self, id: u32, _: &str, pending: SharedPending) -> NativeResult<()> {
         self.pending.insert(id, pending);
         Ok(())
     }
-    pub fn add(
-        &mut self,
-        id: u32,
-        root: &str,
-        relative: &str,
-        root_identity: ExactFileIdentity,
-        identity: ExactFileIdentity,
-    ) -> NativeResult<()> {
+    pub fn add(&mut self, id: u32, directory: &Directory) -> NativeResult<()> {
+        let root = directory.root.as_str();
+        let relative = directory.relative.as_str();
+        let root_identity = directory.root_identity;
+        let identity = directory.identity;
+
         if !self.pending.contains_key(&id) {
             return Err(native_error("EINVAL", "unknown watch registration"));
         }
         let root = CString::new(root).map_err(|_| native_error("EINVAL", "invalid watch root"))?;
         // SAFETY: valid NUL-terminated string. Identity, not this pathname, admits the fd.
-        let root_fd = unsafe {
-            libc::open(
-                root.as_ptr(),
-                libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
+        let root_fd =
+            unsafe { libc::open(root.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
         if root_fd < 0 {
             return Err(error("open watch root"));
         }
         let root_fd = unsafe { OwnedFd::from_raw_fd(root_fd) };
         let matches = |fd: &OwnedFd, expected: ExactFileIdentity| -> NativeResult<()> {
-            let stat = rustix::fs::fstat(fd)
-                .map_err(|e| crate::unix::os_error(e, "stat watch directory"))?;
+            let stat = rustix::fs::fstat(fd).map_err(|e| crate::unix::os_error(e, "stat watch directory"))?;
             if stat.st_dev != expected.dev || stat.st_ino != expected.ino {
                 return Err(native_error("ESTALE", "watch directory identity changed"));
             }
@@ -75,13 +64,9 @@ impl Backend {
             libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW,
         )?;
         matches(&directory, identity)?;
-        let namespace = rustix::fs::statfs("/proc/self/fd")
-            .map_err(|e| crate::unix::os_error(e, "verify procfs"))?;
+        let namespace = rustix::fs::statfs("/proc/self/fd").map_err(|e| crate::unix::os_error(e, "verify procfs"))?;
         if namespace.f_type != 0x9fa0 {
-            return Err(native_error(
-                "ENOTSUP",
-                "watch requires a trusted procfs fd namespace",
-            ));
+            return Err(native_error("ENOTSUP", "watch requires a trusted procfs fd namespace"));
         }
         // The final /. selects the pinned directory, not the procfs magic symlink:
         // IN_DONT_FOLLOW|IN_ONLYDIR on the bare fd symlink would reject with ENOTDIR.
@@ -102,12 +87,7 @@ impl Backend {
         if wd < 0 {
             return Err(error("register inotify directory"));
         }
-        self.watches
-            .entry(wd)
-            .or_default()
-            .entry(id)
-            .or_default()
-            .insert(relative.to_owned());
+        self.watches.entry(wd).or_default().entry(id).or_default().insert(relative.to_owned());
         Ok(()) // inotify owns the inode reference; both opened descriptors close here.
     }
     pub fn remove(&mut self, id: u32) -> NativeResult<()> {
@@ -137,13 +117,7 @@ impl Backend {
         let mut buffer = [0u8; 65536];
         // Bound draining too: commands (especially joined removal) cannot starve.
         for _ in 0..16 {
-            let count = unsafe {
-                libc::read(
-                    self.fd.as_raw_fd(),
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len(),
-                )
-            };
+            let count = unsafe { libc::read(self.fd.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
             if count < 0 {
                 if std::io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN) {
                     self.overflow();
@@ -155,13 +129,7 @@ impl Backend {
             }
             let mut offset = 0;
             while offset + size_of::<libc::inotify_event>() <= count as usize {
-                let event = unsafe {
-                    buffer
-                        .as_ptr()
-                        .add(offset)
-                        .cast::<libc::inotify_event>()
-                        .read_unaligned()
-                };
+                let event = unsafe { buffer.as_ptr().add(offset).cast::<libc::inotify_event>().read_unaligned() };
                 let start = offset + size_of::<libc::inotify_event>();
                 let end = start + event.len as usize;
                 if end > count as usize {

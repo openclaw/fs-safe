@@ -20,12 +20,7 @@ fn enqueue<T>(value: T, call: impl FnOnce(*mut c_void) -> sys::napi_status) -> s
     }
     status
 }
-unsafe extern "C" fn deliver(
-    env: sys::napi_env,
-    function: sys::napi_value,
-    _: *mut c_void,
-    data: *mut c_void,
-) {
+unsafe extern "C" fn deliver(env: sys::napi_env, function: sys::napi_value, _: *mut c_void, data: *mut c_void) {
     // A queued batch must be freed even when Node is draining a closing environment.
     let batch = unsafe { Box::from_raw(data.cast::<WatchBatch>()) };
     if env.is_null() || function.is_null() {
@@ -45,14 +40,8 @@ impl Callback {
     pub fn new(env: Env, callback: Function<WatchBatch, ()>) -> NativeResult<Self> {
         let mut name = null_mut();
         let label = b"fs-safe-watch";
-        let status = unsafe {
-            sys::napi_create_string_utf8(
-                env.raw(),
-                label.as_ptr().cast(),
-                label.len() as isize,
-                &mut name,
-            )
-        };
+        let status =
+            unsafe { sys::napi_create_string_utf8(env.raw(), label.as_ptr().cast(), label.len() as isize, &mut name) };
         if status != sys::Status::napi_ok {
             return Err(native_error("EIO", "create watch callback name"));
         }
@@ -83,11 +72,7 @@ impl Callback {
             return false;
         }
         let status = enqueue(batch, |payload| unsafe {
-            sys::napi_call_threadsafe_function(
-                self.0,
-                payload,
-                sys::ThreadsafeFunctionCallMode::nonblocking,
-            )
+            sys::napi_call_threadsafe_function(self.0, payload, sys::ThreadsafeFunctionCallMode::nonblocking)
         });
         // napi_closing revokes this thread's permit. Never touch that TSFN again.
         if status == sys::Status::napi_closing {
@@ -100,10 +85,7 @@ impl Drop for Callback {
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe {
-                sys::napi_release_threadsafe_function(
-                    self.0,
-                    sys::ThreadsafeFunctionReleaseMode::release,
-                );
+                sys::napi_release_threadsafe_function(self.0, sys::ThreadsafeFunctionReleaseMode::release);
             }
         }
     }
