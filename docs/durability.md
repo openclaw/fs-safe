@@ -436,3 +436,10 @@ owning product boundary.
 - [Migrating to 0.5](migrating-to-0.5.md) — choosing a publication policy during upgrade.
 - [Native architecture](native.md) — clone/copy/hash mechanisms and fallback guarantees.
 - [Errors](errors.md) — typed operational failure handling.
+
+## Existing Windows file retirement
+
+[`retainFileInDirectory`](retained-file.md) describes identity-bound native
+disposition and resource settlement separately from persistence. Its result is
+always `persistence: "not-proven"`; neither accepted disposition nor observed
+namespace absence is a directory/volume barrier or an application commit.

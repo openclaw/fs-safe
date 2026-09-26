@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add explicit retained-handle retirement for existing Windows NTFS files, with exact producer identity, current authority and separate disposition/settlement facts; no persistence guarantee.
+
 ### Features
 
 - **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, a shared Rust event hub using inotify, FSEvents, and ReadDirectoryChangesW on Linux/macOS/Windows, portable polling, first-scan readiness and bounded reconciliation that stay available under sustained writes, scope replacement, and joined close. Thanks @vincentkoc.

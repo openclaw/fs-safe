@@ -1058,6 +1058,12 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Test retained Windows file identity and resource settlement
+        if: runner.os == 'Windows'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/retained-file.test.ts
+
       - name: Test guarded observation
         env:
           FS_SAFE_TEST_WATCH_EVENTS: "1"

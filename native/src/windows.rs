@@ -112,6 +112,15 @@ impl Drop for OwnedHandle {
 }
 
 impl OwnedHandle {
+    pub(crate) fn close(self) -> NativeResult<()> {
+        let handle = self.into_raw();
+        // Consume once even on failure: retrying could close a recycled handle.
+        if unsafe { CloseHandle(handle) } == 0 {
+            return Err(win_error(unsafe { GetLastError() }, "close retained handle"));
+        }
+        Ok(())
+    }
+
     fn into_raw(mut self) -> HANDLE {
         let handle = self.0;
         self.0 = null_mut();
@@ -470,6 +479,17 @@ pub(crate) fn nt_open_relative_with_sharing(
         reparse_policy,
         share_access,
         null_mut(),
+    )
+}
+
+// Direct-child async open for retained-file oplock admission. The caller owns
+// attribute validation and explicit settlement, including failed admission.
+pub(crate) fn open_retained_child(
+    root: HANDLE, name: &str, access: u32, options: u32, sharing: u32,
+) -> NativeResult<OwnedHandle> {
+    nt_open_relative_with_security_descriptor(
+        root, name, access, FILE_OPEN, options, ReparsePolicy::AllowLeaf,
+        sharing, null_mut(),
     )
 }
 

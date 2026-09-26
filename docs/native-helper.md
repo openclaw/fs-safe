@@ -182,3 +182,12 @@ consumer performs its 0.5 upgrade.
 - [Durability](durability.md)
 - [Migrating to 0.5](migrating-to-0.5.md)
 - [Migrating to 0.6](migrating-to-0.6.md)
+
+### Retained existing Windows file
+
+The maintained Windows helper supports the public
+[`retainFileInDirectory`](retained-file.md) lifecycle on fixed local NTFS.
+Private native handles, exact identity/generation checks, writable-section
+admission and explicit close results stay behind that public API. Older helpers
+without this capability are unsupported; there is no pathname deletion fallback.
+No Windows namespace persistence barrier is provided.
