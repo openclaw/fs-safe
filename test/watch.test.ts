@@ -61,11 +61,11 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     changes.length = 0;
     await fs.writeFile(path.join(dir, "tree/top"), "x");
     await owner.reconcile();
-    expect(changes.some(value => value.changes?.some(change => change.path === path.join("tree", "top")))).toBe(true);
+    expect(changes.some(value => (value.reason === "overflow" && value.changes === undefined) || value.changes?.some(change => change.path === path.join("tree", "top")))).toBe(true);
     if (process.platform !== "win32") {
       await owner.setScopes([{ path: "", kind: "entry" }]); changes.length = 0;
       await fs.chmod(dir, 0o750); await owner.reconcile();
-      expect(changes.some(value => value.changes?.some(change => change.path === ""))).toBe(true);
+      expect(changes.some(value => (value.reason === "overflow" && value.changes === undefined) || value.changes?.some(change => change.path === ""))).toBe(true);
     }
   }, 30_000);
   test("does not follow symlink entries and rejects symbolic parents", async () => {

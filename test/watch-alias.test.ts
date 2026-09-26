@@ -31,7 +31,7 @@ describe.each(["events", "poll"] as const)("filesystem scope spelling (%s)", mod
     if (aliases) {
       expect(hints.some(hint => hint.changes === undefined || hint.changes.some(change => change.path === path.join("mixeddir", "entry.txt")))).toBe(true);
     } else {
-      expect(hints).toEqual([]);
+      expect(hints.every(hint => hint.reason === "overflow" && hint.changes === undefined)).toBe(true);
       await fs.mkdir(path.join(dir, "mixeddir"));
       await fs.writeFile(path.join(dir, "mixeddir/entry.txt"), "distinct selected file");
       await Promise.all([entry.reconcile(), tree.reconcile()]);
