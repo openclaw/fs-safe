@@ -1058,6 +1058,20 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Test guarded observation
+        env:
+          FS_SAFE_TEST_WATCH_EVENTS: "1"
+        run: pnpm test test/watch.test.ts test/watch-platforms.test.ts test/watch-alias.test.ts test/watch-hints.test.ts test/watch-limit.test.ts --maxWorkers=1 --testTimeout=30000
+
+      - name: Prove native event delivery on every platform
+        run: node scripts/watch-events-proof.mjs
+
+      - name: Measure idle native watch cost
+        run: node scripts/watch-idle-proof.mjs
+
+      - name: Prove bounded watch shutdown and process exit
+        run: node scripts/watch-lifecycle-proof.mjs
+
       - name: Test creation modes under restrictive umask
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -1098,6 +1112,9 @@ jobs:
 
       - name: Test Bun native compatibility
         run: pnpm test:bun:native
+
+      - name: Prove Bun watch polling and joined close
+        run: bun scripts/watch-runtime-proof.mjs
 
       - name: Prove Bun compatibility with JIT disabled
         run: bun --jitless scripts/bun-native-proof.mjs
@@ -1330,6 +1347,7 @@ jobs:
             pnpm archive:wasm:allocator-tests
             pnpm test test/archive-codec-wasm-abi.test.ts test/archive-codec-wasm-allocator.test.ts test/archive-wasm-build.test.ts test/archive-wasm-abi.test.ts
             pnpm native:build
+            FS_SAFE_TEST_WATCH_EVENTS=1 pnpm test test/watch.test.ts test/watch-platforms.test.ts test/watch-alias.test.ts test/watch-hints.test.ts
             node scripts/temp-workspace-quarantine-swap-proof.mjs
             pnpm package:smoke
             node scripts/native-mode-smoke.mjs auto

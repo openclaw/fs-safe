@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BigIntStats, Stats } from "node:fs";
+import { registerRootHandleContext } from "./root-handle-context.js";
 import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -283,6 +284,7 @@ export class RootHandle implements Root {
     this.rootWithSep = context.rootWithSep;
     this.defaults = defaults;
     registerFileLockSyncRootAdapter(this, context, defaults);
+    registerRootHandleContext(this, context);
   }
 
   private mutationOptions<T extends { denyMutations?: DenyMutationPolicy; assertBeforeMutation?: () => void; mutationSymlinks?: MutationSymlinkPolicy }>(options: T): T {

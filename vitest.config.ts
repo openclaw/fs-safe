@@ -7,7 +7,7 @@ export default defineConfig({
     // Windows hosted runners become nondeterministic when filesystem stress
     // suites compete. Other hosts stay bounded too: local high-core machines
     // hit the same stress/property-suite contention as CI.
-    maxWorkers: process.platform === "win32" ? 1 : 4,
+    maxWorkers: process.platform === "win32" || process.env.FS_SAFE_TEST_SERIAL === "1" ? 1 : 4,
     expect: {
       requireAssertions: true,
     },
