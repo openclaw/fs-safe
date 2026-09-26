@@ -34,85 +34,23 @@ import { admitStandalonePublicationPath } from "./windows-path-alias.js";
 import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 import { hasErrorCode, readErrorCode } from "./file-cleanup.js";
-
-export type ReplaceFileAtomicFileSystem = {
-  promises: Pick<
-    typeof fs,
-    | "mkdir"
-    | "writeFile"
-    | "rename"
-    | "copyFile"
-    | "unlink"
-    | "rm"
-    | "open"
-    | "stat"
-    | "lstat"
-  > & {
-    /** @deprecated Accepted for adapter compatibility but never called. */
-    chmod?: typeof fs.chmod;
-  };
-};
-
-export type ReplaceFileAtomicSyncFileSystem = Pick<
-  typeof syncFs,
-  | "mkdirSync"
-  | "readFileSync"
-  | "writeFileSync"
-  | "renameSync"
-  | "copyFileSync"
-  | "unlinkSync"
-  | "rmSync"
-  | "openSync"
-  | "fsyncSync"
-  | "closeSync"
-  | "fstatSync"
-  | "statSync"
-  | "lstatSync"
-  | "ftruncateSync"
-  | "readSync"
-  | "writeSync"
-> & {
-  /** @deprecated Accepted for adapter compatibility but never called. */
-  chmodSync?: typeof syncFs.chmodSync;
-  fchmodSync?: typeof syncFs.fchmodSync;
-};
-
-type ReplaceFileAtomicBaseOptions = {
-  filePath: string;
-  content: string | Uint8Array;
-  dirMode?: number;
-  mode?: number;
-  /** Inherit only rwx bits from an existing non-symlink regular file. */
-  preserveExistingMode?: boolean;
-  tempPrefix?: string;
-  renameMaxRetries?: number;
-  renameRetryBaseDelayMs?: number;
-  copyFallbackOnPermissionError?: boolean;
-  copyFallbackRestore?: ReplaceFileCopyFallbackRestorePolicy;
-  maxRestoreBytes?: number;
-  destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
-  /** Strict by default; locked content verification is an explicit FUSE compatibility policy. */
-  renameIdentity?: RenameIdentityPolicy;
-  syncTempFile?: boolean;
-  syncParentDir?: boolean;
-  throwOnCleanupError?: boolean;
-};
-
-export type ReplaceFileAtomicOptions = ReplaceFileAtomicBaseOptions & {
-  fileSystem?: ReplaceFileAtomicFileSystem;
-  /** Runs while the exact staged file is retained; replacing or hardlinking it is rejected. */
-  beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
-};
-
-export type ReplaceFileAtomicSyncOptions = ReplaceFileAtomicBaseOptions & {
-  fileSystem?: ReplaceFileAtomicSyncFileSystem;
-  /** Runs while the exact staged file is retained; replacing or hardlinking it is rejected. */
-  beforeRename?: (params: { filePath: string; tempPath: string }) => void;
-};
-
-export type ReplaceFileAtomicResult = {
-  method: "rename" | "copy-fallback";
-};
+import { AtomicMutation } from "./replace-file-mutation.js";
+import type {
+  ReplaceFileAtomicFileSystem,
+  ReplaceFileAtomicSyncFileSystem,
+  ReplaceFileAtomicBaseOptions,
+  ReplaceFileAtomicOptions,
+  ReplaceFileAtomicSyncOptions,
+  ReplaceFileAtomicResult,
+} from "./replace-file-types.js";
+export type { ReplaceFileAtomicDestinationState } from "./replace-file-mutation.js";
+export type {
+  ReplaceFileAtomicFileSystem,
+  ReplaceFileAtomicSyncFileSystem,
+  ReplaceFileAtomicOptions,
+  ReplaceFileAtomicSyncOptions,
+  ReplaceFileAtomicResult,
+} from "./replace-file-types.js";
 
 async function renameWithRetry(params: {
   fsModule: ReplaceFileAtomicFileSystem["promises"];
@@ -127,13 +65,16 @@ async function renameWithRetry(params: {
   sourceIdentity: BigIntStats;
   assertSourceCurrent: () => Promise<void>;
   syncFallback: boolean;
+  mutation: AtomicMutation;
 }): Promise<ReplaceFileAtomicResult> {
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     if (attempt > 0) await params.assertSourceCurrent();
     try {
+      params.mutation.assert();
       await params.fsModule.rename(params.src, params.dest);
       return { method: "rename" };
     } catch (error) {
+      params.mutation.rethrowRefusal();
       const code = readErrorCode(error);
       if (code === "EBUSY" && attempt < params.maxRetries) {
         await sleep(params.baseDelayMs * 2 ** attempt);
@@ -149,6 +90,7 @@ async function renameWithRetry(params: {
           maxRestoreBytes: params.maxRestoreBytes,
           expectedSourceIdentity: params.sourceIdentity,
           sync: params.syncFallback,
+          mutation: params.mutation,
         });
         return { method: "copy-fallback" };
       }
@@ -169,9 +111,11 @@ function renameWithRetrySync(params: Omit<
   for (let attempt = 0; attempt <= params.maxRetries; attempt++) {
     if (attempt > 0) params.assertSourceCurrent();
     try {
+      params.mutation.assert();
       params.fsModule.renameSync(params.src, params.dest);
       return { method: "rename" };
     } catch (error) {
+      params.mutation.rethrowRefusal();
       const code = readErrorCode(error);
       if (code === "EBUSY" && attempt < params.maxRetries) {
         sleepSync(params.baseDelayMs * 2 ** attempt);
@@ -188,6 +132,7 @@ function renameWithRetrySync(params: Omit<
           expectedSourceIdentity: params.sourceIdentity,
           fchmodSync: params.fchmodSync,
           sync: params.syncFallback,
+          mutation: params.mutation,
         });
         return { method: "copy-fallback" };
       }
@@ -271,22 +216,25 @@ export async function replaceFileAtomicWithDirectorySync(
   options: ReplaceFileAtomicOptions,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
+  const mutation = new AtomicMutation(options);
   const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
   validateRenameIdentity(renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
     if (renameIdentity !== "verify-content-with-lock") {
-      return await replaceFileAtomicUnserialized(options, filePath, renameIdentity, syncParent);
+      return await replaceFileAtomicUnserialized(options, filePath, renameIdentity, mutation, syncParent);
     }
     const fsModule = options.fileSystem?.promises ?? fs;
     const dir = path.dirname(filePath);
+    mutation.assert();
     await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
       recursive: true,
       mode: options.dirMode ?? 0o700,
     });
+    mutation.assert();
     return await withAtomicRenameIdentityLock(filePath, async () =>
-      await replaceFileAtomicUnserialized(options, filePath, renameIdentity, syncParent));
+      await replaceFileAtomicUnserialized(options, filePath, renameIdentity, mutation, syncParent));
   });
 }
 
@@ -294,6 +242,7 @@ async function replaceFileAtomicUnserialized(
   options: ReplaceFileAtomicOptions,
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
+  mutation: AtomicMutation,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
   const fsModule = options.fileSystem?.promises ?? fs;
@@ -305,8 +254,9 @@ async function replaceFileAtomicUnserialized(
   const tempOwner = new AsyncAtomicTempOwner(tempPath);
   let originalFailure: AtomicTempFailure | undefined;
   try {
+    mutation.assert();
     await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
-    await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode });
+    await applyDirectoryMode({ fsModule, dirPath: dir, mode: dirMode, mutation });
     tempOwner.start();
     tempOwner.adopt(await writeTempFile({
       fsModule,
@@ -315,6 +265,7 @@ async function replaceFileAtomicUnserialized(
       mode,
       sync: options.syncTempFile === true,
       onIdentity: tempOwner.onIdentity,
+      mutation,
     }));
     await tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
@@ -338,10 +289,12 @@ async function replaceFileAtomicUnserialized(
       sourceIdentity: tempOwner.identity,
       assertSourceCurrent: () => tempOwner.assertCurrent(fsModule),
       syncFallback: options.syncTempFile === true,
+      mutation,
     });
     if (result.method === "rename") {
       tempOwner.markRenamed();
-      await tempOwner.assertPublished(fsModule, filePath, expectedHash);
+      await tempOwner.assertPublished(fsModule, filePath, expectedHash,
+        identity => mutation.destination("published", filePath, identity));
     } else {
       await tempOwner.assertCurrent(fsModule);
     }
@@ -370,27 +323,31 @@ async function replaceFileAtomicUnserialized(
 }
 
 export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): ReplaceFileAtomicResult {
+  const mutation = new AtomicMutation(options);
   const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
   validateRenameIdentity(renameIdentity);
   if (renameIdentity !== "verify-content-with-lock") {
-    return replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity);
+    return replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity, mutation);
   }
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
+  mutation.assert();
   fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
     recursive: true,
     mode: options.dirMode ?? 0o700,
   });
+  mutation.assert();
   return withAtomicRenameIdentityLockSync(filePath, () =>
-    replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity));
+    replaceFileAtomicSyncUnserialized(options, filePath, renameIdentity, mutation));
 }
 
 function replaceFileAtomicSyncUnserialized(
   options: ReplaceFileAtomicSyncOptions,
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
+  mutation: AtomicMutation,
 ): ReplaceFileAtomicResult {
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
@@ -412,8 +369,9 @@ function replaceFileAtomicSyncUnserialized(
   const tempOwner = new SyncAtomicTempOwner(tempPath);
   let originalFailure: AtomicTempFailure | undefined;
   try {
+    mutation.assert();
     fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, { recursive: true, mode: dirMode });
-    applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync });
+    applyDirectoryModeSync({ fsModule, dirPath: dir, mode: dirMode, fchmodSync, mutation });
     tempOwner.start();
     tempOwner.adopt(writeTempFileSync({
       fsModule,
@@ -423,6 +381,7 @@ function replaceFileAtomicSyncUnserialized(
       fchmodSync,
       sync: options.syncTempFile === true,
       onIdentity: tempOwner.onIdentity,
+      mutation,
     }));
     tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
@@ -447,10 +406,12 @@ function replaceFileAtomicSyncUnserialized(
       assertSourceCurrent: () => tempOwner.assertCurrent(fsModule),
       fchmodSync,
       syncFallback: options.syncTempFile === true,
+      mutation,
     });
     if (result.method === "rename") {
       tempOwner.markRenamed();
-      tempOwner.assertPublished(fsModule, filePath, expectedHash);
+      tempOwner.assertPublished(fsModule, filePath, expectedHash,
+        identity => mutation.destination("published", filePath, identity));
     } else {
       tempOwner.assertCurrent(fsModule);
     }
