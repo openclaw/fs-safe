@@ -82,4 +82,3 @@ export type ReplaceFileAtomicSyncOptions = ReplaceFileAtomicBaseOptions & {
 export type ReplaceFileAtomicResult = {
   method: "rename" | "copy-fallback";
 };
-
