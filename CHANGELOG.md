@@ -23,6 +23,10 @@
 - Portable ZIP extraction and entry reads verify payloads against the admitted CRC and size even if in-process decoder state changes after preflight.
 - Portable ZIP reads reject decoder entries substituted from another archive or renamed after admission, while extraction retains its admitted names and physical order.
 
+### Performance
+
+- **Temporary filename sanitization:** skip duplicate normalization after reserved-device suffixing while preserving filename admission and fallback rules.
+
 ## 0.19.0 - 2026-09-24
 
 ### Highlights

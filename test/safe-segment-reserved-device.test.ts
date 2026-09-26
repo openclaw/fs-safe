@@ -40,6 +40,19 @@ describe("safe path segments reject Windows reserved device names", () => {
     expect(sanitizeTempFileName("???")).toBe("download.bin");
   });
 
+  it.each([
+    [".hidden", ".hidden"],
+    [".CON", ".CON"],
+    ["...", "..."],
+    [".", "download.bin"],
+    ["C\0ON.txt", "CON_.txt"],
+    ["a\ud800b", "a-b"],
+    [" \t\r\n ", "download.bin"],
+    ["---", "download.bin"],
+  ])("preserves temporary filename admission for %j", (input, expected) => {
+    expect(sanitizeTempFileName(input)).toBe(expected);
+  });
+
   it.each(["CONsole", "COM10", "NUL_", ".CON"])("keeps a non-device segment: %s", (segment) => {
     expect(assertSafePathSegment(segment, { allowDotPrefix: true })).toBe(segment);
   });
