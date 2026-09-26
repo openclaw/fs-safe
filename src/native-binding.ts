@@ -113,7 +113,7 @@ type NativeTwoPathArgs = [
 
 export interface NativeBinding {
   watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void): number;
-  watchAdd?(id: number, directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint; recursive: boolean }): void;
+  watchAdd?(id: number, directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }): void;
   watchTestEvent?(id: number, path: string, flags: number): void;
   watchUnregister?(id: number): void;
   watchThreadCount?(): number;

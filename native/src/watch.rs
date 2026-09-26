@@ -85,15 +85,13 @@ pub struct WatchDirectory {
     pub root_ino: BigInt,
     pub dev: BigInt,
     pub ino: BigInt,
-    pub recursive: bool,
 }
-#[cfg_attr(not(windows), allow(dead_code))] // FSEvents uses one pathname stream; Linux ignores recursion.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // macOS and Windows observe the entire Root.
 pub(super) struct Directory {
     root: String,
     relative: String,
     root_identity: crate::ExactFileIdentity,
     identity: crate::ExactFileIdentity,
-    recursive: bool,
 }
 type Reply = mpsc::SyncSender<NativeResult<()>>;
 enum Command {
@@ -293,7 +291,6 @@ fn add_impl(id: u32, value: WatchDirectory) -> NativeResult<()> {
         identity: crate::exact_file_identity(&value.dev, &value.ino)?,
         root: value.root,
         relative: value.relative,
-        recursive: value.recursive,
     };
     let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let hub = slot.as_ref().ok_or_else(unavailable)?;

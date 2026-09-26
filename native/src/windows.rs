@@ -473,15 +473,6 @@ pub(crate) fn nt_open_relative_with_sharing(
     )
 }
 
-/// Directory-only asynchronous open; the shared boundary still rejects all reparses.
-pub(crate) fn open_watch_directory(root: HANDLE, path: &str) -> NativeResult<OwnedHandle> {
-    nt_open_relative_with_security_descriptor(
-        root, path, FILE_LIST_DIRECTORY, FILE_OPEN,
-        FILE_DIRECTORY_FILE | windows_sys::Wdk::Storage::FileSystem::FILE_OPEN_FOR_BACKUP_INTENT,
-        ReparsePolicy::Reject, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null_mut(),
-    )
-}
-
 // Keep the NtCreateFile inputs explicit at this shared native boundary.
 #[allow(clippy::too_many_arguments)]
 fn nt_open_relative_with_security_descriptor(
