@@ -1,5 +1,33 @@
 # Testing
 
+## Linux openat2 fallback
+
+Build the host addon and package first. The test hook is cached with the native
+capability probe; set it before starting the process, rather than changing it
+between tests in one process:
+
+```bash
+pnpm native:build
+pnpm build
+FS_SAFE_TEST_NO_OPENAT2=1 FS_SAFE_NATIVE_MODE=require pnpm test test/linux-openat2-fallback.test.ts test/root-move-noreplace.test.ts test/root-move-native-integration.test.ts test/native-write-containment.test.ts
+```
+
+On Linux, the seccomp harness also exercises the real syscall failure without
+the environment hook. It needs a C compiler and permission to install an
+unprivileged seccomp filter; it affects only its child process:
+
+```bash
+cc test/fixtures/deny-openat2.c -o /tmp/fs-safe-deny-openat2
+/tmp/fs-safe-deny-openat2 ENOSYS node test/fixtures/linux-openat2-fallback.mjs "$PWD/native/fs-safe-native.linux-x64-gnu.node"
+/tmp/fs-safe-deny-openat2 EPERM node test/fixtures/linux-openat2-fallback.mjs "$PWD/native/fs-safe-native.linux-x64-gnu.node"
+```
+
+Use the matching native artifact filename on other Linux architectures/libcs.
+The fixture proves nested moves, collisions, read/write, traversal, symlink and
+hardlink rejection, cached selection, and `helper-unavailable` for strict
+bounded cleanup. Bounded-cleanup success tests require real `openat2`; run the
+full suite with the environment hook unset.
+
 `@openclaw/fs-safe/test-hooks` exposes test-only injection points. Registration
 is allowed only when `process.env.NODE_ENV === "test"` or
 `process.env.VITEST === "true"`; registering a non-empty hook set elsewhere

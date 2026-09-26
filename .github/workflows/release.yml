@@ -116,7 +116,7 @@ jobs:
           - label: linux-x64-gnu
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            cross: none
+            cross: zig-gnu
           - label: linux-x64-musl
             os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -124,7 +124,7 @@ jobs:
           - label: linux-arm64-gnu
             os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            cross: napi
+            cross: zig-gnu
           - label: linux-arm64-musl
             os: ubuntu-latest
             target: aarch64-unknown-linux-musl
@@ -159,7 +159,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Set up Zig
-        if: matrix.cross == 'zig'
+        if: startsWith(matrix.cross, 'zig')
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.16.0
@@ -174,16 +174,16 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Install cargo-zigbuild
-        if: matrix.cross == 'zig'
+        if: startsWith(matrix.cross, 'zig')
         run: cargo install cargo-zigbuild --version 0.23.4 --locked
 
       - name: Build native binding
         if: matrix.cross == 'none'
         run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --output-dir ../artifacts
 
-      - name: Build native binding with napi cross toolchain
-        if: matrix.cross == 'napi'
-        run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --use-napi-cross --output-dir ../artifacts
+      - name: Build GNU binding and verify glibc floor
+        if: matrix.cross == 'zig-gnu'
+        run: node scripts/build-linux-gnu.mjs ${{ matrix.target }}
 
       - name: Build native binding with Zig
         if: matrix.cross == 'zig'

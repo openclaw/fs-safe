@@ -122,6 +122,61 @@ it("keeps simultaneous ZIP loaders isolated and restores ordinary JSZip methods"
   expect(JSZip.prototype.file).toBe(file);
 });
 
+it("rejects a decoder entry replaced after admission before reading its payload", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const input = await fixture(zipRecords([{ name: "value", body: "payload" }]));
+  const load = JSZip.prototype.loadAsync;
+  let replacements = 0;
+  const decoded: string[] = [];
+  vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+    const archive = await load.apply(this, args);
+    let files = archive.files;
+    const original = files.value!;
+    const replacement = Object.assign(Object.create(Object.getPrototypeOf(original)), original) as typeof original;
+    replacement.nodeStream = (...params) => { decoded.push("stream"); return original.nodeStream(...params); };
+    replacement.async = (...params) => { decoded.push("buffer"); return original.async(...params); };
+    Object.defineProperty(archive, "files", {
+      configurable: true,
+      get: () => files,
+      set(value: typeof files) {
+        replacements += 1;
+        files = { ...value, value: replacement };
+      },
+    });
+    expect(replacement).not.toBe(original);
+    return archive;
+  });
+  await expect(readArchiveEntry(input.archivePath, "value", { maxBytes: 7 })).rejects.toMatchObject({
+    name: "ArchiveFormatError", code: "archive-header-invalid",
+    message: "ZIP decoder disagrees with admitted directory metadata",
+  });
+  expect(replacements).toBe(1);
+  expect(decoded).toEqual([]);
+});
+
+it("keeps admitted mode metadata separate from filter-time decoder mutations", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const input = await fixture(zipRecords([{ name: "value", creatorSystem: 0, attributes: 0, body: "payload" }]));
+  const load = JSZip.prototype.loadAsync;
+  let captured: JSZip.JSZipObject | undefined;
+  vi.spyOn(JSZip.prototype, "loadAsync").mockImplementation(async function(this: JSZip, ...args) {
+    const archive = await load.apply(this, args);
+    captured = archive.files.value;
+    return archive;
+  });
+  await extractArchive({ ...input, entryModes: "preserve", entryFilter(entry) {
+    expect(entry).toEqual({ path: "value", kind: "file", size: 7 });
+    entry.path = "changed"; entry.kind = "symlink"; entry.size = 0;
+    captured!.dir = true;
+    captured!.unixPermissions = 0o400;
+    return "extract";
+  } });
+  expect(await fs.readdir(input.destDir)).toEqual(["value"]);
+  const directory = await fs.stat(path.join(input.destDir, "value"));
+  expect(directory.isDirectory()).toBe(true);
+  if (process.platform !== "win32") expect(directory.mode & 0o777).toBe(0o755);
+});
+
 it.each(["dir", "unixPermissions", "dosPermissions", "crc32", "uncompressedSize", "compressedSize", "method"])(
   "rejects changed %s before neutralizing decoder metadata and restores its method", async field => {
     const load = JSZip.prototype.loadAsync;

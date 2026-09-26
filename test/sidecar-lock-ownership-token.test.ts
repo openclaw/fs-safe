@@ -66,7 +66,7 @@ describe("sidecar lock ownership tokens", () => {
     await expect(fsp.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("releases its sidecar from process-exit cleanup when identity drifts", async () => {
+  it("releases its sidecar on process-exit cleanup with known descriptor/path identity drift", async () => {
     const base = await tempRoot("fs-safe-sidecar-sync-identity-drift-");
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;
@@ -80,14 +80,24 @@ describe("sidecar lock ownership tokens", () => {
         staleMs: 1,
         payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
       });
+      const canonicalLock = fsSync.realpathSync(lockPath);
+      const observesLock = (seen: unknown) => {
+        const value = String(seen);
+        if (value === lockPath || value === canonicalLock) return true;
+        if (process.platform !== "win32") return false;
+        const fold = (item: string) => path.win32.normalize(item).replace(/^\\\\\?\\/, "").toLowerCase();
+        return fold(value) === fold(lockPath) || fold(value) === fold(canonicalLock)
+          || path.win32.basename(value).toLowerCase() === path.win32.basename(lockPath).toLowerCase();
+      };
       const realLstatSync = fsSync.lstatSync.bind(fsSync);
       vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
         const stat = realLstatSync(...args);
-        if (String(args[0]) !== lockPath) {
+        if (!observesLock(args[0])) {
           return stat;
         }
+        // Doubling stays different even beyond Number.MAX_SAFE_INTEGER on Windows.
         return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, {
-          ino: typeof stat.ino === "bigint" ? stat.ino + 1n : stat.ino + 1,
+          ino: typeof stat.ino === "bigint" ? stat.ino * 2n : stat.ino * 2,
         });
       });
 
