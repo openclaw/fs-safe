@@ -1,5 +1,58 @@
 # Testing
 
+## Manual watch stress campaign
+
+Build from the exact revision being qualified with `pnpm install --frozen-lockfile`,
+`pnpm native:build`, and `pnpm build`, then run on a disposable machine:
+
+```sh
+node scripts/watch-stress.mjs --scenario all
+```
+
+Individual scenario names are `scale`, `fanout`, `churn`, `lifecycle`,
+`adversarial`, `limits`, `idle`, and `soak`. The runner uses plain Node and no
+additional dependencies. Each scenario prints one JSON result line; progress
+goes to stderr. `all` isolates scenarios in child processes and stops at the
+first failure. This suite is manual and is not part of per-PR CI.
+
+Run `node scripts/watch-stress.mjs --scenario oracle-selftest` first to check
+that a poisoned cache fails comparison and can recover only after invalidation.
+All fixture Roots live in `os.tmpdir()`. The consumer cache refreshes only from
+`onInvalidate`, using guarded Root reads of invalidated paths/scopes. After
+quiescence and a fresh `reconcile()`, checkpoints compare it with an independent
+filesystem walk, including file-content hashes. A mismatch is a failure, with
+no comparison retry or checkpoint-triggered cache refresh. Transient guarded
+read failures retain already-invalidated consumer work and settle at 25 ms
+intervals, with a 120-second flush deadline; these errors are counted in results.
+
+Scale uses 50,000 files in 2,000 child directories. Fan-out checks 64 and 256
+distinct Roots, one shared hub thread, and return to the warmed handle baseline.
+Churn first creates 1,024 entries while JavaScript is blocked to exceed the
+default 256-path detail budget, then runs at least five minutes with persistent
+differences across 10,000-mutation batches and isolated edit latency measurements.
+Lifecycle performs 10,000 ready/close cycles plus admission
+cancellation, close-during-ready, 1,000 scope replacements, and callback-close.
+Adversarial cases exercise Root swaps, outside symlinks, recursive deletion and
+10,000 same-name create/delete pairs. Soak runs 30 minutes, checking the oracle
+each minute. Linux needs passwordless `sudo` for the limits scenario; it lowers
+`fs.inotify.max_user_watches` to 1 in a child shell with a restoration trap and
+verifies restoration. Never run that scenario on a shared production host.
+
+RSS limits are fixed before execution: 512 MiB peak for churn/soak, at most
+64 MiB growth after warmup, and at most 32 MiB lifecycle growth after 3,000
+cycles. Reports include samples and fitted slopes. Idle runs for ten minutes
+with 16 subscriptions and a one-hour reconciliation interval to isolate native
+hub wakeups, requiring less than 1% of one CPU and, on Linux, at most 30 hub
+context switches. macOS captures `ps -M`; Windows captures PowerShell thread
+CPU time and handle counts. macOS descriptor counts use `lsof`.
+
+The macOS limits case also exercises injected UserDropped/KernelDropped flags
+through the native decoder and labels these as synthetic. Natural FSEvents drop
+flags are not independently observable through the current public batch. Windows
+records native overflow and recovery, but the shared batch does not distinguish
+RDCW kernel-buffer loss from bounded native queue loss; a Windows qualification
+must retain that limitation rather than call it proved kernel overflow.
+
 ## Linux openat2 fallback
 
 Build the host addon and package first. The test hook is cached with the native
