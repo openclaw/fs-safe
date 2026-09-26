@@ -1,3 +1,4 @@
+import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 import type { NativeRetainedFile } from "./native-binding.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
@@ -74,7 +75,12 @@ class Owner implements RetainedFile {
 
   remove(): RetainedFileResult { return this.#settle(true); }
   dispose(): RetainedFileResult { return this.#settle(false); }
-  [Symbol.dispose](): void { this.dispose(); }
+  [Symbol.dispose](): void {
+    const result = this.dispose();
+    if (result.resources !== "closed") {
+      throw new FsSafeError("helper-failed", "retained-file resource settlement is uncertain", { details: { result } });
+    }
+  }
 }
 
 /** Retain one existing regular file on supported local Windows NTFS. No fallback. */

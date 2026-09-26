@@ -1,4 +1,5 @@
 //! Local NTFS admission. All handles stay private to the retained-file owner.
+use std::fmt::Write;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
 use sha2::{Digest, Sha256};
@@ -87,11 +88,14 @@ pub(super) fn canonical(handle: HANDLE, expected: &str) -> NativeResult<()> {
 
 pub(super) fn exact(handle: HANDLE, dev: u64, ino: u64, directory: bool) -> NativeResult<String> {
     let ((d, i, is_dir), _) = handle_identity_and_size(handle)?;
-    if dev == 0 || ino == 0 || d as u64 != dev || i != ino || is_dir != directory {
+    if dev == 0 || ino == 0 || d == 0 || i == 0 {
+        return Err(native_error("ENOTSUP", "unknown retained object identity"));
+    }
+    if d as u64 != dev || i != ino || is_dir != directory {
         return Err(native_error("path-mismatch", "retained object does not match expected exact identity"));
     }
     let identity = handle_file_identity(handle)?.to_string();
-    if identity.ends_with(":00000000000000000000000000000000") {
+    if identity.starts_with("0000000000000000:") || identity.ends_with(":00000000000000000000000000000000") {
         return Err(native_error("ENOTSUP", "unknown retained object identity"));
     }
     Ok(identity)
@@ -176,7 +180,9 @@ pub(super) fn digest(handle: HANDLE, size: u64) -> NativeResult<String> {
         if read == 0 || read > wanted { return Err(native_error("path-mismatch", "retained file length changed")); }
         hash.update(&buffer[..read as usize]); offset += read as u64;
     }
-    Ok(format!("{:x}", hash.finalize()))
+    let mut digest = String::with_capacity(64);
+    for byte in hash.finalize() { write!(&mut digest, "{byte:02x}").unwrap(); }
+    Ok(digest)
 }
 
 pub(super) fn disposition(handle: HANDLE) -> NativeResult<()> {

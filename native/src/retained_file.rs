@@ -83,12 +83,19 @@ impl Owner {
             if let Err(error) = parent.close() { result.resources = "close-failed".into(); result.error("close-parent", error); }
         }
     }
+    fn observe_identity(&self, handle: windows_sys::Win32::Foundation::HANDLE, result: &mut RetainedFileResult) {
+        result.namespace = match os::exact(handle, self.dev, self.ino, false) {
+            Ok(_) => "original",
+            Err(error) if error.status == "path-mismatch" => "foreign",
+            Err(error) => { result.error("observe", error); "unknown" },
+        }.into();
+    }
     fn observe(&self, result: &mut RetainedFileResult) {
         match os::file(self.parent().0, &self.name) {
             Err(error) if error.status == "ENOENT" => { result.namespace = "absent".into(); result.status = "name-absent-after-settlement".into(); },
             Err(error) => { result.namespace = "unknown".into(); result.error("observe", error); },
             Ok(file) => {
-                result.namespace = match os::exact(file.0, self.dev, self.ino, false) { Ok(_) => "original", Err(_) => "foreign" }.into();
+                self.observe_identity(file.0, result);
                 if let Err(error) = file.close() { result.resources = "close-failed".into(); result.error("close-observation", error); }
             },
         }

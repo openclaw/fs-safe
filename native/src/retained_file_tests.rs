@@ -105,20 +105,27 @@ fn writable_mapping_without_writer_handle_is_refused() {
     let file = unsafe { CreateFileW(wide.as_ptr(), FILE_GENERIC_READ | FILE_GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), OPEN_EXISTING, 0, null_mut()) };
     assert_ne!(file, INVALID_HANDLE_VALUE);
-    let mapping = unsafe { CreateFileMappingW(file, null(), PAGE_READWRITE, 0, 0, null()) };
+    let file = OwnedHandle(file);
+    let mapping = unsafe { CreateFileMappingW(file.0, null(), PAGE_READWRITE, 0, 0, null()) };
     assert!(!mapping.is_null());
-    let view = unsafe { MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, 8) };
+    let mapping = OwnedHandle(mapping);
+    let view = unsafe { MapViewOfFile(mapping.0, FILE_MAP_WRITE, 0, 0, 8) };
     assert!(!view.Value.is_null());
-    assert_ne!(unsafe { CloseHandle(file) }, 0);
+    struct View(MEMORY_MAPPED_VIEW_ADDRESS);
+    impl Drop for View { fn drop(&mut self) { unsafe { UnmapViewOfFile(self.0); } } }
+    let view = View(view);
+    file.close().unwrap();
     let owner = f.retain();
     assert_ne!(owner.result.status, "retained");
     assert_eq!(owner.result.disposition, "not-attempted");
     assert_eq!(owner.result.resources, "closed");
     // A real mapped write is the causal control, not merely an unused mapping.
-    unsafe { std::ptr::copy_nonoverlapping(b"new-data".as_ptr(), view.Value.cast(), 8); }
-    assert_ne!(unsafe { FlushViewOfFile(view.Value, 8) }, 0);
-    assert_ne!(unsafe { UnmapViewOfFile(view) }, 0);
-    assert_ne!(unsafe { CloseHandle(mapping) }, 0);
+    unsafe { std::ptr::copy_nonoverlapping(b"new-data".as_ptr(), view.0.Value.cast(), 8); }
+    assert_ne!(unsafe { FlushViewOfFile(view.0.Value, 8) }, 0);
+    let unmap = unsafe { UnmapViewOfFile(view.0) };
+    std::mem::forget(view);
+    assert_ne!(unmap, 0);
+    mapping.close().unwrap();
     assert_eq!(fs::read(&f.file).unwrap(), b"new-data");
 }
 
@@ -174,4 +181,28 @@ fn close_uncertainty_retains_operation_and_close_errors_without_retry() {
     assert_eq!(owner.settle(true).errors.len(), result.errors.len());
     assert_eq!(foreign.metadata().unwrap().len(), 8);
     drop(foreign);
+}
+
+#[test]
+fn namespace_query_failure_is_unknown_not_foreign() {
+    let f = Fixture::new();
+    let mut owner = f.retain(); assert_retained(&owner);
+    let retained = owner.owner.as_ref().unwrap();
+    let mut result = RetainedFileResult::new();
+    retained.observe_identity(INVALID_HANDLE_VALUE, &mut result);
+    assert_eq!(result.namespace, "unknown");
+    assert_eq!(result.errors.len(), 1);
+    assert_eq!(result.errors[0].phase, "observe");
+    assert_ne!(result.errors[0].code, "path-mismatch");
+    let foreign_path = f.directory.join("foreign");
+    fs::write(&foreign_path, b"foreign!").unwrap();
+    let foreign = os::file(retained.parent().0, "foreign").unwrap();
+    let mut foreign_result = RetainedFileResult::new();
+    retained.observe_identity(foreign.0, &mut foreign_result);
+    assert_eq!(foreign_result.namespace, "foreign");
+    assert!(foreign_result.errors.is_empty());
+    foreign.close().unwrap();
+    assert_eq!(owner.settle(false).resources, "closed");
+    assert_eq!(fs::read(&f.file).unwrap(), b"original");
+    assert_eq!(fs::read(&foreign_path).unwrap(), b"foreign!");
 }

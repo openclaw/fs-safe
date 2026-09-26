@@ -79,7 +79,10 @@ parent, then closes ancestry. No pathname is passed to unlink. Ordinary
 callbacks and reentrancy are refused; even caught reentrancy poisons that attempt.
 Repeated settlement returns the original receipt without another mutation or
 another authority call. A copied receipt cannot be used to remove a replacement.
-GC closes only and produces no settlement receipt; use explicit disposal.
+`[Symbol.dispose]()` throws `FsSafeError` with the complete result in
+`error.details.result` if resource settlement is uncertain; `dispose()` returns
+that result directly. GC closes only and produces no settlement receipt; use
+explicit disposal.
 
 ## Read the facts separately
 

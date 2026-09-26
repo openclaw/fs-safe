@@ -98,11 +98,49 @@ describe.runIf(native)("real Windows retained-file lifecycle", () => {
     expect(fs.readFileSync(filePath, "utf8")).toBe("new-data");
   });
 
-  it("refuses a newer same-content generation and observed named-stream changes", async () => {
+  it("refuses a newer same-content generation", async () => {
     const { options, filePath } = await fixture();
     fs.utimesSync(filePath, new Date(), new Date(Date.now() + 1000));
     expect(retainFileInDirectory(options)).toMatchObject({ status: "preserved-mismatch", resources: "closed" });
     expect(fs.readFileSync(filePath, "utf8")).toBe("original");
+  });
+
+  it("refuses changed bytes even with matching identity and current generation", async () => {
+    const { options, filePath } = await fixture();
+    fs.writeFileSync(filePath, "new-data");
+    const current = fs.statSync(filePath, { bigint: true });
+    const result = retainFileInDirectory({ ...options, expected: { ...options.expected,
+      mtimeNs: current.mtimeNs, ctimeNs: current.ctimeNs } });
+    expect(result).toMatchObject({ status: "preserved-mismatch", resources: "closed", disposition: "not-attempted",
+      errors: [{ message: "retained bytes do not match producer digest" }] });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("new-data");
+  });
+
+  it("hashes multiple native read chunks against an independent producer digest", async () => {
+    const { options, filePath } = await fixture();
+    const bytes = Buffer.alloc(2 * 65536 + 37);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + (i >>> 16)) & 255;
+    fs.writeFileSync(filePath, bytes);
+    const current = fs.statSync(filePath, { bigint: true });
+    const owner = retained({ ...options, expected: { ...options.expected, size: current.size,
+      mtimeNs: current.mtimeNs, ctimeNs: current.ctimeNs,
+      sha256: createHash("sha256").update(bytes).digest("hex") } });
+    expect(owner.remove()).toMatchObject({ status: "name-absent-after-settlement", resources: "closed", errors: [] });
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
+  it("refuses named streams independently of basename, generation and digest guards", async () => {
+    const { options, filePath } = await fixture();
+    fs.writeFileSync(`${filePath}:stream`, "foreign stream");
+    const current = fs.statSync(filePath, { bigint: true });
+    const result = retainFileInDirectory({ ...options, expected: { ...options.expected,
+      mtimeNs: current.mtimeNs, ctimeNs: current.ctimeNs } });
+    expect(result).toMatchObject({ status: "unsupported", disposition: "not-attempted", resources: "closed",
+      errors: [{ message: "named data streams are unsupported for file retirement" }] });
+    expect(fs.readFileSync(filePath, "utf8")).toBe("original");
+    expect(fs.readFileSync(`${filePath}:stream`, "utf8")).toBe("foreign stream");
+    fs.renameSync(filePath, `${filePath}.released`);
+    expect(fs.readFileSync(`${filePath}.released:stream`, "utf8")).toBe("foreign stream");
   });
 
   it("preserves ACL-denied data and leaves the fixture ACL restorable", async () => {
