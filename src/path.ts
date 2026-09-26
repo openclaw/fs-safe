@@ -118,7 +118,21 @@ export function isPathInside(root: string, target: string): boolean {
 }
 
 export function isPathRelativeEscape(relativePath: string): boolean {
-  return relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+  if (path.isAbsolute(relativePath)) {
+    return true;
+  }
+  let depth = 0;
+  // Windows accepts both separators; POSIX backslashes are filename bytes.
+  const segments = relativePath.split(process.platform === "win32" ? /[/\\]/ : /\//);
+  for (const segment of segments) {
+    if (segment === "..") {
+      if (depth === 0) return true;
+      depth -= 1;
+    } else if (segment !== "" && segment !== ".") {
+      depth += 1;
+    }
+  }
+  return false;
 }
 
 export function resolveSafeBaseDir(rootDir: string): string {

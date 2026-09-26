@@ -10,6 +10,7 @@
 
 ### Fixes
 
+- **Relative escape checks:** recognize either Windows separator and nested escapes while preserving contained dotdot paths and literal POSIX backslashes. Thanks @SebTardif. ([#614](https://github.com/openclaw/fs-safe/pull/614))
 - **Lock exit cleanup:** leave raw sidecars in place when Windows reports an unknown device or inode, while preserving token-owned cleanup with known descriptor/path identity drift. Thanks @SebTardif. ([#617](https://github.com/openclaw/fs-safe/pull/617))
 - **Linux native compatibility:** build GNU x64/arm64 bindings for glibc 2.28 and newer, restoring native operations on RHEL 8-family systems; reject release artifacts that require newer GLIBC symbols. ([#548](https://github.com/openclaw/fs-safe/issues/548))
 - **Older Linux kernels:** fall back to guarded no-follow native parent resolution when `openat2` is absent or blocked by seccomp, retaining nested no-clobber moves, exact identity checks, explicit `best-effort` containment, and fail-closed bounded cleanup. ([#572](https://github.com/openclaw/fs-safe/issues/572), [#511](https://github.com/openclaw/fs-safe/issues/511))
