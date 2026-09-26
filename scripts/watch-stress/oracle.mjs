@@ -76,22 +76,17 @@ export function observe(f, options = {}) {
       if (!entry) return;
     }
     const kind = entry.isSymbolicLink ? "symlink" : entry.isDirectory ? "directory" : entry.isFile ? "file" : "other";
-    try { target.set(relative, kind === "file" ? "file:" + digest(await f.capability.readBytes("./" + relative)) : kind); }
-    catch (error) { if (missing(error)) return; throw error; }
+    target.set(relative, kind === "file" ? "file:" + digest(await f.capability.readBytes("./" + relative)) : kind);
     if (kind === "directory" && depth > 0) {
       for (const child of await f.capability.list(relative ? "./" + relative : "", { withFileTypes: true })) {
         const childPath = path.join(relative, child.name);
-        try { await snapshot(childPath, depth - 1, target, child); }
-        catch (error) {
-          if (!missing(error)) throw error;
-          for (const name of target.keys()) if (below(childPath, name)) target.delete(name);
-        }
+        await snapshot(childPath, depth - 1, target, child);
       }
     }
   }
   async function refresh(relative, depth) {
     const next = new Map();
-    try { await snapshot(relative, depth, next); } catch (error) { if (!missing(error)) throw error; next.clear(); }
+    await snapshot(relative, depth, next);
     for (const name of cache.keys()) if (below(relative, name)) cache.delete(name);
     for (const [name, value] of next) cache.set(name, value);
   }
@@ -105,11 +100,7 @@ export function observe(f, options = {}) {
           if (everything) {
             const next = new Map();
             for (const scope of scopes) {
-              try { await snapshot(scope.path, scope.kind === "tree" ? scope.depth ?? 32 : 0, next); }
-              catch (error) {
-                if (!missing(error)) throw error;
-                for (const name of next.keys()) if (below(scope.path, name)) next.delete(name);
-              }
+              await snapshot(scope.path, scope.kind === "tree" ? scope.depth ?? 32 : 0, next);
             }
             cache.clear(); for (const [name, value] of next) cache.set(name, value);
           } else for (const name of names) {

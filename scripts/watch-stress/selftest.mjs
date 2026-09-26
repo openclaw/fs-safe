@@ -18,6 +18,19 @@ export async function selftest() {
     await fs.rm(path.join(f.directory, "child"), { recursive: true }); await observer.checkpoint();
     await fs.mkdir(path.join(f.directory, "new-child"));
     await fs.writeFile(path.join(f.directory, "new-child", "new-file"), "new"); await observer.checkpoint();
-    return { staleCacheDetected: true, creationModificationDeletion: true, ...observer.metrics };
+    const list = f.capability.list.bind(f.capability);
+    let missingDescendant = true;
+    f.capability.list = async (...args) => {
+      if (missingDescendant) {
+        missingDescendant = false;
+        throw Object.assign(new Error("descendant disappeared during a guarded listing"), { code: "not-found" });
+      }
+      return list(...args);
+    };
+    await fs.writeFile(path.join(f.directory, "sibling"), "after-transient-listing-error");
+    await observer.checkpoint();
+    assert.equal(missingDescendant, false);
+    assert.equal(observer.metrics.consumerReadErrors, 1);
+    return { staleCacheDetected: true, creationModificationDeletion: true, transientListingPreserved: true, ...observer.metrics };
   } finally { binding.watchRegister = original; await cleanup([() => observer?.close()], [() => f.remove()]); }
 }
