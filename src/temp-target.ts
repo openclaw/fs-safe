@@ -4,7 +4,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { suffixWindowsReservedDeviceName } from "./filename.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
-import { assertSafePathSegment, sanitizeSafePathSegment, trimHyphenEdges } from "./safe-path-segment.js";
+import {
+  assertSafePathSegment,
+  normalizeSafePathSegment,
+  sanitizeSafePathSegment,
+  trimHyphenEdges,
+} from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { hasNodeErrorCode } from "./path.js";
 import { registerTempPathForExit } from "./temp-cleanup.js";
@@ -95,9 +100,11 @@ function sanitizeExtension(extension?: string): string {
 }
 
 export function sanitizeTempFileName(fileName: string): string {
-  return suffixWindowsReservedDeviceName(
-    sanitizeSafePathSegment(path.basename(fileName)) ?? "download.bin",
+  // Suffix reserved stems before admission so CON.txt stays CON_.txt.
+  const suffixed = suffixWindowsReservedDeviceName(
+    normalizeSafePathSegment(path.basename(fileName)),
   );
+  return sanitizeSafePathSegment(suffixed) ?? "download.bin";
 }
 
 export function buildRandomTempFilePath(params: {

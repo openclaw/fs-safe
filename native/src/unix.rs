@@ -93,7 +93,7 @@ pub(crate) fn open_owned_beneath(root_fd: i32, rel_path: &str, flags: i32) -> Na
     use rustix::fs::{ResolveFlags, openat2};
 
     validate_beneath_path(rel_path)?;
-    if rel_path.is_empty() || rel_path == "." {
+    if rel_path.is_empty() {
         return duplicate_cloexec(root_fd);
     }
     // Negative sentinels are not retained capabilities: -1 cannot be borrowed,
@@ -108,6 +108,9 @@ pub(crate) fn open_owned_beneath(root_fd: i32, rel_path: &str, flags: i32) -> Na
     } else {
         Mode::empty()
     };
+    if !crate::linux_open::openat2_available() {
+        return crate::linux_open::open_fallback(root_fd, rel_path, oflags, mode);
+    }
     openat2(
         borrowed(root_fd),
         rel_path,
@@ -115,7 +118,13 @@ pub(crate) fn open_owned_beneath(root_fd: i32, rel_path: &str, flags: i32) -> Na
         mode,
         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
     )
-    .map_err(|error| os_error(error, "openat2 beneath root"))
+    .map_err(|error| match error {
+        rustix::io::Errno::NOSYS => native_error(
+            "ENOTSUP",
+            "openat2 became unavailable after capability admission",
+        ),
+        error => os_error(error, "openat2 beneath root"),
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -550,6 +559,12 @@ pub fn owned_tree_removal_available(parent_fd: i32) -> bool {
 pub(crate) fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResult<OwnedFd> {
     use rustix::fs::{ResolveFlags, openat2};
 
+    if !crate::linux_open::openat2_available() {
+        return Err(native_error(
+            "ENOTSUP",
+            "bounded cleanup requires openat2 with RESOLVE_NO_XDEV",
+        ));
+    }
     openat2(
         borrowed(parent_fd),
         name,
@@ -557,7 +572,10 @@ pub(crate) fn open_cleanup_directory(parent_fd: i32, name: &CStr) -> NativeResul
         Mode::empty(),
         ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS | ResolveFlags::NO_XDEV,
     )
-    .map_err(|error| os_error(error, "open owned cleanup child without mount crossing"))
+    .map_err(|error| match error {
+        rustix::io::Errno::NOSYS => native_error("ENOTSUP", "bounded cleanup requires openat2 with RESOLVE_NO_XDEV"),
+        error => os_error(error, "open owned cleanup child without mount crossing"),
+    })
 }
 
 #[cfg(target_os = "macos")]

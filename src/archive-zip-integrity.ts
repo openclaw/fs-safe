@@ -1,9 +1,6 @@
 import { Transform } from "node:stream";
 import { ArchiveFormatError } from "./archive-errors.js";
-import {
-  zipEntryIntegrityMetadata,
-  type ZipEntry,
-} from "./archive-zip-entry.js";
+import type { AdmittedZipEntry } from "./archive-zip-entry.js";
 
 import { updateCrc32 } from "./archive-crc32.js";
 
@@ -17,19 +14,8 @@ export function normalizeZipIntegrityError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function createZipIntegrityTransform(entry: ZipEntry): Transform {
-  const metadata = zipEntryIntegrityMetadata(entry);
-  const expectedCrc32 = metadata?.crc32;
-  const expectedSize = metadata?.uncompressedSize;
-  if (
-    typeof expectedCrc32 !== "number" ||
-    !Number.isInteger(expectedCrc32) ||
-    typeof expectedSize !== "number" ||
-    !Number.isSafeInteger(expectedSize) ||
-    expectedSize < 0
-  ) {
-    throw new ArchiveFormatError(`zip entry has invalid integrity metadata: ${entry.name}`);
-  }
+export function createZipIntegrityTransform(record: AdmittedZipEntry): Transform {
+  const { entry, crc32: expectedCrc32, size: expectedSize } = record;
 
   let actualCrc32 = 0;
   let actualSize = 0;

@@ -43,6 +43,7 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
 
 - Linux uses `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, fd-relative
   `mkdirat`/`linkat`/`renameat`/`renameat2`, `FICLONE`, and `copy_file_range`.
+  Without `openat2`, beneath opens use the [guarded fallback](#linux-without-openat2).
 - macOS 15.4 and newer first use `openat(O_RESOLVE_BENEATH)`; older kernels walk
   components with `openat(O_NOFOLLOW)` and restart in-root symlinks from the
   pinned root. Both routes apply an `F_GETPATH` post-open containment detector,
@@ -84,6 +85,49 @@ zero for an entry; end-of-list is accepted only for the first entry of a valid,
 privately owned empty ACL. Unsupported, malformed, and failed inspection is not
 reported as absence. These facts do not classify individual ACE permissions or
 prove volume ownership enforcement; each caller applies its own security policy.
+
+## Linux without openat2
+
+Linux kernels before 5.6 and containers whose seccomp policy denies `openat2`
+can keep native mode `auto` or `require`. The addon caches one harmless
+`openat2(".")` capability probe per process. `ENOSYS`, or `EPERM` on that probe,
+selects the native `openat` fallback. An `EPERM`/`EACCES` from an application
+operation is still a permission error and never triggers a retry. Install
+syscall filters before the first native operation; a later `ENOSYS` fails with
+`ENOTSUP`, rather than changing the cached mechanism during a call.
+
+The fallback opens each directory relative to a retained descriptor with
+`O_PATH | O_DIRECTORY | O_NOFOLLOW`, compares exact device/inode/type identities,
+and rechecks the retained parent chain before and after the final no-follow
+open. It rejects all symlink components, including procfs magic links, even
+when the low-level caller requests symlink following. Public Root policy and
+canonical-path admission, hardlink rejection, pinned-file checks, and mutation
+identity fences remain in place. `openBeneath()` reports `best-effort`: these
+identity samples detect replacements but cannot make a multi-component walk
+atomic against a hostile process renaming directories between samples. This
+is the same documented containment class as the macOS and JavaScript paths;
+applications requiring atomic beneath resolution must check the result or use
+OS isolation. Rejection after a mutating open does not promise rollback.
+
+Nested no-clobber `Root.move()` still admits both parents and uses
+`renameat2(RENAME_NOREPLACE)`. Existing destinations are never overwritten.
+That separate syscall/filesystem capability remains required; if unavailable,
+the operation fails with `helper-unavailable`. Turning native mode `off` still
+disables no-clobber moves because Node has no equivalent atomic rename API.
+
+Bounded owned-tree cleanup deliberately has no `openat` fallback:
+`RESOLVE_NO_XDEV` rejects bind mounts even when device numbers match, which
+ordinary identity checks cannot reproduce. `cleanupSafety: "require-bounded"`
+fails before workspace creation with `helper-unavailable`; low-level cleanup
+opens report `ENOTSUP`. Compatible cleanup retains its documented behavior.
+Low-level `O_TMPFILE` anonymous opens also fail before creation with `ENOTSUP`
+in the fallback, because named-entry identity checks cannot verify an unnamed
+file. Public staged-write APIs use exclusive named files and remain available.
+
+For tests, set `FS_SAFE_TEST_NO_OPENAT2=1` before starting Node to force the
+fallback (including bounded-cleanup refusal). It is read only at the first
+capability probe. It has no effect on macOS or Windows.
+See [Linux fallback testing](testing.md#linux-openat2-fallback).
 
 ## Archives
 
@@ -252,7 +296,7 @@ See [Root containment guarantees](security-model.md#containment-guarantees-by-pl
 
 | Capability | Native path | Guarded JavaScript path |
 |---|---|---|
-| Native beneath opens and Root mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Native `openBeneath()` reports `kernel-atomic` on Linux and `best-effort` on macOS and Windows. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
+| Native beneath opens and Root mutations | Descriptor-relative beneath operations. Pinned writes create parents and publish both replacement and no-replace targets relative to open directory descriptors. No-clobber `Root.move()` admits both parents and uses the native no-replace rename. Native `openBeneath()` reports `kernel-atomic` with Linux `openat2` and `best-effort` with the guarded Linux fallback, macOS, and Windows. macOS uses `O_RESOLVE_BENEATH` when available plus an `F_GETPATH` detector, while Windows rejects reparse traversal in the object-manager call. | Reports `best-effort`: component-wise alias checks, no-follow opens where Node exposes them, private temp/rename, and post-operation identity verification. No-clobber `Root.move()` is unsupported because a check followed by a replacing rename is unsafe. A same-privilege peer can replace a writable parent after a guard assertion but before Node resolves another pathname mutation; the mutation may land outside the intended root before the post-check detects it. |
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Rust streaming decode and fd-relative output creation. | Bundled WASM codecs feed the shared Rust TAR parser, then guarded private staging and the same merge policy; no optional codec dependency. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |

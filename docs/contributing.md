@@ -70,6 +70,36 @@ Consumers receive the asset in the npm package and need no compiler.
 
 Output lands in `dist/`. The package's `prepack` hook re-runs the build before publishing — manual `pnpm build` is only required when you want to inspect the output or run a freshly-built copy locally.
 
+### Linux GNU release bindings
+
+GNU x64 and arm64 artifacts use Zig 0.16.0 and `cargo-zigbuild` 0.23.4 with an
+explicit glibc 2.28 target, independent of the runner's libc. This matches the
+Node Linux runtime baseline and supports RHEL 8-family users without adding a
+second legacy package. Run the same build and ABI gate used in CI and releases:
+
+```bash
+cargo install cargo-zigbuild --version 0.23.4 --locked
+rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+node scripts/build-linux-gnu.mjs x86_64-unknown-linux-gnu
+node scripts/build-linux-gnu.mjs aarch64-unknown-linux-gnu
+```
+
+These commands require Zig on `PATH` and GNU `objdump`. They build the N-API
+cdylib with `cargo zigbuild --target <triple>.2.28`, copy it to the existing
+`artifacts/fs-safe-native.<platform>.node` name, and reject any GLIBC symbol
+requirement above 2.28 before upload. The gate also rejects missing or unknown
+GLIBC versions. To inspect an existing binding, use
+`node scripts/check-linux-glibc.mjs <binding.node>`.
+
+`pnpm native:build` remains a host-toolchain development build; it does not
+establish the GNU release ABI floor.
+
+On Linux x64 with Docker, run `pnpm build`, copy the GNU x64 artifact from
+`artifacts/` to `native/`, run `node scripts/stage-host-native.mjs`, then run
+`bash scripts/test-linux-glibc-floor.sh`. CI uses this command to load the actual
+artifact and run native security and no-replace move tests in Rocky Linux 8
+(glibc 2.28). GNU arm64 is cross-built and symbol-checked in the same CI matrix.
+
 ## Test
 
 ```bash

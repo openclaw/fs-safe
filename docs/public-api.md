@@ -41,6 +41,11 @@ The lexical path surface additionally exports `isNodeError`,
 `UnsafeDeviceReadPathMatch`, `UnsafeDeviceReadPathOptions`, and
 `UnsafeDeviceReadPathReason`.
 
+`isPathRelativeEscape()` rejects absolute paths and relative paths that step
+above their starting directory at any point. Contained paths such as
+`dir/../file` remain relative. It accepts both separators on Windows; on POSIX,
+a backslash remains a literal filename character.
+
 The advanced root-file primitive exports `OpenRootFileParams`,
 `OpenRootFileSyncParams`, `RootFileOpenResult`, and
 `RootFileOpenFailureReason`. These are composition types for callers building

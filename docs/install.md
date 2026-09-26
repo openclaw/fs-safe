@@ -134,6 +134,16 @@ when the matching package is absent, incompatible, or disabled.
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
 before deploying with native mode `require` or native-only features.
 
+### Older Linux kernels and seccomp
+
+The native addon supports kernels without `openat2` (before Linux 5.6) and
+containers returning `ENOSYS` or probe-time `EPERM` for that syscall. Beneath
+opens use a guarded no-follow component walk and report `best-effort`.
+Nested no-clobber moves retain atomic `renameat2(RENAME_NOREPLACE)` and exact
+identity checks; keep native mode enabled. Strict bounded cleanup still
+requires `openat2` with `RESOLVE_NO_XDEV` and reports `helper-unavailable`
+without it. See [Linux capability behavior and limits](native.md#linux-without-openat2).
+
 ### Windows security fallback
 
 Windows raw owner/DACL inspection, private-directory creation, and secure-file
@@ -160,6 +170,24 @@ available native operation's error never triggers a command retry. See
 [Permissions](permissions.md) and [Secure file reads](secure-file.md).
 
 ## Native helper policy
+
+### Supported native platforms
+
+Prebuilt bindings cover Linux x64/arm64 (GNU glibc **2.28 or newer**, or musl),
+macOS x64/arm64, and Windows x64. The GNU baseline includes RHEL 8, Rocky Linux 8,
+and AlmaLinux 8. A compatible Node 22+ runtime and the kernel/filesystem features
+required by each operation are still necessary; a loadable addon alone does not
+guarantee every native capability. Systems older than glibc 2.28 are outside the
+GNU binary support floor.
+
+A missing or incompatible optional binding (including `ERR_DLOPEN_FAILED` from
+glibc) does not prevent importing fs-safe. In `auto`, supported JavaScript/WASM
+fallbacks remain available. Native-only operations such as the default
+no-clobber `Root.move()` still fail closed with `helper-unavailable`; `require`
+also rejects fallback-capable operations and retains the binding load error as
+the cause.
+
+### Loading modes
 
 The platform native binaries provide fd-relative open/link/mkdir primitives,
 atomic no-replace rename, and file identity checks. The default is `auto`: use

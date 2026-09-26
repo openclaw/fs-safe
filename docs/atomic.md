@@ -295,9 +295,9 @@ semantics. For single-file replacement, `replaceFileAtomic` is the right tool.
 
 Atomic UTF-8 text write with the same secure defaults as `writeJson`: sibling
 temp file, descriptor-bound mode setting and fsync, rename, and parent fsync.
-It delegates to `replaceFileAtomic()` with a smaller call shape. Use it when
-you do not need replacement hooks such as `beforeRename`, `preserveExistingMode`,
-or custom copy-fallback policy.
+It delegates to `replaceFileAtomic()` with a smaller call shape, including its
+pre-publication hook and staging-prefix options. Use `replaceFileAtomic()` when
+you need mode preservation or a custom copy-fallback policy.
 
 ```ts
 import { writeTextAtomic } from "@openclaw/fs-safe/atomic";
@@ -317,8 +317,16 @@ type WriteTextAtomicOptions = {
   dirMode?: number;          // parent mode (default 0o777 masked by process umask)
   trailingNewline?: boolean; // append "\n" if missing; default false
   durable?: boolean;         // default true; false skips temp/parent fsync
+  beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
+  tempPrefix?: string;       // default ".fs-safe-replace"
 };
 ```
+
+`beforeRename` is awaited after the complete text is staged and before
+publication, with the same [stage identity and refusal cleanup](#beforerename)
+checks as `replaceFileAtomic`. Pass `tempPrefix` to identify staged files; it
+uses the same prefix validation, including rejection of empty prefixes and path
+separators.
 
 `durable: false` keeps the sibling-temp replace/rename behavior but skips the
 temp-file and parent-directory `fsync` calls. Use it only for reconstructible
