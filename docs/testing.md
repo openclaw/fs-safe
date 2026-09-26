@@ -33,14 +33,18 @@ differences across 10,000-mutation batches and isolated edit latency measurement
 Lifecycle performs 10,000 ready/close cycles plus admission
 cancellation, close-during-ready, 1,000 scope replacements, and callback-close.
 Adversarial cases exercise Root swaps, outside symlinks, recursive deletion and
-10,000 same-name create/delete pairs. Soak runs 30 minutes, checking the oracle
+10,000 same-name create/delete pairs. Soak runs 60 minutes, checking the oracle
 each minute. Linux needs passwordless `sudo` for the limits scenario; it lowers
 `fs.inotify.max_user_watches` to 1 in a child shell with a restoration trap and
 verifies restoration. Never run that scenario on a shared production host.
 
 RSS limits are fixed before execution: 512 MiB peak for churn/soak, at most
-64 MiB growth after warmup, and at most 32 MiB lifecycle growth after 3,000
-cycles. Reports include samples and fitted slopes. Idle runs for ten minutes
+64 MiB churn growth after warmup, and at most 32 MiB lifecycle growth after 3,000
+cycles. Soak collects garbage twice at every checkpoint, limits collected-heap
+and external-memory growth to 8 MiB after minute five, and requires the fitted
+RSS slope over minutes 31–60 to stay at or below 1 MiB/minute. The runner launches
+soak with `--expose-gc` automatically, including through `--scenario all`.
+Reports include samples and fitted slopes. Idle runs for ten minutes
 with 16 subscriptions and a one-hour reconciliation interval to isolate native
 hub wakeups, requiring less than 1% of one CPU and, on Linux, at most 30 hub
 context switches. macOS captures `ps -M`; Windows captures PowerShell thread
@@ -264,6 +268,23 @@ workspace reads that bypass pinned file descriptors.
 `pnpm check` also runs `pnpm lint:file-size`. New source and test files should stay under 500 lines. Existing larger files have explicit budgets in `scripts/check-file-size.mjs`; do not increase those budgets as part of unrelated work.
 
 ## Watch memory diagnosis
+
+The original soak rule rejected more than 64 MiB RSS growth after minute five.
+That outcome remains in `memory.legacyRss`, with its original limit and pass/fail
+value; it is no longer the soak pass criterion. Static guarded poll scans alone
+reproduced growth from 72 to 181 MiB RSS while collected heap stayed near 7–8 MiB:
+V8 expanded its almost-empty young generation to 128 MiB, with 103 MiB physically
+committed. A diagnostic run limiting that space ended at 85 MiB RSS with the
+same live heap. The normal harness keeps Node's default nursery sizing.
+
+The 60-minute qualification separates this capacity warm-up from the later RSS
+trend. The measured Linux event run had under 1 MiB collected-heap drift and a
+0.55 MiB/minute second-half RSS slope; its final ten-minute RSS range was 1.60 MiB.
+The 8 MiB live-memory allowance and 1 MiB/minute RSS slope leave measurement
+margin while rejecting retained growth and continued rapid RSS growth. The
+512 MiB peak ceiling is unchanged. Native allocation leaks need independent
+accounting/profiling too: the investigation found a much smaller cleanup-hook
+context leak even when registrations, pending sets, and TSFN counters retired.
 
 Build the native addon and package from the same revision, then run each control
 in a fresh Node process on a disposable machine:
