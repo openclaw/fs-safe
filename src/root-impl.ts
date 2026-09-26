@@ -48,6 +48,7 @@ import {
   assertRootIdentityCurrentSync,
   assertValidRootDestinationPath,
   assertValidRootRelativePath,
+  createRootObservationGuard,
   ensureTrailingSep,
   expandRelativePathWithHome,
   resolvePathInRoot,
@@ -571,9 +572,13 @@ export class RootHandle implements Root {
     assertValidRootRelativePath(relativePath);
     return walkRoot({
       rootReal: this.context.rootReal,
+      observeRoot: () => createRootObservationGuard(this.context),
       stat: relative => this.stat(relative),
-      list: async (relative, listingOptions) => {
+      list: async (relative, listingOptions, receipt) => {
         validatePinnedRelativePath(relative);
+        if (receipt) {
+          return await openRootDirectoryListing(this.context, receipt.targetPath, listingOptions, receipt);
+        }
         const resolved = await resolvePinnedPathInRoot(this.context, { relativePath: relative, allowRoot: true });
         return await openRootDirectoryListing(this.context, resolved.resolved, listingOptions);
       },

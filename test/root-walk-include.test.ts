@@ -1,8 +1,10 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import type { RootWalkEntry, RootWalkOptions } from "../src/root-walk.js";
+import { realpathSync } from "../src/realpath.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -42,6 +44,23 @@ it.each(orders)("includes link metadata without following targets in $name order
   for (const entry of entries.filter(({ kind }) => kind === "symlink")) {
     expect(entry.size).toBe((await fs.lstat(path.join(directory, entry.relativePath))).size);
   }
+});
+
+it.each(orders)("preserves a starting alias and literal descendants in $name order", async ({ options }) => {
+  const directory = await tempRoot("fs-safe-walk-include-alias-");
+  const target = path.join(directory, "target");
+  await fs.mkdir(path.join(target, "~", "nested"), { recursive: true });
+  await fs.writeFile(path.join(target, "~", "nested", "value"), "literal");
+  await fs.symlink(target, path.join(directory, "alias"),
+    process.platform === "win32" ? "junction" : "dir");
+  const capability = await root(directory);
+
+  const entries = await Array.fromAsync(capability.walk("alias", { ...options, symlinkPolicy: "include" }));
+
+  expect(entries.map(entry => entry.relativePath)).toEqual([
+    "alias/~", "alias/~/nested", "alias/~/nested/value",
+  ]);
+  expect(entries.at(-1)).toEqual({ relativePath: "alias/~/nested/value", kind: "file", size: 7 });
 });
 
 itPosix("counts filtered links against the entry budget without following or expanding them", async () => {
@@ -110,4 +129,110 @@ it("fails closed on a substituted directory and closes its streamed iterator", a
     process.platform === "win32" ? "junction" : "dir");
   await expect(iterator.next()).rejects.toMatchObject({ code: "path-mismatch" });
   expect(close).toHaveBeenCalledOnce();
+});
+
+it.each(orders.flatMap(mode => ["different", "original"].flatMap(target =>
+  [false, true].map(report => ({ ...mode, target, report })),
+)))("binds child admission to listing in $name order ($target target, report=$report)", async ({ options, target, report }) => {
+  const directory = await tempRoot("fs-safe-walk-admission-");
+  const child = path.join(directory, "child");
+  const moved = path.join(directory, "moved");
+  const other = path.join(directory, "target");
+  await fs.mkdir(child);
+  await fs.mkdir(other);
+  await fs.writeFile(path.join(child, "payload.txt"), "admitted");
+  await fs.writeFile(path.join(other, "payload.txt"), "foreign");
+  const capability = await root(directory);
+  const iterator = capability.walk("", {
+    ...options, symlinkPolicy: "include",
+    onDirectoryError: report ? "skip-and-report" : "throw",
+  });
+  let next;
+  do { next = await iterator.next(); }
+  while (!next.done && next.value.relativePath !== "child");
+  expect(next.value).toMatchObject({ relativePath: "child", kind: "directory" });
+
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  let queued = false;
+  let swapped = false;
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+    const stat = lstat(...args);
+    if (!queued && String(args[0]) === child && stat?.isDirectory()) {
+      queued = true;
+      // Resolution is synchronous; run after its observations, before the awaiting walker lists.
+      queueMicrotask(() => {
+        fsSync.renameSync(child, moved);
+        fsSync.symlinkSync(target === "original" ? moved : other, child,
+          process.platform === "win32" ? "junction" : "dir");
+        swapped = true;
+      });
+    }
+    return stat;
+  });
+  const entries: RootWalkEntry<"include">[] = [];
+  let failure: unknown;
+  try {
+    for await (const entry of iterator) entries.push(entry);
+  } catch (error) {
+    failure = error;
+  }
+  expect(swapped).toBe(true);
+  expect(entries.map(entry => entry.relativePath)).not.toContain("child/payload.txt");
+  if (report) {
+    expect(failure).toBeUndefined();
+    expect(entries).toContainEqual({ relativePath: "child", kind: "directory-error", size: 0,
+      error: expect.objectContaining({ code: "path-mismatch" }) });
+  } else {
+    expect(failure).toMatchObject({ code: "path-mismatch" });
+  }
+});
+
+it.each(orders)("rejects ancestor substitution during child admission in $name order", async ({ options }) => {
+  const directory = await tempRoot("fs-safe-walk-ancestor-admission-");
+  const ancestor = path.join(directory, "ancestor");
+  const moved = path.join(directory, "moved");
+  await fs.mkdir(path.join(ancestor, "child"), { recursive: true });
+  await fs.writeFile(path.join(ancestor, "child", "payload.txt"), "admitted");
+  const capability = await root(directory);
+  const iterator = capability.walk("", {
+    ...options, symlinkPolicy: "include", onDirectoryError: "skip-and-report",
+  });
+  expect((await iterator.next()).value).toMatchObject({ relativePath: "ancestor", kind: "directory" });
+  expect((await iterator.next()).value).toMatchObject({ relativePath: "ancestor/child", kind: "directory" });
+
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  let swapped = false;
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+    const stat = lstat(...args);
+    if (!swapped && String(args[0]) === ancestor && stat?.isDirectory()) {
+      fsSync.renameSync(ancestor, moved);
+      fsSync.symlinkSync(moved, ancestor, process.platform === "win32" ? "junction" : "dir");
+      swapped = true;
+    }
+    return stat;
+  });
+
+  const entries = await Array.fromAsync(iterator);
+
+  expect(swapped).toBe(true);
+  expect(entries.map(entry => entry.relativePath)).not.toContain("ancestor/child/payload.txt");
+  expect(entries).toContainEqual({ relativePath: "ancestor/child", kind: "directory-error", size: 0,
+    error: expect.objectContaining({ code: "path-mismatch" }) });
+});
+
+it("preserves filesystem errors while admitting a child directory", async () => {
+  const directory = await tempRoot("fs-safe-walk-admission-error-");
+  const child = path.join(directory, "child");
+  await fs.mkdir(child);
+  const capability = await root(directory);
+  const iterator = capability.walk("", { symlinkPolicy: "include" });
+  expect((await iterator.next()).value).toMatchObject({ relativePath: "child", kind: "directory" });
+  const realpath = realpathSync.native;
+  const denied = Object.assign(new Error("directory observation denied"), { code: "EACCES" });
+  vi.spyOn(realpathSync, "native").mockImplementation(candidate => {
+    if (candidate === child) throw denied;
+    return realpath(candidate);
+  });
+
+  await expect(iterator.next()).rejects.toBe(denied);
 });

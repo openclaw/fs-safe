@@ -1,7 +1,14 @@
 import path from "node:path";
+import type { DirectoryObservationGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { expandRelativePathWithHome } from "./root-context.js";
-import { resolveRootPath, ROOT_PATH_ALIAS_POLICIES } from "./root-path.js";
+import {
+  resolveRootPath,
+  resolveRootPathWithObservation,
+  ROOT_PATH_ALIAS_POLICIES,
+  RootPathObservationError,
+  type RootPathObservationReceipt,
+} from "./root-path.js";
 import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-directory-list.js";
 import type { DirEntry, PathStat } from "./types.js";
 import { createSuppressedError } from "./suppressed-error.js";
@@ -58,10 +65,12 @@ function filterEntry(options: AnyRootWalkOptions, entry: RootWalkDataEntry<RootW
 
 type RootWalkCapability = {
   rootReal: string;
+  observeRoot(): Promise<DirectoryObservationGuard | undefined>;
   stat(relativePath: string): Promise<PathStat>;
   list(
     relativePath: string,
     options: RootDirectoryListingOptions,
+    receipt?: RootPathObservationReceipt,
   ): Promise<RootDirectoryListing>;
 };
 
@@ -135,19 +144,41 @@ export async function* walkRoot(
     return { relativePath: directory, kind: "directory-error", size: 0, error };
   };
 
-  async function* visit(directory: string, depth: number): AsyncGenerator<AnyRootWalkEntry> {
+  async function* visit(
+    directory: string,
+    depth: number,
+    admittedChildPath?: string,
+  ): AsyncGenerator<AnyRootWalkEntry> {
     options.signal?.throwIfAborted();
     let listing: RootDirectoryListing;
+    let canonicalDirectory: string;
     try {
       const expandedDirectory = depth === 0 ? await expandRelativePathWithHome(directory) : directory;
       const noFollowChildSymlinks = depth > 0 && options.symlinkPolicy !== "follow-within-root";
-      const resolvedDirectory = await resolveRootPath({
-        absolutePath: path.resolve(root.rootReal, expandedDirectory),
+      const includeChild = depth > 0 && options.symlinkPolicy === "include";
+      const resolution = {
+        absolutePath: admittedChildPath ?? path.resolve(root.rootReal, expandedDirectory),
         rootPath: root.rootReal,
         rootCanonicalPath: root.rootReal,
         boundaryLabel: "root walk",
         policy: noFollowChildSymlinks ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
-      });
+      };
+      let receipt: RootPathObservationReceipt | undefined;
+      let resolvedDirectory;
+      if (includeChild) {
+        const rootGuard = await root.observeRoot();
+        if (!rootGuard) {
+          throw new FsSafeError("helper-unavailable", "root walk requires an exact directory observation");
+        }
+        const observed = await resolveRootPathWithObservation({
+          ...resolution,
+          rootIdentity: rootGuard.identity,
+        }, { kind: "directory", rootGuard });
+        resolvedDirectory = observed.resolved;
+        receipt = observed.receipt;
+      } else {
+        resolvedDirectory = await resolveRootPath(resolution);
+      }
       if (noFollowChildSymlinks && resolvedDirectory.kind === "symlink") {
         if (options.symlinkPolicy === "skip") return;
         throw new FsSafeError("path-mismatch", `root walk directory became a symlink: ${directory}`);
@@ -158,6 +189,10 @@ export async function* walkRoot(
           `root walk path is not a directory: ${directory || "."}`,
         );
       }
+      if (includeChild && (!receipt || receipt.directoryGuard.realPath !== resolvedDirectory.canonicalPath)) {
+        throw new FsSafeError("path-mismatch", "root walk directory observation was not retained");
+      }
+      canonicalDirectory = resolvedDirectory.canonicalPath;
       if (visitedDirectories.has(resolvedDirectory.canonicalPath)) {
         return;
       }
@@ -176,9 +211,9 @@ export async function* walkRoot(
         signal: options.signal,
         snapshot: maxEntries === Number.POSITIVE_INFINITY,
         admitEntry,
-      });
+      }, receipt);
     } catch (error) {
-      yield onDirectoryError(directory, error);
+      yield onDirectoryError(directory, error instanceof RootPathObservationError ? error.error : error);
       return;
     }
     // A thrown undefined still needs to be retained if closing also fails.
@@ -251,7 +286,11 @@ export async function* walkRoot(
           yield onLimit(child);
           return;
         }
-        yield* visit(child, depth + 1);
+        yield* visit(
+          child,
+          depth + 1,
+          options.symlinkPolicy === "include" ? path.join(canonicalDirectory, name) : undefined,
+        );
         if (truncated) return;
       }
     } catch (error) {

@@ -226,14 +226,7 @@ export async function listDirectoryPath(
 ): Promise<string[] | DirEntry[]> {
   let guard: RootDirectoryObservationGuard | RootPathDirectoryObservationGuard;
   if (receipt) {
-    if (receipt.kind !== "directory" || receipt.targetPath !== directory ||
-      receipt.directoryGuard.dir !== directory ||
-      receipt.target !== receipt.directoryGuard ||
-      (!isNativeDirectoryObservationGuard(receipt.directoryGuard) &&
-        !receipt.directoryGuard.stat.isDirectory())) {
-      throw new FsSafeError("path-mismatch", "directory observation receipt does not match target");
-    }
-    guard = receipt.directoryGuard;
+    guard = directoryGuardFromReceipt(directory, receipt);
   } else {
     try {
       guard = await createRootDirectoryObservationGuard(root, directory);
@@ -242,6 +235,20 @@ export async function listDirectoryPath(
     }
   }
   return await listGuardedDirectoryPath(root, guard, withFileTypes, receipt);
+}
+
+function directoryGuardFromReceipt(
+  directory: string,
+  receipt: RootPathObservationReceipt,
+): RootPathDirectoryObservationGuard {
+  if (receipt.kind !== "directory" || receipt.targetPath !== directory ||
+    receipt.directoryGuard.dir !== directory ||
+    receipt.target !== receipt.directoryGuard ||
+    (!isNativeDirectoryObservationGuard(receipt.directoryGuard) &&
+      !receipt.directoryGuard.stat.isDirectory())) {
+    throw new FsSafeError("path-mismatch", "directory observation receipt does not match target");
+  }
+  return receipt.directoryGuard;
 }
 
 function listGuardedDirectoryPath(
@@ -308,20 +315,27 @@ export async function openRootDirectoryListing(
   root: RootContext,
   directory: string,
   options: RootDirectoryListingOptions,
+  receipt?: RootPathObservationReceipt,
 ): Promise<RootDirectoryListing> {
   if (options.exactIdentity && options.order !== "filesystem") throw new TypeError("exact entry identities require filesystem order");
-  const admitted = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
-    throw normalizeDirectoryError(error);
-  });
-  // Retain exact admission identities; metadata rechecks can use numeric Stats
-  // only when every identity component is losslessly representable.
-  const guard = extendDirectoryObservationGuard({
-    stat: admitted.stat,
-    identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
-  }, admitted.dir, admitted.realPath);
+  let guard: RootPathDirectoryObservationGuard;
+  if (receipt) {
+    guard = directoryGuardFromReceipt(directory, receipt);
+  } else {
+    const admitted = await createRootDirectoryObservationGuard(root, directory).catch((error) => {
+      throw normalizeDirectoryError(error);
+    });
+    // Retain exact admission identities; metadata rechecks can use numeric Stats
+    // only when every identity component is losslessly representable.
+    guard = extendDirectoryObservationGuard({
+      stat: admitted.stat,
+      identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
+    }, admitted.dir, admitted.realPath);
+  }
   const assertCurrent = async () => {
     options.signal?.throwIfAborted();
-    await assertRootDirectoryObservationGuard(root, guard);
+    if (receipt) assertRootPathObservationReceiptCurrent(root, receipt);
+    else await assertRootDirectoryObservationGuard(root, guard);
     options.signal?.throwIfAborted();
   };
   let handle: Dir | undefined;
@@ -345,7 +359,7 @@ export async function openRootDirectoryListing(
       // A one-entry buffer keeps the truncation lookahead independent of width.
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
     } else if (options.snapshot) {
-      snapshot = await listGuardedDirectoryPath(root, guard, true);
+      snapshot = await listGuardedDirectoryPath(root, guard, true, receipt);
     } else if (options.maxNames !== undefined) {
       names = [];
       handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
