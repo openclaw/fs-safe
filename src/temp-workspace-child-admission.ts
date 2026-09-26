@@ -4,6 +4,7 @@ import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./director
 import { FsSafeError } from "./errors.js";
 import { fileIdentityMismatchError, inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
+import { classifyTempWorkspaceOwner, warnUnmappedTempWorkspaceAncestor } from "./temp-workspace-ownership.js";
 
 export type TempWorkspaceIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 export type TempWorkspaceNumericIdentity = Readonly<{ dev: number; ino: number }>;
@@ -76,18 +77,18 @@ export function validateTempWorkspaceDirMode(mode: number): void {
 }
 
 export function assertTrustedTempWorkspaceDirectory(
-  stat: Pick<BigIntStats, "uid" | "mode"> | Pick<Stats, "uid" | "mode">,
+  stat: Pick<BigIntStats, "uid" | "gid" | "mode"> | Pick<Stats, "uid" | "gid" | "mode">,
   uid: number | undefined,
-  child = false,
+  privateDirectory = false,
 ): void {
   if (uid === undefined) return;
-  const ownedByUser = typeof stat.uid === "bigint" ? stat.uid === BigInt(uid) : stat.uid === uid;
-  const ownedByRoot = typeof stat.uid === "bigint" ? stat.uid === 0n : stat.uid === 0;
-  if (!ownedByUser && (child || !ownedByRoot)) {
-    throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner");
+  const ownership = classifyTempWorkspaceOwner(stat, uid);
+  if (ownership === "foreign" || (privateDirectory && ownership !== "user")) {
+    throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner; use a private temp root owned by the effective user under a trusted directory hierarchy");
   }
-  // A root/current-user-owned sticky directory protects children owned by us,
-  // including the usual shared system temp directory. Never chmod that parent.
+  // Unmapped ancestors do not prove host ownership. To support private user-namespace
+  // workspaces, trust the host hierarchy against unmapped host peers; retain mode
+  // checks and strict effective-user ownership for the supplied root and new child.
   const writable = typeof stat.mode === "bigint"
     ? (stat.mode & 0o022n) !== 0n
     : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o022) !== 0;
@@ -97,12 +98,15 @@ export function assertTrustedTempWorkspaceDirectory(
   if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
     throw new FsSafeError("insecure-permissions", "temp workspace directory permissions are invalid");
   }
-  if (writable && (child || !sticky)) {
+  if (writable && (privateDirectory || !sticky)) {
     throw new FsSafeError(
       "insecure-permissions",
-      "temp workspace directory is group/world writable without sticky protection",
+      privateDirectory
+        ? "temp workspace root and child must not be group/world writable; use a private temp directory"
+        : "temp workspace ancestor is group/world writable without sticky protection",
     );
   }
+  if (ownership === "unmapped") warnUnmappedTempWorkspaceAncestor();
 }
 
 const WINDOWS = process.platform === "win32";

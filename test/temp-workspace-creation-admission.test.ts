@@ -79,7 +79,7 @@ for (const variant of ["async", "sync"] as const) {
       });
     }
 
-    it.runIf(process.platform !== "win32").each([0o755, 0o1777])(
+    it.runIf(process.platform !== "win32").each([0o700, 0o755])(
       "preserves an admitted supplied root's mode %o", async (mode) => {
         const rootDir = await tempRoot("fs-safe-workspace-root-mode-");
         await fs.chmod(rootDir, mode);
@@ -112,9 +112,9 @@ for (const variant of ["async", "sync"] as const) {
     });
 
     it.runIf(process.platform !== "win32").each([
-      ["root", 0o770], ["root", 0o777], ["ancestor", 0o770], ["ancestor", 0o777],
+      ["root", 0o770], ["root", 0o777], ["root", 0o1777], ["ancestor", 0o770], ["ancestor", 0o777],
     ] as const)(
-      "rejects a non-sticky writable %s (mode %o) before creating a child", async (kind, mode) => {
+      "rejects an insecure writable %s (mode %o) before creating a child", async (kind, mode) => {
         const base = await tempRoot("fs-safe-workspace-root-insecure-");
         const rootDir = path.join(base, "parent");
         await fs.mkdir(rootDir, { mode: 0o700 });

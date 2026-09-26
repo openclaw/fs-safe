@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Linux user namespaces:** allow private temp workspaces beneath unmapped ancestors, including systemd user services with `PrivateUsers=true`, while retaining ancestor permission checks and warning once about unverifiable host ownership. Supplied workspace roots must be effective-user-owned and not group/world writable; use a private per-user root instead of shared `/tmp`.
+
 ### Performance
 
 - **Temporary filename sanitization:** skip duplicate normalization after reserved-device suffixing while preserving filename admission and fallback rules.
