@@ -4,7 +4,7 @@
 
 ### Features
 
-- **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, a shared Rust event hub using inotify, FSEvents, and ReadDirectoryChangesW on Linux/macOS/Windows, portable polling, scope replacement, and joined close. Thanks @vincentkoc.
+- **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, a shared Rust event hub using inotify, FSEvents, and ReadDirectoryChangesW on Linux/macOS/Windows, portable polling, first-scan readiness and bounded reconciliation that stay available under sustained writes, scope replacement, and joined close. Thanks @vincentkoc.
 
 ### Fixes
 

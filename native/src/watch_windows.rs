@@ -206,7 +206,7 @@ impl Backend {
         if self.anchors.values().any(|a| {
             a.owner == id
                 && ((a.identity == identity && (a.recursive || !recursive))
-                    || (a.recursive && beneath(&a.directory, relative)))
+                    || (a.recursive && a.directory != relative && beneath(&a.directory, relative)))
         }) {
             return Ok(());
         }
@@ -215,7 +215,10 @@ impl Backend {
             .anchors
             .iter()
             .filter(|(_, a)| {
-                a.owner == id && (a.identity == identity || (recursive && beneath(relative, &a.directory)))
+                a.owner == id
+                    && (a.directory == relative
+                        || a.identity == identity
+                        || (recursive && beneath(relative, &a.directory)))
             })
             .map(|(&key, _)| key)
             .collect();

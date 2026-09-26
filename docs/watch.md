@@ -119,7 +119,7 @@ the handle or freeing its buffer; there are no detached retirement waits.
 | `maxDirectories` | 4096 observed directories, including scope ancestors |
 | `maxEntries` | 100000 examined entries per pass, including excluded entries |
 | `maxPendingPaths` | 256; maximum 4096 |
-| Reconciliation | At most four passes; requires two agreeing guarded scans |
+| Reconciliation | One active pass and one coalesced pending pass; no convergence/pass budget |
 
 Periodic guarded reconciliation runs without needing an event. It catches
 missed events and works on filesystems where native hints are incomplete.
@@ -127,15 +127,38 @@ Scans are metadata comparisons: content changes preserving all compared
 metadata may be missed in polling mode. No mode promises transactional
 snapshots, complete history, or hard real-time delivery.
 
-`ready` resolves after registration and converged initial scans. `setScopes`
-fences the old generation immediately and resolves after the new one is ready;
-superseded calls reject `AbortError`. Concurrent `reconcile()` calls coalesce.
+`ready` resolves after the first complete guarded scan establishes the baseline,
+even while writes continue. Events mode installs each directory registration
+before listing it (FSEvents and recursive RDCW anchors cover the crawl). A changed
+registration/listing identity is retried up to three times per directory; further
+churn invalidates that subtree. Poll mode starts with its first scan and detects
+changes during the crawl on the next comparison. Neither mode waits for two
+agreeing scans.
+
+Each later pass compares with the previous snapshot, publishes bounded differences,
+and adopts its result as the next snapshot. Vanishing entries, kind changes, and
+transient descendant scan errors produce structural invalidations, preserving the
+Root identity checks. Events during a pass coalesce into one pending pass; detail
+overflow or catching up beyond the 25 ms coalescing window emits `overflow` without
+detail. Sustained writes cannot exhaust a pass budget or disable observation.
+
+`reconcile()` resolves after a complete pass that **started after the call**. Calls
+waiting for the same future pass coalesce; an earlier in-flight pass cannot satisfy
+a new call. It rejects only when observation becomes unavailable or is closed.
+`setScopes` fences the old generation immediately and resolves after the new
+baseline scan; superseded scope calls reject `AbortError`.
 An open subscription keeps the Node event loop alive. `signal` triggers close;
 await `close()` or `[Symbol.asyncDispose]()` to join owned work.
 
 `health()` returns `starting`, `ready`, `reconciling`, `unavailable`, or `closed`,
 the actual mode, observed `directories`, and optional `{ operation, code, error }`
-failure. Callbacks may synchronously retire the owner; returning a thenable from
+failure. A running reconciliation reports `reconciling`, then returns to `ready`.
+Observation becomes `unavailable` on loss of Root authority (removed, replaced,
+or inaccessible), fatal native backend/registration failures such as `watch-limit`,
+deterministic size limits (`too-large`, operation `scan`), or callback contract
+violations. Invalid scope admission, including symbolic parents, still rejects;
+it never grants authority through a link. Transient descendant churn does not
+make an admitted subscription unavailable. Callbacks may synchronously retire the owner; returning a thenable from
 `onInvalidate`, `onHealth`, or `exclude` rejects observation. Application async
 work remains application-owned and is not joined by the subscription.
 

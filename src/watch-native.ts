@@ -43,7 +43,7 @@ export class NativeWatchBackend {
 
 function watchError(cause: unknown): FsSafeError {
   const code = (cause as { code?: string } | null)?.code;
-  return new FsSafeError(code === "ENOTSUP" ? "helper-unavailable" : code === "ESTALE" ? "path-mismatch" : code === "ENOENT" ? "not-found" : "helper-failed", "native watch registration failed", {
+  return new FsSafeError(code === "ENOTSUP" ? "helper-unavailable" : ["ESTALE", "ENOTDIR", "ELOOP"].includes(code ?? "") ? "path-mismatch" : code === "ENOENT" ? "not-found" : "helper-failed", "native watch registration failed", {
     cause, details: { operation: "watch", code },
   });
 }

@@ -22,6 +22,8 @@ describe.each(["events", "poll"] as const)("filesystem scope spelling (%s)", mod
   it.skipIf(mode === "events" && !nativeWatchSupported)("uses real filesystem lookup for exact entries and prefix scopes", async () => {
     let emit: ((batch: NativeWatchBatch) => void) | undefined;
     if (mode === "events") {
+      // Isolate exact hint detail from the separately tested slow-pass overflow path.
+      vi.spyOn(performance, "now").mockReturnValue(0);
       const native = getNativeBinding()!;
       const register = native.watchRegister!;
       // Isolate spelling admission from unrelated native overflow notifications.
