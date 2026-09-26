@@ -9,7 +9,19 @@ const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 
 describe("isPathRelativeEscape", () => {
-  it.each(["../secret", "foo/../../x", "./../secret", "..", "../inside/../x"])(
+  it.each([
+    "../secret",
+    "foo/../../x",
+    "./../secret",
+    "..",
+    "../inside/../x",
+    "C:foo/../../file",
+    "C:C:foo/../../file",
+    "foo:/../../file",
+    "foo:/../..",
+    "CON:foo/../../file",
+    "NUL:foo/../../file",
+  ])(
     "rejects an escaping path: %s", (input) => expect(isPathRelativeEscape(input)).toBe(true),
   );
 
@@ -25,16 +37,62 @@ describe("isPathRelativeEscape", () => {
     expect(isPathRelativeEscape("C:/secret")).toBe(process.platform === "win32");
   });
 
+  it.each(["C:./..", "C:../file", "C:..\\file", "C:.."])(
+    "interprets a drive-relative parent on the native platform: %s",
+    (input) => expect(isPathRelativeEscape(input)).toBe(process.platform === "win32"),
+  );
+
   it("recognizes both Windows separators with native Windows path operations", () => {
     if (process.platform !== "win32") {
       vi.spyOn(process, "platform", "get").mockReturnValue("win32");
       vi.spyOn(path, "isAbsolute").mockImplementation(path.win32.isAbsolute);
-      vi.spyOn(path, "sep", "get").mockReturnValue("\\");
     }
-    for (const input of ["../secret", "..\\secret", "foo/..\\../secret", "C:/secret"]) {
+    for (const input of [
+      "../secret",
+      "..\\secret",
+      "foo/..\\../secret",
+      "C:/secret",
+      "C:./..",
+      "C:../file",
+      "C:..\\file",
+      "C:foo/../../file",
+      "C:C:foo/../../file",
+      "foo:/../../file",
+      "foo:/../..",
+      "foo:\\..\\..\\file",
+      "foo:/../../C:foo",
+      "CON:foo/../../file",
+      "con:foo/../../file",
+      "NUL:foo/../../file",
+      "PRN:foo/../../file",
+      "AUX:foo/../../file",
+      "COM1:foo/../../file",
+      "LPT1:foo/../../file",
+      "prefix/CON:foo/../../../file",
+      "C:CON:foo/../../file",
+    ]) {
       expect(isPathRelativeEscape(input), input).toBe(true);
     }
-    expect(isPathRelativeEscape("foo/..\\bar")).toBe(false);
+    for (const input of [
+      "foo/..\\bar",
+      "C:",
+      "C:.",
+      "C:foo",
+      "C:foo/../file",
+      "C:..safe/file",
+      "C::../file",
+      "C:C:../file",
+      "C:C:/file",
+      "CC:../file",
+      "foo/../C:../file",
+      "foo:/../file",
+      "CON:",
+      "CON:foo/../file",
+      "prefix/CON:foo/../../file",
+      "C:CON:foo/../file",
+    ]) {
+      expect(isPathRelativeEscape(input), input).toBe(false);
+    }
   });
 
   itPosix("writes and reads a literal backslash filename inside a Root", async () => {

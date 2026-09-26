@@ -29,6 +29,11 @@ conservative count hint with no comment, a short or maximum-length comment,
 dense false signatures, and a missing record. Its latest-valid-record behavior
 is intentionally different from strict admission's ambiguity rejection.
 
+The `isPathRelativeEscape` rows cover an ordinary relative path, a contained
+parent step, and an escaping parent step, with result checks outside timing.
+Windows drive-relative bug fixes remain correctness-only because their results
+differ from affected baselines.
+
 The `inspectTarArchive/tar-member-paths-*` rows admit 5,000 small files with
 ASCII, NFC, or NFD paths, each both ordinary and USTAR-prefixed. Matching PAX
 and GNU Unicode override cases retain their separate effective-path validation as controls.

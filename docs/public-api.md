@@ -45,6 +45,10 @@ The lexical path surface additionally exports `isNodeError`,
 above their starting directory at any point. Contained paths such as
 `dir/../file` remain relative. It accepts both separators on Windows; on POSIX,
 a backslash remains a literal filename character.
+On Windows, a drive-relative prefix is not a directory component: `C:../file`
+escapes its drive's starting directory, while `C:dir/../file` does not.
+This is a lexical answer; symlink traversal and Windows namespace admission
+remain separate filesystem checks.
 
 The advanced root-file primitive exports `OpenRootFileParams`,
 `OpenRootFileSyncParams`, `RootFileOpenResult`, and

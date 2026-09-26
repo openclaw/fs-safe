@@ -121,18 +121,15 @@ export function isPathRelativeEscape(relativePath: string): boolean {
   if (path.isAbsolute(relativePath)) {
     return true;
   }
-  let depth = 0;
-  // Windows accepts both separators; POSIX backslashes are filename bytes.
-  const segments = relativePath.split(process.platform === "win32" ? /[/\\]/ : /\//);
-  for (const segment of segments) {
-    if (segment === "..") {
-      if (depth === 0) return true;
-      depth -= 1;
-    } else if (segment !== "" && segment !== ".") {
-      depth += 1;
-    }
+  if (!relativePath.includes("..")) {
+    return false;
   }
-  return false;
+  // Use separator-only normalization so Windows device prefixes stay literal.
+  const lexicalPath = process.platform === "win32"
+    ? relativePath.slice(isDriveRelativePath(relativePath) ? 2 : 0).replaceAll("\\", "/")
+    : relativePath;
+  const normalized = path.posix.normalize(lexicalPath);
+  return normalized === ".." || normalized.startsWith("../");
 }
 
 export function resolveSafeBaseDir(rootDir: string): string {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Windows drive-relative escapes:** `isPathRelativeEscape()` now recognizes parent traversal in paths such as `C:./..` and `C:../file`, while preserving contained drive-relative paths and literal POSIX names.
+
 ## 0.20.0 - 2026-09-25
 
 ### Highlights

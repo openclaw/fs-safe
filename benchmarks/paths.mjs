@@ -22,7 +22,7 @@ export async function registerPaths({
   const simple = {
     assertNoNulPathInput: ["tree/nested/file"], hasNodeErrorCode: [error, "ENOENT"], isNodeError: [error],
     isNotFoundPathError: [error], isSymlinkOpenError: [error], isPathInside: [w, input],
-    isPathRelativeEscape: ["tree/file"], isWithinDir: [w, input],
+    isWithinDir: [w, input],
     normalizeWindowsPathForComparison: ["C:\\workspace\\tree\\file.json"],
     resolveSafeBaseDir: [w], resolveSafeRelativePath: [w, "tree/nested/file"], splitSafeRelativePath: ["tree/nested/file"],
     assertAbsolutePathInput: [input], assertNoUnsafeDeviceReadPath: [input], isUnsafeDeviceReadPath: [input], matchUnsafeDeviceReadPath: [input],
@@ -42,6 +42,15 @@ export async function registerPaths({
     categorizeFsSafeError: ["outside-workspace"],
   };
   for (const [name, values] of Object.entries(simple)) add(name, () => a[name](...values), { sync: true, batch: 100 });
+  for (const [name, input, expected] of [
+    ["isPathRelativeEscape", "tree/file", false],
+    ["isPathRelativeEscape/contained-parent", "tree/../file", false],
+    ["isPathRelativeEscape/escaping-parent", "tree/../../file", true],
+  ]) {
+    add(name, () => a.isPathRelativeEscape(input), {
+      sync: true, batch: 100, verify: result => assert.equal(result, expected),
+    });
+  }
   for (const [label, input, expected] of [
     ["separator", "plugin/v1", "plugin-v1-d9ef8af2eb"],
     ["unicode", "Über@", "ber-e392bba2b3"],
