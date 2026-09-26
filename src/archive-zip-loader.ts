@@ -1,14 +1,20 @@
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
 import { validateArchiveEntryPath } from "./archive-entry.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
-import { registerAdmittedZipEntry, type ZipEntry } from "./archive-zip-entry.js";
+import { createAdmittedZipEntry, type AdmittedZipEntry, type ZipEntry } from "./archive-zip-entry.js";
 import { zipPathKey } from "./archive-zip-names.js";
 
 export type ZipArchiveWithFiles = { files: Record<string, unknown> };
-const orderedEntries = new WeakMap<ZipArchiveWithFiles, readonly ZipEntry[]>();
+export type ZipArchiveAdmission = {
+  archive: ZipArchiveWithFiles;
+  entries: ReadonlyMap<string, AdmittedZipEntry>;
+};
 
-export function admittedZipEntries(archive: ZipArchiveWithFiles): readonly ZipEntry[] {
-  return orderedEntries.get(archive) ?? disagreement();
+export function assertZipEntryBinding(archive: ZipArchiveWithFiles, record: AdmittedZipEntry, path: string): void {
+  const { entry } = record;
+  const name = entry.name;
+  validateArchiveEntryPath(name, { escapeLabel: "archive root" });
+  if (archive.files[record.name] !== entry || zipPathKey(name) !== path) disagreement();
 }
 
 type JsZipArchive = ZipArchiveWithFiles & {
@@ -41,7 +47,7 @@ function matchesData(value: unknown, physical: ZipDirectoryEntry): value is Comp
 export async function loadAdmittedZipArchive(
   buffer: Buffer | Uint8Array,
   admitted: ZipDirectoryEntry[],
-): Promise<ZipArchiveWithFiles> {
+): Promise<ZipArchiveAdmission> {
   const physicalByPath = new Map<string, ZipDirectoryEntry>();
   for (const entry of admitted) {
     if (physicalByPath.has(entry.portableKey)) collision();
@@ -111,7 +117,7 @@ export async function loadAdmittedZipArchive(
   }
   if (remaining.size || inserted.size) disagreement();
   const files: Record<string, unknown> = Object.create(null);
-  const entries: ZipEntry[] = [];
+  const entries = new Map<string, AdmittedZipEntry>();
   for (const [name, entry, physical] of normalized) {
     const appendSlash = physical.kind === "directory" && !name.endsWith("/");
     const normalizedName = appendSlash ? `${name}/` : name;
@@ -120,12 +126,10 @@ export async function loadAdmittedZipArchive(
       entry.name = `${entry.name}/`;
     }
     files[normalizedName] = entry;
-    registerAdmittedZipEntry(entry, physical);
-    entries.push(entry);
+    entries.set(physical.portableKey, createAdmittedZipEntry(entry, normalizedName, physical));
   }
   archive.files = files;
-  orderedEntries.set(archive, entries);
-  return archive;
+  return { archive, entries };
 }
 
 async function importOptionalJsZip(): Promise<JsZipConstructor> {
