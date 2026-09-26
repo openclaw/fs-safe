@@ -566,7 +566,8 @@ Check `scan.truncated` before treating the result as complete, and `scan.failedD
 `walkDirectory()` accepts asynchronous `include` and `descend` callbacks through `AsyncWalkDirectoryOptions`, so a marker lookup can prune a directory before its children are read. Decisions remain serial and retain the options object as their `this` receiver; `walkDirectorySync()` and its options remain synchronous. See [Directory walking](docs/walk.md) for callback timing, JavaScript result compatibility, and error handling.
 
 For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
-It supports entry/depth budgets, in-root symlink following, cancellation, and a
+It supports entry/depth budgets, including links without following their targets,
+in-root symlink following, cancellation, and a
 truncation marker (or typed error) when a budget is reached. Its `entryFilter`
 accepts `"include"`, `"skip"`, or `"skip-subtree"`, directly or through a Promise.
 After an awaited decision resolves, the walk rechecks cancellation and the
