@@ -1,17 +1,21 @@
-use super::{Directory, Pending, SharedPending};
+use super::{Directory, Notify, Pending, SharedPending};
 use crate::windows::{
-    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, open_watch_directory, win_error,
+    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, open_watch_directory,
+    win_error,
 };
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::HashMap;
 use std::mem::{replace, zeroed};
 use std::ptr::null_mut;
+use std::sync::Arc;
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NOT_FOUND, ERROR_NOTIFY_ENUM_DIR,
     ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, GetLastError, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::*;
-use windows_sys::Win32::System::IO::{CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED};
+use windows_sys::Win32::System::IO::{
+    CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, PostQueuedCompletionStatus,
+};
 
 const CAPACITY: usize = 65536;
 struct Anchor {
@@ -55,7 +59,7 @@ impl Anchor {
         Ok(())
     }
     fn fail(&self, error: napi::Error<String>) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         pending.overflow();
         pending.error = Some(error.status);
     }
@@ -68,21 +72,39 @@ impl Anchor {
         Ok(())
     }
 }
+// Completion-port handles may be posted from any thread. Arc keeps the handle
+// live through queued JS acknowledgements, including after the hub has joined.
+struct Port(OwnedHandle);
+unsafe impl Send for Port {}
+unsafe impl Sync for Port {}
+#[derive(Clone)]
+pub(super) struct Waker(Arc<Port>);
+impl Waker {
+    pub fn wake(&self) {
+        unsafe {
+            PostQueuedCompletionStatus(self.0.0.0, 0, 0, null_mut());
+        }
+    }
+}
 pub(super) struct Backend {
-    port: OwnedHandle,
+    port: Arc<Port>,
     owners: HashMap<u32, SharedPending>,
     anchors: HashMap<usize, Box<Anchor>>,
     next: usize,
 }
 fn read_error(code: u32) -> napi::Error<String> {
-    if [ERROR_NOTIFY_ENUM_DIR, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND].contains(&code) {
+    if [ERROR_NOTIFY_ENUM_DIR, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND]
+        .contains(&code)
+    {
         native_error("ESTALE", "watch anchor needs guarded reconciliation")
     } else {
         win_error(code, "read directory changes")
     }
 }
 fn beneath(parent: &str, child: &str) -> bool {
-    parent.is_empty() || child == parent || child.strip_prefix(parent).is_some_and(|tail| tail.starts_with('\\'))
+    parent.is_empty()
+        || child == parent
+        || child.strip_prefix(parent).is_some_and(|tail| tail.starts_with('\\'))
 }
 fn check(handle: &OwnedHandle, expected: ExactFileIdentity) -> NativeResult<()> {
     let ((dev, ino, directory), _) = handle_identity_and_size(handle.0)?;
@@ -124,11 +146,13 @@ fn decode(pending: &mut Pending, directory: &str, bytes: &[u8]) {
         let next = word(at);
         let action = word(at + 4);
         let length = word(at + 8);
-        let Some(name) = bytes.get(at + 12..at + 12 + length).filter(|_| length > 0 && length % 2 == 0) else {
+        let Some(name) = bytes.get(at + 12..at + 12 + length).filter(|_| length > 0 && length % 2 == 0)
+        else {
             pending.overflow();
             return;
         };
-        let name: Vec<u16> = name.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect();
+        let name: Vec<u16> =
+            name.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect();
         let Ok(name) = String::from_utf16(&name) else {
             pending.overflow();
             return;
@@ -159,9 +183,14 @@ impl Backend {
         if port.is_null() {
             return Err(win_error(unsafe { GetLastError() }, "create watch completion port"));
         }
-        Ok(Self { port: OwnedHandle(port), owners: HashMap::new(), anchors: HashMap::new(), next: 1 })
+        Ok(Self {
+            port: Arc::new(Port(OwnedHandle(port))),
+            owners: HashMap::new(),
+            anchors: HashMap::new(),
+            next: 1,
+        })
     }
-    pub fn register(&mut self, id: u32, _: &str, pending: SharedPending) -> NativeResult<()> {
+    pub fn register(&mut self, id: u32, _: &str, pending: SharedPending, _: Notify) -> NativeResult<()> {
         self.owners.insert(id, pending);
         Ok(())
     }
@@ -172,7 +201,8 @@ impl Backend {
         let identity = directory.identity;
         let recursive = directory.recursive;
 
-        let pending = self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?.clone();
+        let pending =
+            self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?.clone();
         if self.anchors.values().any(|a| {
             a.owner == id
                 && ((a.identity == identity && (a.recursive || !recursive))
@@ -192,8 +222,10 @@ impl Backend {
         self.retire(&replaced)?;
         let handle = open_anchor(root, relative, root_identity, identity)?;
         let key = self.next;
-        self.next =
-            self.next.checked_add(1).ok_or_else(|| native_error("EOVERFLOW", "watch anchor identifiers exhausted"))?;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or_else(|| native_error("EOVERFLOW", "watch anchor identifiers exhausted"))?;
         let mut anchor = Box::new(Anchor {
             owner: id,
             directory: relative.into(),
@@ -206,7 +238,7 @@ impl Backend {
             armed: false,
             retiring: false,
         });
-        if unsafe { CreateIoCompletionPort(anchor.handle.0, self.port.0, key, 0) }.is_null() {
+        if unsafe { CreateIoCompletionPort(anchor.handle.0, self.port.0.0, key, 0) }.is_null() {
             return Err(win_error(unsafe { GetLastError() }, "associate watch completion port"));
         }
         anchor.arm()?;
@@ -215,12 +247,18 @@ impl Backend {
     }
     fn completion(&mut self, timeout: u32) -> bool {
         let (mut bytes, mut key, mut overlapped) = (0, 0, null_mut());
-        let ok = unsafe { GetQueuedCompletionStatus(self.port.0, &mut bytes, &mut key, &mut overlapped, timeout) };
+        let ok = unsafe {
+            GetQueuedCompletionStatus(self.port.0.0, &mut bytes, &mut key, &mut overlapped, timeout)
+        };
         let code = if ok != 0 { ERROR_SUCCESS } else { unsafe { GetLastError() } };
         if overlapped.is_null() {
+            if ok != 0 && key == 0 {
+                return true;
+            } // Command wake, never an anchor completion.
             if code != WAIT_TIMEOUT {
                 for pending in self.owners.values() {
-                    pending.lock().unwrap().error = Some(win_error(code, "dequeue watch completion").status);
+                    pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).error =
+                        Some(win_error(code, "dequeue watch completion").status);
                 }
             }
             return false;
@@ -248,7 +286,7 @@ impl Backend {
             anchor.fail(error);
             return true;
         }
-        let mut pending = anchor.pending.lock().unwrap();
+        let mut pending = anchor.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if data.is_empty() {
             pending.overflow();
         } else {
@@ -285,8 +323,12 @@ impl Backend {
         self.owners.remove(&id);
         result
     }
-    pub fn poll(&mut self) {
-        for _ in 0..256 {
+    pub fn waker(&self) -> Waker {
+        Waker(self.port.clone())
+    }
+    pub fn wait(&mut self) {
+        self.completion(u32::MAX);
+        for _ in 1..256 {
             if !self.completion(0) {
                 break;
             }

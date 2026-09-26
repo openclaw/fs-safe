@@ -83,3 +83,17 @@ win("observes deep edits using recursive RDCW and joins cancellation during recu
   }
   console.log(JSON.stringify({ proof: "rdcw-recursive-delete-cancel-join", platform: process.platform, mode: "events", cycles: 3 }));
 }, 30_000);
+
+mac("retries a full native callback queue when JS consumes a batch, without another event", async () => {
+  const batches: { overflow: boolean }[] = [];
+  const id = binding!.watchRegister!(directory, 256, batch => { batches.push(batch); });
+  try {
+    // Keep JS blocked while the hub fills the one-batch TSFN queue and overflows it.
+    for (let i = 0; i < 3; i++) {
+      binding!.watchTestEvent!(id, path.join(directory, "kept"), 0x1000);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30);
+    }
+    await expect.poll(() => batches.some(batch => batch.overflow), { timeout: 1000 }).toBe(true);
+  } finally { binding!.watchUnregister!(id); }
+  expect(binding!.watchThreadCount!()).toBe(0);
+});

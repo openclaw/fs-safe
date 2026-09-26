@@ -1,11 +1,27 @@
-use super::{Directory, SharedPending};
+use super::{Directory, Notify, SharedPending};
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::sync::Arc;
 
+#[derive(Clone)]
+pub(super) struct Waker(Arc<OwnedFd>);
+impl Waker {
+    pub fn wake(&self) {
+        let value = 1u64;
+        loop {
+            let written = unsafe { libc::write(self.0.as_raw_fd(), (&raw const value).cast(), 8) };
+            if written >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                // EAGAIN means an existing wake already fills the counter.
+                break;
+            }
+        }
+    }
+}
 pub(super) struct Backend {
     fd: OwnedFd,
+    waker: Waker,
     pending: HashMap<u32, SharedPending>,
     watches: HashMap<i32, HashMap<u32, HashSet<String>>>,
 }
@@ -27,9 +43,19 @@ impl Backend {
         if fd < 0 {
             return Err(error("initialize inotify"));
         }
-        Ok(Self { fd: unsafe { OwnedFd::from_raw_fd(fd) }, pending: HashMap::new(), watches: HashMap::new() })
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let wake_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+        if wake_fd < 0 {
+            return Err(error("create watch waker"));
+        }
+        Ok(Self {
+            fd,
+            waker: Waker(Arc::new(unsafe { OwnedFd::from_raw_fd(wake_fd) })),
+            pending: HashMap::new(),
+            watches: HashMap::new(),
+        })
     }
-    pub fn register(&mut self, id: u32, _: &str, pending: SharedPending) -> NativeResult<()> {
+    pub fn register(&mut self, id: u32, _: &str, pending: SharedPending, _: Notify) -> NativeResult<()> {
         self.pending.insert(id, pending);
         Ok(())
     }
@@ -44,8 +70,9 @@ impl Backend {
         }
         let root = CString::new(root).map_err(|_| native_error("EINVAL", "invalid watch root"))?;
         // SAFETY: valid NUL-terminated string. Identity, not this pathname, admits the fd.
-        let root_fd =
-            unsafe { libc::open(root.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        let root_fd = unsafe {
+            libc::open(root.as_ptr(), libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        };
         if root_fd < 0 {
             return Err(error("open watch root"));
         }
@@ -64,7 +91,8 @@ impl Backend {
             libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW,
         )?;
         matches(&directory, identity)?;
-        let namespace = rustix::fs::statfs("/proc/self/fd").map_err(|e| crate::unix::os_error(e, "verify procfs"))?;
+        let namespace =
+            rustix::fs::statfs("/proc/self/fd").map_err(|e| crate::unix::os_error(e, "verify procfs"))?;
         if namespace.f_type != 0x9fa0 {
             return Err(native_error("ENOTSUP", "watch requires a trusted procfs fd namespace"));
         }
@@ -110,10 +138,39 @@ impl Backend {
     }
     fn overflow(&self) {
         for pending in self.pending.values() {
-            pending.lock().unwrap().overflow();
+            pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).overflow();
         }
     }
-    pub fn poll(&mut self) {
+    pub fn waker(&self) -> Waker {
+        self.waker.clone()
+    }
+    pub fn wait(&mut self) {
+        let mut fds = [
+            libc::pollfd { fd: self.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: self.waker.0.as_raw_fd(), events: libc::POLLIN, revents: 0 },
+        ];
+        loop {
+            let result = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+            if result >= 0 {
+                break;
+            }
+            if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                self.overflow();
+                return;
+            }
+        }
+        if fds[1].revents != 0 {
+            let mut value = 0u64;
+            // Read once: counter coalescing preserves wakes sent after this read.
+            unsafe {
+                libc::read(self.waker.0.as_raw_fd(), (&raw mut value).cast(), 8);
+            }
+        }
+        if fds[0].revents != 0 {
+            self.poll();
+        }
+    }
+    fn poll(&mut self) {
         let mut buffer = [0u8; 65536];
         // Bound draining too: commands (especially joined removal) cannot starve.
         for _ in 0..16 {
@@ -129,7 +186,8 @@ impl Backend {
             }
             let mut offset = 0;
             while offset + size_of::<libc::inotify_event>() <= count as usize {
-                let event = unsafe { buffer.as_ptr().add(offset).cast::<libc::inotify_event>().read_unaligned() };
+                let event =
+                    unsafe { buffer.as_ptr().add(offset).cast::<libc::inotify_event>().read_unaligned() };
                 let start = offset + size_of::<libc::inotify_event>();
                 let end = start + event.len as usize;
                 if end > count as usize {
@@ -147,7 +205,7 @@ impl Backend {
                     let name = std::str::from_utf8(bytes).ok().filter(|s| !s.is_empty());
                     for (id, directories) in owners {
                         if let Some(pending) = self.pending.get(id) {
-                            let mut pending = pending.lock().unwrap();
+                            let mut pending = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                             if let Some(name) = name {
                                 for directory in directories {
                                     pending.push(

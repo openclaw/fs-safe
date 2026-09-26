@@ -1,4 +1,4 @@
-use super::{Directory, SharedPending};
+use super::{Directory, Notify, SharedPending};
 use crate::{NativeResult, native_error};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -42,9 +42,15 @@ unsafe extern "C" {
     fn dispatch_sync_f(queue: Ref, context: Ref, work: unsafe extern "C" fn(Ref));
     fn dispatch_release(queue: Ref);
 }
+#[derive(Clone)]
+pub(super) struct Waker;
+impl Waker {
+    pub fn wake(&self) {} // The channel send itself wakes recv() on Darwin.
+}
 struct Events {
     prefix: String,
     pending: SharedPending,
+    notify: Option<Notify>,
 }
 struct Stream {
     paths: Ref,
@@ -63,10 +69,13 @@ unsafe extern "C" fn callback(_: Ref, info: Ref, count: usize, paths: Ref, flags
         let path = unsafe { CStr::from_ptr(*(paths.cast::<*const c_char>()).add(index)) }.to_str();
         events.record(path.ok(), flag);
     }
+    if let Some(notify) = &events.notify {
+        notify.wake();
+    }
 }
 impl Events {
     fn record(&self, path: Option<&str>, flags: u32) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Dropped/wrapped streams, RootChanged and Unmount require guarded reconciliation.
         if flags & (1 | 2 | 4 | 8 | 32 | 128) != 0 {
             pending.overflow();
@@ -108,9 +117,19 @@ impl Backend {
         }
         Ok(Self { queue, streams: HashMap::new() })
     }
-    pub fn register(&mut self, id: u32, root: &str, pending: SharedPending) -> NativeResult<()> {
+    pub fn register(
+        &mut self,
+        id: u32,
+        root: &str,
+        pending: SharedPending,
+        notify: Notify,
+    ) -> NativeResult<()> {
         let path = CString::new(root).map_err(|_| native_error("EINVAL", "invalid watch root"))?;
-        let mut events = Box::new(Events { prefix: format!("{}/", root.trim_end_matches('/')), pending });
+        let mut events = Box::new(Events {
+            prefix: format!("{}/", root.trim_end_matches('/')),
+            pending,
+            notify: Some(notify),
+        });
         let mut context = Context {
             version: 0,
             info: (&mut *events as *mut Events).cast(),
@@ -123,14 +142,16 @@ impl Backend {
         if string.is_null() {
             return Err(native_error("ENOMEM", "create FSEvents root string"));
         }
-        let array =
-            unsafe { CFArrayCreate(null_mut(), &string, 1, (&raw const kCFTypeArrayCallBacks).cast_mut().cast()) };
+        let array = unsafe {
+            CFArrayCreate(null_mut(), &string, 1, (&raw const kCFTypeArrayCallBacks).cast_mut().cast())
+        };
         if array.is_null() {
             unsafe { CFRelease(string) };
             return Err(native_error("ENOMEM", "create FSEvents paths"));
         }
-        let stream =
-            unsafe { FSEventStreamCreate(null_mut(), callback, &mut context, array, u64::MAX, 0.03, 0x10 | 0x2 | 0x4) };
+        let stream = unsafe {
+            FSEventStreamCreate(null_mut(), callback, &mut context, array, u64::MAX, 0.03, 0x10 | 0x2 | 0x4)
+        };
         unsafe {
             CFRelease(string);
         }
@@ -173,11 +194,14 @@ impl Backend {
         Ok(())
     }
     pub fn test_event(&self, id: u32, path: &str, flags: u32) -> NativeResult<()> {
-        let stream = self.streams.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
+        let stream =
+            self.streams.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
         stream.events.record(Some(path), flags);
         Ok(())
     }
-    pub fn poll(&mut self) {}
+    pub fn waker(&self) -> Waker {
+        Waker
+    }
 }
 impl Drop for Backend {
     fn drop(&mut self) {
@@ -198,15 +222,15 @@ mod tests {
     #[test]
     fn decoder_preserves_inside_names_and_discards_outside_paths() {
         let pending = Arc::new(Mutex::new(Pending { limit: 2, ..Pending::default() }));
-        let events = Events { prefix: "/admitted/".into(), pending: pending.clone() };
+        let events = Events { prefix: "/admitted/".into(), pending: pending.clone(), notify: None };
         events.record(Some("/admitted/kept"), 0x1000);
-        let batch = pending.lock().unwrap().take().unwrap();
+        let batch = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap();
         assert!(!batch.overflow);
         assert_eq!(batch.hints.len(), 1);
         assert_eq!(batch.hints[0].name, "kept");
         for path in ["/admitted-other/private", "/admitted/../private", "/outside/private"] {
             events.record(Some(path), 0x1000);
-            let batch = pending.lock().unwrap().take().unwrap();
+            let batch = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap();
             assert!(batch.overflow && batch.hints.is_empty());
         }
     }

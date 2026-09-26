@@ -72,6 +72,11 @@ the application.
 | Bun / other unsupported runtimes | `poll` | TSFN lifetime and shutdown have not been qualified; `events` rejects. |
 | Missing/disabled addon | `poll` | `events` rejects with `FsSafeError("helper-unavailable")`. |
 
+The shared hub sleeps until a filesystem event, command, or callback acknowledgement:
+Linux blocks on inotify plus eventfd, Windows on IOCP, and macOS on its command
+channel (FSEvents wakes it from the serial dispatch queue). There is no native
+polling timer; the independent JS reconciliation interval remains authoritative.
+
 `mode` is required. `poll` never starts or loads the watch hub; guarded scans
 may still use the existing addon. Existing `FS_SAFE_NATIVE_MODE=off` and
 `require` policies apply: `require` plus an unavailable event backend rejects

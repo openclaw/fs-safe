@@ -1,9 +1,14 @@
 //! Explicit payload ownership: napi-rs 3.12's TSFN call leaks rejected payloads.
-use super::WatchBatch;
+use super::{Notify, WatchBatch};
 use crate::{NativeResult, native_error};
 use napi::{Env, JsValue, bindgen_prelude::*, sys};
 use std::ffi::c_void;
 use std::ptr::null_mut;
+
+struct Payload {
+    batch: WatchBatch,
+    notify: Notify,
+}
 
 pub(super) struct Callback(sys::napi_threadsafe_function);
 // Node-API explicitly permits transferring a TSFN's thread permit to the hub.
@@ -20,14 +25,20 @@ fn enqueue<T>(value: T, call: impl FnOnce(*mut c_void) -> sys::napi_status) -> s
     }
     status
 }
-unsafe extern "C" fn deliver(env: sys::napi_env, function: sys::napi_value, _: *mut c_void, data: *mut c_void) {
+unsafe extern "C" fn deliver(
+    env: sys::napi_env,
+    function: sys::napi_value,
+    _: *mut c_void,
+    data: *mut c_void,
+) {
     // A queued batch must be freed even when Node is draining a closing environment.
-    let batch = unsafe { Box::from_raw(data.cast::<WatchBatch>()) };
+    let payload = unsafe { Box::from_raw(data.cast::<Payload>()) };
+    payload.notify.wake();
     if env.is_null() || function.is_null() {
         return;
     }
     let result = unsafe { Function::<WatchBatch, ()>::from_napi_value(env, function) }
-        .and_then(|callback| callback.call(*batch));
+        .and_then(|callback| callback.call(payload.batch));
     if let Err(error) = result {
         // Internal JS delivery normally cannot throw; preserve Node's async exception semantics.
         let value = unsafe { napi::JsError::from(error).into_value(env) };
@@ -40,8 +51,9 @@ impl Callback {
     pub fn new(env: Env, callback: Function<WatchBatch, ()>) -> NativeResult<Self> {
         let mut name = null_mut();
         let label = b"fs-safe-watch";
-        let status =
-            unsafe { sys::napi_create_string_utf8(env.raw(), label.as_ptr().cast(), label.len() as isize, &mut name) };
+        let status = unsafe {
+            sys::napi_create_string_utf8(env.raw(), label.as_ptr().cast(), label.len() as isize, &mut name)
+        };
         if status != sys::Status::napi_ok {
             return Err(native_error("EIO", "create watch callback name"));
         }
@@ -67,11 +79,11 @@ impl Callback {
         }
         Ok(Self(raw))
     }
-    pub fn send(&mut self, batch: WatchBatch) -> bool {
+    pub fn send(&mut self, batch: WatchBatch, notify: Notify) -> bool {
         if self.0.is_null() {
             return false;
         }
-        let status = enqueue(batch, |payload| unsafe {
+        let status = enqueue(Payload { batch, notify }, |payload| unsafe {
             sys::napi_call_threadsafe_function(self.0, payload, sys::ThreadsafeFunctionCallMode::nonblocking)
         });
         // napi_closing revokes this thread's permit. Never touch that TSFN again.
