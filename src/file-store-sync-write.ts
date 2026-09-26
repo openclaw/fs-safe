@@ -4,11 +4,7 @@ import path from "node:path";
 import { syncDirectorySync } from "./directory-durability.js";
 import { createDirectoryReceiptFromIdentity } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
-import {
-  ensureParentSync,
-  ensureStoreDirectorySync,
-  type SyncParentGuard,
-} from "./file-store-boundary.js";
+import { ensureStoreDirectorySync } from "./file-store-boundary.js";
 import { assertSyncStoreDirectoryReceipt } from "./file-store-sync-directory.js";
 import { isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
@@ -60,14 +56,14 @@ export function writeFileSyncAtomic(params: {
   if (!isPathInside(params.rootDir, filePath)) {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
   }
-  let parentGuard: SyncParentGuard;
-  if (params.privateMode) {
-    parentGuard = ensureStoreDirectorySync({
-      rootDir: params.rootDir,
-      targetDir: path.dirname(filePath),
-      mode: params.dirMode,
-      messagePrefix: "private store",
-    });
+  const privateMode = params.privateMode;
+  const parentGuard = ensureStoreDirectorySync({
+    rootDir: params.rootDir,
+    targetDir: path.dirname(filePath),
+    mode: params.dirMode,
+    messagePrefix: privateMode ? "private store" : "store",
+  });
+  if (privateMode) {
     try {
       const stat = fs.lstatSync(filePath);
       if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -78,12 +74,6 @@ export function writeFileSyncAtomic(params: {
         throw error;
       }
     }
-  } else {
-    parentGuard = ensureParentSync({
-      rootDir: params.rootDir,
-      filePath,
-      mode: params.dirMode,
-    });
   }
   const tempPath = path.join(
     parentGuard.dir,
