@@ -20,8 +20,6 @@ import { readRegularFile } from "./regular-file.js";
 import { errorCauseOptions } from "./root-errors.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
-export type SyncParentGuard = SyncStoreDirectoryReceipt;
-
 export async function ensureParentInRoot(
   scopedRoot: Root,
   relativePath: string,
@@ -128,24 +126,9 @@ export async function writeStreamToTempSource(params: {
   }
 }
 
-export function ensureParentSync(params: {
-  rootDir: string;
-  filePath: string;
-  mode: number;
-}): SyncParentGuard {
-  assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
-  assertNoWindowsPathAlias(params.filePath, "filesystem", "store path uses a Windows filesystem namespace alias");
-  return ensureStoreDirectorySync({
-    rootDir: params.rootDir,
-    targetDir: path.dirname(path.resolve(params.filePath)),
-    mode: params.mode,
-    messagePrefix: "store",
-  });
-}
-
 export function ensureStoreDirectorySync(
   params: Parameters<typeof ensureSyncStoreDirectory>[0],
-): SyncParentGuard {
+): SyncStoreDirectoryReceipt {
   const guard = ensureSyncStoreDirectory(params);
   assertSyncStoreDirectoryReceipt(guard);
   return guard;
