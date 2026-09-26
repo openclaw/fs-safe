@@ -4,12 +4,14 @@
 
 ### Features
 
+- Expose the existing pre-publication hook and staging-prefix options through `writeTextAtomic`, preserving atomic replacement's validation and identity checks.
 - **Retained symlink publication:** `retainSymlinkInDirectory()` on the advanced surface holds an explicitly identified POSIX symlink through exact-slot no-replace publication and explicit recovery, preserving observed foreign replacements and uncertain outcomes.
 
 - **Batched Windows ACL facts:** add `readOwnerAndDaclBatch()` to inspect ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Existing synchronous inspection remains unchanged.
 
 ### Fixes
 
+- **Windows ACL batch memory:** bound encoded fallback results during collection and reject oversized batches with `too-large` before querying later paths, avoiding retention of every descriptor graph while preserving duplicate observations and earlier query failures.
 - **Trash containment:** admit the moved entry by its real parent and retain the parent guard through mutation, including dangling and outward-pointing symlinks. Thanks @SebTardif. ([#611](https://github.com/openclaw/fs-safe/pull/611))
 - **Symlink parent checks:** inspect raw parent segments before dotdot normalization, including guarded regular-file appends. Thanks @SebTardif. ([#615](https://github.com/openclaw/fs-safe/pull/615))
 - **Safe path segments:** reject Windows reserved device names consistently across platforms while preserving device-safe temporary filename sanitization. Thanks @SebTardif. ([#612](https://github.com/openclaw/fs-safe/pull/612))

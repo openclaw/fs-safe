@@ -135,6 +135,16 @@ describe("readOwnerAndDaclBatch", () => {
     expect(spawn).toHaveBeenCalledOnce();
   });
 
+  it("retains an early fallback output-budget failure without returning partial facts", async () => {
+    const child = commandChild();
+    const pending = readOwnerAndDaclBatch([firstPath, secondPath]);
+    child.finish({ ok: false, code: "too-large", message: "Windows security batch exceeded its output budget" });
+    await expect(pending).rejects.toMatchObject({
+      code: "too-large", message: "Windows security batch exceeded its output budget",
+    });
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
   it("captures selected-drive paths before dispatch without erasing their suffix", async () => {
     const resolve = path.resolve;
     let driveDirectory = String.raw`C:\selected`;
