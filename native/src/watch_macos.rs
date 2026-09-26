@@ -135,7 +135,9 @@ impl Backend {
             CFRelease(string);
         }
         if stream.is_null() {
-            unsafe { CFRelease(array); }
+            unsafe {
+                CFRelease(array);
+            }
             return Err(native_error("EIO", "create FSEvents stream"));
         }
         unsafe {
@@ -146,7 +148,9 @@ impl Backend {
                 dispatch_sync_f(self.queue, stream, retire);
                 dispatch_sync_f(self.queue, null_mut(), barrier);
             }
-            unsafe { CFRelease(array); }
+            unsafe {
+                CFRelease(array);
+            }
             return Err(native_error("EIO", "start FSEvents stream"));
         }
         self.streams.insert(id, Stream { paths: array, stream, events });
@@ -161,7 +165,9 @@ impl Backend {
                 dispatch_sync_f(self.queue, stream.stream, retire);
                 dispatch_sync_f(self.queue, null_mut(), barrier);
             }
-            unsafe { CFRelease(stream.paths); }
+            unsafe {
+                CFRelease(stream.paths);
+            }
             drop(stream.events);
         }
         Ok(())
@@ -180,6 +186,28 @@ impl Drop for Backend {
         }
         unsafe {
             dispatch_release(self.queue);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::watch::Pending;
+    use std::sync::{Arc, Mutex};
+    #[test]
+    fn decoder_preserves_inside_names_and_discards_outside_paths() {
+        let pending = Arc::new(Mutex::new(Pending { limit: 2, ..Pending::default() }));
+        let events = Events { prefix: "/admitted/".into(), pending: pending.clone() };
+        events.record(Some("/admitted/kept"), 0x1000);
+        let batch = pending.lock().unwrap().take().unwrap();
+        assert!(!batch.overflow);
+        assert_eq!(batch.hints.len(), 1);
+        assert_eq!(batch.hints[0].name, "kept");
+        for path in ["/admitted-other/private", "/admitted/../private", "/outside/private"] {
+            events.record(Some(path), 0x1000);
+            let batch = pending.lock().unwrap().take().unwrap();
+            assert!(batch.overflow && batch.hints.is_empty());
         }
     }
 }

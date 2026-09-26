@@ -97,8 +97,8 @@ Unmount trigger guarded reconciliation. Pathname hints can reflect activity
 after a swap, but the Root is never replaced and names require guarded admission.
 Removal synchronously stops, invalidates and releases the stream on its queue.
 
-Windows opens anchors through the existing guarded handle-relative path, then
-reopens the admitted object for overlapped I/O with READ/WRITE/DELETE sharing.
+Windows opens overlapped anchors directly through the existing guarded
+handle-relative path with READ/WRITE/DELETE sharing.
 Recursive anchors cover tree scopes and deduplicate descendant watches; entry
 ancestors use nonrecursive anchors. Completed 64 KiB buffers are copied and the
 read re-armed before names are examined. Zero-byte / enumeration-loss completions

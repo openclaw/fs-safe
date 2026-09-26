@@ -1,13 +1,11 @@
 use super::{Directory, Pending, SharedPending};
 use crate::windows::{
-    OwnedHandle, ReparsePolicy, handle_identity_and_size, handle_is_reparse, nt_open_relative_with_policy,
-    open_existing_handle, win_error,
+    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, open_watch_directory, win_error,
 };
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::HashMap;
 use std::mem::{replace, zeroed};
 use std::ptr::null_mut;
-use windows_sys::Wdk::Storage::FileSystem::{FILE_DIRECTORY_FILE, FILE_OPEN};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NOT_FOUND, ERROR_NOTIFY_ENUM_DIR,
     ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, GetLastError, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
@@ -107,38 +105,13 @@ fn open_anchor(
     let root = open_existing_handle(
         &root,
         FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
-        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OVERLAPPED,
         |code| win_error(code, "open watch root"),
     )?;
     check(&root, root_identity)?;
-    let directory = if relative.is_empty() {
-        root
-    } else {
-        nt_open_relative_with_policy(
-            root.0,
-            relative,
-            FILE_LIST_DIRECTORY,
-            FILE_OPEN,
-            FILE_DIRECTORY_FILE,
-            ReparsePolicy::Reject,
-        )?
-    };
+    let directory = if relative.is_empty() { root } else { open_watch_directory(root.0, relative)? };
     check(&directory, identity)?;
-    // ReOpenFile preserves the admitted object and changes only its I/O mode.
-    let handle = unsafe {
-        ReOpenFile(
-            directory.0,
-            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(win_error(unsafe { GetLastError() }, "reopen overlapped watch directory"));
-    }
-    let handle = OwnedHandle(handle);
-    check(&handle, identity)?;
-    Ok(handle)
+    Ok(directory)
 }
 fn decode(pending: &mut Pending, directory: &str, bytes: &[u8]) {
     let mut at = 0;
