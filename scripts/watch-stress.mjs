@@ -34,6 +34,6 @@ if (selected === "all") {
   if (diagnostics.cleanupErrors.length && !failure) failure = { message: "cleanup failed", errors: diagnostics.cleanupErrors };
   process.stdout.write(JSON.stringify({ scenario: selected, result: failure ? "fail" : "pass", platform: process.platform,
     arch: process.arch, node: process.version, durationMs: performance.now() - started,
-    metrics: metrics ?? { diagnostics, rss: process.memoryUsage().rss, peakRss: process.resourceUsage().maxRSS * 1024 }, failure, unhandled }) + "\n");
+    metrics: metrics ?? diagnostics.scenarioMetrics ?? { diagnostics, rss: process.memoryUsage().rss, peakRss: process.resourceUsage().maxRSS * 1024 }, failure, unhandled }) + "\n");
   if (failure) process.exitCode = 1;
 }

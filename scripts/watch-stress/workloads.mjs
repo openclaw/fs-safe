@@ -1,4 +1,4 @@
-import { assert, fs, path, delay, fixture, observe, populate, isolatedEdit, cleanup } from "./oracle.mjs";
+import { assert, fs, path, delay, fixture, observe, populate, isolatedEdit, cleanup, diagnostics } from "./oracle.mjs";
 import { resources, percentile, trend } from "./metrics.mjs";
 import { writeFileSync } from "node:fs";
 
@@ -72,11 +72,13 @@ export async function churn() {
     } while (performance.now() - begin < 300_000);
     await observer.checkpoint();
     const memory = trend(samples.slice(Math.min(2, samples.length - 2)));
-    assert.ok(memory.growth <= 64 * 1024 * 1024, "post-warmup RSS grew by more than 64 MiB");
     const peakRss = process.resourceUsage().maxRSS * 1024;
-    assert.ok(peakRss < 512 * 1024 * 1024, "RSS exceeded 512 MiB");
-    return { durationSeconds: (performance.now() - begin) / 1000, operations, batches, pressureOperations: 1024, pressureOverflows,
+    const result = { durationSeconds: (performance.now() - begin) / 1000, operations, batches, pressureOperations: 1024, pressureOverflows,
       latencySamples: latency.length, p50Ms: percentile(latency, 0.5), p99Ms: percentile(latency, 0.99), peakRss, memory, samples, ...observer.metrics };
+    diagnostics.scenarioMetrics = result;
+    assert.ok(memory.growth <= 64 * 1024 * 1024, "post-warmup RSS grew by more than 64 MiB");
+    assert.ok(peakRss < 512 * 1024 * 1024, "RSS exceeded 512 MiB");
+    return result;
   } finally { await cleanup([() => observer?.close()], [() => f.remove()]); }
 }
 
@@ -102,9 +104,11 @@ export async function soak() {
       process.stderr.write(`soak checkpoint ${minute}/30\n`);
     }
     const memory = trend(samples.slice(5));
-    assert.ok(memory.growth <= 64 * 1024 * 1024, "soak RSS grew by more than 64 MiB after minute five");
     const peakRss = process.resourceUsage().maxRSS * 1024;
+    const result = { durationSeconds: (performance.now() - begin) / 1000, edits, operations, cycles, bursts, peakRss, samples, memory, ...observer.metrics };
+    diagnostics.scenarioMetrics = result;
+    assert.ok(memory.growth <= 64 * 1024 * 1024, "soak RSS grew by more than 64 MiB after minute five");
     assert.ok(peakRss < 512 * 1024 * 1024, "soak RSS exceeded 512 MiB");
-    return { durationSeconds: (performance.now() - begin) / 1000, edits, operations, cycles, bursts, peakRss, samples, memory, ...observer.metrics };
+    return result;
   } finally { await cleanup([() => observer?.close()], [() => f.remove()]); }
 }
