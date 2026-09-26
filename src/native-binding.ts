@@ -1,3 +1,10 @@
+import type { RetainedFileResult } from "./retained-file-types.js";
+
+export interface NativeRetainedFile {
+  readonly admission: RetainedFileResult | { status: "retained"; identity: string };
+  settle(remove: boolean): RetainedFileResult;
+}
+
 import type { TarMeterLimits } from "./archive-limits.js";
 import type { ArchiveMemberKind } from "./archive-plan.js";
 import type { CopyCloneMode } from "./copy-policy.js";
@@ -112,6 +119,9 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  /** Windows-only, private handle custody; no borrowed/runtime descriptors. */
+  retainWindowsFile?(directory: string, basename: string, parentDev: bigint, parentIno: bigint,
+    dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, ctimeNs: bigint, sha256: string, maxBytes: number): NativeRetainedFile;
   watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void): number;
   watchAdd?(id: number, directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }): void;
   watchTestEvent?(id: number, path: string, flags: number): void;

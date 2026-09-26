@@ -183,3 +183,9 @@ export {
   type WindowsAclSummary,
 } from "./permissions-windows.js";
 export type { PermissionCommandFailure } from "./permission-exec.js";
+
+export { retainFileInDirectory } from "./retained-file.js";
+export type {
+  RetainedFile, RetainedFileAdmission, RetainedFileExpected, RetainedFileIssue,
+  RetainedFileReceipt, RetainedFileResult, RetainFileInDirectoryOptions,
+} from "./retained-file-types.js";
