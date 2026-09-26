@@ -67,11 +67,16 @@ fn ace_flags(raw: u8) -> WindowsAceFlags {
 }
 
 macro_rules! windows_security_export {
+    (@unused $arg:ident: $arg_type:ty $(,)?) => {
+        $arg
+    };
+    (@unused $($arg:ident: $arg_type:ty),+ $(,)?) => {
+        ($($arg),+)
+    };
     (
         $js_name:literal,
         fn $name:ident($env:ident: Env, $($args:tt)*) -> $result:ty,
         $operation:expr,
-        $unused:expr,
         $unsupported:literal
     ) => {
         #[napi(js_name = $js_name)]
@@ -83,7 +88,7 @@ macro_rules! windows_security_export {
             );
             #[cfg(not(windows))]
             {
-                let _ = $unused;
+                let _ = $crate::windows_security::windows_security_export!(@unused $($args)*);
                 into_napi(
                     $env,
                     Err(native_error(
@@ -103,7 +108,6 @@ windows_security_export!(
     fn create_private_directory(env: Env, path: String) -> (),
     validate_windows_filesystem_path(&path)
         .and_then(|()| windows::create_private_directory(&path)),
-    path,
     "private Windows directories are only available on Windows"
 );
 
@@ -116,7 +120,6 @@ windows_security_export!(
     ) -> WindowsIdentityReceipt,
     validate_windows_filesystem_path(&path)
         .and_then(|()| windows::inspect_directory(&path, require_private)),
-    (path, require_private),
     "Windows directory inspection is only available on Windows"
 );
 
@@ -130,7 +133,6 @@ windows_security_export!(
     validate_windows_filesystem_path(&path).and_then(|()| {
         windows::create_private_directory_with_parent_identity(&path, &expected_parent_identity)
     }),
-    (path, expected_parent_identity),
     "private Windows directories are only available on Windows"
 );
 
@@ -144,7 +146,6 @@ windows_security_export!(
     ) -> WindowsIdentityReceipt,
     validate_windows_filesystem_path(&path)
         .and_then(|()| windows::protect_private_file(fd, &path, &expected_parent_identity)),
-    (fd, path, expected_parent_identity),
     "private Windows file protection is only available on Windows"
 );
 
@@ -167,13 +168,6 @@ windows_security_export!(
             expected_links,
         )
     }),
-    (
-        fd,
-        path,
-        expected_file_identity,
-        expected_parent_identity,
-        expected_links,
-    ),
     "private Windows file verification is only available on Windows"
 );
 
@@ -181,7 +175,6 @@ windows_security_export!(
     "readOwnerAndDacl",
     fn read_owner_and_dacl(env: Env, path: String) -> WindowsSecurityFacts,
     validate_windows_filesystem_path(&path).and_then(|()| windows::read_owner_and_dacl(&path)),
-    path,
     "Windows owner and DACL inspection is only available on Windows"
 );
 
@@ -2564,6 +2557,47 @@ pub(crate) fn read_owner_and_dacl_for_handle(
 #[cfg(test)]
 mod tests {
     use super::ace_flags;
+
+    #[test]
+    fn unsupported_export_arguments_preserve_drop_boundaries() {
+        use std::cell::RefCell;
+
+        struct Witness<'a>(&'a RefCell<Vec<&'static str>>, &'static str);
+        impl Drop for Witness<'_> {
+            fn drop(&mut self) {
+                self.0.borrow_mut().push(self.1);
+            }
+        }
+
+        let events = RefCell::new(Vec::new());
+        {
+            let scalar = Witness(&events, "scalar");
+            let _ = crate::windows_security::windows_security_export!(
+                @unused scalar: Witness<'_>,
+            );
+            events.borrow_mut().push("following scalar work");
+            assert_eq!(events.borrow().as_slice(), ["following scalar work"]);
+        }
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["following scalar work", "scalar"]
+        );
+
+        events.borrow_mut().clear();
+        {
+            let first = Witness(&events, "first");
+            let second = Witness(&events, "second");
+            let third = Witness(&events, "third");
+            let _: (Witness<'_>, Witness<'_>, Witness<'_>) = crate::windows_security::windows_security_export!(
+                @unused first: Witness<'_>, second: Witness<'_>, third: Witness<'_>,
+            );
+            events.borrow_mut().push("following tuple work");
+        }
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["first", "second", "third", "following tuple work"]
+        );
+    }
 
     #[test]
     fn decodes_ace_inheritance_and_audit_flags() {
