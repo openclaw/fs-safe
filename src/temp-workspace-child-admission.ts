@@ -86,9 +86,9 @@ export function assertTrustedTempWorkspaceDirectory(
   if (ownership === "foreign" || (privateDirectory && ownership !== "user")) {
     throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner; use a private temp root owned by the effective user under a trusted directory hierarchy");
   }
-  // Unmapped ancestors do not prove host ownership. To support private user-namespace
-  // workspaces, trust the host hierarchy against unmapped host peers; retain mode
-  // checks and strict effective-user ownership for the supplied root and new child.
+  // Unmapped host owners are unverifiable; trust the host directory hierarchy.
+  // Admit sticky ancestors so PrivateUsers keeps host /tmp and PrivateTmp usable.
+  // Leaf roots stay euid-owned/private; non-sticky writable ancestors are rejected.
   const writable = typeof stat.mode === "bigint"
     ? (stat.mode & 0o022n) !== 0n
     : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o022) !== 0;

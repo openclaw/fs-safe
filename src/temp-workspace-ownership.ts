@@ -1,10 +1,8 @@
 import fs from "node:fs";
 
 type DirectoryOwner = { uid: number | bigint; gid: number | bigint };
-type UnmappedOwner = { uid: number; gid: number };
 export type TempWorkspaceOwnership = "user" | "root" | "unmapped" | "foreign";
 
-let unmappedOwner: UnmappedOwner | null | undefined;
 let warned = false;
 
 function overflowId(kind: "uid" | "gid"): number {
@@ -17,39 +15,34 @@ function overflowId(kind: "uid" | "gid"): number {
   return 65534;
 }
 
-function namespaceOwner(): UnmappedOwner | null {
-  if (unmappedOwner !== undefined) return unmappedOwner;
-  unmappedOwner = null;
-  if (process.platform !== "linux") return unmappedOwner;
-  try {
-    const mappings = fs.readFileSync("/proc/self/uid_map", "utf8").trim()
-      .split("\n").map((line) => line.trim().split(/\s+/).map(Number));
-    if (!mappings.every((row) => row.length === 3 && row.every((id) =>
-      Number.isSafeInteger(id) && id >= 0 && id <= 0xffffffff) && row[2]! > 0)) {
-      return unmappedOwner;
-    }
-    if (mappings.length === 1 && mappings[0]![0] === 0 &&
-      mappings[0]![1] === 0 && mappings[0]![2] === 0xffffffff) return unmappedOwner;
-    const uid = overflowId("uid");
-    // An explicitly mapped overflow-number UID is a real owner, not an unmapped one.
-    if (mappings.some(([start, , count]) => uid >= start! && uid < start! + count!)) {
-      return unmappedOwner;
-    }
-    unmappedOwner = { uid, gid: overflowId("gid") };
-  } catch {
-    // Without namespace evidence, preserve ordinary ownership admission.
-  }
-  return unmappedOwner;
+function unmappedId(kind: "uid" | "gid"): number | null {
+  const mappings = fs.readFileSync(`/proc/self/${kind}_map`, "utf8").trim()
+    .split("\n").map((line) => line.trim().split(/\s+/).map(Number));
+  if (!mappings.every((row) => row.length === 3 && row.every((id) =>
+    Number.isSafeInteger(id) && id >= 0 && id <= 0xffffffff) && row[2]! > 0)) return null;
+  if (mappings.length === 1 && mappings[0]![0] === 0 &&
+    mappings[0]![1] === 0 && mappings[0]![2] === 0xffffffff) return null;
+  const id = overflowId(kind);
+  // Recheck every admission: an explicitly mapped overflow-number ID is real ownership.
+  return mappings.some(([start, , count]) => id >= start! && id < start! + count!) ? null : id;
 }
 
 export function classifyTempWorkspaceOwner(stat: DirectoryOwner, uid: number): TempWorkspaceOwnership {
   if (stat.uid === uid || stat.uid === BigInt(uid)) return "user";
   if (stat.uid === 0 || stat.uid === 0n) return "root";
-  const unmapped = namespaceOwner();
-  return unmapped && (stat.uid === unmapped.uid || stat.uid === BigInt(unmapped.uid)) &&
-    (stat.gid === unmapped.gid || stat.gid === BigInt(unmapped.gid))
-    ? "unmapped"
-    : "foreign";
+  if (process.platform !== "linux") return "foreign";
+  try {
+    const overflowUid = unmappedId("uid");
+    const overflowGid = unmappedId("gid");
+    return overflowUid !== null && overflowGid !== null &&
+      (stat.uid === overflowUid || stat.uid === BigInt(overflowUid)) &&
+      (stat.gid === overflowGid || stat.gid === BigInt(overflowGid))
+      ? "unmapped"
+      : "foreign";
+  } catch {
+    // Unavailable mapping evidence cannot authorize the namespace exception.
+    return "foreign";
+  }
 }
 
 export function warnUnmappedTempWorkspaceAncestor(): void {
