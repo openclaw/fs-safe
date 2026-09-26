@@ -23,7 +23,7 @@ async function sample(cycles) {
   global.gc(); await immediate(); global.gc();
   let report;
   try {
-    const result = await run("/usr/bin/leaks", ["--quiet", "--fullStacks", String(process.pid)],
+    const result = await run("/usr/bin/leaks", ["--quiet", "--fullStacks", "--noContent", String(process.pid)],
       { env: toolEnv, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
     report = result.stdout + result.stderr;
   } catch (error) {
@@ -31,8 +31,8 @@ async function sample(cycles) {
     report = String(error.stdout ?? "") + String(error.stderr ?? "");
   }
   await fs.writeFile(path.join(output, `cycles-${cycles}.txt`), report);
-  const match = report.match(/Process \d+: (\d+) leaks for (\d+) total leaked bytes/);
-  assert.ok(match, "leaks did not produce an allocation result");
+  const match = report.match(/Process \d+: (\d+) leaks? for (\d+) total leaked bytes/);
+  assert.ok(match, `leaks did not produce an allocation result:\n${report}`);
   assert.equal(binding.watchThreadCount(), 0);
   const result = { cycles, leaks: Number(match[1]), leakedBytes: Number(match[2]) };
   process.stdout.write(JSON.stringify(result) + "\n");
