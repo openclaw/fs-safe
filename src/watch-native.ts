@@ -25,9 +25,9 @@ export class NativeWatchBackend {
       })) });
     }); } catch (cause) { throw watchError(cause); }
   }
-  add(name: string, identity: DirectoryIdentity, recursive: boolean): void {
+  add(name: string, identity: DirectoryIdentity): void {
     try {
-      this.binding.watchAdd!(this.id!, { root: this.root.rootReal, relative: name, recursive,
+      this.binding.watchAdd!(this.id!, { root: this.root.rootReal, relative: name,
         rootDev: BigInt(this.root.rootIdentity.dev), rootIno: BigInt(this.root.rootIdentity.ino), ...identity });
     } catch (cause) {
       throw watchError(cause);
