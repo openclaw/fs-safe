@@ -10,6 +10,7 @@
 
 ### Fixes
 
+- **Trash containment:** admit the moved entry by its real parent and retain the parent guard through mutation, including dangling and outward-pointing symlinks. Thanks @SebTardif. ([#611](https://github.com/openclaw/fs-safe/pull/611))
 - **Symlink parent checks:** inspect raw parent segments before dotdot normalization, including guarded regular-file appends. Thanks @SebTardif. ([#615](https://github.com/openclaw/fs-safe/pull/615))
 - **Safe path segments:** reject Windows reserved device names consistently across platforms while preserving device-safe temporary filename sanitization. Thanks @SebTardif. ([#612](https://github.com/openclaw/fs-safe/pull/612))
 - **Relative escape checks:** recognize either Windows separator and nested escapes while preserving contained dotdot paths and literal POSIX backslashes. Thanks @SebTardif. ([#614](https://github.com/openclaw/fs-safe/pull/614))

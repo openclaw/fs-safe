@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertSyncDirectoryGuard, createSyncDirectoryGuard, type SyncDirectoryGuard } from "./directory-guard.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { guardedRenameSync, guardedRmSync } from "./guarded-mutation.js";
 import { realpathSync } from "./realpath.js";
@@ -69,6 +70,7 @@ function resolveAllowedTrashRoots(allowedRoots: readonly string[]): string[] {
 }
 
 type TrashTargetGuard = {
+  parent: SyncDirectoryGuard;
   path: string;
   realPath: string;
   realPathResolved: boolean;
@@ -92,6 +94,22 @@ function resolveTrashTargetPath(targetPath: string): { path: string; resolved: b
   return { path: resolvedPath, resolved: true };
 }
 
+function resolveTrashEntryParent(lexicalTarget: string, targetPath: string): string {
+  const lexicalParent = path.dirname(lexicalTarget);
+  assertNoTrashPathAlias(lexicalParent, "target path");
+  let realParent: string;
+  try {
+    // The renamed name lives in this parent. rename follows intermediate
+    // symlinks, so a lexical parent inside an allowed root is not enough.
+    realParent = realpathSync.native(lexicalParent);
+  } catch {
+    throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
+  }
+  const resolvedParent = path.resolve(realParent);
+  assertNoTrashPathAlias(resolvedParent, "target path");
+  return resolvedParent;
+}
+
 function assertAllowedTrashTarget(
   targetPath: string,
   allowedRoots: readonly string[],
@@ -102,13 +120,21 @@ function assertAllowedTrashTarget(
   const stat = fs.lstatSync(lexicalTarget);
   const resolvedTarget = resolveTrashTargetPath(targetPath);
   const resolvedTargetPath = resolvedTarget.path;
-  const isAllowed = resolveAllowedTrashRoots(allowedRoots).some(
-    (root) => resolvedTargetPath !== root && isSameOrChildPath(resolvedTargetPath, root),
+  const parent = createSyncDirectoryGuard(path.dirname(lexicalTarget));
+  // Admit the directory entry only when its parent really stays inside an
+  // allowed root. Do not admit it because the symlink target is inside.
+  const resolvedParent = resolveTrashEntryParent(lexicalTarget, targetPath);
+  const isAllowed = resolveAllowedTrashRoots(allowedRoots).some((root) =>
+    isSameOrChildPath(resolvedParent, root),
   );
   if (!isAllowed) {
     throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
   }
+  // Sync and native realpath can use different Windows short-name spellings.
+  // Recheck the retained guard around native containment instead of comparing them.
+  assertSyncDirectoryGuard(parent);
   return {
+    parent,
     path: lexicalTarget,
     realPath: resolvedTargetPath,
     realPathResolved: resolvedTarget.resolved,
@@ -117,6 +143,7 @@ function assertAllowedTrashTarget(
 }
 
 function assertTrashTargetGuard(guard: TrashTargetGuard): void {
+  assertSyncDirectoryGuard(guard.parent);
   const stat = fs.lstatSync(guard.path);
   if (!sameFileIdentity(stat, guard.stat)) {
     throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
