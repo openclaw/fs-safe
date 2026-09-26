@@ -604,6 +604,7 @@
         "MovePathWithCopyFallbackOptions",
         "RenameIdentityPolicy",
         "ReplaceDirectoryAtomicOptions",
+        "ReplaceFileAtomicDestinationState",
         "ReplaceFileAtomicFileSystem",
         "ReplaceFileAtomicOptions",
         "ReplaceFileAtomicRestoreCleanup",

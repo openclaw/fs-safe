@@ -5,6 +5,7 @@
 ### Features
 
 - **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, a shared Rust event hub using inotify, FSEvents, and ReadDirectoryChangesW on Linux/macOS/Windows, portable polling, first-scan readiness and bounded reconciliation that stay available under sustained writes, scope replacement, and joined close. Thanks @vincentkoc.
+- **Revocable atomic writes:** atomic replacement can recheck caller authority before new effects and report retained destination identities for partial writes and publication, without treating receipts as permission to roll back.
 
 ### Fixes
 

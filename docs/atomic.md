@@ -60,6 +60,8 @@ type ReplaceFileAtomicOptions = {
   syncTempFile?: boolean;           // fsync(temp) before rename, or the final file after copy fallback; default false
   syncParentDir?: boolean;          // fsync(parent) after rename, POSIX only; default false
   throwOnCleanupError?: boolean;    // report temp cleanup failure; default false
+  assertBeforeMutation?: () => void;
+  onDestinationState?: (state: ReplaceFileAtomicDestinationState) => void;
   beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
   fileSystem?: ReplaceFileAtomicFileSystem; // injectable fs for tests
 };
@@ -107,6 +109,65 @@ failure: the temp stays registered for identity-checked process-exit cleanup, th
 descriptor is still closed, and a close failure remains reportable.
 
 Identity checks and pathname rename/unlink remain separate syscalls, not atomic conditional mutations. Use an approved writable parent plus cooperative locking or OS isolation when arbitrary concurrent namespace mutation is in scope.
+
+### Atomic write authority and destination state
+
+Use `assertBeforeMutation` when a write depends on a lease or other revocable
+application authority. Both atomic variants capture the callback at entry and
+run it synchronously before directory creation or mode changes, compatibility
+lock acquisition, staging creation and writes, each rename attempt, and fallback
+removal, destination acquisition, truncation, and each content write. Asynchronous destination identity checks
+finish before the final authority check; no await separates that check from the
+write dispatch. A dispatched operation still owns its completion.
+
+`onDestinationState` captures facts that a caller may need if the operation later
+rejects:
+
+```ts
+type ReplaceFileAtomicDestinationState =
+  | Readonly<{ state: "removed"; path: string }>
+  | Readonly<{
+      state: "writing" | "published";
+      path: string;
+      dev: bigint;
+      ino: bigint;
+    }>;
+```
+
+- `removed` follows successful removal of an existing fallback destination.
+- `writing` records the fallback's retained descriptor after exclusive creation
+  or the first successful truncation of an existing `restore-original` target.
+  Opening an existing target leaves it untouched and emits no receipt. This state
+  does not claim that all requested bytes were written.
+- `published` follows successful rename and destination identity verification,
+  before parent synchronization or descriptor close can fail. Copy fallback
+  reports it after its content, mode, and requested file synchronization complete.
+  The explicit `verify-content-with-lock` policy first applies its existing
+  locked content verification to admit the replacement descriptor.
+
+Receipts are frozen and use the destination spelling captured by the operation.
+File identities come from retained descriptors, never from reopening a pathname
+after a failed copy. Failed or indeterminate admission can leave no identity
+receipt; a rename followed by replacement before verification also has no
+publication receipt. Do not infer ownership from a fresh post-failure stat. A later writer
+can replace the pathname, so compare the recorded identity with the current
+entry and recheck application authority before compensation. Receipts do not
+promise durable storage or authorize rollback.
+
+Both callbacks must complete synchronously; Promise and thenable results are
+rejected, and ordinary return values are ignored. The first callback refusal
+is terminal, including falsy thrown values; an `EPERM`, `EEXIST`, or `EBUSY` code
+from a callback never starts fallback or retry. Refusal during an in-place
+fallback also stops new restoration writes. Final mode, synchronization, close,
+and private-stage cleanup may still settle against owned identities after
+revocation. Callback refusal does not delete a published destination or a
+competing file at a staging name. An observer that throws must retain its receipt
+first if recovery needs it.
+
+`beforeRename` remains the hook for preparing backups. Effects performed inside
+that hook remain the caller's responsibility; the authority option guards the
+atomic writer's own effects. Omitting both new callbacks preserves existing
+write, fallback, restoration, result, and cleanup behavior.
 
 ### FUSE, Windows exFAT/FAT32, and unstable rename identity
 
