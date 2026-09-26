@@ -1061,7 +1061,7 @@ jobs:
       - name: Test guarded observation
         env:
           FS_SAFE_TEST_WATCH_EVENTS: "1"
-        run: pnpm test test/watch.test.ts test/watch-platforms.test.ts test/watch-alias.test.ts test/watch-hints.test.ts test/watch-limit.test.ts test/watch-windows-edge.test.ts --maxWorkers=1 --testTimeout=30000
+        run: pnpm test test/watch.test.ts test/watch-lifecycle.test.ts test/watch-platforms.test.ts test/watch-alias.test.ts test/watch-hints.test.ts test/watch-limit.test.ts test/watch-windows-edge.test.ts --maxWorkers=1 --testTimeout=30000
 
       - name: Prove native event delivery on every platform
         run: node scripts/watch-events-proof.mjs
@@ -1347,7 +1347,7 @@ jobs:
             pnpm archive:wasm:allocator-tests
             pnpm test test/archive-codec-wasm-abi.test.ts test/archive-codec-wasm-allocator.test.ts test/archive-wasm-build.test.ts test/archive-wasm-abi.test.ts
             pnpm native:build
-            FS_SAFE_TEST_WATCH_EVENTS=1 pnpm test test/watch.test.ts test/watch-platforms.test.ts test/watch-alias.test.ts test/watch-hints.test.ts
+            FS_SAFE_TEST_WATCH_EVENTS=1 pnpm test test/watch.test.ts test/watch-lifecycle.test.ts test/watch-platforms.test.ts test/watch-alias.test.ts test/watch-hints.test.ts
             node scripts/temp-workspace-quarantine-swap-proof.mjs
             pnpm package:smoke
             node scripts/native-mode-smoke.mjs auto
