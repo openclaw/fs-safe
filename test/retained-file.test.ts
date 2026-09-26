@@ -17,7 +17,7 @@ const owners: RetainedFile[] = [];
 afterEach(() => { for (const owner of owners.splice(0)) owner.dispose(); });
 
 async function fixture() {
-  const directory = fs.realpathSync(await tempRoot("fs-safe-retained-file-"));
+  const directory = fs.realpathSync.native(await tempRoot("fs-safe-retained-file-"));
   const filePath = path.join(directory, "backup");
   fs.writeFileSync(filePath, "original");
   const parent = fs.statSync(directory, { bigint: true });

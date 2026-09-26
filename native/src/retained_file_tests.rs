@@ -170,8 +170,9 @@ fn close_uncertainty_retains_operation_and_close_errors_without_retry() {
     let mut owner = f.retain(); assert_retained(&owner);
     let file = owner.owner.as_mut().unwrap().file.as_mut().unwrap();
     assert_ne!(unsafe { CloseHandle(file.0) }, 0);
-    // Fault injection substitutes a guaranteed-invalid value, never a recycled handle.
-    file.0 = INVALID_HANDLE_VALUE;
+    // Null is invalid for CloseHandle; -1 is a process pseudo-handle whose close can succeed.
+    // Never retry the old value: the OS may have recycled it after the injected close.
+    file.0 = null_mut();
     let result = owner.settle(true);
     assert_eq!(result.status, "indeterminate");
     assert_eq!(result.resources, "close-failed");

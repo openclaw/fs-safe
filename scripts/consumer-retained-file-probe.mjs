@@ -42,7 +42,7 @@ if (process.argv[2] === "child") {
   assert.equal(hash(fs.readFileSync(fileURLToPath(import.meta.url))), expected.retainedProbeSha256);
   const compiled = creationCompiledFiles(path.join(path.dirname(manifest), "dist"));
   assert.deepEqual(compiled, expected.creation.compiledFiles);
-  const directory = fs.realpathSync(fs.mkdtempSync(path.join(process.cwd(), "retained-fixture-")));
+  const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(process.cwd(), "retained-fixture-")));
   const file = path.join(directory, "backup");
   const rows = [];
   try {
