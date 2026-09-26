@@ -116,7 +116,29 @@ impl Backend {
             return Err(error("register inotify directory"));
         }
         self.watches.entry(wd).or_default().entry(id).or_default().insert(relative.to_owned());
-        Ok(()) // inotify owns the inode reference; both opened descriptors close here.
+        // Re-registration replaces this owner's old inode without disturbing aliases or peers.
+        let mut failure = None;
+        self.watches.retain(|old_wd, owners| {
+            if *old_wd == wd {
+                return true;
+            }
+            if let Some(names) = owners.get_mut(&id) {
+                names.remove(relative);
+                if names.is_empty() {
+                    owners.remove(&id);
+                }
+            }
+            if !owners.is_empty() {
+                return true;
+            }
+            if unsafe { libc::inotify_rm_watch(self.fd.as_raw_fd(), *old_wd) } < 0
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL)
+            {
+                failure.get_or_insert_with(|| error("replace inotify watch"));
+            }
+            false
+        });
+        failure.map_or(Ok(()), Err) // inotify owns the inode reference; both opened descriptors close here.
     }
     pub fn remove(&mut self, id: u32) -> NativeResult<()> {
         self.pending.remove(&id);
@@ -232,5 +254,52 @@ impl Backend {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::Mutex;
+
+    #[test]
+    fn replacement_retires_old_inode_but_preserves_other_owners() {
+        let root = std::env::temp_dir().join(format!("fs-safe-watch-replace-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let child = root.join("child");
+        fs::create_dir(&child).unwrap();
+        let identity = |path: &std::path::Path| {
+            let stat = fs::metadata(path).unwrap();
+            ExactFileIdentity { dev: stat.dev(), ino: stat.ino() }
+        };
+        let mut backend = Backend::new().unwrap();
+        for id in [1, 2] {
+            backend.pending.insert(id, Arc::new(Mutex::new(super::super::Pending::default())));
+        }
+        let mut directory = Directory {
+            root: root.to_str().unwrap().into(),
+            relative: "child".into(),
+            root_identity: identity(&root),
+            identity: identity(&child),
+            recursive: false,
+        };
+        backend.add(1, &directory).unwrap();
+        backend.add(2, &directory).unwrap();
+        for cycle in 0..3 {
+            fs::rename(&child, root.join(format!("old-{cycle}"))).unwrap();
+            fs::create_dir(&child).unwrap();
+            directory.identity = identity(&child);
+            backend.add(1, &directory).unwrap();
+            assert_eq!(backend.watches.len(), 2);
+            assert_eq!(backend.watches.values().filter(|owners| owners.contains_key(&1)).count(), 1);
+            assert_eq!(backend.watches.values().filter(|owners| owners.contains_key(&2)).count(), 1);
+        }
+        backend.remove(1).unwrap();
+        assert_eq!(backend.watches.len(), 1);
+        backend.remove(2).unwrap();
+        assert!(backend.watches.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 }

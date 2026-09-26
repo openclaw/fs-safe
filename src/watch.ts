@@ -1,5 +1,4 @@
 import { FsSafeError } from "./errors.js";
-import { isNotFoundPathError } from "./path.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { assertRootIdentityCurrent } from "./root-context.js";
 import { rootHandleContext } from "./root-handle-context.js";
@@ -7,11 +6,11 @@ import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { admittedNativeChanges } from "./watch-alias.js";
-import { changedEntries, guardedHintChanges } from "./watch-hints.js";
+import { changedEntries, guardedHintChanges, scopedChanges } from "./watch-hints.js";
 import { watchBinding, NativeWatchBackend, type NativeWatchBatch, type NativeWatchHint } from "./watch-native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import type { NativeBinding } from "./native.js";
-import { sameEntries, scanWatch, watchScopes, type DirectoryIdentity, type WatchSnapshot } from "./watch-scan.js";
+import { isWatchPathError, scanWatch, watchScopes, type DirectoryIdentity, type WatchSnapshot } from "./watch-scan.js";
 import type { WatchChange, WatchInvalidation, WatchFailure, WatchHealth, WatchOptions, WatchScope, WatchSubscription } from "./watch-types.js";
 export type * from "./watch-types.js";
 
@@ -33,7 +32,7 @@ function budget(value: number | undefined, fallback: number, name: string, max =
   return result;
 }
 const retired = () => new DOMException("Watch generation retired", "AbortError");
-const restart = Symbol("reacquire");
+const coalesceMs = 25;
 
 /** Advisory observation only. Hints never grant filesystem authority. */
 export function watch(root: Root, input: WatchOptions): WatchSubscription {
@@ -49,7 +48,6 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const maxDirectories = budget(options.maxDirectories, 4096, "maxDirectories");
   const maxEntries = budget(options.maxEntries, 100_000, "maxEntries");
   const maxPendingPaths = budget(options.maxPendingPaths, 256, "maxPendingPaths", 4096);
-  const maxPasses = 4;
   if (typeof options.onInvalidate !== "function") throw new TypeError("watch requires onInvalidate");
   const makeGeneration = (scopes: readonly WatchScope[]) => ({
     scopes: watchScopes(scopes), abort: new AbortController(), waiter: deferred(),
@@ -70,7 +68,9 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let snapshot: WatchSnapshot | undefined;
   let resetRequested = false;
   let refreshBackend = false;
-  let revision = 0;
+  let pending = false;
+  let pendingWaiter: ReturnType<typeof deferred> | undefined;
+  let runningWaiter: ReturnType<typeof deferred> | undefined;
   let pendingHint = false;
   let pendingChanges: Map<string, NativeWatchHint> | undefined = new Map();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -102,7 +102,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const clearTimers = () => {
     clearTimeout(timer); clearTimeout(hintTimer);
-    timer = undefined; hintTimer = undefined; pendingHint = false; pendingChanges = new Map();
+    timer = undefined; hintTimer = undefined; pending = false; pendingHint = false; pendingChanges = new Map();
   };
   const notifyHealth = () => {
     try {
@@ -140,6 +140,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     failureInfo = Object.freeze({ error, operation: details?.operation === "watch" ? "watch" : details?.operation === "callback" ? "callback" : details?.operation === "close" ? "close" : operation, ...(typeof code === "string" ? { code } : {}) });
     current.abort.abort(error);
     current.waiter.reject(error);
+    pendingWaiter?.reject(error); runningWaiter?.reject(error);
+    pendingWaiter = undefined; runningWaiter = undefined;
     clearTimers();
     state = "unavailable";
     // Stop backend admission before notifying. Its join remains owned by active/close.
@@ -161,15 +163,15 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       const previous = pendingChanges.get(key);
       pendingChanges.set(key, previous?.event === "rename" ? previous : hint);
     }
-    revision++;
     pendingHint = true;
+    pending = true;
     if (hintTimer) return;
     hintTimer = setTimeout(() => {
       hintTimer = undefined;
       if (terminal || current !== g || failure !== undefined) return;
       // Raw backend filenames stay private. Reconcile before publishing detail.
       void request().catch(() => {});
-    }, 25);
+    }, coalesceMs);
   };
   const fallBack = (error: unknown): boolean => {
     if (options.mode !== "auto" || getFsSafeNativeConfig().mode === "require" ||
@@ -189,113 +191,113 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     state = snapshot ? "reconciling" : "starting";
     notifyHealth();
     check(g);
-    let prior: WatchSnapshot | undefined;
-    let reacquired = false;
-    const retryChurn = async (error: unknown) => {
-      check(g);
-      // Descendant churn never grants a replacement authority Root.
-      await assertRootIdentityCurrent(context);
-      if (!fallBack(error) && error !== restart && !isNotFoundPathError(error) &&
-        !(error instanceof FsSafeError && ["not-found", "path-mismatch"].includes(error.code))) throw error;
-      await retireBackend();
-      prior = undefined; reacquired = true;
-    };
-    for (let pass = 0; pass < maxPasses; pass++) {
-      check(g);
-      if (mode === "events" && !backend && g.scopes.length) {
-        try {
-          const candidate = new NativeWatchBackend(binding!, context, batch => {
-            if (backend === candidate) onHint(g, batch);
-          }, maxPendingPaths);
-          backend = candidate;
-          const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
-            if (backend === candidate) onHint(g, batch);
-          }, (path, flags) => candidate.testEvent(path, flags));
-          assertSynchronousCallbackResult(hookResult, "afterWatchBackendCreated");
-        } catch (error) { if (!fallBack(error)) throw error; }
-        check(g);
-      }
-      const before = revision;
-      let next: WatchSnapshot;
+    const started = performance.now();
+    const hadHints = pendingHint;
+    const hints = pendingChanges;
+    pendingHint = false; pendingChanges = new Map();
+    clearTimeout(hintTimer); hintTimer = undefined;
+    if (mode === "events" && !backend && g.scopes.length) {
       try {
-        next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries }, g.abort.signal,
-          async (name, identity, guard) => {
-            check(g);
-            const existing = registered.get(name);
-            if (existing && (existing.dev !== identity.dev || existing.ino !== identity.ino)) throw restart;
-            const acquire = !existing;
-            if (acquire && registered.size >= maxDirectories) throw restart;
-            await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
-            check(g);
-            if (acquire) backend?.add(name, identity, g.scopes.some(scope => scope.path === name && scope.kind === "tree" && scope.depth! > 0));
-            await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
-            check(g);
-            if (acquire) registered.set(name, identity);
-          }, retainRetirement);
-        check(g);
-        if ([...registered.keys()].some(name => !next.directories.has(name))) throw restart;
-        check(g);
-      } catch (error) {
-        await retryChurn(error);
-        continue;
-      }
-      observedDirectories = next.directories.size;
-      if (sameEntries(prior, next) && before === revision) {
-        const initial = !snapshot;
-        const changed = reacquired || !sameEntries(snapshot, next);
-        const hadHints = pendingHint;
-        const observed = reacquired ? undefined : changedEntries(snapshot, next, maxPendingPaths);
-        const nativeRevision = revision;
-        let admittedHints: WatchChange[] | undefined = [];
-        try {
-          if (hadHints) admittedHints = await admittedNativeChanges(context, g.scopes, snapshot, next, {
-            hints: pendingChanges ? [...pendingChanges.values()] : [], overflow: !pendingChanges,
-          }, g.abort.signal, maxPendingPaths);
-        } catch (error) { await retryChurn(error); continue; }
-        check(g);
-        if (nativeRevision !== revision) { prior = next; continue; }
-        const details = hadHints
-          ? guardedHintChanges(g.scopes, snapshot, next, admittedHints, observed, maxPendingPaths)
-          : observed;
-        pendingHint = false; pendingChanges = new Map();
-        clearTimeout(hintTimer); hintTimer = undefined;
-        snapshot = next;
-        state = "ready";
-        // Publish invalidation before readiness; callbacks may synchronously retire us.
-        if (changed || (hadHints && (!details || details.length))) dirty(g, initial ? "reconcile" : hadHints ? (details ? "event" : "overflow") : "reconcile", initial ? undefined : details);
-        check(g);
-        notifyHealth();
-        check(g);
-        return;
-      }
-      prior = next;
+        const candidate = new NativeWatchBackend(binding!, context, batch => {
+          if (backend === candidate) onHint(g, batch);
+        }, maxPendingPaths);
+        backend = candidate;
+        const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
+          if (backend === candidate) onHint(g, batch);
+        }, (path, flags) => candidate.testEvent(path, flags));
+        assertSynchronousCallbackResult(hookResult, "afterWatchBackendCreated");
+      } catch (error) { if (!fallBack(error)) throw error; }
+      check(g);
     }
-    throw new FsSafeError("timeout", "watch reconciliation did not converge within its pass budget", { details: { operation: "scan" } });
+    const next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot }, g.abort.signal,
+      async (name, identity, guard) => {
+        check(g);
+        const existing = registered.get(name);
+        const acquire = !existing || existing.dev !== identity.dev || existing.ino !== identity.ino;
+        await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
+        check(g);
+        if (acquire) {
+          try { backend?.add(name, identity, g.scopes.some(scope => scope.path === name && scope.kind === "tree" && scope.depth! > 0)); }
+          catch (error) {
+            if (snapshot || !fallBack(error)) throw error;
+            await retireBackend(); check(g);
+          }
+        }
+        await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+        check(g);
+        if (acquire) registered.set(name, identity);
+      }, retainRetirement);
+    check(g);
+    // Retire stale inventory before the next pass; that crawl installs fresh anchors first.
+    if ([...registered.keys()].some(name => !next.directories.has(name))) {
+      refreshBackend = true;
+    }
+    observedDirectories = next.directories.size;
+    const initial = !snapshot;
+    let observed = next.overflow ? undefined : changedEntries(snapshot, next, maxPendingPaths);
+    if (observed) {
+      const changes = new Map(observed.map(change => [change.path, change]));
+      for (const name of next.structural ?? []) for (const change of scopedChanges(g.scopes, { path: name, type: "structural" })) changes.set(change.path, change);
+      observed = changes.size > maxPendingPaths ? undefined : [...changes.values()];
+    }
+    let admittedHints: WatchChange[] | undefined = [];
+    try {
+      if (hadHints) admittedHints = await admittedNativeChanges(context, g.scopes, snapshot, next, {
+        hints: hints ? [...hints.values()] : [], overflow: !hints,
+      }, g.abort.signal, maxPendingPaths);
+    } catch (error) {
+      check(g);
+      await assertRootIdentityCurrent(context);
+      if (!isWatchPathError(error)) throw error;
+      admittedHints = undefined;
+    }
+    check(g);
+    await assertRootIdentityCurrent(context);
+    check(g);
+    let details = hadHints
+      ? guardedHintChanges(g.scopes, snapshot, next, admittedHints, observed, maxPendingPaths)
+      : observed;
+    const behind = (hadHints || pendingHint) && performance.now() - started > coalesceMs;
+    if (behind) details = undefined;
+    snapshot = next;
+    // Publish before readiness; callbacks may synchronously retire this generation.
+    if (initial || !details || details.length) dirty(g, initial ? "reconcile" : !details ? "overflow" : hadHints ? "event" : "reconcile", initial ? undefined : details);
+    check(g);
+    state = "ready";
+    notifyHealth();
+    check(g);
   };
   const pump = () => {
     if (active || terminal || failure !== undefined) return;
-    // Enroll the operation before any user callback or asynchronous acquisition.
+    // Enroll before any callback. There is one active pass and one coalesced request.
     active = Promise.resolve().then(async () => {
-      while (!terminal && failure === undefined) {
+      do {
         const g = current;
-        const waiter = g.waiter;
+        pending = false;
+        if (pendingWaiter) {
+          // A scope replacement keeps reconcile requests alive until its baseline completes.
+          const previous = runningWaiter;
+          runningWaiter = pendingWaiter; pendingWaiter = undefined;
+          if (previous) void runningWaiter.promise.then(() => previous.resolve(), error => previous.reject(error));
+        }
         try {
           await observe(g);
           check(g);
-          waiter.resolve();
+          g.waiter.resolve();
+          runningWaiter?.resolve(); runningWaiter = undefined;
         } catch (error) {
-          waiter.reject(error);
+          g.waiter.reject(error);
           if (!g.abort.signal.aborted && current === g && !terminal) lose(error);
           try { await retireBackend(); } catch (closeError) { retainRetirement(closeError); }
         }
-        if (current === g) break;
-        await retireBackend();
-        snapshot = undefined;
-      }
+        if (current !== g) {
+          await retireBackend(); snapshot = undefined; pending = true;
+        }
+      } while (pending && !terminal && failure === undefined);
     }).catch(lose).finally(() => {
       active = undefined;
       if (!terminal && failure === undefined) {
-        if (!current.waiter.settled) pump(); else scheduleInterval();
+        if (pending || !current.waiter.settled) pump(); else scheduleInterval();
       }
     });
   };
@@ -303,15 +305,19 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     if (terminal) return Promise.reject(retired());
     if (failure !== undefined) return Promise.reject(failure);
     clearTimeout(timer); timer = undefined;
-    if (current.waiter.settled) current.waiter = deferred();
-    if (!active) pump();
-    return current.waiter.promise;
+    pending = true;
+    pendingWaiter ??= deferred();
+    const result = pendingWaiter.promise;
+    pump();
+    return result;
   };
   const close = (): Promise<void> => {
     if (closing) return closing;
     terminal = true;
     current.abort.abort(retired());
     current.waiter.reject(retired());
+    pendingWaiter?.reject(retired()); runningWaiter?.reject(retired());
+    pendingWaiter = undefined; runningWaiter = undefined;
     clearTimers();
     options.signal?.removeEventListener("abort", abort);
     // Start physical stop immediately, without waiting behind an in-flight scan.

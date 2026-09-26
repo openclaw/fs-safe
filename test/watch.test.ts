@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
 import { watchBinding } from "../src/watch-native.js";
@@ -15,7 +16,7 @@ let executedEventCases = 0;
 let latencyProof = false;
 afterAll(() => {
   if (requiredEvents) {
-    expect(executedEventCases).toBe(6);
+    expect(executedEventCases).toBe(10);
     expect(latencyProof).toBe(true);
     console.log(JSON.stringify({ proof: "watch-events-suite", platform: process.platform, mode: "events", cases: executedEventCases }));
   }
@@ -104,8 +105,104 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     await owner.ready; expect(owner.health().directories).toBe(1);
     const limited = own(watch(await root(dir), { mode, scopes, maxEntries: 1, onInvalidate() {} }));
     await expect(limited.ready).rejects.toMatchObject({ code: "too-large" });
-    expect(limited.health().failure?.operation).toBe("scan");
+    expect(limited.health()).toMatchObject({ state: "unavailable", failure: { operation: "scan", code: "too-large" } });
+    const directories = own(watch(await root(dir), { mode, scopes, maxDirectories: 1, onInvalidate() {} }));
+    await expect(directories.ready).rejects.toMatchObject({ code: "too-large" });
+    expect(directories.health()).toMatchObject({ state: "unavailable", failure: { operation: "scan", code: "too-large" } });
   }, 30_000);
+  test("stays available under sustained writes and keeps an invalidation-only cache current", async () => {
+    await Promise.all(Array.from({ length: 1024 }, (_, n) => fs.writeFile(path.join(dir, `file-${n}`), "initial")));
+    const capability = await root(dir);
+    const cache = new Map<string, string>();
+    const failures: unknown[] = [];
+    const states: string[] = [];
+    let refresh = Promise.resolve();
+    let refreshPending = false, refreshing = false;
+    const owner = own(watch(capability, { mode, scopes, intervalMs: mode === "poll" ? 20 : 60_000,
+      onHealth: value => { states.push(value.state); },
+      onInvalidate: () => {
+        refreshPending = true;
+        if (refreshing) return;
+        refreshing = true;
+        refresh = Promise.resolve().then(async () => {
+          do {
+            refreshPending = false;
+            const next = new Map<string, string>();
+            const names = await capability.list("");
+            for (let i = 0; i < names.length; i += 16) {
+              await Promise.all(names.slice(i, i + 16).map(async name => { next.set(name, await capability.readText("./" + name)); }));
+            }
+            cache.clear(); for (const [name, value] of next) cache.set(name, value);
+          } while (refreshPending);
+        }).catch(error => { failures.push(error); }).finally(() => { refreshing = false; });
+      },
+    }));
+    await owner.ready; await refresh;
+    const end = performance.now() + 1500;
+    let writes = 0;
+    while (performance.now() < end) {
+      await fs.writeFile(path.join(dir, "file-0"), `edit-${++writes}`);
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    await owner.reconcile(); await refresh;
+    expect(states).not.toContain("unavailable");
+    expect(writes).toBeGreaterThan(20);
+    const truth = new Map<string, string>();
+    for (const name of await fs.readdir(dir)) truth.set(name, await fs.readFile(path.join(dir, name), "utf8"));
+    expect(cache).toEqual(truth);
+    await fs.writeFile(path.join(dir, "file-0"), "isolated-final-edit");
+    await expect.poll(() => cache.get("file-0"), { timeout: 5000 }).toBe("isolated-final-edit");
+    await owner.close(); await refresh;
+    expect(failures).toEqual([]);
+  }, 30_000);
+  test("resolves readiness while the baseline is changing", async () => {
+    await fs.writeFile(path.join(dir, "changing"), "initial");
+    let writes = 0;
+    __setFsSafeTestHooksForTest({ afterWatchRegistration: async () => {
+      await fs.writeFile(path.join(dir, "changing"), String(++writes));
+    } });
+    const owner = own(watch(await root(dir), { mode, scopes, onInvalidate() {} }));
+    await owner.ready;
+    expect(["ready", "reconciling"]).toContain(owner.health().state);
+    expect(writes).toBeGreaterThan(0);
+    expect(writes).toBeLessThan(4);
+  });
+  test("re-registers a directory replaced between registration and listing", async () => {
+    const child = path.join(dir, "child"); await fs.mkdir(child);
+    let registrations = 0, baselineRegistrations = 0, backends = 0;
+    __setFsSafeTestHooksForTest({
+      afterWatchBackendCreated: () => { backends++; },
+      afterWatchRegistration: async name => {
+        if (name !== child) return;
+        if (++registrations === 1) {
+          await fs.rename(child, path.join(dir, "retired"));
+          await fs.mkdir(child); await fs.writeFile(path.join(child, "new"), "new");
+        }
+      },
+    });
+    const owner = own(watch(await root(dir), { mode, scopes: [{ path: "child", kind: "tree" }], onInvalidate: () => { baselineRegistrations ||= registrations; } }));
+    await owner.ready;
+    expect(["ready", "reconciling"]).toContain(owner.health().state);
+    expect(baselineRegistrations).toBe(2);
+    expect(backends).toBe(mode === "events" ? 1 : 0);
+  });
+  test("treats a directory changing kind mid-pass as structural churn", async () => {
+    const child = path.join(dir, "child"); await fs.mkdir(child);
+    const changes: WatchInvalidation[] = [];
+    let replace = false;
+    const owner = own(watch(await root(dir), { mode, scopes, onInvalidate: value => { changes.push(value); },
+      exclude: entry => {
+        if (replace && entry.path === "child" && entry.kind === "directory") {
+          replace = false; fsSync.rmdirSync(child); fsSync.writeFileSync(child, "now a file");
+        }
+        return false;
+      },
+    }));
+    await owner.ready; changes.length = 0; replace = true;
+    await owner.reconcile();
+    expect(owner.health().failure).toBeUndefined();
+    expect(changes.some(value => !value.changes || value.changes.some(change => change.path === "child" && change.type === "structural"))).toBe(true);
+  });
   test("rejects thenables and retains callback failure after successful close", async () => {
     const owner = own(watch(await root(dir), { mode, scopes, onInvalidate: async () => {} }));
     await expect(owner.ready).rejects.toMatchObject({ code: "helper-failed" });
@@ -247,4 +344,123 @@ it.skipIf(!eventsAvailable)("coalesces a real event burst while JavaScript is bl
   await expect.poll(() => changes.some(v => v.reason === "overflow" && v.changes === undefined), { timeout: 5000 }).toBe(true);
   expect(changes.every(v => !v.changes || v.changes.length <= 2)).toBe(true);
   await owner.close(); expect(getNativeBinding()!.watchThreadCount!()).toBe(0);
+});
+
+it("waits for a pass started after reconcile, coalescing only pending calls", async () => {
+  let release!: () => void, entered!: () => void;
+  const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const owner = own(watch(await root(dir), { mode: "poll", scopes, onInvalidate() {} }));
+  await owner.ready;
+  let passes = 0;
+  __setFsSafeTestHooksForTest({ beforeWatchRegistration: async () => {
+    if (++passes === 1) { entered(); await held; }
+  } });
+  const first = owner.reconcile(); await enteredPromise;
+  const second = owner.reconcile(), peer = owner.reconcile();
+  release();
+  expect(peer).toBe(second); expect(second).not.toBe(first);
+  await Promise.all([first, second]);
+  expect(passes).toBe(2);
+});
+
+it("bounds per-directory replacement retries without failing the subscription", async () => {
+  const child = path.join(dir, "child"); await fs.mkdir(child);
+  let registrations = 0;
+  __setFsSafeTestHooksForTest({ afterWatchRegistration: async name => {
+    if (name !== child) return;
+    await fs.rename(child, path.join(dir, `old-${++registrations}`)); await fs.mkdir(child);
+  } });
+  const owner = own(watch(await root(dir), { mode: "poll", scopes: [{ path: "child", kind: "tree" }], onInvalidate() {} }));
+  await owner.ready;
+  expect(registrations).toBe(3);
+  expect(owner.health().state).toBe("ready");
+  __setFsSafeTestHooksForTest();
+  await owner.reconcile();
+  expect(owner.health().directories).toBe(2);
+});
+
+it.skipIf(!eventsAvailable)("coalesces hints during a slow pass and reports undetailed overflow", async () => {
+  let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
+  __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const changes: WatchInvalidation[] = [];
+  const owner = own(watch(await root(dir), { mode: "events", scopes, onInvalidate: value => { changes.push(value); } }));
+  await owner.ready; changes.length = 0;
+  let passes = 0;
+  __setFsSafeTestHooksForTest({ beforeWatchRegistration: async () => {
+    if (++passes === 1) {
+      for (let i = 0; i < 100; i++) emit({ hints: [], overflow: true });
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+  } });
+  await owner.reconcile();
+  await expect.poll(() => owner.health().state).toBe("ready");
+  expect(passes).toBe(2);
+  expect(changes.some(value => value.reason === "overflow" && value.changes === undefined)).toBe(true);
+});
+
+it("keeps reconcile requests alive across a fenced scope replacement", async () => {
+  let release!: () => void, entered!: () => void;
+  const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const owner = own(watch(await root(dir), { mode: "poll", scopes, onInvalidate() {} }));
+  await owner.ready;
+  let passes = 0;
+  __setFsSafeTestHooksForTest({ beforeWatchRegistration: async () => {
+    if (++passes === 1) { entered(); await held; }
+  } });
+  const reconciliation = owner.reconcile(); await enteredPromise;
+  const replacement = owner.setScopes([{ path: "new", kind: "entry" }]);
+  release();
+  await expect(reconciliation).resolves.toBeUndefined();
+  await replacement;
+  expect(passes).toBe(2);
+});
+
+it.skipIf(!eventsAvailable)("preserves isolated event detail after the normal coalescing delay", async () => {
+  await fs.writeFile(path.join(dir, "file"), "data");
+  let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
+  __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  let notified!: (value: WatchInvalidation) => void;
+  const notification = new Promise<WatchInvalidation>(resolve => { notified = resolve; });
+  let ready = false;
+  const owner = own(watch(await root(dir), { mode: "events", scopes, onInvalidate: value => { if (ready) notified(value); } }));
+  await owner.ready; ready = true;
+  let now = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  try {
+    emit({ hints: [{ directory: "", name: "file", event: "change" }], overflow: false });
+    now = 26; // Intentional debounce time, with no slow scan or pending work.
+    expect(await notification).toEqual({ reason: "event", changes: [{ path: "file", type: "content" }] });
+  } finally { clock.mockRestore(); }
+});
+
+it.skipIf(!eventsAvailable)("retries transient descendant registration errors but fails lost Root access", async () => {
+  await fs.mkdir(path.join(dir, "child"));
+  const binding = getNativeBinding()!;
+  const add = binding.watchAdd!.bind(binding);
+  for (const code of ["EACCES", "EPERM", "EBUSY"]) {
+    let attempts = 0;
+    const mocked = vi.spyOn(binding, "watchAdd").mockImplementation((id, directory) => {
+      if (directory.relative === "child" && ++attempts === 1) throw Object.assign(new Error("transient access"), { code });
+      add(id, directory);
+    });
+    try {
+      const owner = own(watch(await root(dir), { mode: "events", scopes, onInvalidate() {} }));
+      await owner.ready;
+      expect(attempts).toBe(2);
+      expect(owner.health().failure).toBeUndefined();
+      await owner.close();
+    } finally { mocked.mockRestore(); }
+  }
+  for (const code of ["EACCES", "EBUSY"]) {
+    let attempts = 0;
+    const mocked = vi.spyOn(binding, "watchAdd").mockImplementation(() => { attempts++; throw Object.assign(new Error("Root access"), { code }); });
+    try {
+      const owner = own(watch(await root(dir), { mode: "events", scopes: [{ path: "child", kind: "tree" }], onInvalidate() {} }));
+      await expect(owner.ready).rejects.toMatchObject({ details: { code: code === "EBUSY" ? "registration-failed" : code } });
+      expect(owner.health().state).toBe("unavailable");
+      expect(attempts).toBe(code === "EBUSY" ? 3 : 1);
+    } finally { mocked.mockRestore(); }
+  }
 });

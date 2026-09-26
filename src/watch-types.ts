@@ -33,7 +33,7 @@ export type WatchSubscription = {
   readonly ready: Promise<void>;
   /** Immediately fences the old generation. Superseded calls reject AbortError. */
   setScopes(scopes: readonly WatchScope[]): Promise<void>;
-  /** Coalesces concurrent requests. */
+  /** Completes a pass started after this call; concurrent pending requests coalesce. */
   reconcile(): Promise<void>;
   health(): WatchHealth;
   /** Terminal, idempotent, joined; rejects only retirement failures. */
