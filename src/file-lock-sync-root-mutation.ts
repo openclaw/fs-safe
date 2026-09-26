@@ -31,13 +31,12 @@ import {
   observeDirectory,
   readFileLockSyncRootSnapshot,
   sameExactIdentity,
-  type DirectoryReceipt,
   type FileLockSyncRootDirectoryReceipt,
   type FileLockSyncRootFileReceipt,
 } from "./file-lock-sync-root-io.js";
 import { pathForWindowsFilesystem } from "./windows-path-alias.js";
 
-function ensureParent(pathAuthority: FileLockSyncRootPath): DirectoryReceipt {
+function ensureParent(pathAuthority: FileLockSyncRootPath) {
   const authority = pathAuthority.authority;
   const context = authority.context;
   assertFileLockSyncRootResolvedPathCurrent(pathAuthority);
