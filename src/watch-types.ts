@@ -19,6 +19,8 @@ export type WatchOptions = {
   scopes: readonly WatchScope[];
   /** Required. auto selects events when available, otherwise poll. */
   mode: "auto" | "events" | "poll";
+  /** Keep the Node event loop alive while open. Defaults to true. */
+  persistent?: boolean;
   /** Guarded reconciliation interval: events 30000, poll 1000; minimum 20 ms. */
   intervalMs?: number;
   exclude?: (entry: WatchEntry) => boolean;

@@ -123,6 +123,7 @@ handles and delivery queues, and closing one does not retire another's observati
 | Option | Default / bound |
 | --- | --- |
 | `scopes` | At most 128 literal scopes |
+| `persistent` | `true`; `false` lets Node exit with the subscription still open |
 | `intervalMs` | 30000 with events; 1000 with poll; minimum 20 ms |
 | `maxDirectories` | 4096 observed directories, including scope ancestors |
 | `maxEntries` | 100000 examined entries per pass, including excluded entries |
@@ -155,7 +156,14 @@ waiting for the same future pass coalesce; an earlier in-flight pass cannot sati
 a new call. It rejects only when observation becomes unavailable or is closed.
 `setScopes` fences the old generation immediately and resolves after the new
 baseline scan; superseded scope calls reject `AbortError`.
-An open subscription keeps the Node event loop alive. `signal` triggers close;
+By default, an open subscription keeps the Node event loop alive, matching
+`fs.watch`. Set `persistent: false` for caches used by one-shot commands:
+the subscription's timers and native delivery handle do not keep Node alive,
+including during startup or reconciliation. Invalidations still arrive while
+other work keeps the process alive. Persistent and non-persistent subscriptions
+have independent lifetimes; closing the last persistent one lets Node exit.
+Native environment cleanup retires any remaining event registrations and joins
+the hub at exit. `signal` triggers close;
 await `close()` or `[Symbol.asyncDispose]()` to join owned work.
 
 `health()` returns `starting`, `ready`, `reconciling`, `unavailable`, or `closed`,

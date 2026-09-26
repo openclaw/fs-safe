@@ -44,11 +44,11 @@ export async function limits() {
   const f = await fixture("transport-overflow"); let observer, inject;
   const binding = getNativeBinding(), original = binding.watchRegister;
   const batches = { total: 0, overflow: 0, errors: [] };
-  binding.watchRegister = (directory, limit, callback) => original(directory, limit, batch => {
+  binding.watchRegister = (directory, limit, callback, persistent) => original(directory, limit, batch => {
     batches.total++; if (batch.overflow) batches.overflow++;
     if (batch.error) batches.errors.push(batch.error);
     callback(batch);
-  });
+  }, persistent);
   try {
     await fs.writeFile(path.join(f.directory, "modify"), "before");
     await fs.writeFile(path.join(f.directory, "remove"), "before");

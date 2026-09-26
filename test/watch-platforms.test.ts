@@ -86,7 +86,7 @@ win("observes deep edits using recursive RDCW and joins cancellation during recu
 
 mac("retries a full native callback queue when JS consumes a batch, without another event", async () => {
   const batches: { overflow: boolean }[] = [];
-  const id = binding!.watchRegister!(directory, 256, batch => { batches.push(batch); });
+  const id = binding!.watchRegister!(directory, 256, batch => { batches.push(batch); }, true);
   try {
     // Keep JS blocked while the hub fills the one-batch TSFN queue and overflows it.
     for (let i = 0; i < 3; i++) {

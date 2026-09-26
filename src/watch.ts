@@ -38,6 +38,7 @@ const coalesceMs = 25;
 export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const context = rootHandleContext(root);
   const options = { ...input };
+  const persistent = options.persistent !== false;
   if (!["auto", "events", "poll"].includes(options.mode)) throw new TypeError("invalid watch mode");
   let binding: NativeBinding | undefined;
   let selectionFailure: unknown;
@@ -151,6 +152,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const scheduleInterval = () => {
     if (terminal || failure !== undefined) return;
     timer = setTimeout(() => { timer = undefined; void request().catch(() => {}); }, intervalMs);
+    if (!persistent) timer.unref();
   };
   const onHint = (g: Generation, batch: NativeWatchBatch) => {
     if (terminal || current !== g || g.abort.signal.aborted || failure !== undefined) return;
@@ -172,6 +174,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       // Raw backend filenames stay private. Reconcile before publishing detail.
       void request().catch(() => {});
     }, coalesceMs);
+    if (!persistent) hintTimer.unref();
   };
   const fallBack = (error: unknown): boolean => {
     if (options.mode !== "auto" || getFsSafeNativeConfig().mode === "require" ||
@@ -200,7 +203,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       try {
         const candidate = new NativeWatchBackend(binding!, context, batch => {
           if (backend === candidate) onHint(g, batch);
-        }, maxPendingPaths);
+        }, maxPendingPaths, persistent);
         backend = candidate;
         const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
           if (backend === candidate) onHint(g, batch);

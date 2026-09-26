@@ -122,7 +122,7 @@ export interface NativeBinding {
   /** Windows-only, private handle custody; no borrowed/runtime descriptors. */
   retainWindowsFile?(directory: string, basename: string, parentDev: bigint, parentIno: bigint,
     dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, ctimeNs: bigint, sha256: string, maxBytes: number): NativeRetainedFile;
-  watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void): number;
+  watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void, persistent: boolean): number;
   watchAdd?(id: number, directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }): void;
   watchTestEvent?(id: number, path: string, flags: number): void;
   watchUnregister?(id: number): void;

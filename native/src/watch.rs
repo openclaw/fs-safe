@@ -254,6 +254,7 @@ fn register_impl(
     root: String,
     limit: u32,
     callback: Function<WatchBatch, ()>,
+    persistent: bool,
 ) -> NativeResult<u32> {
     if !(1..=4096).contains(&limit) {
         return Err(native_error("EINVAL", "invalid watch pending limit"));
@@ -261,7 +262,7 @@ fn register_impl(
     let id = NEXT
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |id| id.checked_add(1))
         .map_err(|_| unavailable())?;
-    let callback = Callback::new(env, callback)?;
+    let callback = Callback::new(env, callback, persistent)?;
     let mut slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if slot.is_none() {
         *slot = Some(start()?);
@@ -325,8 +326,8 @@ fn unregister_impl(env: Env, id: u32) -> NativeResult<()> {
     Ok(())
 }
 #[napi]
-pub fn watch_register(env: Env, root: String, limit: u32, callback: Function<WatchBatch, ()>) -> Result<u32> {
-    crate::into_napi(env, register_impl(env, root, limit, callback))
+pub fn watch_register(env: Env, root: String, limit: u32, callback: Function<WatchBatch, ()>, persistent: bool) -> Result<u32> {
+    crate::into_napi(env, register_impl(env, root, limit, callback, persistent))
 }
 #[napi]
 pub fn watch_add(env: Env, id: u32, directory: WatchDirectory) -> Result<()> {

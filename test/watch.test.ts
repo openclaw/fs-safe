@@ -308,7 +308,7 @@ it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("turns overflow and
   const native = getNativeBinding()!;
   const register = native.watchRegister!;
   // Exercise hint admission independently of OS coalescing and queue pressure.
-  vi.spyOn(native, "watchRegister").mockImplementation((root, limit) => register(root, limit, () => {}));
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
   let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
   __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
   const changes: WatchInvalidation[] = [];
@@ -432,7 +432,7 @@ it("keeps reconcile requests alive across a fenced scope replacement", async () 
 it.skipIf(!eventsAvailable)("preserves isolated event detail after the normal coalescing delay", async () => {
   const native = getNativeBinding()!;
   const register = native.watchRegister!;
-  vi.spyOn(native, "watchRegister").mockImplementation((root, limit) => register(root, limit, () => {}));
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
   await fs.writeFile(path.join(dir, "file"), "data");
   let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
   __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });

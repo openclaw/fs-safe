@@ -48,7 +48,7 @@ unsafe extern "C" fn deliver(
     }
 }
 impl Callback {
-    pub fn new(env: Env, callback: Function<WatchBatch, ()>) -> NativeResult<Self> {
+    pub fn new(env: Env, callback: Function<WatchBatch, ()>, persistent: bool) -> NativeResult<Self> {
         let mut name = null_mut();
         let label = b"fs-safe-watch";
         let status = unsafe {
@@ -58,7 +58,7 @@ impl Callback {
             return Err(native_error("EIO", "create watch callback name"));
         }
         let mut raw = null_mut();
-        // One thread permit, a one-batch queue, and the default referenced event-loop lifetime.
+        // One thread permit and one queued batch per registration.
         let status = unsafe {
             sys::napi_create_threadsafe_function(
                 env.raw(),
@@ -77,7 +77,16 @@ impl Callback {
         if status != sys::Status::napi_ok {
             return Err(native_error("EIO", "create watch callback"));
         }
-        Ok(Self(raw))
+        let callback = Self(raw);
+        if !persistent {
+            // This registration's libuv handle is unref'd on the JS thread before
+            // the hub can enqueue delivery. The native hub owns no Node handles.
+            let status = unsafe { sys::napi_unref_threadsafe_function(env.raw(), raw) };
+            if status != sys::Status::napi_ok {
+                return Err(native_error("EIO", "unref watch callback"));
+            }
+        }
+        Ok(callback)
     }
     pub fn send(&mut self, batch: WatchBatch, notify: Notify) -> bool {
         if self.0.is_null() {
