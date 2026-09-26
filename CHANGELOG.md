@@ -2,28 +2,32 @@
 
 ## Unreleased
 
+## 0.20.0 - 2026-09-25
+
+### Highlights
+
+- **Older Linux systems:** when `openat2` is absent (Linux before 5.6) or blocked by seccomp, native operations fall back to a guarded no-follow walk instead of failing with `ENOSYS`. Nested no-clobber moves keep working, and GNU x64/arm64 bindings now target glibc 2.28, so native operations load on RHEL 8-family systems. ([#686](https://github.com/openclaw/fs-safe/pull/686), [#685](https://github.com/openclaw/fs-safe/pull/685); fixes [#572](https://github.com/openclaw/fs-safe/issues/572), [#511](https://github.com/openclaw/fs-safe/issues/511), [#548](https://github.com/openclaw/fs-safe/issues/548))
+- **Path hardening:** trash moves stay inside allowed roots, symlink-parent checks inspect raw segments before dotdot normalization, relative-escape checks recognize either Windows separator and nested escapes, and safe path segments reject Windows reserved device names. Thanks @SebTardif. ([#611](https://github.com/openclaw/fs-safe/pull/611), [#615](https://github.com/openclaw/fs-safe/pull/615), [#614](https://github.com/openclaw/fs-safe/pull/614), [#612](https://github.com/openclaw/fs-safe/pull/612))
+- **ZIP admission per operation:** portable ZIP reads and extraction bind entry selection to the admitted archive, name, and decoder object, and verify payloads against the admitted CRC and size. Substituted, renamed, or replaced decoder entries are rejected. ([#660](https://github.com/openclaw/fs-safe/pull/660))
+
 ### Features
 
-- Expose the existing pre-publication hook and staging-prefix options through `writeTextAtomic`, preserving atomic replacement's validation and identity checks.
-- **Retained symlink publication:** `retainSymlinkInDirectory()` on the advanced surface holds an explicitly identified POSIX symlink through exact-slot no-replace publication and explicit recovery, preserving observed foreign replacements and uncertain outcomes.
-
-- **Batched Windows ACL facts:** add `readOwnerAndDaclBatch()` to inspect ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Existing synchronous inspection remains unchanged.
+- **Retained symlink publication:** `retainSymlinkInDirectory()` on the advanced surface holds an explicitly identified POSIX symlink through exact-slot no-replace publication and explicit recovery, preserving observed foreign replacements and uncertain outcomes. ([#682](https://github.com/openclaw/fs-safe/pull/682))
+- **Batched Windows ACL facts:** `readOwnerAndDaclBatch()` inspects ordered paths in one isolated native worker or one PowerShell process, with a configurable whole-batch timeout and bounded output. Results are bounded during collection; oversized batches reject with `too-large` before later paths are queried. ([#669](https://github.com/openclaw/fs-safe/pull/669), [#680](https://github.com/openclaw/fs-safe/pull/680))
+- **Atomic text options:** `writeTextAtomic()` forwards the existing `beforeRename` hook and `tempPrefix` option to atomic replacement, keeping its validation and identity checks. ([#580](https://github.com/openclaw/fs-safe/pull/580))
 
 ### Fixes
 
-- **Windows ACL batch memory:** bound encoded fallback results during collection and reject oversized batches with `too-large` before querying later paths, avoiding retention of every descriptor graph while preserving duplicate observations and earlier query failures.
-- **Trash containment:** admit the moved entry by its real parent and retain the parent guard through mutation, including dangling and outward-pointing symlinks. Thanks @SebTardif. ([#611](https://github.com/openclaw/fs-safe/pull/611))
-- **Symlink parent checks:** inspect raw parent segments before dotdot normalization, including guarded regular-file appends. Thanks @SebTardif. ([#615](https://github.com/openclaw/fs-safe/pull/615))
-- **Safe path segments:** reject Windows reserved device names consistently across platforms while preserving device-safe temporary filename sanitization. Thanks @SebTardif. ([#612](https://github.com/openclaw/fs-safe/pull/612))
-- **Relative escape checks:** recognize either Windows separator and nested escapes while preserving contained dotdot paths and literal POSIX backslashes. Thanks @SebTardif. ([#614](https://github.com/openclaw/fs-safe/pull/614))
-- **Lock exit cleanup:** leave raw sidecars in place when Windows reports an unknown device or inode, while preserving token-owned cleanup with known descriptor/path identity drift. Thanks @SebTardif. ([#617](https://github.com/openclaw/fs-safe/pull/617))
-- **Linux native compatibility:** build GNU x64/arm64 bindings for glibc 2.28 and newer, restoring native operations on RHEL 8-family systems; reject release artifacts that require newer GLIBC symbols. ([#548](https://github.com/openclaw/fs-safe/issues/548))
-- **Older Linux kernels:** fall back to guarded no-follow native parent resolution when `openat2` is absent or blocked by seccomp, retaining nested no-clobber moves, exact identity checks, explicit `best-effort` containment, and fail-closed bounded cleanup. ([#572](https://github.com/openclaw/fs-safe/issues/572), [#511](https://github.com/openclaw/fs-safe/issues/511))
-- **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes.
-- **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence.
-- Portable ZIP entry reads reject decoder entries replaced after preflight before invoking the payload reader.
-- Portable ZIP extraction and entry reads verify payloads against the admitted CRC and size even if in-process decoder state changes after preflight.
-- Portable ZIP reads reject decoder entries substituted from another archive or renamed after admission, while extraction retains its admitted names and physical order.
+- **Lock exit cleanup:** leave raw sidecars in place when Windows reports an unknown device or inode, while keeping token-owned cleanup working when the descriptor and path identities legitimately differ (for example on VirtioFS). Thanks @SebTardif. ([#617](https://github.com/openclaw/fs-safe/pull/617))
+- **Retained symlink errors:** preserve uncertain publication outcomes and cached cleanup/recovery failures when inspecting thrown error metadata fails, retaining the original cause without retrying mutations, callbacks, or descriptor closes. ([#684](https://github.com/openclaw/fs-safe/pull/684))
+- **Create collision cleanup:** atomic and streamed creates remove their private stage when the JavaScript fallback observes a competing destination before publication; failures after a link attempt retain their existing recovery evidence. ([#683](https://github.com/openclaw/fs-safe/pull/683))
+
+### Compatibility
+
+- Safe path segments now reject Windows reserved device names (`CON`, `NUL`, `COM1`, `CON.json`, …) on every platform, because segments are portable identifiers. Temporary filename sanitization still suffixes them (`CON.txt` becomes `CON_.txt`). ([#612](https://github.com/openclaw/fs-safe/pull/612))
+- `assertNoSymlinkParents()` and guarded appends with `rejectSymlinkParents` reject raw spellings whose dotdot segments would cancel a symlink or re-enter the root after leaving it. ([#615](https://github.com/openclaw/fs-safe/pull/615))
+- Without `openat2`, beneath opens report `best-effort` containment instead of `kernel-atomic`, anonymous `O_TMPFILE` opens report `ENOTSUP`, and bounded tree cleanup fails closed with `helper-unavailable` because it requires `RESOLVE_NO_XDEV`. ([#686](https://github.com/openclaw/fs-safe/pull/686))
+- The Linux GNU binding floor is glibc 2.28 for both x64 and arm64 (arm64 was previously built against 2.17), matching Node 22's own Linux baseline. ([#685](https://github.com/openclaw/fs-safe/pull/685))
 
 ## 0.19.0 - 2026-09-24
 
