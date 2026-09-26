@@ -7,7 +7,8 @@ import { watch } from "../src/watch.js";
 import { watchBinding } from "../src/watch-native.js";
 
 const binding = watchBinding("auto");
-it.skipIf(!binding?.watchMemoryStats)("retires native allocations across close and scope generations", async () => {
+it.skipIf(!binding?.watchMemoryStats && process.env.FS_SAFE_TEST_WATCH_EVENTS !== "1")("retires native allocations across close and scope generations", async () => {
+  expect(binding?.watchMemoryStats, "the native lane must build the accounting hook").toBeTypeOf("function");
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "watch-memory-"));
   const capability = await root(directory);
   const before = binding!.watchMemoryStats!();
