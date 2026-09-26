@@ -68,8 +68,13 @@ const requiredImports = [
   },
   {
     file: "src/temp-target.ts",
-    pattern: /sanitizeSafePathSegment/,
-    message: "temp filenames must use the shared safe path segment sanitizer",
+    pattern: /\bnormalizeSafePathSegment\b/,
+    message: "temp filenames must use the shared normalizeSafePathSegment helper",
+  },
+  {
+    file: "src/temp-target.ts",
+    pattern: /\bisSafePathSegment\b/,
+    message: "temp filenames must use the shared isSafePathSegment helper",
   },
 ];
 
