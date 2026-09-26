@@ -18,7 +18,6 @@ windows_security_export!(
     "inspectWindowsSecureFileHandle",
     fn inspect_windows_secure_file_handle(env: Env, fd: i32) -> WindowsDescriptorSecurityFacts,
     windows::inspect(fd),
-    fd,
     "Windows descriptor security inspection is only available on Windows"
 );
 
