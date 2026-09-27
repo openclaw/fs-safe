@@ -56,11 +56,20 @@ means invalidate **every configured scope**. Initial admission and every
 successful `setScopes` publish one undetailed `reconcile` invalidation. A rename
 or identity replacement is structural; metadata changes to the same ordinary
 file may be content changes. Neither means the file is settled or readable.
+An admitted native hint can invalidate an entry even when its before/after scan
+metadata is identical: the path may have changed and been restored between scans
+(ABA), or content may have changed without a distinguishable metadata change.
+Structural hints remain conservative in that case.
+This does not promise delivery for a differently spelled alias that appears and
+disappears entirely between scans: without an observed identity, it cannot be
+admitted as the selected path. Observation is not a complete transient history.
 Raw event names remain private: detail comes from guarded scans, prior guarded
-snapshots, or explicitly configured targets. Unknown names and overflow lose
-detail. Exclusion callbacks are synchronous; excluded directories are not
-scanned. Exclusions are a scan policy, not a promise that overflow cannot wake
-the application.
+snapshots, or explicitly configured targets. Unclassifiable hints inside selected,
+non-excluded territory lose detail. Hints for excluded or unselected paths are
+ignored. Exclusion callbacks are synchronous; excluded directories are recorded
+without descent. Bounded exclusion records recognize late deletion hints.
+Genuine backend event loss and detail-budget exhaustion still invalidate every
+scope, including when an excluded subtree caused the underlying event pressure.
 
 ## Transport and mode
 
@@ -96,6 +105,14 @@ pending detail and queued batches are bounded. The last removal stops and joins
 the native thread. No Worker threads, eval programs, or JS `fs.watch` are used.
 
 macOS uses FileEvents, NoDefer and WatchRoot with a 30 ms FSEvents latency.
+After guarded admission, streams use selected tree anchors and entry parents,
+falling back to the nearest admitted ancestor for missing paths. Nested anchors
+are deduplicated, with at most 128 paths. The eight shallowest non-overlapping
+excluded directories are also passed to `FSEventStreamSetExclusionPaths`.
+When the stream paths change, the old stream is stopped, invalidated and released
+on its dispatch queue, then its replacement starts before another guarded pass
+covers the handover. Native exclusions reduce traffic but cannot eliminate real
+FSEvents drops, including during recursive deletion.
 Absolute hints are reduced lexically against the admitted canonical Root;
 outside paths never become detail. Dropped/wrapped streams, RootChanged and
 Unmount trigger guarded reconciliation. Pathname hints can reflect activity
@@ -107,9 +124,10 @@ READ/WRITE/DELETE sharing, backup semantics and overlapped I/O. Each handle
 observes the entire subtree; guarded scans filter hints to configured scopes.
 No descendant watch handles are retained, so directories inside the Root can be
 renamed while watching, including directories containing selected scopes.
-Root-wide noise can coalesce into whole-scope invalidation. Completed 64 KiB buffers are copied and the
+Completed buffers are copied and the
 read re-armed before names are examined. Zero-byte / enumeration-loss completions
-invalidate every scope. Cancellation waits for IOCP completion before closing
+invalidate every scope. Buffers are 1 MiB on confirmed local volumes, and 64 KiB
+on network/UNC or unclassified volumes. Cancellation waits for IOCP completion before closing
 the handle or freeing its buffer; there are no detached retirement waits.
 
 Windows prevents ordinary renames of the Root's own ancestors while its directory
@@ -150,12 +168,20 @@ registration/listing identity is retried up to three times per directory; furthe
 churn invalidates that subtree. Poll mode starts with its first scan and detects
 changes during the crawl on the next comparison. Neither mode waits for two
 agreeing scans.
+`ready` and `reconcile()` do not drain the operating system's event queue.
+For example, FSEvents can deliver coalesced setup creation activity after `ready`,
+even with its stream starting at the current event ID. Consumers must tolerate
+these advisory invalidations; tests measuring a quiet interval should first
+observe a selected sentinel edit and drain its trailing events.
 
 Each later pass compares with the previous snapshot, publishes bounded differences,
 and adopts its result as the next snapshot. Vanishing entries, kind changes, and
 transient descendant scan errors produce structural invalidations, preserving the
-Root identity checks. Events during a pass coalesce into one pending pass; detail
-overflow or catching up beyond the 25 ms coalescing window emits `overflow` without
+Root identity checks. Events during a pass coalesce into one pending pass and
+retain bounded detail regardless of how long the scan takes. The 25 ms hint
+coalescing window does not impose a scan deadline. A full native callback queue
+retains its bounded pending batch for retry. Genuine backend loss, exhausted
+detail capacity, or an unclassifiable selected hint emits `overflow` without
 detail. Sustained writes cannot exhaust a pass budget or disable observation.
 
 `reconcile()` resolves after a complete pass that **started after the call**. Calls
@@ -191,6 +217,10 @@ work remains application-owned and is not joined by the subscription.
 health but do not make successful retirement reject. Retirement failures do
 reject, with a `SuppressedError` retaining an earlier observation failure when
 both exist. No new generation or callback can be admitted after close.
+
+The stress harness also provides `node scripts/watch-stress.mjs --scenario soak-short`,
+a two-minute lifecycle and collected-memory smoke. It is separate from the
+full one-hour `soak` scenario and its stronger memory-growth qualification.
 
 ## Seeded consumer-cache stress test
 

@@ -36,7 +36,7 @@ function gate() {
   return { promise, resolve };
 }
 function backend() {
-  const binding = { watchRegister: vi.fn(() => 1), watchAdd: vi.fn(), watchUnregister: vi.fn() };
+  const binding = { watchRegister: vi.fn(() => 1), watchAdd: vi.fn(), watchConfigure: vi.fn(), watchUnregister: vi.fn() };
   vi.spyOn(nativeWatch, "watchBinding").mockReturnValue(binding as unknown as NativeBinding);
   return binding;
 }
@@ -201,7 +201,7 @@ it.each([false, true])("applies persistent=%s to interval and hint timers", asyn
   const invalidations = vi.fn();
   const owner = make({ mode: "events", persistent, onInvalidate: invalidations });
   try {
-    await owner.ready; await vi.advanceTimersByTimeAsync(0);
+    await owner.ready; await owner.reconcile(); await vi.advanceTimersByTimeAsync(0);
     expect(binding.watchRegister).toHaveBeenCalledWith(dir, 256, expect.any(Function), persistent);
     expect(timers.mock.results.at(-1)!.value.hasRef()).toBe(persistent);
     emit({ hints: [], overflow: true });
@@ -244,7 +244,7 @@ it("keeps rename hints when later change hints arrive and bounds distinct pendin
   expect(changes.at(-1)).toEqual({ reason: "overflow", changes: undefined });
 });
 
-it("coalesces hints during a slow pass and reports undetailed overflow", async () => {
+it("coalesces backend overflow during a slow pass into one pending overflow", async () => {
   backend(); let emit!: (batch: nativeWatch.NativeWatchBatch) => void;
   hooks({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
   const changes: WatchInvalidation[] = [];
@@ -266,6 +266,40 @@ it("coalesces hints during a slow pass and reports undetailed overflow", async (
   expect(passes).toBe(2);
   expect(changes).toEqual([
     { reason: "overflow", changes: undefined },
-    { reason: "overflow", changes: undefined },
   ]);
+});
+
+it("drops guarded unselected sibling hints and preserves selected detail", async () => {
+  backend(); let emit!: (batch: nativeWatch.NativeWatchBatch) => void;
+  hooks({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  await fs.writeFile(path.join(dir, "config.json"), "value");
+  const invalidations: WatchInvalidation[] = [];
+  const owner = make({ mode: "events", maxPendingPaths: 1025, scopes: [{ path: "config.json", kind: "entry" }],
+    onInvalidate: value => { invalidations.push(value); },
+  });
+  await owner.ready; await owner.reconcile(); invalidations.length = 0;
+  const noise = { hints: Array.from({ length: 1024 }, (_, n) => ({ directory: "", name: `sibling-${n}`, event: "rename" as const })), overflow: false };
+  emit(noise); await owner.reconcile();
+  expect(invalidations).toEqual([]);
+  emit(noise);
+  emit({ hints: [{ directory: "", name: "config.json", event: "change" }], overflow: false });
+  await owner.reconcile();
+  expect(invalidations).toEqual([{ reason: "event", changes: [{ path: "config.json", type: "content" }] }]);
+});
+
+it("attributes overflow flags to the pass that consumed them", async () => {
+  backend(); let emit!: (batch: nativeWatch.NativeWatchBatch) => void;
+  hooks({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const phases: string[] = [];
+  let ready = false;
+  const owner = make({ mode: "events", onInvalidate: value => { if (ready) phases.push(value.reason); } });
+  await owner.ready; await owner.reconcile(); ready = true;
+  let passes = 0;
+  hooks({
+    afterWatchBackendOverflow: (_, phase) => { phases.push(phase); },
+    beforeWatchRegistration: () => { if (++passes === 1) emit({ hints: [], overflow: true }); },
+  });
+  emit({ hints: [], overflow: true });
+  await owner.reconcile(); await owner.reconcile();
+  expect(phases).toEqual(["received", "received", "reconciled", "overflow", "reconciled", "overflow"]);
 });

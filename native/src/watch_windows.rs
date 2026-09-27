@@ -15,8 +15,28 @@ use windows_sys::Win32::Storage::FileSystem::*;
 use windows_sys::Win32::System::IO::{
     CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, PostQueuedCompletionStatus,
 };
+use windows_sys::Win32::System::WindowsProgramming::{
+    DRIVE_CDROM, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOVABLE,
+};
+#[cfg(test)]
+use windows_sys::Win32::System::WindowsProgramming::{DRIVE_NO_ROOT_DIR, DRIVE_REMOTE, DRIVE_UNKNOWN};
 
-const CAPACITY: usize = 65536;
+const NETWORK_CAPACITY: usize = 64 * 1024;
+const LOCAL_CAPACITY: usize = 1024 * 1024;
+fn buffer_capacity(root: &str) -> usize {
+    let root: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+    let mut volume = vec![0u16; 32768];
+    if unsafe { GetVolumePathNameW(root.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) } == 0 {
+        return NETWORK_CAPACITY;
+    }
+    capacity_for_drive(unsafe { GetDriveTypeW(volume.as_ptr()) })
+}
+fn capacity_for_drive(drive: u32) -> usize {
+    match drive {
+        DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_RAMDISK | DRIVE_CDROM => LOCAL_CAPACITY,
+        _ => NETWORK_CAPACITY,
+    }
+}
 struct Anchor {
     owner: u32,
     identity: ExactFileIdentity,
@@ -35,7 +55,7 @@ impl Anchor {
             ReadDirectoryChangesW(
                 self.handle.0,
                 self.buffer.as_mut_ptr().cast(),
-                CAPACITY as u32,
+                (self.buffer.len() * 4) as u32,
                 1,
                 FILE_NOTIFY_CHANGE_FILE_NAME
                     | FILE_NOTIFY_CHANGE_DIR_NAME
@@ -200,7 +220,7 @@ impl Backend {
             identity: directory.root_identity,
             handle,
             overlapped: unsafe { zeroed() },
-            buffer: vec![0; CAPACITY / 4],
+            buffer: vec![0; buffer_capacity(&directory.root) / 4],
             pending,
             armed: false,
             retiring: false,
@@ -244,7 +264,7 @@ impl Backend {
         }
         let count = bytes as usize;
         // Copy completed bytes, then re-arm before examining names or scheduling a JS scan.
-        let data = if code == ERROR_SUCCESS && (1..=CAPACITY).contains(&count) {
+        let data = if code == ERROR_SUCCESS && (1..=anchor.buffer.len() * 4).contains(&count) {
             unsafe { std::slice::from_raw_parts(anchor.buffer.as_ptr().cast::<u8>(), count) }.to_vec()
         } else {
             Vec::new()
@@ -311,6 +331,13 @@ impl Drop for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_buffers_grow_while_network_and_unknown_volumes_keep_the_network_limit() {
+        assert_eq!(capacity_for_drive(DRIVE_FIXED), 1024 * 1024);
+        assert_eq!(capacity_for_drive(DRIVE_REMOTE), 65536);
+        assert_eq!(capacity_for_drive(DRIVE_UNKNOWN), 65536);
+        assert_eq!(capacity_for_drive(DRIVE_NO_ROOT_DIR), 65536);
+    }
     #[test]
     fn immediate_enumeration_loss_rebuilds_instead_of_disabling_observation() {
         assert_eq!(read_error(ERROR_NOTIFY_ENUM_DIR).status, "ESTALE");
