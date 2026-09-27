@@ -90,3 +90,25 @@ it.skipIf(!nativeWatchSupported)("retains ambiguity under pending pressure inste
   await owner.reconcile();
   expect(values).toEqual([{ reason: "event", changes: [{ path: "entry.txt", type: "structural" }] }]);
 });
+
+it.skipIf(!nativeWatchSupported)("does not infer a selected identity for unseen names that are already gone", async () => {
+  const native = getNativeBinding()!;
+  const register = native.watchRegister!;
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
+  let emit!: (batch: NativeWatchBatch) => void;
+  __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const values: WatchInvalidation[] = [];
+  const owner = watch(await root(dir), { mode: "events", scopes: [{ path: "entry.txt", kind: "entry" }], onInvalidate: value => { values.push(value); } });
+  owners.push(owner); await owner.ready; values.length = 0;
+  for (const name of ["Entry.TXT", "unselected-sibling"]) {
+    await fs.writeFile(path.join(dir, name), "transient");
+    await fs.unlink(path.join(dir, name));
+    emit({ hints: [{ directory: "", name, event: "rename" }], overflow: false });
+    await owner.reconcile();
+    expect(values).toEqual([]);
+  }
+  // The caller's literal target is already admitted independently of the hint.
+  emit({ hints: [{ directory: "", name: "entry.txt", event: "rename" }], overflow: false });
+  await owner.reconcile();
+  expect(values).toEqual([{ reason: "event", changes: [{ path: "entry.txt", type: "structural" }] }]);
+});

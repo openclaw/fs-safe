@@ -65,7 +65,8 @@ export async function admittedNativeChanges(
     const found = await lookupRootDirectoryEntry(root, guard, name);
     signal.throwIfAborted();
     // A missing unselected sibling is not evidence of lost selected detail.
-    // Deleted aliases remain observable through the guarded snapshot comparison.
+    // Previously observed selected deletions remain visible in the snapshot diff;
+    // an unseen, already-gone name has no identity proving a selected alias.
     if (!found) continue;
     for (const [relative, identity] of candidates) {
       if (!relative || (path.dirname(relative) === "." ? "" : path.dirname(relative)) !== parent) continue;
