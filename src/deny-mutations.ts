@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createMutationDenyMatcher } from "./deny-mutation-match.js";
 import { FsSafeError } from "./errors.js";
-import { assertNoNulPathInput, isNotFoundPathError, isPathInside } from "./path.js";
+import { assertNoNulPathInput, isNotFoundPathError } from "./path.js";
 import { realpathSync } from "./realpath.js";
 import { resolveExistingAncestor } from "./root-path-existing.js";
 import {
@@ -84,6 +85,7 @@ export function assertMutationNotDenied(
   const strict = mode === "sync-root-lock";
   const comparablePaths = strict ? strictMutationComparablePaths : resolveMutationComparablePaths;
   const targets = comparablePaths(filePath);
+  const matches = createMutationDenyMatcher();
   // Validate one complete phase at a time. A paths denial must not read or
   // canonicalize prefixes, and invalid later paths retain validation precedence.
   for (const kind of ["paths", "prefixes"] as const) {
@@ -91,8 +93,7 @@ export function assertMutationNotDenied(
       const deniedPaths = comparablePaths(entry);
       for (const target of targets) {
         for (const denied of deniedPaths) {
-          if ((isPathInside(denied, target) && (kind === "prefixes" || isPathInside(target, denied))) ||
-            (options.protectAncestors === true && isPathInside(target, denied))) {
+          if (matches(target, denied, kind === "prefixes", options.protectAncestors)) {
             throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
           }
         }
