@@ -9,7 +9,7 @@ import {
   openNativeRootAdmission,
   type NativeParentAdmission,
 } from "./native-parent-admission.js";
-import { getNativeBinding } from "./native.js";
+import { requireNativeBinding } from "./native.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
 import { resolveRootPathSync } from "./root-path.js";
@@ -107,8 +107,8 @@ export async function movePathNoReplaceNative(
     if (!isNotFoundPathError(error)) throw error;
     // Advisory fast rejection only. renameNoReplace owns the collision decision.
   }
-  const binding = getNativeBinding();
-  if (!binding || typeof binding.renameNoReplace !== "function") {
+  const binding = requireNativeBinding();
+  if (typeof binding.renameNoReplace !== "function") {
     throw new FsSafeError("helper-unavailable", "native no-replace move is unavailable");
   }
   const rootAdmission = await openNativeRootAdmission(binding, {
