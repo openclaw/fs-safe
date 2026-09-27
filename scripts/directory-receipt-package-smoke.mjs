@@ -72,14 +72,14 @@ type RetainedOptionsShape = Expect<Equal<RetainFileInDirectoryOptions, Readonly<
   assertBeforeMutation: () => void;
   maxBytes?: number;
 }>>>;
-declare module "./node_modules/@openclaw/fs-safe/dist/staged-symlink-types.js" {
+declare module "@openclaw/fs-safe/advanced" {
   interface StagedSymlink { readonly __receiptMergeProof?: true }
-}
-declare module "./node_modules/@openclaw/fs-safe/dist/retained-file-types.js" {
   interface RetainedFile { readonly __receiptMergeProof?: true }
 }
 type SymlinkInterfaceMerge = Expect<Equal<StagedSymlink["__receiptMergeProof"], true | undefined>>;
 type RetainedInterfaceMerge = Expect<Equal<RetainedFile["__receiptMergeProof"], true | undefined>>;
+type SymlinkInterfaceOriginalMember = Expect<Equal<StagedSymlink["assertCurrent"], () => Promise<void>>>;
+type RetainedInterfaceOriginalMember = Expect<Equal<RetainedFile["receipt"]["expected"], RetainedFileExpected>>;
 type WalkItem<T> = T extends AsyncIterable<infer Entry> ? Entry : never;
 type LegacyKinds = Expect<Equal<RootWalkDataEntryKind, "file" | "directory" | "other">>;
 type LegacyPolicies = Expect<Equal<RootWalkOptions["symlinkPolicy"], "skip" | "follow-within-root">>;
