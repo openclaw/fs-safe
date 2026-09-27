@@ -6,6 +6,7 @@ packages/*/*.node
 native/index.js
 native/index.d.ts
 coverage/
+coverage-rust/
 release-graph-proof*.json
 artifacts*/
 release-artifacts*/
