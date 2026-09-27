@@ -196,7 +196,7 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)("real 
     } });
     let settled = false;
     let operation: Promise<void> | undefined;
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const merge = withExtractionDeadline(500, "directory merge", async (deadline) => {
       deadline.signal.addEventListener("abort", expired.resolve, { once: true });
       operation = mergeExtractedTreeIntoDestination({ ...params, deadline });
