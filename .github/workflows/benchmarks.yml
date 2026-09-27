@@ -72,6 +72,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: benchmarks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   prepare_method_audit:
     if: github.event_name == 'workflow_dispatch' && inputs.method_audit

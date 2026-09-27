@@ -23,7 +23,7 @@ Percentages complement behavioral gates: mutation-policy proof, nightly watch
 stress, and platform lanes are equally important. High coverage cannot establish
 root confinement, race safety, event delivery, or bounded resource retirement.
 
-## Manual watch stress campaign
+## Watch stress campaign
 
 Build from the exact revision being qualified with `pnpm install --frozen-lockfile`,
 `pnpm native:build`, and `pnpm build`, then run on a disposable machine:
@@ -36,7 +36,8 @@ Individual scenario names are `scale`, `fanout`, `churn`, `lifecycle`,
 `adversarial`, `limits`, `idle`, and `soak`. The runner uses plain Node and no
 additional dependencies. Each scenario prints one JSON result line; progress
 goes to stderr. `all` isolates scenarios in child processes and stops at the
-first failure. This suite is manual and is not part of per-PR CI.
+first failure. The full qualification remains manual. A smaller nightly campaign runs outside
+per-PR CI; it can also be dispatched with `watch-stress.yml`.
 
 Run `node scripts/watch-stress.mjs --scenario oracle-selftest` first to check
 that a poisoned cache fails comparison and can recover only after invalidation.
@@ -80,6 +81,34 @@ records native overflow and recovery, but the shared batch does not distinguish
 RDCW kernel-buffer loss from bounded native queue loss; a Windows qualification
 must retain that limitation rather than call it proved kernel overflow.
 
+### Nightly workload
+
+The nightly workflow runs on `ubuntu-latest` (x64), `ubuntu-24.04-arm`,
+`macos-15` (arm64), `macos-15-intel`, and the Windows latest 16-core runner,
+using Node 24 and freshly built native bindings. Each job has a 25-minute
+budget, uploads one JSON result per scenario (including failures), and fails
+if any scenario fails. Remaining scenarios still run after a failure. Only
+Linux runs the kernel-limits scenario automatically.
+
+The same harness accepts these environment overrides; defaults remain the
+full qualification workload. Child processes inherit the settings, which are
+recorded in every JSON result.
+
+| Environment variable | Default | Nightly |
+| --- | ---: | ---: |
+| `FS_SAFE_STRESS_SCALE_DIRECTORIES` (25 files each) | 2,000 | 400 (10,000 files) |
+| `FS_SAFE_STRESS_FANOUT` (maximum subscriptions) | 256 | 64 |
+| `FS_SAFE_STRESS_CHURN_SECONDS` | 300 | 60 |
+| `FS_SAFE_STRESS_LIFECYCLE_CYCLES` | 10,000 | 1,000 |
+| `FS_SAFE_STRESS_IDLE_SECONDS` | 600 | 120 |
+| `FS_SAFE_STRESS_SOAK_MINUTES` (minimum 10) | 60 | 10 |
+
+Short soaks keep the same peak/live-memory limits and second-half RSS slope
+check, and explicitly report `memory.qualification: false`. They do not prove
+60-minute stability. Lifecycle memory is sampled across ten intervals, with
+the first two excluded as warm-up; idle's Linux wakeup bound scales with the
+requested duration (three per minute). Adversarial cases remain unchanged.
+
 ## Linux openat2 fallback
 
 Build the host addon and package first. The test hook is cached with the native
@@ -108,7 +137,11 @@ The fixtures prove in-root alias operations and policy parity, nested moves,
 collisions, read/write, traversal and escaping-link rejection, hardlink rejection,
 cached selection, and `helper-unavailable` for strict
 bounded cleanup. Bounded-cleanup success tests require real `openat2`; run the
-full suite with the environment hook unset.
+full suite with the environment hook unset. PR CI's `Native check
+(linux-x64-no-openat2)` runs the native Node suites and watch proofs with the
+hook set. It replaces the four bounded-cleanup success suites and quarantine
+success proof with the explicit refusal fixture above. Bun's full compatibility
+suite remains in the normal native lanes, because it includes bounded cleanup.
 
 `@openclaw/fs-safe/test-hooks` exposes test-only injection points. Registration
 is allowed only when `process.env.NODE_ENV === "test"` or
@@ -273,7 +306,8 @@ regression with `MallocStackLogging=1 node --expose-gc scripts/watch-cleanup-lea
 It compares `leaks` results before and after 100 and 1,000 subscription cycles,
 requiring zero growth in leaked allocations. Allocation stacks are saved under
 `.artifacts/watch-cleanup-leaks`. The native macOS CI lane runs this short proof;
-the full stress campaign remains manual.
+the full stress qualification remains manual, with the smaller nightly
+campaign above.
 
 Run the full local gate before handoff:
 

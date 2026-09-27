@@ -1,0 +1,123 @@
+name: watch stress
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watch-stress-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stress:
+    name: Watch stress (${{ matrix.os }})
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+          - windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      FS_SAFE_NATIVE_MODE: require
+      FS_SAFE_STRESS_SCALE_DIRECTORIES: "400"
+      FS_SAFE_STRESS_FANOUT: "64"
+      FS_SAFE_STRESS_CHURN_SECONDS: "60"
+      FS_SAFE_STRESS_LIFECYCLE_CYCLES: "1000"
+      FS_SAFE_STRESS_IDLE_SECONDS: "120"
+      FS_SAFE_STRESS_SOAK_MINUTES: "10"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package and host binding
+        id: build
+        run: |
+          pnpm build
+          pnpm native:build
+          node scripts/native-mode-smoke.mjs require
+          mkdir -p watch-stress-results
+
+      # Run the remaining scenarios after a failure so each OS has a complete
+      # diagnosis. Bash pipefail preserves failures through tee; no retries.
+      - name: Scale (10,000 files)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario scale | tee watch-stress-results/scale.json
+
+      - name: Fan-out (64 subscriptions)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario fanout | tee watch-stress-results/fanout.json
+
+      - name: Churn (60 seconds)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario churn | tee watch-stress-results/churn.json
+
+      - name: Lifecycle (1,000 cycles)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario lifecycle | tee watch-stress-results/lifecycle.json
+
+      - name: Adversarial
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario adversarial | tee watch-stress-results/adversarial.json
+
+      # The harness lowers inotify limits with passwordless sudo and restores
+      # the original sysctl even when the child fails. Hosted VMs are isolated.
+      - name: Linux watch limits and recovery
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && runner.os == 'Linux' }}
+        run: node scripts/watch-stress.mjs --scenario limits | tee watch-stress-results/limits.json
+
+      - name: Idle (2 minutes)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario idle | tee watch-stress-results/idle.json
+
+      - name: Soak (10 minutes)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario soak | tee watch-stress-results/soak.json
+
+      - name: Upload scenario results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watch-stress-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: watch-stress-results/*.json
+          if-no-files-found: error
+          retention-days: 14

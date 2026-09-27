@@ -26,3 +26,15 @@ it("keeps the peak ceiling and rejects incomplete or invalid evidence", () => {
   expect(() => assessSoakMemory(samples().map(sample => ({ ...sample, seconds: sample.seconds / 2 })), 220 * MiB)).toThrow("shortened");
   expect(() => assessSoakMemory(samples().map(sample => ({ ...sample, heapUsed: NaN })), 220 * MiB)).toThrow("invalid memory sample");
 });
+
+it("evaluates a configured short soak without claiming hour-long qualification", () => {
+  const points = samples().slice(0, 10).map(sample => ({ ...sample, rss: 80 * MiB }));
+  const result = assessSoakMemory(points, 100 * MiB, 10);
+  expect(result.failures).toEqual([]);
+  expect(result.qualification).toBe(false);
+  expect(assessSoakMemory(samples(), 220 * MiB).qualification).toBe(true);
+  expect(() => assessSoakMemory(points.slice(1), 100 * MiB, 10)).toThrow("every minute checkpoint");
+  expect(() => assessSoakMemory(points, 100 * MiB, 9)).toThrow("at least ten minutes");
+  const leaking = points.map((sample, index) => ({ ...sample, rss: (80 + index * 2) * MiB }));
+  expect(assessSoakMemory(leaking, 100 * MiB, 10).failures).toContain("second-half RSS slope exceeded 1 MiB/minute");
+});
