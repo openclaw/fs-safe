@@ -9,7 +9,7 @@ import type { NativeBinding } from "./native.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { isSymlinkOpenError } from "./path.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
-import { checkedMutationDirectory } from "./pinned-mutation-observation.js";
+import { checkedMutationDirectory, type MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import type { NativePolicyParent } from "./native-policy-parent.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
@@ -40,7 +40,7 @@ export function closeWindowsPolicyParentAfterFailure(
   }
 }
 
-export function windowsParentObservation(binding: NativeBinding, fd: number, guard: AsyncDirectoryGuard<BigIntStats>) {
+export function windowsParentObservation(binding: NativeBinding, fd: number, guard: AsyncDirectoryGuard<BigIntStats>): MutationDirectoryObservation {
   return checkedMutationDirectory(guard.dir, guard.realPath, guard.stat,
     typeof binding.observeDirectory === "function" ? () => {
       const stat = inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), guard.stat);
