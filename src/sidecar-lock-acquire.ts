@@ -296,9 +296,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           }
           await handle.writeFile(raw, "utf8");
         }
-        const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd), ownershipToken };
+        const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd, { bigint: true }), ownershipToken };
         createdSnapshot = snapshot;
-        if (snapshot.stat.nlink === 0) {
+        if (snapshot.stat.nlink === 0n) {
           await handle.close();
           handle = null;
           await waitForRetry();
@@ -373,7 +373,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           if (handle) {
             failedSnapshot ??= { payload: null };
             try {
-              failedSnapshot.stat = fsSync.fstatSync(handle.fd);
+              failedSnapshot.stat = fsSync.fstatSync(handle.fd, { bigint: true });
             } catch {
               // Best-effort cleanup of a failed exclusive create.
             }

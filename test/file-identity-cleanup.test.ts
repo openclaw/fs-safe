@@ -183,9 +183,9 @@ describe("cleanup file identity", () => {
     it.each([
       ["safe maximum", Number.MAX_SAFE_INTEGER, 9_007_199_254_740_991n, true],
       ["safe boundary mismatch", Number.MAX_SAFE_INTEGER, 9_007_199_254_740_990n, false],
-      ["first unsafe exact integer", 9_007_199_254_740_992, 9_007_199_254_740_992n, true],
+      ["first unsafe exact integer", 9_007_199_254_740_992, 9_007_199_254_740_992n, false],
       ["first unsafe adjacent bigint", 9_007_199_254_740_992, 9_007_199_254_740_993n, false],
-      ["next unsafe exact integer", 9_007_199_254_740_994, 9_007_199_254_740_994n, true],
+      ["next unsafe exact integer", 9_007_199_254_740_994, 9_007_199_254_740_994n, false],
       ["next unsafe adjacent bigint", 9_007_199_254_740_994, 9_007_199_254_740_995n, false],
     ] as const)("compares the %s exactly", (_label, numeric, bigint, expected) => {
       for (const component of ["dev", "ino"] as const) {

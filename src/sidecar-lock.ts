@@ -82,7 +82,7 @@ function resolveManagerState(key: string): SidecarLockManagerState {
 function snapshotMatchesSync(lockPath: string, observed: SidecarLockSnapshot): boolean {
   let fd: number | undefined;
   try {
-    const beforeStat = fsSync.lstatSync(lockPath);
+    const beforeStat = fsSync.lstatSync(lockPath, { bigint: true });
     if (!beforeStat.isFile()) {
       return false;
     }
@@ -93,17 +93,17 @@ function snapshotMatchesSync(lockPath: string, observed: SidecarLockSnapshot): b
         : 0) |
       (typeof fsSync.constants.O_NONBLOCK === "number" ? fsSync.constants.O_NONBLOCK : 0);
     fd = fsSync.openSync(lockPath, openFlags);
-    const openedStat = fsSync.fstatSync(fd);
+    const openedStat = fsSync.fstatSync(fd, { bigint: true });
     // Token-owned files can have different descriptor/path identities on VirtioFS.
     // Require a known descriptor identity without rejecting that supported drift.
     if (!openedStat.isFile() || !sameFileIdentityForCleanup(openedStat, openedStat)) {
       return false;
     }
-    if (observed.raw !== undefined && openedStat.size !== Buffer.byteLength(observed.raw)) {
+    if (observed.raw !== undefined && openedStat.size !== BigInt(Buffer.byteLength(observed.raw))) {
       return false;
     }
     const raw = fsSync.readFileSync(fd, "utf8");
-    const afterStat = fsSync.lstatSync(lockPath);
+    const afterStat = fsSync.lstatSync(lockPath, { bigint: true });
     if (!afterStat.isFile() || !sameFileIdentityForCleanup(beforeStat, afterStat)) {
       return false;
     }
