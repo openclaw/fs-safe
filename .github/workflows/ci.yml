@@ -1235,7 +1235,10 @@ jobs:
             sudo umount "$mount"
           done
 
+      # Existing-directory replacement benchmarks require bounded cleanup;
+      # the no-openat2 lane checks the corresponding refusal in the tests.
       - name: Smoke method benchmarks with native binding
+        if: ${{ !matrix.no-openat2 }}
         run: pnpm benchmark:methods --mode require --iterations 1 --samples 1 --warmup 0
 
       - name: Prove archive device admission and secret reads with native binding
