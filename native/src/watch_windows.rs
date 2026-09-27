@@ -15,6 +15,11 @@ use windows_sys::Win32::Storage::FileSystem::*;
 use windows_sys::Win32::System::IO::{
     CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, PostQueuedCompletionStatus,
 };
+use windows_sys::Win32::System::WindowsProgramming::{
+    DRIVE_CDROM, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOVABLE,
+};
+#[cfg(test)]
+use windows_sys::Win32::System::WindowsProgramming::{DRIVE_NO_ROOT_DIR, DRIVE_REMOTE, DRIVE_UNKNOWN};
 
 const NETWORK_CAPACITY: usize = 64 * 1024;
 const LOCAL_CAPACITY: usize = 1024 * 1024;
