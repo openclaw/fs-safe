@@ -3,7 +3,7 @@ import type { PinnedWriteParams, PublishedWriteIdentity } from "./pinned-write-t
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 
-export type RootCopyPublicationReceipt = PublishedWriteIdentity & Readonly<{ path: string }>;
+export type RootCopyPublicationReceipt = Readonly<PublishedWriteIdentity & { path: string }>;
 
 export function createCopyPublicationObserver(
   path: string,

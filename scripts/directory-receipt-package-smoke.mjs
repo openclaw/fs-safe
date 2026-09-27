@@ -17,7 +17,7 @@ import { lstatSync, mkdtempSync, realpathSync, rmSync, utimesSync, type BigIntSt
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
-  Root, RootWalkDataEntryKind, RootWalkEntry, RootWalkOptions, RootWalkSymlinkPolicy,
+  Root, RootCopyPublicationReceipt, RootWalkDataEntryKind, RootWalkEntry, RootWalkOptions, RootWalkSymlinkPolicy,
 } from "@openclaw/fs-safe";
 import { stageFileInDirectory } from "@openclaw/fs-safe/advanced";
 import {
@@ -34,6 +34,10 @@ type Expect<T extends true> = T;
 type WalkItem<T> = T extends AsyncIterable<infer Entry> ? Entry : never;
 type LegacyKinds = Expect<Equal<RootWalkDataEntryKind, "file" | "directory" | "other">>;
 type LegacyPolicies = Expect<Equal<RootWalkOptions["symlinkPolicy"], "skip" | "follow-within-root">>;
+type CopyPublicationShape = Expect<Equal<
+  RootCopyPublicationReceipt,
+  Readonly<{ path: string; dev: bigint; ino: bigint }>
+>>;
 
 export function rootWalkDeclarations(
   scoped: Root,
