@@ -66,7 +66,7 @@ between tests in one process:
 ```bash
 pnpm native:build
 pnpm build
-FS_SAFE_TEST_NO_OPENAT2=1 FS_SAFE_NATIVE_MODE=require pnpm test test/linux-openat2-fallback.test.ts test/root-move-noreplace.test.ts test/root-move-native-integration.test.ts test/native-write-containment.test.ts
+FS_SAFE_TEST_NO_OPENAT2=1 FS_SAFE_NATIVE_MODE=require pnpm test test/linux-openat2-parity.test.ts test/linux-openat2-fallback.test.ts test/root-move-noreplace.test.ts test/root-move-native-integration.test.ts test/native-write-containment.test.ts
 ```
 
 On Linux, the seccomp harness also exercises the real syscall failure without
@@ -77,11 +77,13 @@ unprivileged seccomp filter; it affects only its child process:
 cc test/fixtures/deny-openat2.c -o /tmp/fs-safe-deny-openat2
 /tmp/fs-safe-deny-openat2 ENOSYS node test/fixtures/linux-openat2-fallback.mjs "$PWD/native/fs-safe-native.linux-x64-gnu.node"
 /tmp/fs-safe-deny-openat2 EPERM node test/fixtures/linux-openat2-fallback.mjs "$PWD/native/fs-safe-native.linux-x64-gnu.node"
+FS_SAFE_TEST_OPENAT2_FILTER=/tmp/fs-safe-deny-openat2 FS_SAFE_NATIVE_MODE=require pnpm test test/linux-openat2-parity.test.ts
 ```
 
 Use the matching native artifact filename on other Linux architectures/libcs.
-The fixture proves nested moves, collisions, read/write, traversal, symlink and
-hardlink rejection, cached selection, and `helper-unavailable` for strict
+The fixtures prove in-root alias operations and policy parity, nested moves,
+collisions, read/write, traversal and escaping-link rejection, hardlink rejection,
+cached selection, and `helper-unavailable` for strict
 bounded cleanup. Bounded-cleanup success tests require real `openat2`; run the
 full suite with the environment hook unset.
 

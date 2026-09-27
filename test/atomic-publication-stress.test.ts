@@ -139,6 +139,17 @@ describe("atomic publication stress regressions", () => {
       await fs.writeFile(path.join(stagedA, "value.txt"), "a");
       await fs.writeFile(path.join(stagedB, "value.txt"), "b");
 
+      // Replacing an existing target needs bounded cleanup. The no-openat2
+      // lane must prove refusal before mutation, rather than expect success.
+      if (process.platform === "linux" && process.env.FS_SAFE_TEST_NO_OPENAT2 === "1") {
+        await expect(replaceDirectoryAtomic({ stagedDir: stagedA, targetDir: target }))
+          .rejects.toMatchObject({ code: "helper-unavailable" });
+        await expect(fs.readFile(path.join(target, "value.txt"), "utf8")).resolves.toBe("original");
+        await expect(fs.readFile(path.join(stagedA, "value.txt"), "utf8")).resolves.toBe("a");
+        expect((await fs.readdir(root)).sort()).toEqual(["staged-a", "staged-b", "target"]);
+        return;
+      }
+
       let firstCleanupStarted!: () => void;
       const cleanupStarted = new Promise<void>((resolve) => {
         firstCleanupStarted = resolve;
