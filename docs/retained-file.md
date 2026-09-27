@@ -75,8 +75,10 @@ outside this capability's threat model.
 `remove()` admits authority once, revalidates the retained object, sets native
 handle disposition, closes the file, observes the name under the still-retained
 parent, then closes ancestry. No pathname is passed to unlink. Ordinary
-`dispose()` and `[Symbol.dispose]()` only close resources. Asynchronous authority
-callbacks and reentrancy are refused; even caught reentrancy poisons that attempt.
+`dispose()` and `[Symbol.dispose]()` only close resources. Authority callbacks
+returning Promises, thenables, or synchronous or asynchronous generator objects
+are refused without deletion; generators are never advanced. Reentrancy is also
+refused, and even caught reentrancy poisons that attempt.
 Repeated settlement returns the original receipt without another mutation or
 another authority call. A copied receipt cannot be used to remove a replacement.
 `[Symbol.dispose]()` throws `FsSafeError` with the complete result in

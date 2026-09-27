@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { FsSafeError } from "./errors.js";
 
 export class MutationAuthorityError extends FsSafeError {
@@ -14,6 +15,10 @@ export function assertSynchronousCallbackResult(returned: unknown, name: string)
   ) {
     // TypeScript permits async functions for () => void. Do not admit their work.
     void Promise.resolve(returned).catch(() => undefined);
+    throw new TypeError(`${name} must be synchronous`);
+  }
+  // A generator returns its iterator before running the callback body.
+  if (types.isGeneratorObject(returned)) {
     throw new TypeError(`${name} must be synchronous`);
   }
 }

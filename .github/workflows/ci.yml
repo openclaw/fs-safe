@@ -16,6 +16,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-workflows:
     name: Lint workflows
@@ -938,6 +942,7 @@ jobs:
         node:
           - 22
           - 24
+          - 26
         os:
           - ubuntu-latest
           - macos-15
@@ -1007,7 +1012,7 @@ jobs:
 
   native-check:
     name: Native check (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.runner || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1016,10 +1021,19 @@ jobs:
           - ubuntu-latest
           - macos-15
           - windows-latest
+          - ubuntu-24.04-arm
+          - macos-15-intel
+          - windows-2022
+        include:
+          - os: linux-x64-no-openat2
+            runner: ubuntu-latest
+            no-openat2: true
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The 16-core contract belongs to the custom latest runner. Server 2022
+      # deliberately uses the standard hosted image to exercise its OS behavior.
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
@@ -1058,6 +1072,17 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Force the Linux descriptor-walk fallback
+        if: matrix.no-openat2
+        shell: bash
+        run: echo 'FS_SAFE_TEST_NO_OPENAT2=1' >> "$GITHUB_ENV"
+
+      - name: Prove Linux fallback operations and bounded-cleanup refusal
+        if: runner.os == 'Linux'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/linux-openat2-fallback.test.ts test/root-move-noreplace.test.ts test/root-move-native-integration.test.ts
+
       - name: Test retained Windows file identity and resource settlement
         if: runner.os == 'Windows'
         env:
@@ -1088,12 +1113,12 @@ jobs:
         if: always() && runner.os == 'macOS'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: watch-cleanup-allocation-reports
+          name: watch-cleanup-allocation-reports-${{ matrix.os }}
           path: .artifacts/watch-cleanup-leaks
           if-no-files-found: ignore
 
       - name: Test creation modes under restrictive umask
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         shell: bash
         env:
           FS_SAFE_NATIVE_MODE: require
@@ -1126,20 +1151,25 @@ jobs:
         run: pnpm test test/native-directory-observation.test.ts test/root-native-directory-observation.test.ts
 
       - name: Set up Bun
+        if: ${{ !matrix.no-openat2 }}
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
 
       - name: Test Bun native compatibility
+        if: ${{ !matrix.no-openat2 }}
         run: pnpm test:bun:native
 
       - name: Prove Bun watch polling and joined close
+        if: ${{ !matrix.no-openat2 }}
         run: bun scripts/watch-runtime-proof.mjs
 
       - name: Prove Bun compatibility with JIT disabled
+        if: ${{ !matrix.no-openat2 }}
         run: bun --jitless scripts/bun-native-proof.mjs
 
       - name: Require Bun native helper
+        if: ${{ !matrix.no-openat2 }}
         run: bun scripts/native-mode-smoke.mjs require
 
       - name: Test directory copying and native cloning
@@ -1173,8 +1203,10 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/copy-offload-eof-proof.mjs
 
+      # XFS native tree cloning uses the same NO_XDEV/openat2 directory
+      # primitive as bounded cleanup, so it requires the ordinary kernel lane.
       - name: Test XFS cloning and unavailable-reflink fallback
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.no-openat2
         shell: bash
         run: |
           set -euo pipefail
@@ -1205,13 +1237,19 @@ jobs:
             sudo umount "$mount"
           done
 
+      # Existing-directory replacement benchmarks require bounded cleanup;
+      # the no-openat2 lane checks the corresponding refusal in the tests.
       - name: Smoke method benchmarks with native binding
+        if: ${{ !matrix.no-openat2 }}
         run: pnpm benchmark:methods --mode require --iterations 1 --samples 1 --warmup 0
 
       - name: Prove archive device admission and secret reads with native binding
         run: node scripts/device-path-proof.mjs require
 
+      # Bounded cleanup deliberately refuses without openat2. The fallback
+      # fixture above proves that refusal; ordinary lanes prove cleanup success.
       - name: Prove temp workspace quarantine swap at native removal
+        if: ${{ !matrix.no-openat2 }}
         run: node scripts/temp-workspace-quarantine-swap-proof.mjs
 
       - name: Test native mode auto
@@ -1256,7 +1294,11 @@ jobs:
       - name: Test native security and path equivalence
         env:
           FS_SAFE_PAX_REQUIRE_NATIVE: "1"
-        run: pnpm test test/linux-openat2-parity.test.ts test/native-integration.test.ts test/native-unix-descriptor-admission.test.ts test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/staged-symlink.test.ts test/staged-symlink-error-settlement.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-unified.test.ts test/archive-wasm-abi.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-decimal.test.ts test/archive-pax-raw-admission.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/archive-gzip-container.test.ts test/temp-workspace-cleanup-ownership.test.ts test/temp-workspace-cleanup-admission.test.ts test/temp-workspace-cleanup-capability.test.ts test/temp-workspace-cleanup-descriptor-access.test.ts
+        run: pnpm test test/linux-openat2-parity.test.ts test/native-integration.test.ts test/native-unix-descriptor-admission.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/staged-symlink.test.ts test/staged-symlink-error-settlement.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/private-directory.test.ts test/archive-unified.test.ts test/archive-wasm-abi.test.ts test/archive-pax.test.ts test/archive-pax-security.test.ts test/archive-pax-decimal.test.ts test/archive-pax-raw-admission.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/archive-gzip-container.test.ts test/temp-workspace-cleanup-descriptor-access.test.ts
+
+      - name: Test openat2-dependent native cleanup
+        if: ${{ !matrix.no-openat2 }}
+        run: pnpm test test/native-owned-tree.test.ts test/temp-workspace-cleanup-ownership.test.ts test/temp-workspace-cleanup-admission.test.ts test/temp-workspace-cleanup-capability.test.ts
 
       - name: Test native Root publication verification
         env:
@@ -1285,15 +1327,17 @@ jobs:
 
   native-gnu-floor:
     name: Native glibc 2.28 (${{ matrix.label }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: linux-x64-gnu
+            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - label: linux-arm64-gnu
+            os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
     steps:
       - name: Check out
@@ -1330,24 +1374,29 @@ jobs:
         run: node scripts/build-linux-gnu.mjs ${{ matrix.target }}
 
       - name: Set up portable archive LLVM
-        if: matrix.label == 'linux-x64-gnu'
         uses: ./.github/actions/setup-archive-llvm
 
-      - name: Build package and stage GNU x64 binding
-        if: matrix.label == 'linux-x64-gnu'
+      - name: Build package and stage GNU host binding
         run: |
           pnpm build
-          cp artifacts/fs-safe-native.linux-x64-gnu.node native/
+          cp artifacts/fs-safe-native.${{ matrix.label }}.node native/
           node scripts/stage-host-native.mjs
 
       - name: Load and test on glibc 2.28
-        if: matrix.label == 'linux-x64-gnu'
         run: bash scripts/test-linux-glibc-floor.sh
 
   native-musl:
-    name: Native check (linux-x64-musl)
-    runs-on: ubuntu-latest
+    name: Native check (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64-musl
+            os: ubuntu-latest
+          - label: linux-arm64-musl
+            os: ubuntu-24.04-arm
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1387,7 +1436,7 @@ jobs:
       - name: Upload musl consumer proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: platform-package-proof-linux-x64-musl
+          name: platform-package-proof-${{ matrix.label }}
           path: |
             release-artifacts/manifest.json
             release-artifacts/consumer-proof.json

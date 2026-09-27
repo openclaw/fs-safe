@@ -5,6 +5,9 @@ export function observe(root: Root, options: WatchOptions): WatchSubscription {
 }
 const defaultOptions: WatchOptions = { mode: "poll", scopes: [], onInvalidate() {} };
 const persistentOptions: WatchOptions = { ...defaultOptions, persistent: true };
+const pollingOptions: WatchOptions = { ...defaultOptions, mode: "auto", pollIntervalMs: 25 };
+// @ts-expect-error pollIntervalMs accepts only a number.
+const invalidPollingOptions: WatchOptions = { ...defaultOptions, pollIntervalMs: "25" };
 // @ts-expect-error persistent accepts only a boolean.
 const invalidOptions: WatchOptions = { ...defaultOptions, persistent: "false" };
-void [persistentOptions, invalidOptions];
+void [persistentOptions, pollingOptions, invalidPollingOptions, invalidOptions];

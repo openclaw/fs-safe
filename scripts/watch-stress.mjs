@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { settings } from "./watch-stress/config.mjs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -34,7 +35,7 @@ if (selected === "all" || (["soak", "soak-short"].includes(selected) && typeof g
   if (unhandled.length && !failure) failure = { message: "unhandled promise rejections" };
   if (diagnostics.cleanupErrors.length && !failure) failure = { message: "cleanup failed", errors: diagnostics.cleanupErrors };
   process.stdout.write(JSON.stringify({ scenario: selected, result: failure ? "fail" : "pass", platform: process.platform,
-    arch: process.arch, node: process.version, durationMs: performance.now() - started,
+    arch: process.arch, settings, node: process.version, durationMs: performance.now() - started,
     metrics: metrics ?? diagnostics.scenarioMetrics ?? { diagnostics, rss: process.memoryUsage().rss, peakRss: process.resourceUsage().maxRSS * 1024 }, failure, unhandled }) + "\n");
   if (failure) process.exitCode = 1;
 }

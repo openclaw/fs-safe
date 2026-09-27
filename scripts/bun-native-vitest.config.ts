@@ -25,6 +25,7 @@ export default {
       "test/root-copy-*.test.ts",
       "test/root-parent-symlink-policy.test.ts",
       "test/root-mutation-*.test.ts",
+      "test/mutation-authority.test.ts",
       "test/native-mutation-policy-integration.test.ts",
       "test/pinned-mutation-fast-path.test.ts",
       "test/root-shared-js-bun-deoptimization.test.ts",

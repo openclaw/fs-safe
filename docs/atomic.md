@@ -154,8 +154,9 @@ can replace the pathname, so compare the recorded identity with the current
 entry and recheck application authority before compensation. Receipts do not
 promise durable storage or authorize rollback.
 
-Both callbacks must complete synchronously; Promise and thenable results are
-rejected, and ordinary return values are ignored. The first callback refusal
+Both callbacks must complete synchronously; Promise, thenable, and synchronous
+or asynchronous generator results are rejected. Returned generators are never
+advanced; other ordinary return values are ignored. The first callback refusal
 is terminal, including falsy thrown values; an `EPERM`, `EEXIST`, or `EBUSY` code
 from a callback never starts fallback or retry. Refusal during an in-place
 fallback also stops new restoration writes. Final mode, synchronization, close,

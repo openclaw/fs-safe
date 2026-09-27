@@ -18,8 +18,8 @@ function options(directory) {
   const file = fs.statSync(path.join(directory, "backup"), { bigint: true });
   return { directory, parent, basename: "backup", expected: { ...file, sha256: hash("original") }, assertBeforeMutation() {} };
 }
-function admit(directory) {
-  const result = retainFileInDirectory(options(directory));
+function admit(directory, assertBeforeMutation = () => {}) {
+  const result = retainFileInDirectory({ ...options(directory), assertBeforeMutation });
   assert.equal(result.status, "retained", result.status === "retained" ? undefined : JSON.stringify(result));
   return result.file;
 }
@@ -54,6 +54,33 @@ if (process.argv[2] === "child") {
       assert.equal(fs.readFileSync(file, "utf8"), "original");
       rows.push("dispose-preserves");
     } finally { owner.dispose(); }
+    for (const kind of ["sync", "async"]) {
+      let bodyCalls = 0;
+      const assertion = kind === "sync"
+        ? function* () { bodyCalls++; throw new Error("revoked"); }
+        : async function* () { bodyCalls++; throw new Error("revoked"); };
+      const retained = admit(directory, assertion);
+      try {
+        const result = retained.remove();
+        assert.equal(result.status, "not-attempted");
+        assert.equal(result.phase, "authority");
+        assert.equal(result.disposition, "not-attempted");
+        assert.equal(result.namespace, "not-observed");
+        assert.equal(result.resources, "closed");
+        assert.equal(result.persistence, "not-proven");
+        assert.equal(result.errors.length, 1);
+        assert.equal(result.errors[0].code, "denied-path");
+        assert.ok(result.errors[0].cause instanceof TypeError);
+        assert.equal(bodyCalls, 0);
+        assert.equal(retained.remove(), result);
+        assert.equal(retained.dispose(), result);
+        const released = path.join(directory, `released-${kind}`);
+        fs.renameSync(file, released);
+        assert.equal(fs.readFileSync(released, "utf8"), "original");
+        fs.renameSync(released, file);
+        rows.push(`authority-generator-${kind}`);
+      } finally { retained.dispose(); }
+    }
     for (const phase of ["admitted", "settled"]) {
       const child = fork(fileURLToPath(import.meta.url), ["child", directory, phase], { stdio: ["ignore", "pipe", "pipe", "ipc"] });
       let stderr = "";

@@ -94,11 +94,11 @@ GLIBC versions. To inspect an existing binding, use
 `pnpm native:build` remains a host-toolchain development build; it does not
 establish the GNU release ABI floor.
 
-On Linux x64 with Docker, run `pnpm build`, copy the GNU x64 artifact from
+On Linux x64 or arm64 with Docker, run `pnpm build`, copy the matching GNU artifact from
 `artifacts/` to `native/`, run `node scripts/stage-host-native.mjs`, then run
 `bash scripts/test-linux-glibc-floor.sh`. CI uses this command to load the actual
 artifact and run native security and no-replace move tests in Rocky Linux 8
-(glibc 2.28). GNU arm64 is cross-built and symbol-checked in the same CI matrix.
+(glibc 2.28). Both GNU architectures execute this load test on matching runners.
 
 ## Test
 
@@ -277,10 +277,32 @@ require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standa
 direct `node` invocation without lifecycle metadata is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
-PR CI builds and executes four host targets: Linux x64 glibc, Linux x64 musl
-(Alpine), macOS arm64, and Windows x64. The root-only smoke runs on each. The
-seven-target source build matrix runs on release tags; packaging all seven is
-not execution proof for every architecture. The smoke writes manager versions,
+PR CI builds and executes all seven shipped bindings. The existing check names
+stay stable; extra runner/runtime combinations add checks without changing the
+repository ruleset. Native lanes run Node 24; the GNU host lanes also exercise
+Bun 1.4.2 (as do macOS and Windows).
+
+| Lane | Runner | Architecture / libc | Runtime |
+| --- | --- | --- | --- |
+| JavaScript check | `ubuntu-latest` | x64 / glibc | Node 22, 24, 26 |
+| JavaScript check | `macos-15` | arm64 | Node 22, 24, 26 |
+| JavaScript check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 22, 24, 26 |
+| Native check | `ubuntu-latest` | x64 / glibc | Node 24, Bun 1.4.2 |
+| Native check (forced no-openat2) | `ubuntu-latest` | x64 / glibc | Node 24 |
+| Native check | `ubuntu-24.04-arm` | arm64 / glibc | Node 24, Bun 1.4.2 |
+| Native check | `macos-15` | arm64 | Node 24, Bun 1.4.2 |
+| Native check | `macos-15-intel` | x64 | Node 24, Bun 1.4.2 |
+| Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.2 |
+| Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.2 |
+| Native check (Alpine 3.24) | `ubuntu-latest` | x64 / musl | Node 24 |
+| Native check (Alpine 3.24) | `ubuntu-24.04-arm` | arm64 / musl | Node 24 |
+| GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-latest` | x64 / glibc | Node 24 |
+| GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-24.04-arm` | arm64 / glibc | Node 24 |
+| Bundled package smoke | `ubuntu-latest`, `macos-15`, `fs-safe-windows-16core` | host | Node 22, 24 |
+| Coverage | `ubuntu-latest`, `macos-15`, `fs-safe-windows-16core` | host | Node 22 |
+
+Both musl lanes also run root-only package smoke with the real host binding.
+The seven-target source build matrix still runs on release tags. The smoke writes manager versions,
 cases, and synthetic-fixture scope to `release-artifacts/consumer-proof.json`.
 
 ## Docs
