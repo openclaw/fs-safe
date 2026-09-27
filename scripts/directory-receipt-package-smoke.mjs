@@ -20,6 +20,11 @@ import type {
   Root, RootWalkDataEntryKind, RootWalkEntry, RootWalkOptions, RootWalkSymlinkPolicy,
 } from "@openclaw/fs-safe";
 import { stageFileInDirectory } from "@openclaw/fs-safe/advanced";
+import type {
+  PublishedSymlinkReceipt, RetainedFile, RetainedFileExpected, RetainFileInDirectoryOptions,
+  StagedSymlink, StagedSymlinkCleanupReceipt, StagedSymlinkExpected,
+  StagedSymlinkPublication, StagedSymlinkReceipt,
+} from "@openclaw/fs-safe/advanced";
 import {
   pinDirectory,
   publishFileExclusive,
@@ -31,6 +36,50 @@ import {
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Expect<T extends true> = T;
+type SymlinkExpectedShape = Expect<Equal<StagedSymlinkExpected, Readonly<{
+  dev: bigint;
+  ino: bigint;
+  uid: number;
+  gid: number;
+  ctimeNs: bigint;
+  target: string;
+}>>>;
+type SymlinkPublishedShape = Expect<Equal<PublishedSymlinkReceipt, Readonly<{
+  status: "published";
+  staged: StagedSymlinkReceipt;
+  basename: string;
+  overwrite: false;
+}>>>;
+type SymlinkCleanupShape = Expect<Equal<StagedSymlinkCleanupReceipt, Readonly<{
+  temporaryBasename: string;
+  publication: StagedSymlinkPublication;
+  status: "removed" | "name-absent" | "preserved" | "failed" | "not-needed";
+  resources: "closed" | "close-failed";
+}>>>;
+type RetainedExpectedShape = Expect<Equal<RetainedFileExpected, Readonly<{
+  dev: bigint;
+  ino: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  sha256: string;
+}>>>;
+type RetainedOptionsShape = Expect<Equal<RetainFileInDirectoryOptions, Readonly<{
+  directory: string;
+  parent: Readonly<{ dev: bigint; ino: bigint }>;
+  basename: string;
+  expected: RetainedFileExpected;
+  assertBeforeMutation: () => void;
+  maxBytes?: number;
+}>>>;
+declare module "./node_modules/@openclaw/fs-safe/dist/staged-symlink-types.js" {
+  interface StagedSymlink { readonly __receiptMergeProof?: true }
+}
+declare module "./node_modules/@openclaw/fs-safe/dist/retained-file-types.js" {
+  interface RetainedFile { readonly __receiptMergeProof?: true }
+}
+type SymlinkInterfaceMerge = Expect<Equal<StagedSymlink["__receiptMergeProof"], true | undefined>>;
+type RetainedInterfaceMerge = Expect<Equal<RetainedFile["__receiptMergeProof"], true | undefined>>;
 type WalkItem<T> = T extends AsyncIterable<infer Entry> ? Entry : never;
 type LegacyKinds = Expect<Equal<RootWalkDataEntryKind, "file" | "directory" | "other">>;
 type LegacyPolicies = Expect<Equal<RootWalkOptions["symlinkPolicy"], "skip" | "follow-within-root">>;
@@ -141,6 +190,7 @@ writeFileSync(config, JSON.stringify({
 const failures = [];
 for (const [label, args] of [
   ["declarations", [resolve(dirname(compilerPackage), compiler.bin.tsc), "-p", config]],
+  ["exact optional declarations", [resolve(dirname(compilerPackage), compiler.bin.tsc), "-p", config, "--noEmit", "--exactOptionalPropertyTypes"]],
   ["runtime", [join(output, "directory-receipt-consumer.js")]],
 ]) {
   try {

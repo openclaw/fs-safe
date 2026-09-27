@@ -1,20 +1,17 @@
-import type { StagedFileReceipt } from "./staged-file-types.js";
+import type {
+  PublishedFileReceipt,
+  StagedFileCleanupReceipt,
+  StagedFileReceipt,
+} from "./staged-file-types.js";
 
 /** Caller-captured admission evidence, never a same-target ownership heuristic. */
-export type StagedSymlinkExpected = Readonly<{
-  dev: bigint;
-  ino: bigint;
-  uid: number;
-  gid: number;
-  ctimeNs: bigint;
-  target: string;
-}>;
+export type StagedSymlinkExpected = Readonly<
+  Pick<StagedFileReceipt["identity"], "dev" | "ino" | "uid" | "gid" | "ctimeNs"> & { target: string }
+>;
 
 export type StagedSymlinkReceipt = StagedFileReceipt & Readonly<{ target: string }>;
-export type PublishedSymlinkReceipt = Readonly<{
-  status: "published";
+export type PublishedSymlinkReceipt = Readonly<Pick<PublishedFileReceipt, "status" | "basename"> & {
   staged: StagedSymlinkReceipt;
-  basename: string;
   overwrite: false;
 }>;
 export type StagedSymlinkPublication =
@@ -22,12 +19,9 @@ export type StagedSymlinkPublication =
   | PublishedSymlinkReceipt
   | Readonly<{ status: "indeterminate"; basename: string; overwrite: false }>;
 export type StagedSymlinkRemoval = "removed" | "name-absent" | "preserved";
-export type StagedSymlinkCleanupReceipt = Readonly<{
-  temporaryBasename: string;
-  publication: StagedSymlinkPublication;
-  status: StagedSymlinkRemoval | "failed" | "not-needed";
-  resources: "closed" | "close-failed";
-}>;
+export type StagedSymlinkCleanupReceipt = Readonly<
+  Pick<StagedFileCleanupReceipt, "temporaryBasename" | "status" | "resources"> & { publication: StagedSymlinkPublication }
+>;
 export type StagedSymlinkFailureDetails = Readonly<{
   phase: "prepare" | "publish" | "remove-published" | "cleanup";
   publication: StagedSymlinkPublication;

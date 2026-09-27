@@ -1,13 +1,12 @@
+import type { StagedFileReceipt } from "./staged-file-types.js";
+
 /** Exact producer observations: never supply rounded Number identities. */
-export type RetainedFileExpected = Readonly<{
-  dev: bigint;
-  ino: bigint;
-  size: bigint;
-  mtimeNs: bigint;
-  ctimeNs: bigint;
-  /** Lowercase SHA-256 of the producer's expected bytes. */
-  sha256: string;
-}>;
+export type RetainedFileExpected = Readonly<
+  Pick<StagedFileReceipt["identity"], "dev" | "ino" | "size" | "mtimeNs" | "ctimeNs"> & {
+    /** Lowercase SHA-256 of the producer's expected bytes. */
+    sha256: string;
+  }
+>;
 
 export type RetainedFileIssue = Readonly<{
   phase: string;
@@ -50,12 +49,10 @@ export type RetainedFileAdmission =
   | Readonly<{ status: "retained"; file: RetainedFile }>
   | RetainedFileResult;
 
-export type RetainFileInDirectoryOptions = Readonly<{
-  directory: string;
-  parent: Readonly<{ dev: bigint; ino: bigint }>;
-  basename: string;
-  expected: RetainedFileExpected;
-  assertBeforeMutation: () => void;
-  /** Synchronous verification budget, default 16 MiB; maximum 64 MiB. */
-  maxBytes?: number;
-}>;
+export type RetainFileInDirectoryOptions = Readonly<
+  Pick<RetainedFileReceipt, "directory" | "parent" | "basename" | "expected"> & {
+    assertBeforeMutation: () => void;
+    /** Synchronous verification budget, default 16 MiB; maximum 64 MiB. */
+    maxBytes?: number;
+  }
+>;
