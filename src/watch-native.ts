@@ -18,12 +18,12 @@ export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | 
 }
 export class NativeWatchBackend {
   private id: number | undefined;
-  constructor(private binding: NativeBinding, private root: RootContext, callback: (batch: NativeWatchBatch) => void, limit: number) {
+  constructor(private binding: NativeBinding, private root: RootContext, callback: (batch: NativeWatchBatch) => void, limit: number, persistent: boolean) {
     try { this.id = binding.watchRegister!(root.rootReal, limit, batch => {
       if (this.id !== undefined) callback({ overflow: batch.overflow, error: batch.error, hints: batch.hints.map(hint => ({
         directory: hint.directory, name: hint.name, event: hint.structural ? "rename" : "change",
       })) });
-    }); } catch (cause) { throw watchError(cause); }
+    }, persistent); } catch (cause) { throw watchError(cause); }
   }
   add(name: string, identity: DirectoryIdentity): void {
     try {

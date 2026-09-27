@@ -44,6 +44,8 @@ mod linux_open;
 mod windows;
 mod windows_security;
 mod windows_secure_file;
+#[cfg(windows)]
+mod retained_file;
 
 #[napi(object)]
 pub struct FileIdentity {

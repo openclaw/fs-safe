@@ -6,7 +6,7 @@ import { getNativeBinding } from "../../dist/native.js";
 export async function selftest() {
   const f = await fixture("oracle-selftest"), binding = getNativeBinding(), original = binding.watchRegister;
   let observer;
-  binding.watchRegister = (directory, limit) => original(directory, limit, () => {});
+  binding.watchRegister = (directory, limit, _callback, persistent) => original(directory, limit, () => {}, persistent);
   try {
     await fs.mkdir(path.join(f.directory, "child"));
     await fs.writeFile(path.join(f.directory, "child", "file"), "initial");

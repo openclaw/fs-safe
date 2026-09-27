@@ -172,6 +172,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     }
     const rootArtifact = artifacts.find((artifact) => artifact.pkg.name === rootPkg.name);
     assert.ok(rootArtifact?.integrity);
+    const retainedProbeSource = readFileSync(new URL("./consumer-retained-file-probe.mjs", import.meta.url));
     const suffixProbeSource = readFileSync(new URL("./consumer-suffix-probe.mjs", import.meta.url));
     const metadataHelperSource = readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url));
     const windowsSecurityProbeSource = readFileSync(new URL("./consumer-windows-security-probe.mjs", import.meta.url));
@@ -239,6 +240,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
             .digest("hex"),
           manager: { name: manager, version },
           windowsSecurity: windowsSecurityExpected,
+          retainedProbeSha256: createHash("sha256").update(retainedProbeSource).digest("hex"),
           creation: creationExpected,
           ...suffixExpected,
         }));
@@ -294,6 +296,18 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
               omitted && mode === "require" ? windowsSecurityRequireScenarios : windowsSecurityScenarios);
             cases.windowsSecurity.push(receipt);
           }
+        }
+        if (!omitted && process.platform === "win32") {
+          const probe = join(directory, "consumer-retained-file-probe.mjs");
+          writeFileSync(probe, retainedProbeSource);
+          cases.retainedFile = JSON.parse(await run([process.execPath, probe], [], directory, env));
+          assert.deepEqual(cases.retainedFile.source, source);
+          assert.equal(cases.retainedFile.rootIntegrity, rootArtifact.integrity);
+          assert.equal(cases.retainedFile.hostBinarySha256, suffixExpected.hostBinarySha256);
+          assert.deepEqual(cases.retainedFile.compiledFiles, creationExpected.compiledFiles);
+          assert.equal(cases.retainedFile.nativeLoaded, true);
+          assert.equal(cases.retainedFile.persistence, "not-proven");
+          assert.deepEqual(cases.retainedFile.rows, ["dispose-preserves", "process-death-admitted", "process-death-settled"]);
         }
         if (!omitted) {
           const suffixProbe = join(directory, "suffix-probe.mjs");

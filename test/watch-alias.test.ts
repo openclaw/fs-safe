@@ -27,7 +27,7 @@ describe.each(["events", "poll"] as const)("filesystem scope spelling (%s)", mod
       const native = getNativeBinding()!;
       const register = native.watchRegister!;
       // Isolate spelling admission from unrelated native overflow notifications.
-      vi.spyOn(native, "watchRegister").mockImplementation((root, limit) => register(root, limit, () => {}));
+      vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
       __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit ??= callback; } });
     }
     await fs.mkdir(path.join(dir, "MixedDir"));

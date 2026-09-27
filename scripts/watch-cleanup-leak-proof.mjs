@@ -43,7 +43,7 @@ try {
   const checkpoints = [];
   const callback = () => {};
   for (let cycle = 1; cycle <= 1000; cycle++) {
-    const id = binding.watchRegister(directory, 256, callback);
+    const id = binding.watchRegister(directory, 256, callback, true);
     binding.watchUnregister(id);
     await immediate();
     if (cycle === 100 || cycle === 1000) checkpoints.push(await sample(cycle));
