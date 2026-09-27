@@ -125,6 +125,7 @@ handles and delivery queues, and closing one does not retire another's observati
 | `scopes` | At most 128 literal scopes |
 | `persistent` | `true`; `false` lets Node exit with the subscription still open |
 | `intervalMs` | 30000 with events; 1000 with poll; minimum 20 ms |
+| `pollIntervalMs` | Optional polling override; minimum 20 ms, maximum 2147483647 ms (same as `intervalMs`) |
 | `maxDirectories` | 4096 observed directories, including scope ancestors |
 | `maxEntries` | 100000 examined entries per pass, including excluded entries |
 | `maxPendingPaths` | 256; maximum 4096 |
@@ -132,6 +133,12 @@ handles and delivery queues, and closing one does not retire another's observati
 
 Periodic guarded reconciliation runs without needing an event. It catches
 missed events and works on filesystems where native hints are incomplete.
+When polling is selected, the interval is `pollIntervalMs`, then `intervalMs`,
+then 1000 ms, in that order. This applies to explicit `mode: "poll"`, `auto`
+selecting polling, and `auto` falling back after an unsupported event backend.
+`pollIntervalMs` does not change the events reconciliation interval, which
+remains `intervalMs` or 30000 ms. For example, `mode: "auto", pollIntervalMs: 25`
+uses 25 ms polling when needed and retains the 30-second events reconciliation.
 Scans are metadata comparisons: content changes preserving all compared
 metadata may be missed in polling mode. No mode promises transactional
 snapshots, complete history, or hard real-time delivery.

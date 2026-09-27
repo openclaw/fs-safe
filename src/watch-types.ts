@@ -23,6 +23,8 @@ export type WatchOptions = {
   persistent?: boolean;
   /** Guarded reconciliation interval: events 30000, poll 1000; minimum 20 ms. */
   intervalMs?: number;
+  /** Polling transport interval; overrides intervalMs in poll mode or auto fallback. Minimum 20 ms. */
+  pollIntervalMs?: number;
   exclude?: (entry: WatchEntry) => boolean;
   maxDirectories?: number;
   maxEntries?: number;

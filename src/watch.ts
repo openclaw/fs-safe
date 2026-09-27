@@ -46,6 +46,9 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let mode: "events" | "poll" = binding || options.mode === "events" ? "events" : "poll";
   let intervalMs = budget(options.intervalMs, mode === "events" ? 30_000 : 1000, "intervalMs", 2_147_483_647);
   if (intervalMs < 20) throw new RangeError("watch intervalMs must be at least 20");
+  const pollIntervalMs = budget(options.pollIntervalMs, options.intervalMs ?? 1000, "pollIntervalMs", 2_147_483_647);
+  if (pollIntervalMs < 20) throw new RangeError("watch pollIntervalMs must be at least 20");
+  if (mode === "poll") intervalMs = pollIntervalMs;
   const maxDirectories = budget(options.maxDirectories, 4096, "maxDirectories");
   const maxEntries = budget(options.maxEntries, 100_000, "maxEntries");
   const maxPendingPaths = budget(options.maxPendingPaths, 256, "maxPendingPaths", 4096);
@@ -180,7 +183,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     if (options.mode !== "auto" || getFsSafeNativeConfig().mode === "require" ||
       !(error instanceof FsSafeError) || error.code !== "helper-unavailable") return false;
     mode = "poll"; binding = undefined;
-    intervalMs = options.intervalMs ?? 1000;
+    intervalMs = pollIntervalMs;
     return true;
   };
   const observe = async (g: Generation) => {
