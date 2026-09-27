@@ -307,7 +307,8 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           assert.deepEqual(cases.retainedFile.compiledFiles, creationExpected.compiledFiles);
           assert.equal(cases.retainedFile.nativeLoaded, true);
           assert.equal(cases.retainedFile.persistence, "not-proven");
-          assert.deepEqual(cases.retainedFile.rows, ["dispose-preserves", "process-death-admitted", "process-death-settled"]);
+          assert.deepEqual(cases.retainedFile.rows, ["dispose-preserves", "authority-generator-sync", "authority-generator-async",
+            "process-death-admitted", "process-death-settled"]);
         }
         if (!omitted) {
           const suffixProbe = join(directory, "suffix-probe.mjs");

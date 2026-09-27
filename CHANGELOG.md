@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Mutation authority:** reject synchronous and asynchronous generator callback results before mutation, preventing lazy authority checks from being skipped.
+
 ## 0.21.0 - 2026-09-26
 
 ### Highlights

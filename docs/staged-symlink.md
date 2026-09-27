@@ -86,7 +86,8 @@ the original receipt is never replaced by a post-publication identity.
   touching descriptor numbers.
 - `await using` invokes cleanup and raises on a `preserved` outcome. Invocation
   order serializes descriptor work; reentrant calls from the authority callback
-  reject. Callbacks must be synchronous; returned thenables are refused.
+  reject. Callbacks must be synchronous; returned thenables and synchronous or
+  asynchronous generator objects are refused. Generators are never advanced.
 
 Errors carry `StagedSymlinkFailureDetails` in `FsSafeError.details`: the phase,
 recorded `publication`, and a cleanup receipt when applicable. Publication is
