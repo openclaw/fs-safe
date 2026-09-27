@@ -58,7 +58,10 @@ export function defaultSyncShouldReclaim(
 ): boolean {
   const createdAtMs = sidecarLockPayloadCreatedAtMs(snapshot.payload);
   if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
-  return !snapshot.stat || nowMs - snapshot.stat.mtimeMs > staleMs;
+  if (!snapshot.stat) return true;
+  const mtimeMs = "mtimeNs" in snapshot.stat
+    ? Number(snapshot.stat.mtimeNs) / 1e6 : snapshot.stat.mtimeMs;
+  return nowMs - mtimeMs > staleMs;
 }
 
 export function syncReclaimGuardExists(reclaimGuardPath: string): boolean {
