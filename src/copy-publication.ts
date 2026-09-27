@@ -1,12 +1,9 @@
 import type { BigIntStats } from "node:fs";
 import type { PinnedWriteParams, PublishedWriteIdentity } from "./pinned-write-types.js";
 import { FsSafeError } from "./errors.js";
+import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 
-export type RootCopyPublicationReceipt = Readonly<{
-  path: string;
-  dev: bigint;
-  ino: bigint;
-}>;
+export type RootCopyPublicationReceipt = PublishedWriteIdentity & Readonly<{ path: string }>;
 
 export function createCopyPublicationObserver(
   path: string,
@@ -17,12 +14,7 @@ export function createCopyPublicationObserver(
     onPublished(identity: PublishedWriteIdentity): void {
       const receipt = Object.freeze({ path, dev: identity.dev, ino: identity.ino });
       try {
-        const result: unknown = notify?.(receipt);
-        if (result !== null && (typeof result === "object" || typeof result === "function") &&
-          "then" in result && typeof result.then === "function") {
-          void Promise.resolve(result).catch(() => undefined);
-          throw new TypeError("onDestinationPublished must be synchronous");
-        }
+        assertSynchronousCallbackResult(notify?.(receipt), "onDestinationPublished");
       } catch (error) {
         rejected = { error };
         throw error;
