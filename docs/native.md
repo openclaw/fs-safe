@@ -96,12 +96,30 @@ operation is still a permission error and never triggers a retry. Install
 syscall filters before the first native operation; a later `ENOSYS` fails with
 `ENOTSUP`, rather than changing the cached mechanism during a call.
 
-The fallback opens each directory relative to a retained descriptor with
-`O_PATH | O_DIRECTORY | O_NOFOLLOW`, compares exact device/inode/type identities,
-and rechecks the retained parent chain before and after the final no-follow
-open. It rejects all symlink components, including procfs magic links, even
-when the low-level caller requests symlink following. Public Root policy and
-canonical-path admission, hardlink rejection, pinned-file checks, and mutation
+The fallback inspects components with `O_PATH | O_NOFOLLOW`, follows relative
+symlink targets using a stack of retained directory descriptors, and rejects
+absolute targets or `..` past the retained root with `EXDEV`. It permits at most
+40 link expansions (`ELOOP` beyond that limit). Final `O_NOFOLLOW` and exclusive
+creation retain their syscall semantics, including opening the link itself with
+`O_PATH | O_NOFOLLOW` and creating through a dangling in-root relative link.
+Exact device/inode/type identities are checked before and after the final
+no-follow open; followed links also retain their descriptors and have their
+named identities and target strings rechecked. Detected replacements fail with
+`EXDEV`, including changes to directories left behind by a link's `..` target.
+
+The fallback also honors `nosymfollow` mount restrictions on retained links.
+Two conservative restrictions remain: the fallback refuses to follow **any
+procfs symlink** with `ELOOP`, including ordinary links such as `/proc/mounts`.
+Userspace metadata cannot distinguish these from procfs magic links, which
+`RESOLVE_NO_MAGICLINKS` must never follow. Opening a final link itself with
+`O_PATH | O_NOFOLLOW` remains allowed. In a sticky, world-writable directory,
+the fallback refuses all symlink following with `EACCES`, even when the calling
+thread or directory owner owns the link, or `fs.protected_symlinks=0`. This
+preserves Linux's protected-symlink restriction without assuming the thread's
+filesystem UID or treating equal mapped `stat` UIDs as proof of equal kernel
+owners (distinct unmapped owners can both appear as the overflow UID).
+
+Public Root policy and canonical-path admission, hardlink rejection, pinned-file checks, and mutation
 identity fences remain in place. `openBeneath()` reports `best-effort`: these
 identity samples detect replacements but cannot make a multi-component walk
 atomic against a hostile process renaming directories between samples. This

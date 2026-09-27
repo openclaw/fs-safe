@@ -1,5 +1,6 @@
 import path from "node:path";
 import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
+import { createMutationDenyMatcher } from "./deny-mutation-match.js";
 import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
@@ -153,9 +154,10 @@ function epochCurrent(epoch: Epoch, directories?: readonly MutationDirectoryObse
 }
 
 function assertCachedNotDenied(target: string, epoch: Epoch): void {
+  const matches = createMutationDenyMatcher();
   if (epoch.paths.some((paths) => paths.some((denied) =>
-    isPathInside(denied, target) && isPathInside(target, denied))) ||
-    epoch.prefixes.some((paths) => paths.some((denied) => isPathInside(denied, target)))) {
+    matches(target, denied, false))) ||
+    epoch.prefixes.some((paths) => paths.some((denied) => matches(target, denied, true)))) {
     throw new FsSafeError("denied-path", "path is denied by denyMutations policy");
   }
 }

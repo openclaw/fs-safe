@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import fsSync, { type Stats } from "node:fs";
+import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-read.js";
@@ -30,7 +30,7 @@ export type SidecarLockStaleSnapshot = {
 export type SidecarLockSnapshot = {
   raw?: string;
   payload: unknown;
-  stat?: Stats;
+  stat?: Stats | BigIntStats;
   ownershipToken?: string;
 };
 
@@ -147,14 +147,14 @@ export async function readSidecarLockRawSnapshot(
         const raw = (await readFileHandleBounded(opened.handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
         return {
           raw,
-          stat: opened.stat,
+          stat: fsSync.fstatSync(opened.handle.fd, { bigint: true }),
         };
       } finally {
         await opened.handle.close().catch(() => undefined);
       }
     }
-    let before: Stats | null;
-    try { before = fsSync.lstatSync(lockPath); }
+    let before: BigIntStats | null;
+    try { before = fsSync.lstatSync(lockPath, { bigint: true }); }
     catch (error) { before = missingSnapshotPath(error); }
     if (!before) return null;
     if (!before.isFile() || before.isSymbolicLink()) {
@@ -185,7 +185,7 @@ export async function readSidecarLockRawSnapshot(
       options.onOpenFailure?.(error);
       throw error;
     }
-    const opened = fsSync.fstatSync(handle.fd);
+    const opened = fsSync.fstatSync(handle.fd, { bigint: true });
     if (!opened.isFile()) {
       if (options.rejectNonFile) {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);
@@ -194,8 +194,8 @@ export async function readSidecarLockRawSnapshot(
     }
     if (!options.allowDescriptorIdentityDrift && !sameFileIdentity(before, opened)) return null;
     const raw = (await readFileHandleBounded(handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
-    let after: Stats | null;
-    try { after = fsSync.lstatSync(lockPath); }
+    let after: BigIntStats | null;
+    try { after = fsSync.lstatSync(lockPath, { bigint: true }); }
     catch (error) { after = missingSnapshotPath(error); }
     if (!after || !after.isFile() || !sameFileIdentity(before, after)) return null;
     return { raw, stat: after };
@@ -204,9 +204,9 @@ export async function readSidecarLockRawSnapshot(
   }
 }
 
-function lstatSidecarLockSync(lockPath: string): Stats | null {
+function lstatSidecarLockSync(lockPath: string): BigIntStats | null {
   try {
-    return fsSync.lstatSync(lockPath);
+    return fsSync.lstatSync(lockPath, { bigint: true });
   } catch (error) {
     return missingSnapshotPath(error);
   }
@@ -241,7 +241,7 @@ export function readSidecarLockRawSnapshotSync(
       options.onOpenFailure?.(error);
       throw error;
     }
-    const opened = fsSync.fstatSync(fd);
+    const opened = fsSync.fstatSync(fd, { bigint: true });
     if (!opened.isFile()) {
       if (options.rejectNonFile) {
         throw new FsSafeError("not-file", `sidecar lock is not a regular file: ${lockPath}`);

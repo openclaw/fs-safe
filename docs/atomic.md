@@ -245,6 +245,22 @@ that same descriptor, and synchronizes the result. Any write, mode, or sync
 failure triggers a byte-and-mode restore and another sync through the same
 descriptor.
 
+With mutation callbacks enabled, an `EIO` from destination `stat`/`lstat` after
+successful truncation also attempts restoration through that retained descriptor.
+Each restore write still requires live application authority and fresh exact
+descriptor identity, regular-file, and configured hardlink checks. The failed
+pathname observation is not retried to authorize restoration; no pathname is
+opened, removed, or replaced. A successor at that name is left untouched.
+`details.cleanup: "restored"` means the retained original file's bytes and mode
+were restored and synchronized, not that the pathname still names it. The existing
+`writing` receipt identifies that file; no `published` receipt is emitted for a
+failed replacement. Restoration I/O failures report `"restore-failed"`.
+
+Callback refusals, detected identity/type/link changes, and other metadata errors
+remain terminal. Failed descriptor revalidation also stops restoration. These
+cases can leave the retained file empty or partial with only a `writing` receipt;
+before the first successful truncation, verification failure leaves it untouched.
+
 With `syncTempFile: false`, an exclusive-create copy fallback does not report
 success until its new destination writer closes successfully. This includes
 `"restore-original"` when the destination did not exist. A close rejection or throw is
