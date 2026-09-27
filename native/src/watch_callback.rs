@@ -125,6 +125,17 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[test]
+    fn diagnostics_survive_hint_coalescing_and_callback_retry() {
+        let mut pending = super::super::Pending { limit: 1, ..Default::default() };
+        pending.push_with_flags("".into(), "config.json".into(), true, Some(0x100));
+        pending.push_with_flags("".into(), "config.json".into(), false, Some(0x1000));
+        let batch = pending.take().unwrap();
+        pending.restore(batch);
+        let batch = pending.take().unwrap();
+        assert!(batch.hints[0].structural);
+        assert_eq!(batch.hints[0].flags, Some(0x1100));
+    }
+    #[test]
     fn rejected_payloads_are_reclaimed_on_full_queue_and_shutdown() {
         struct Payload<'a>(&'a AtomicUsize);
         impl Drop for Payload<'_> {

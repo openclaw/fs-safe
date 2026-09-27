@@ -56,6 +56,10 @@ means invalidate **every configured scope**. Initial admission and every
 successful `setScopes` publish one undetailed `reconcile` invalidation. A rename
 or identity replacement is structural; metadata changes to the same ordinary
 file may be content changes. Neither means the file is settled or readable.
+An admitted native hint can invalidate an entry even when its before/after scan
+metadata is identical: the path may have changed and been restored between scans
+(ABA), or content may have changed without a distinguishable metadata change.
+Structural hints remain conservative in that case.
 Raw event names remain private: detail comes from guarded scans, prior guarded
 snapshots, or explicitly configured targets. Unclassifiable hints inside selected,
 non-excluded territory lose detail. Hints for excluded or unselected paths are
@@ -161,6 +165,11 @@ registration/listing identity is retried up to three times per directory; furthe
 churn invalidates that subtree. Poll mode starts with its first scan and detects
 changes during the crawl on the next comparison. Neither mode waits for two
 agreeing scans.
+`ready` and `reconcile()` do not drain the operating system's event queue.
+For example, FSEvents can deliver coalesced setup creation activity after `ready`,
+even with its stream starting at the current event ID. Consumers must tolerate
+these advisory invalidations; tests measuring a quiet interval should first
+observe a selected sentinel edit and drain its trailing events.
 
 Each later pass compares with the previous snapshot, publishes bounded differences,
 and adopts its result as the next snapshot. Vanishing entries, kind changes, and

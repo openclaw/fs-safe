@@ -25,6 +25,7 @@ pub struct WatchHint {
     pub directory: String,
     pub name: String,
     pub structural: bool,
+    pub flags: Option<u32>,
 }
 #[napi(object)]
 pub struct WatchBatch {
@@ -39,7 +40,7 @@ use callback::Callback;
 mod memory;
 #[derive(Default)]
 pub(super) struct Pending {
-    paths: BTreeMap<(String, String), bool>,
+    paths: BTreeMap<(String, String), (bool, Option<u32>)>,
     overflow: bool,
     limit: usize,
     error: Option<String>,
@@ -50,7 +51,17 @@ impl Pending {
         self.paths.clear();
         self.overflow = true;
     }
+    #[cfg(any(not(target_os = "macos"), test))]
     pub(super) fn push(&mut self, directory: String, name: String, structural: bool) {
+        self.push_with_flags(directory, name, structural, None);
+    }
+    pub(super) fn push_with_flags(
+        &mut self,
+        directory: String,
+        name: String,
+        structural: bool,
+        flags: Option<u32>,
+    ) {
         if self.overflow {
             return;
         }
@@ -59,7 +70,11 @@ impl Pending {
             self.overflow();
             return;
         }
-        *self.paths.entry(key).or_default() |= structural;
+        let value = self.paths.entry(key).or_default();
+        value.0 |= structural;
+        if let Some(flags) = flags {
+            value.1 = Some(value.1.unwrap_or(0) | flags);
+        }
     }
     fn take(&mut self) -> Option<WatchBatch> {
         if self.paths.is_empty() && !self.overflow && self.error.is_none() {
@@ -70,7 +85,12 @@ impl Pending {
             overflow: std::mem::take(&mut self.overflow),
             hints: std::mem::take(&mut self.paths)
                 .into_iter()
-                .map(|((directory, name), structural)| WatchHint { directory, name, structural })
+                .map(|((directory, name), (structural, flags))| WatchHint {
+                    directory,
+                    name,
+                    structural,
+                    flags,
+                })
                 .collect(),
         })
     }
@@ -79,7 +99,7 @@ impl Pending {
             self.overflow();
         }
         for hint in batch.hints {
-            self.push(hint.directory, hint.name, hint.structural);
+            self.push_with_flags(hint.directory, hint.name, hint.structural, hint.flags);
         }
         if batch.error.is_some() {
             self.error = batch.error;

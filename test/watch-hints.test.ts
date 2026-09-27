@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { changedEntries, nativeChanges } from "../src/watch-hints.js";
+import { changedEntries, guardedHintChanges, nativeChanges } from "../src/watch-hints.js";
 import { watchScopes, type WatchSnapshot } from "../src/watch-scan.js";
 const snapshot = (entries: [string, string][]): WatchSnapshot => ({ entries: new Map(entries), directories: new Map(), targets: new Map(), scanned: entries.length });
 const scopes = watchScopes([{ path: "config.json", kind: "entry" }, { path: "skills", kind: "tree", depth: 2 }]);
@@ -28,4 +28,14 @@ describe("bounded advisory hints", () => {
     expect(changedEntries(before, after, 1)).toBeUndefined();
     expect(changedEntries(undefined, after, 2)).toBeUndefined();
   });
+});
+
+
+it("retains admitted namespace activity despite equal before/after fingerprints", () => {
+  const before = snapshot([["config.json", "file:1:2:3:4:5"]]);
+  const after = snapshot([["config.json", "file:1:2:3:4:5"]]);
+  const observed = changedEntries(before, after, 256);
+  expect(observed).toEqual([]);
+  const hints = nativeChanges(scopes, before, { overflow: false, hints: [{ directory: "", name: "config.json", event: "rename" }] });
+  expect(guardedHintChanges(scopes, before, after, hints, observed, 256)).toEqual([{ path: "config.json", type: "structural" }]);
 });

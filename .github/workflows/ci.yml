@@ -1089,6 +1089,12 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/retained-file.test.ts
 
+      - name: Repeat Config sibling isolation twenty times without retries
+        if: matrix.os == 'macos-15'
+        env:
+          FS_SAFE_TEST_WATCH_EVENTS: "1"
+        run: pnpm test test/watch-selection.test.ts -t 'keeps Config entry' --maxWorkers=1 --repeats=19 --retry=0 --reporter=verbose
+
       - name: Test guarded observation
         env:
           FS_SAFE_TEST_WATCH_EVENTS: "1"

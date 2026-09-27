@@ -9,6 +9,7 @@ import { watchBinding } from "../src/watch-native.js";
 import type { NativeWatchBatch } from "../src/watch-native.js";
 import { getNativeBinding } from "../src/native.js";
 import { __setFsSafeTestHooksForTest as hooks } from "../src/test-hooks.js";
+import { watchDiagnostics } from "./helpers/watch-diagnostics.js";
 
 const events = !!watchBinding("auto");
 if (process.env.FS_SAFE_TEST_WATCH_EVENTS === "1" && !events) throw new Error("selection proof requires the source-built native binding");
@@ -81,23 +82,38 @@ describe.each(["events", "poll"] as const)("selected observation (%s)", mode => 
   }, 60_000);
 
   test("keeps Config entry scopes quiet during heavy sibling churn and details selected edits", async () => {
-    await fs.writeFile(path.join(directory, "config.json"), "before");
-    const values: WatchInvalidation[] = [];
-    owner = watch(await root(directory), { mode, scopes: [{ path: "config.json", kind: "entry" }], intervalMs: 60_000,
-      onInvalidate: value => { values.push(value); },
-    });
-    await owner.ready; await settle(); values.length = 0;
-    for (let cycle = 0; cycle < 32; cycle++) {
-      const names = Array.from({ length: 32 }, (_, n) => path.join(directory, `sibling-${n}`));
-      await Promise.all(names.map(name => fs.mkdir(name)));
-      await Promise.all(names.map(name => fs.writeFile(path.join(name, "unselected"), "noise")));
-      await Promise.all(names.map(name => fs.rm(name, { recursive: true })));
+    const diagnostics = watchDiagnostics("config.json");
+    try {
+      await fs.writeFile(path.join(directory, "config.json"), "before");
+      const values: WatchInvalidation[] = [];
+      owner = watch(await root(directory), { mode, scopes: [{ path: "config.json", kind: "entry" }], intervalMs: 60_000,
+        onInvalidate: value => { diagnostics.invalidation(value); values.push(value); },
+      });
+      await owner.ready;
+      diagnostics.phase("fixture-drain");
+      // FSEvents may deliver setup creation after ready. Establish real delivery
+      // and drain trailing events before the strict sibling-only measurement.
+      await fs.writeFile(path.join(directory, "config.json"), "fixture sentinel edit");
+      if (mode === "events") await expect.poll(() => values.some(value => value.reason === "event" && value.changes?.some(change => change.path === "config.json")), { timeout: 5000 }).toBe(true);
+      await diagnostics.quiet(owner);
+      values.length = 0;
+      diagnostics.phase("sibling-churn");
+      for (let cycle = 0; cycle < 32; cycle++) {
+        const names = Array.from({ length: 32 }, (_, n) => path.join(directory, `sibling-${n}`));
+        await Promise.all(names.map(name => fs.mkdir(name)));
+        await Promise.all(names.map(name => fs.writeFile(path.join(name, "unselected"), "noise")));
+        await Promise.all(names.map(name => fs.rm(name, { recursive: true })));
+      }
+      await settle(); expect(values).toEqual([]);
+      diagnostics.phase("selected-edit");
+      await fs.writeFile(path.join(directory, "config.json"), "selected config edit");
+      if (mode === "events") await expect.poll(() => values.length, { timeout: 5000 }).toBeGreaterThan(0);
+      await settle(); detailed(values, "config.json");
+      console.log(JSON.stringify({ proof: "watch-config-siblings", platform: process.platform, mode, siblingOperations: 3072, overflows: 0, diagnostic: diagnostics.report().selectedHints }));
+    } catch (error) {
+      console.error(JSON.stringify({ proof: "watch-config-failure", mode, platform: process.platform, ...diagnostics.report() }));
+      throw error;
     }
-    await settle(); expect(values).toEqual([]);
-    await fs.writeFile(path.join(directory, "config.json"), "selected config edit");
-    if (mode === "events") await expect.poll(() => values.length, { timeout: 5000 }).toBeGreaterThan(0);
-    await settle(); detailed(values, "config.json");
-    console.log(JSON.stringify({ proof: "watch-config-siblings", platform: process.platform, mode, siblingOperations: 3072, overflows: 0 }));
   }, 60_000);
 });
 

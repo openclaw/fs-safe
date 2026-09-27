@@ -7,7 +7,7 @@ import type { WatchStreamPaths } from "./watch-stream.js";
 
 export type NativeWatchHint = { directory: string; name: string; event: "rename" | "change" };
 export type NativeWatchBatch = { hints: NativeWatchHint[]; overflow: boolean; error?: string };
-export type NativeWatchWireBatch = { hints: { directory: string; name: string; structural: boolean }[]; overflow: boolean; error?: string };
+export type NativeWatchWireBatch = { hints: { directory: string; name: string; structural: boolean; flags?: number }[]; overflow: boolean; error?: string };
 export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | undefined {
   if (mode === "poll") return;
   const binding = getNativeBinding(); // Preserves require + missing-addon failure.

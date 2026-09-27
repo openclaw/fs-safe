@@ -79,6 +79,8 @@ export function guardedHintChanges(
     // the previous guarded snapshot), or a target explicitly supplied by caller.
     // A stale/misdirected inode watch may report outside names: erase its detail.
     if (!before?.entries.has(hint.path) && !after.entries.has(hint.path) && !scopes.some(scope => scope.path === hint.path)) return undefined;
+    // Equal snapshots cannot exclude an intermediate change and restoration (ABA).
+    // Preserve admitted hints, including setup activity delivered after ready.
     if (!result.has(hint.path) && result.size >= limit) return undefined;
     const prior = result.get(hint.path);
     result.set(hint.path, Object.freeze(prior?.type === "structural" ? prior : hint));

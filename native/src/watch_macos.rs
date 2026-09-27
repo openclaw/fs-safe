@@ -143,7 +143,12 @@ impl Events {
             return;
         }
         let (directory, name) = relative.rsplit_once('/').unwrap_or(("", relative));
-        pending.push(directory.into(), name.into(), flags & (0x100 | 0x200 | 0x800) != 0);
+        pending.push_with_flags(
+            directory.into(),
+            name.into(),
+            flags & (0x100 | 0x200 | 0x800) != 0,
+            Some(flags),
+        );
     }
 }
 
