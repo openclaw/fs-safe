@@ -79,6 +79,16 @@ missing relative suffixes beneath an existing directory using bounded temporary
 directory probes. The caller owns Unicode-pair policy, caching, and the fallback
 for `undefined`. See [path suffix alias probing](path-suffix-aliases.md).
 
+`retainSymlinkInDirectory` holds an explicitly identified POSIX symlink through
+exact-slot no-replace publication; its receipts use the `StagedSymlink*` and
+`PublishedSymlinkReceipt` types. See [staged symlinks](staged-symlink.md).
+
+`retainFileInDirectory` retains an existing Windows NTFS file through a native
+handle for explicit identity-bound retirement. It is described by
+`RetainFileInDirectoryOptions`, `RetainedFile`, `RetainedFileAdmission`,
+`RetainedFileExpected`, `RetainedFileIssue`, `RetainedFileReceipt`, and
+`RetainedFileResult`. See [retained Windows files](retained-file.md).
+
 ## Guest source
 
 `@openclaw/fs-safe/guest` exports `GUEST_FILESYSTEM_PYTHON`,
@@ -132,8 +142,11 @@ parent/workspace descriptors; see the
 Atomic helper option and receipt types include
 `MovePathWithCopyFallbackOptions`, `ReplaceDirectoryAtomicOptions`,
 `ReplaceFileAtomicSyncOptions`, `ReplaceFileAtomicResult`,
-`ReplaceFileAtomicRestoreCleanup`, `ReplaceFileCopyFallbackRestorePolicy`, and
-`ReplaceFileDestinationHardlinkPolicy`.
+`ReplaceFileAtomicRestoreCleanup`, `ReplaceFileCopyFallbackRestorePolicy`,
+`ReplaceFileDestinationHardlinkPolicy`, and `ReplaceFileAtomicDestinationState`.
+The `assertBeforeMutation` option rechecks caller authority before new effects,
+and `onDestinationState` reports retained destination identities as
+`ReplaceFileAtomicDestinationState` values; see [atomic writes](atomic.md).
 
 The durability surface also exports the synchronous strict
 `syncDirectorySync`, plus `DirectoryReceipt`, `DurableDirectoryReceipt`,
@@ -159,6 +172,14 @@ Archive option and policy types are `ExtractArchiveOptions`,
 `createArchiveSymlinkTraversalError` constructs the typed traversal failure
 used by extractors. `resolvePackedRootDir` finds the single packed root when an
 archive layout permits it; neither helper weakens entry validation.
+
+## `watch`
+
+`@openclaw/fs-safe/watch` exports `watch()` plus `WatchScope`, `WatchEntry`,
+`WatchChange`, `WatchInvalidation`, `WatchFailure`, `WatchHealth`,
+`WatchOptions`, and `WatchSubscription`. Invalidations are advisory; guarded
+scans stay authoritative. See [filesystem observation](watch.md) for modes,
+budgets, `persistent`, and lifecycle.
 
 ## Keeping this list honest
 
