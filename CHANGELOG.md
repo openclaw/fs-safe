@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Remote validation:** add an optional 16-vCPU Linux Blacksmith Testbox workflow for maintainer checks through Crabbox, with the existing Node, pnpm, and portable archive toolchain.
+
 ## 0.21.0 - 2026-09-26
 
 ### Highlights
