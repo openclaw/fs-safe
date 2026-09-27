@@ -5,6 +5,7 @@
 ### Fixes
 
 - **Mutation authority:** reject synchronous and asynchronous generator callback results before mutation, preventing lazy authority checks from being skipped.
+- **Native move diagnostics:** no-clobber `Root.move()` preserves the original native loader error as its cause, including missing libraries or incompatible glibc versions.
 
 ## 0.21.0 - 2026-09-26
 

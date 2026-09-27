@@ -24,7 +24,10 @@ it("keeps guarded JS operations usable after a glibc load failure and rejects na
   await scoped.write("source.txt", "source");
   await expect(scoped.readText("source.txt")).resolves.toBe("source");
   await expect(scoped.write("../escape.txt", "escape")).rejects.toMatchObject({ code: "outside-workspace" });
-  await expect(scoped.move("source.txt", "target.txt")).rejects.toMatchObject({ code: "helper-unavailable" });
+  await expect(scoped.move("source.txt", "target.txt")).rejects.toMatchObject({
+    code: "helper-unavailable",
+    cause: loadFailure,
+  });
   await expect(fs.readFile(path.join(directory, "source.txt"), "utf8")).resolves.toBe("source");
   await expect(fs.lstat(path.join(directory, "target.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   expect(loader).toHaveBeenCalledOnce();
