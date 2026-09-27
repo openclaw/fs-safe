@@ -1,3 +1,4 @@
+import { settings } from "./config.mjs";
 import { fileURLToPath } from "node:url";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { assert, fs, path, delay, fixture, observe, watch, wholeTree, isolatedEdit, cleanup } from "./oracle.mjs";
@@ -92,7 +93,7 @@ export async function idle() {
     assert.equal(threads(), 1);
     const before = await resources(), threadBefore = await threadSample();
     const cpu = process.cpuUsage(), usage = process.resourceUsage(), started = performance.now();
-    await delay(600_000);
+    await delay(settings.idleSeconds * 1000);
     const elapsedMs = performance.now() - started, consumed = process.cpuUsage(cpu), afterUsage = process.resourceUsage();
     const cpuMs = (consumed.user + consumed.system) / 1000;
     const threadAfter = await threadSample(), after = await resources();
@@ -102,7 +103,7 @@ export async function idle() {
       assert.equal(threadBefore.length, 1); assert.equal(threadAfter.length, 1);
       assert.equal(threadBefore[0].id, threadAfter[0].id);
       hubContextSwitches = threadAfter[0].voluntary + threadAfter[0].involuntary - threadBefore[0].voluntary - threadBefore[0].involuntary;
-      assert.ok(hubContextSwitches <= 30, "idle hub woke more than 30 times in ten minutes");
+      assert.ok(hubContextSwitches <= Math.ceil(30 * settings.idleSeconds / 600), "idle hub exceeded three wakeups per minute");
     }
     for (const observer of observers) await observer.checkpoint();
     return { subscriptions: 16, intervalMs: 3_600_000, elapsedMs, cpuMs, cpuPercent: cpuMs / elapsedMs * 100,

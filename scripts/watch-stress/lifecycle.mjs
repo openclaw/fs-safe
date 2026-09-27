@@ -1,3 +1,4 @@
+import { settings } from "./config.mjs";
 import { assert, fs, path, delay, fixture, observe, watch, wholeTree, compare, truthWalk, cleanup } from "./oracle.mjs";
 import { resources, threads, trend } from "./metrics.mjs";
 import { __setFsSafeTestHooksForTest as hooks } from "../../dist/test-hooks.js";
@@ -11,7 +12,7 @@ async function warm() {
 
 export async function fanout() {
   await warm(); const baseline = await resources(), phases = [];
-  for (const count of [64, 256]) {
+  for (const count of [...new Set([Math.min(64, settings.fanout), settings.fanout])]) {
     const fixtures = [], observers = [];
     try {
       for (let n = 0; n < count; n++) {
@@ -41,19 +42,20 @@ export async function fanout() {
 export async function lifecycle() {
   await warm(); const baseline = await resources();
   const f = await fixture("lifecycle"); const samples = [], begin = performance.now();
+  const sampleEvery = Math.max(1, Math.floor(settings.lifecycleCycles / 10));
   let observer;
   try {
     await fs.writeFile(path.join(f.directory, "value"), "content");
-    for (let cycle = 1; cycle <= 10_000; cycle++) {
+    for (let cycle = 1; cycle <= settings.lifecycleCycles; cycle++) {
       observer = observe(f); await observer.subscription.ready; await observer.flush();
-      if (cycle % 1000 === 0) await observer.checkpoint();
+      if (cycle % sampleEvery === 0 || cycle === settings.lifecycleCycles) await observer.checkpoint();
       await observer.close(); observer = undefined;
-      if (cycle % 1000 === 0) {
+      if (cycle % sampleEvery === 0 || cycle === settings.lifecycleCycles) {
         await delay(100);
         const sample = { cycle, seconds: (performance.now() - begin) / 1000, ...(await resources()) };
         samples.push(sample); assert.equal(sample.hubThreads, 0);
         assert.ok(sample.handles <= baseline.handles, `handle leak after ${cycle} cycles`);
-        process.stderr.write(`lifecycle ${cycle}/10000\n`);
+        process.stderr.write(`lifecycle ${cycle}/${settings.lifecycleCycles}\n`);
       }
     }
     for (let n = 0; n < 100; n++) {
@@ -90,8 +92,8 @@ export async function lifecycle() {
     await delay(100);
     const closed = await resources(), memory = trend(samples.slice(2));
     assert.equal(closed.hubThreads, 0); assert.ok(closed.handles <= baseline.handles);
-    assert.ok(memory.growth <= 32 * 1024 * 1024, "lifecycle RSS grew by more than 32 MiB after 3000 cycles");
-    return { cycles: 10_000, immediateClose: 100, abortDuringAdmission: 100, scopeChanges: 1000, callbackClose: 100, baseline, closed, memory, samples };
+    assert.ok(memory.growth <= 32 * 1024 * 1024, "lifecycle RSS grew by more than 32 MiB after warm-up");
+    return { cycles: settings.lifecycleCycles, immediateClose: 100, abortDuringAdmission: 100, scopeChanges: 1000, callbackClose: 100, baseline, closed, memory, samples };
   } finally { hooks(); await cleanup([() => observer?.close()], [() => f.remove()]); }
 }
 
