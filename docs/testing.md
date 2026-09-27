@@ -140,7 +140,9 @@ bounded cleanup. Bounded-cleanup success tests require real `openat2`; run the
 full suite with the environment hook unset. PR CI's `Native check
 (linux-x64-no-openat2)` runs the native Node suites and watch proofs with the
 hook set. It replaces the four bounded-cleanup success suites and quarantine
-success proof with the explicit refusal fixture above. Bun's full compatibility
+success proof with the explicit refusal fixture above. XFS tree-clone proof
+requires the same openat2/NO_XDEV primitive and runs in the ordinary Linux
+lanes. Bun's full compatibility
 suite remains in the normal native lanes, because it includes bounded cleanup.
 
 `@openclaw/fs-safe/test-hooks` exposes test-only injection points. Registration

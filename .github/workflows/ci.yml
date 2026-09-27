@@ -1203,8 +1203,10 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/copy-offload-eof-proof.mjs
 
+      # XFS native tree cloning uses the same NO_XDEV/openat2 directory
+      # primitive as bounded cleanup, so it requires the ordinary kernel lane.
       - name: Test XFS cloning and unavailable-reflink fallback
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !matrix.no-openat2
         shell: bash
         run: |
           set -euo pipefail
