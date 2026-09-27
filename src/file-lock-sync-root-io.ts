@@ -1,4 +1,4 @@
-import fs, { type BigIntStats, type Stats } from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
@@ -41,7 +41,7 @@ export type FileLockSyncRootDiskSnapshot = {
   ownershipToken?: never;
   payload: unknown;
   raw: string;
-  stat: Stats;
+  stat: BigIntStats;
 };
 
 export type FileLockSyncRootSnapshot = Readonly<{
@@ -203,7 +203,7 @@ export function readFileLockSyncRootSnapshot(
       throw error;
     }
     assertRegularFile(after, pathAuthority.authority.hardlinks);
-    const stat = fs.fstatSync(fd);
+    const stat = fs.fstatSync(fd, { bigint: true });
     if (expectedReceipt) {
       assertRetainedParentCurrent(pathAuthority, parent);
     } else {

@@ -2,7 +2,9 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLockSync } from "../src/file-lock.js";
+import { root } from "../src/root.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { sidecarLockSnapshotMatches } from "../src/sidecar-lock-reclaim.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -12,10 +14,12 @@ const originalId = 9_007_199_254_740_995n;
 const replacementId = 9_007_199_254_740_996n;
 const retry = { retries: 0, minTimeout: 0, maxTimeout: 0 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); configureFsSafeNative({ mode: "auto" }); });
 
 function project<T extends fs.Stats | fs.BigIntStats>(stat: T, component: "dev" | "ino", value: bigint): T {
   return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, {
+    dev: typeof stat.dev === "bigint" ? 41n : 41,
+    ino: typeof stat.ino === "bigint" ? 73n : 73,
     [component]: typeof stat[component] === "bigint" ? value : Number(value),
   });
 }
@@ -33,6 +37,7 @@ it.each(["dev", "ino"] as const)("refuses colliding numeric %s in no-token snaps
 
 for (const synchronous of [false, true]) {
   it.each(["dev", "ino"] as const)(`preserves a successor after failed raw creation with large %s (sync=${synchronous})`, async component => {
+    configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-bigint-");
     const targetPath = path.join(directory, "state");
     const lockPath = `${targetPath}.lock`;
@@ -93,3 +98,42 @@ for (const synchronous of [false, true]) {
     expect(statOptions.filter(options => (options as { bigint?: boolean } | undefined)?.bigint === true).length).toBeGreaterThanOrEqual(4);
   });
 }
+
+it.each(["dev", "ino"] as const)("reclaims an unchanged Root sidecar with a large %s", async component => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-root-sidecar-bigint-");
+  const capability = await root(directory);
+  const targetPath = path.join(directory, "state");
+  const lockPath = `${targetPath}.lock`;
+  fs.writeFileSync(lockPath, '{"createdAt":"2000-01-01T00:00:00.000Z"}\n');
+  const descriptors = new Set<number>();
+  const open = fs.openSync.bind(fs), close = fs.closeSync.bind(fs);
+  const fstat = fs.fstatSync.bind(fs), lstat = fs.lstatSync.bind(fs);
+  vi.spyOn(fs, "openSync").mockImplementation(((candidate, flags, mode) => {
+    const fd = open(candidate, flags, mode);
+    if (String(candidate) === lockPath) descriptors.add(fd);
+    return fd;
+  }) as typeof fs.openSync);
+  vi.spyOn(fs, "closeSync").mockImplementation(fd => { descriptors.delete(fd); close(fd); });
+  vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+    const stat = fstat(fd, options);
+    return descriptors.has(fd) ? project(stat, component, originalId) : stat;
+  }) as typeof fs.fstatSync);
+  vi.spyOn(fs, "lstatSync").mockImplementation(((candidate, options) => {
+    const stat = lstat(candidate, options);
+    return String(candidate) === lockPath && stat ? project(stat, component, originalId) : stat;
+  }) as typeof fs.lstatSync);
+  let approved = 0;
+  const handle = acquireFileLockSync(targetPath, {
+    lockRoot: capability, payload: () => ({ owner: "new" }),
+    staleMs: 0, staleRecovery: "remove-if-unchanged",
+    shouldRemoveStaleLock: () => { approved++; return true; },
+    retry: { ...retry, retries: 1 }, timeoutMs: Infinity,
+  });
+  try {
+    expect(approved).toBe(1);
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual({ owner: "new" });
+  } finally { handle.release(); }
+  expect(descriptors.size).toBe(0);
+  expect(fs.existsSync(lockPath)).toBe(false);
+});
