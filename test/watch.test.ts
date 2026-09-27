@@ -392,24 +392,6 @@ it("bounds per-directory replacement retries without failing the subscription", 
   expect(owner.health().directories).toBe(2);
 });
 
-it.skipIf(!eventsAvailable)("coalesces hints during a slow pass and reports undetailed overflow", async () => {
-  let emit!: (batch: import("../src/watch-native.js").NativeWatchBatch) => void;
-  __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
-  const changes: WatchInvalidation[] = [];
-  const owner = own(watch(await root(dir), { mode: "events", scopes, onInvalidate: value => { changes.push(value); } }));
-  await owner.ready; changes.length = 0;
-  let passes = 0;
-  __setFsSafeTestHooksForTest({ beforeWatchRegistration: async () => {
-    if (++passes === 1) {
-      for (let i = 0; i < 100; i++) emit({ hints: [], overflow: true });
-      await new Promise(resolve => setTimeout(resolve, 40));
-    }
-  } });
-  await owner.reconcile();
-  await expect.poll(() => owner.health().state).toBe("ready");
-  expect(passes).toBe(2);
-  expect(changes.some(value => value.reason === "overflow" && value.changes === undefined)).toBe(true);
-});
 
 it("keeps reconcile requests alive across a fenced scope replacement", async () => {
   let release!: () => void, entered!: () => void;

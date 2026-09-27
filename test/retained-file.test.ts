@@ -200,6 +200,25 @@ describe.runIf(native)("real Windows retained-file lifecycle", () => {
     expect(fs.readFileSync(filePath, "utf8")).toBe("original");
   });
 
+  it.each(["sync", "async"] as const)("settles resources without deleting for %s generator authority", async kind => {
+    const { options, directory, filePath } = await fixture();
+    let bodyCalls = 0;
+    const assertion = kind === "sync"
+      ? function* () { bodyCalls++; throw new Error("revoked"); }
+      : async function* () { bodyCalls++; throw new Error("revoked"); };
+    const owner = retained({ ...options, assertBeforeMutation: assertion });
+    const result = owner.remove();
+    expect(result).toMatchObject({ status: "not-attempted", phase: "authority", disposition: "not-attempted",
+      resources: "closed", errors: [{ phase: "authority", code: "denied-path" }] });
+    expect(result.errors[0]?.cause).toBeInstanceOf(TypeError);
+    expect(bodyCalls).toBe(0);
+    expect(owner.remove()).toBe(result);
+    expect(owner.dispose()).toBe(result);
+    const released = path.join(directory, "released");
+    fs.renameSync(filePath, released);
+    expect(fs.readFileSync(released, "utf8")).toBe("original");
+  });
+
   it("copied receipts and methods do not authorize removal; inputs are captured", async () => {
     const { options, filePath } = await fixture();
     const mutable = { ...options, expected: { ...options.expected } };

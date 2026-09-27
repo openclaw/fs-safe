@@ -174,8 +174,10 @@ or inaccessible), fatal native backend/registration failures such as `watch-limi
 deterministic size limits (`too-large`, operation `scan`), or callback contract
 violations. Invalid scope admission, including symbolic parents, still rejects;
 it never grants authority through a link. Transient descendant churn does not
-make an admitted subscription unavailable. Callbacks may synchronously retire the owner; returning a thenable from
-`onInvalidate`, `onHealth`, or `exclude` rejects observation. Application async
+make an admitted subscription unavailable. Callbacks may synchronously retire
+the owner. Returning a thenable or a synchronous or asynchronous generator object
+from `onInvalidate`, `onHealth`, or `exclude` rejects observation without advancing
+generators. Application async
 work remains application-owned and is not joined by the subscription.
 
 `close()` is terminal, idempotent, and joined. Observation failures remain in

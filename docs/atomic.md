@@ -154,8 +154,9 @@ can replace the pathname, so compare the recorded identity with the current
 entry and recheck application authority before compensation. Receipts do not
 promise durable storage or authorize rollback.
 
-Both callbacks must complete synchronously; Promise and thenable results are
-rejected, and ordinary return values are ignored. The first callback refusal
+Both callbacks must complete synchronously; Promise, thenable, and synchronous
+or asynchronous generator results are rejected. Returned generators are never
+advanced; other ordinary return values are ignored. The first callback refusal
 is terminal, including falsy thrown values; an `EPERM`, `EEXIST`, or `EBUSY` code
 from a callback never starts fallback or retry. Refusal during an in-place
 fallback also stops new restoration writes. Final mode, synchronization, close,
@@ -244,6 +245,22 @@ snapshots it through a pinned descriptor, overwrites and mode-adjusts through
 that same descriptor, and synchronizes the result. Any write, mode, or sync
 failure triggers a byte-and-mode restore and another sync through the same
 descriptor.
+
+With mutation callbacks enabled, an `EIO` from destination `stat`/`lstat` after
+successful truncation also attempts restoration through that retained descriptor.
+Each restore write still requires live application authority and fresh exact
+descriptor identity, regular-file, and configured hardlink checks. The failed
+pathname observation is not retried to authorize restoration; no pathname is
+opened, removed, or replaced. A successor at that name is left untouched.
+`details.cleanup: "restored"` means the retained original file's bytes and mode
+were restored and synchronized, not that the pathname still names it. The existing
+`writing` receipt identifies that file; no `published` receipt is emitted for a
+failed replacement. Restoration I/O failures report `"restore-failed"`.
+
+Callback refusals, detected identity/type/link changes, and other metadata errors
+remain terminal. Failed descriptor revalidation also stops restoration. These
+cases can leave the retained file empty or partial with only a `writing` receipt;
+before the first successful truncation, verification failure leaves it untouched.
 
 With `syncTempFile: false`, an exclusive-create copy fallback does not report
 success until its new destination writer closes successfully. This includes

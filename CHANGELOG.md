@@ -2,23 +2,34 @@
 
 ## Unreleased
 
-- Add explicit retained-handle retirement for existing Windows NTFS files, with exact producer identity, current authority and separate disposition/settlement facts; no persistence guarantee.
+### Fixes
+
+- **Mutation authority:** reject synchronous and asynchronous generator callback results before mutation, preventing lazy authority checks from being skipped.
+- **Native move diagnostics:** no-clobber `Root.move()` preserves the original native loader error as its cause, including missing libraries or incompatible glibc versions.
+- **Remote validation:** add an optional 16-vCPU Linux Blacksmith Testbox workflow for maintainer checks through Crabbox, with the existing Node, pnpm, and portable archive toolchain.
+
+## 0.21.0 - 2026-09-26
+
+### Highlights
+
+- **Guarded filesystem observation:** `@openclaw/fs-safe/watch` observes literal entry and tree scopes beneath an admitted Root and delivers bounded advisory invalidations; guarded scans stay authoritative. One shared Rust event thread per process uses inotify, FSEvents and ReadDirectoryChangesW on Linux, macOS and Windows, sleeps while idle, and falls back to portable polling under `mode: "auto"`. Subscriptions become ready after one baseline scan, stay available under sustained writes, fence stale generations on `setScopes()`, join native work on `close()`, and support `persistent: false` so one-shot Node commands can exit. Thanks @vincentkoc. ([#690](https://github.com/openclaw/fs-safe/pull/690), [#695](https://github.com/openclaw/fs-safe/pull/695), [#697](https://github.com/openclaw/fs-safe/pull/697), [#703](https://github.com/openclaw/fs-safe/pull/703), [#707](https://github.com/openclaw/fs-safe/pull/707))
+- **Linux user namespaces:** private temp workspaces now work beneath unmapped ancestors, including systemd user services with `PrivateUsers=true`, while UID/GID mappings and ancestor permissions are still rechecked. ([#693](https://github.com/openclaw/fs-safe/pull/693))
 
 ### Features
 
-- **Guarded filesystem observation:** add `@openclaw/fs-safe/watch` with bounded advisory invalidations, a shared Rust event hub using inotify, FSEvents, and ReadDirectoryChangesW on Linux/macOS/Windows, portable polling, first-scan readiness and bounded reconciliation that stay available under sustained writes, scope replacement, joined close, and `persistent: false` for subscriptions that let one-shot Node commands exit. Thanks @vincentkoc.
-- **Revocable atomic writes:** atomic replacement can recheck caller authority before new effects and report retained destination identities for partial writes and publication, without treating receipts as permission to roll back.
-- **Root walking:** `symlinkPolicy: "include"` reports links without following their targets, preserving sorted traversal, entry budgets, and the existing skip/follow result types. Directory-to-symlink substitutions fail before descent.
-
-### Fixes
-
-- **Watch cleanup:** stop leaking native environment-cleanup metadata when subscriptions close or replace scopes.
-- **Windows watching:** retain one recursive Root handle per subscription so directories containing watched scopes can be renamed without closing the watcher; document the Windows ancestor-rename restriction and polling escape hatch.
-- **Linux user namespaces:** allow private temp workspaces beneath unmapped ancestors, including systemd user services with `PrivateUsers=true`, while rechecking UID/GID mappings, retaining ancestor permission checks, and warning once about unverifiable host ownership. Supplied workspace roots must be effective-user-owned and not group/world writable; use a private per-user root instead of shared `/tmp`.
+- **Revocable atomic writes:** atomic replacement can recheck caller authority before new effects and report retained destination identities for partial writes and publication, without treating receipts as permission to roll back. ([#694](https://github.com/openclaw/fs-safe/pull/694))
+- **Root walking:** `symlinkPolicy: "include"` reports links without following their targets, preserving sorted traversal, entry budgets, and the existing skip/follow result types. Directory-to-symlink substitutions fail before descent. ([#692](https://github.com/openclaw/fs-safe/pull/692))
+- **Windows file retirement:** the advanced surface can retire existing NTFS files through a retained handle, with exact producer identity, current authority, and separate disposition and settlement facts. There is no persistence guarantee. ([#706](https://github.com/openclaw/fs-safe/pull/706))
 
 ### Performance
 
-- **Temporary filename sanitization:** skip duplicate normalization after reserved-device suffixing while preserving filename admission and fallback rules.
+- **Temporary filename sanitization:** skip duplicate normalization after reserved-device suffixing while preserving filename admission and fallback rules. ([#689](https://github.com/openclaw/fs-safe/pull/689))
+
+### Compatibility
+
+- Supplied temp workspace roots must be owned by the effective user and must not be group- or world-writable; use a private per-user root instead of shared `/tmp`. A one-time warning reports host ownership that cannot be verified. ([#693](https://github.com/openclaw/fs-safe/pull/693))
+- On Windows, an events-mode watch holds one handle on each watched Root, so the Root's own ancestor directories cannot be renamed while it is open; renaming inside the Root is unaffected. Use `mode: "poll"` where that matters. ([#697](https://github.com/openclaw/fs-safe/pull/697))
+- `watch()` requires an explicit `mode` (`"auto"`, `"events"` or `"poll"`); `"events"` fails readiness with `helper-unavailable` when no native backend is available, and Bun currently selects polling under `"auto"`. ([#690](https://github.com/openclaw/fs-safe/pull/690))
 
 ## 0.20.0 - 2026-09-25
 

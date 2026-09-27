@@ -274,7 +274,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         createdSnapshot = {
           raw,
           payload,
-          stat: fs.fstatSync(fd),
+          stat: fs.fstatSync(fd, { bigint: true }),
           ownershipToken,
         };
         createdHeld = {
@@ -320,7 +320,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           const failed: SidecarLockSnapshot = createdSnapshot ?? { payload: null };
           if (!failed.stat) {
             try {
-              failed.stat = fs.fstatSync(fd);
+              failed.stat = fs.fstatSync(fd, { bigint: true });
             } catch {
               // Missing identity leaves the sidecar in place, but must not skip close.
             }

@@ -130,6 +130,8 @@ features, including strict owned-tree temp cleanup, retained-directory staging,
 and atomic `rename-noreplace` (including the default no-clobber `Root.move()`),
 remain unavailable. Operations without a safe fallback fail with `helper-unavailable`
 when the matching package is absent, incompatible, or disabled.
+No-clobber `Root.move()` preserves a native loader failure in the error's
+`cause`, including the original missing-library or incompatible-glibc diagnostic.
 
 Upgrading an existing 0.5 consumer? Follow [Migrating to 0.6](migrating-to-0.6.md)
 before deploying with native mode `require` or native-only features.

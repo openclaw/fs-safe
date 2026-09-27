@@ -324,10 +324,12 @@ truncation, append, move, and removal. Buffered writes use bounded chunks and
 recheck before every partial-write submission; file removal submits a direct
 unlink request. Native calls that perform multiple filesystem steps are one
 dispatch. No asynchronous wait separates the check
-from that dispatch. A thrown value rejects the operation unchanged; an async
-or thenable-returning callback rejects with `TypeError` before that mutation.
-Synchronous return values are ignored. Callbacks can run multiple times and
-must inspect current authority each time.
+from that dispatch. A thrown value rejects the operation unchanged; a Promise,
+thenable, or synchronous or asynchronous generator result rejects with `TypeError`
+before that mutation. Returned generators are never advanced. Other synchronous
+return values are ignored. Generator detection applies to generator objects
+themselves, not proxy wrappers. Callbacks can run multiple times and must inspect
+current authority during each call; return-value validation does not establish it.
 Directory creation rechecks the retained parent after the callback and before
 submitting mkdir, so a replacement is rejected before creating that component.
 Overwrite moves recheck the retained root, parents, source identity and both
@@ -388,6 +390,12 @@ fs.list(rel, { withFileTypes })  // DirEntry[]
 fs.entries(rel, options?)        // nonrecursive AsyncIterable<DirEntry>, including symlinks
 fs.resolve(rel)                  // absolute path inside the root, after canonicalization
 ```
+
+Directory enumeration (`list`, `entries`, and `walk`) requires UTF-8 filenames.
+A discovered name that cannot be represented losslessly as a JavaScript string
+rejects with `invalid-path`, before looking up metadata through that name.
+Streaming traversal may already have yielded earlier entries. Literal Unicode
+replacement characters (`U+FFFD`) remain valid names.
 
 These do not pin a later operation. During `stat()`, the exact selected target and
 parent are checked around metadata collection; `list()` checks one exact selected

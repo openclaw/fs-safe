@@ -1,5 +1,5 @@
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
-import { stripArchivePath } from "./archive-entry.js";
+import { createArchiveOutputPathTracker, stripArchivePath } from "./archive-entry.js";
 import type { NativeArchiveEntry } from "./native-binding.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 
@@ -10,6 +10,7 @@ export function validateNativeZipManifest(
   if (manifest.length !== admitted.length) {
     throw new ArchiveSecurityError("entry-path", "zip decoder collapsed entry names");
   }
+  const trackOutputPath = createArchiveOutputPathTracker();
   for (const [ordinal, entry] of manifest.entries()) {
     const physical = admitted[ordinal];
     const physicalPath = physical?.path;
@@ -23,5 +24,6 @@ export function validateNativeZipManifest(
         (physical.creatorSystem === 3 && entry.mode !== physical.externalAttributes >>> 16)) {
       throw new ArchiveFormatError("ZIP decoder disagrees with admitted directory metadata");
     }
+    trackOutputPath(entry.path, entry.path);
   }
 }

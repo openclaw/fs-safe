@@ -261,3 +261,35 @@ itPosix.each([false, true])(
     expect(await fs.readFile(child, "utf8")).toBe("fresh");
   },
 );
+
+it("preserves a directory whose identity changes below numeric precision during listing", async () => {
+  const rootDir = await tempRoot("fs-safe-prune-bigint-");
+  const nested = path.join(rootDir, "nested");
+  await fs.mkdir(nested);
+  const target = path.join(nested, "expired");
+  await fs.writeFile(target, "keep");
+  await fs.utimes(target, new Date(0), new Date(0));
+  const before = 9_007_199_254_740_995n, after = 9_007_199_254_740_996n;
+  expect(Number(before)).toBe(Number(after));
+  let listed = false;
+  const readdir = fs.readdir.bind(fs);
+  vi.spyOn(fs, "readdir").mockImplementation((async (...args) => {
+    const entries = await readdir(...args);
+    if (String(args[0]) === nested) listed = true;
+    return entries;
+  }) as typeof fs.readdir);
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+    const stat = lstat(...args);
+    if (String(args[0]) !== nested || !stat) return stat;
+    const ino = listed ? after : before;
+    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, {
+      ino: typeof stat.ino === "bigint" ? ino : Number(ino),
+    });
+  });
+
+  await fileStore({ rootDir }).pruneExpired({ ttlMs: 0, recursive: true });
+
+  expect(listed).toBe(true);
+  expect(await fs.readFile(target, "utf8")).toBe("keep");
+});
