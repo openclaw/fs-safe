@@ -192,7 +192,14 @@ async function capturePolicyAwarePosixParent(
       directoryFlags,
     ).fd;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !params.mkdir) throw error;
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || !params.mkdir) {
+      // A mechanism rejection must not hide canonical denial/symlink policy.
+      // This admission only classifies failure; it cannot authorize a retry.
+      await authorizePinnedMutation(params, {
+        targetPath: initialTarget, mutationPath: initialTarget, phase: "parent",
+      });
+      throw normalizePolicyParentOpenError(error, params);
+    }
   }
   if (completeParentFd !== undefined) {
     const parentFd = completeParentFd;
