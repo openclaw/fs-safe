@@ -340,13 +340,29 @@ mod tests {
         } else {
             Mode::empty()
         };
-        let kernel = openat2(
-            borrowed(root),
-            path,
-            flags,
-            mode,
-            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
-        );
+        let mut retries = 0;
+        let kernel = loop {
+            let result = openat2(
+                borrowed(root),
+                path,
+                flags,
+                mode,
+                ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+            );
+            match result {
+                // Unrelated renames can make scoped kernel lookup of `..` retry.
+                Err(rustix::io::Errno::AGAIN) => {
+                    assert!(
+                        retries < 7,
+                        "{path}: kernel openat2 exhausted 8 attempts, raw errno={}",
+                        rustix::io::Errno::AGAIN.raw_os_error(),
+                    );
+                    retries += 1;
+                    std::thread::yield_now();
+                }
+                result => break result,
+            }
+        };
         let fallback = open_fallback(root, path, flags, mode);
         match (kernel, fallback) {
             (Ok(kernel), Ok(fallback)) => {
@@ -356,7 +372,12 @@ mod tests {
                 Ok(actual)
             }
             (Err(kernel), Err(fallback)) => {
-                assert_eq!(os_error(kernel, "kernel").status, fallback.status, "{path}");
+                assert_eq!(
+                    os_error(kernel, "kernel").status,
+                    fallback.status,
+                    "{path}: kernel={kernel:?}, raw errno={}, fallback={fallback:?}",
+                    kernel.raw_os_error(),
+                );
                 Err(fallback.status)
             }
             (kernel, fallback) => panic!("{path}: kernel={kernel:?}, fallback={fallback:?}"),
