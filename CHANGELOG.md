@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Copy publication callbacks:** reject deferred generator observers in `Root.copyIn()` while preserving the completed destination and source bytes.
 - **Mutation authority:** reject synchronous and asynchronous generator callback results before mutation, preventing lazy authority checks from being skipped.
 - **Linux fallback:** native opens without `openat2` now follow in-root relative symlinks and preserve canonical policy errors, while retaining identity checks and rejecting escapes.
 

@@ -348,6 +348,34 @@ describe("Root.copyIn exclusive publication", () => {
   );
 });
 
+describe.each(["off", "require"] as const)("Root.copyIn publication callbacks with native %s", nativeMode => {
+  it.skipIf(nativeMode === "require" && !nativeAvailable).each(
+    [false, true].flatMap(overwrite => ["sync", "async"].map(kind => ({ overwrite, kind }))),
+  )("rejects $kind generator observers after publication (overwrite=$overwrite)", async ({ overwrite, kind }) => {
+    configureFsSafeNative({ mode: nativeMode });
+    const copy = await fixture();
+    if (overwrite) await fs.writeFile(copy.target, "previous target");
+    const body = vi.fn();
+    const observer = vi.fn(kind === "sync"
+      ? function* (_receipt: RootCopyPublicationReceipt) { body(); throw new Error("deferred observer"); }
+      : async function* (_receipt: RootCopyPublicationReceipt) { body(); throw new Error("deferred observer"); });
+    const operation = copy.destination.copyIn("target", { root: copy.source, relativePath: "input" }, {
+      overwrite, onDestinationPublished: observer,
+    });
+    await expect(operation).rejects.toBeInstanceOf(TypeError);
+    await expect(operation).rejects.toThrow("onDestinationPublished must be synchronous");
+    expect(observer).toHaveBeenCalledOnce();
+    expect(body).not.toHaveBeenCalled();
+    const receipt = observer.mock.calls[0]![0];
+    const published = await fs.stat(copy.target, { bigint: true });
+    expect(receipt).toEqual({ path: copy.target, dev: published.dev, ino: published.ino });
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(await fs.readFile(copy.target, "utf8")).toBe(copy.content);
+    expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
+    expect(await fs.readdir(copy.destinationDirectory)).toEqual(["target"]);
+  });
+});
+
 describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
   it.runIf(process.platform === "win32")("refuses clone=always with the Windows binding before destination creation", async () => {
     configureFsSafeNative({ mode: "require" });
