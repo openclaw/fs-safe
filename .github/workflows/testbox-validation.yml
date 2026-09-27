@@ -1,0 +1,76 @@
+name: Testbox validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      testbox_id:
+        description: Testbox session ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 240
+    steps:
+      - name: Begin Testbox
+        uses: useblacksmith/begin-testbox@233448af4bfdc6fca509a7f0974411ac6d8a8043
+        with:
+          testbox_id: ${{ inputs.testbox_id }}
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Prepare validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add wasm32-unknown-unknown
+          pnpm install --frozen-lockfile
+
+          # SSH commands do not inherit the Actions tool paths or build environment.
+          printf '#!/usr/bin/env bash\nexport PATH=%q\nexport CC_wasm32_unknown_unknown=%q\nexport AR_wasm32_unknown_unknown=%q\nexec "$@"\n' \
+            "$PATH" "$CC_wasm32_unknown_unknown" "$AR_wasm32_unknown_unknown" \
+            | sudo tee /usr/local/bin/fs-safe-testbox >/dev/null
+          sudo chmod 0755 /usr/local/bin/fs-safe-testbox
+          /usr/local/bin/fs-safe-testbox node --version
+          /usr/local/bin/fs-safe-testbox pnpm --version
+          /usr/local/bin/fs-safe-testbox cargo --version
+
+      - name: Run Testbox
+        if: always()
+        uses: useblacksmith/run-testbox@3f60ff9ceb2c10c3feefa87dc0c6490cffae059d
+
+      - name: Close Testbox SSH sessions
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The external forwarded port differs from sshd's local listener.
+          testbox_ssh_port="$(sudo sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')"
+          if [[ "$testbox_ssh_port" =~ ^[0-9]+$ ]] &&
+            (( testbox_ssh_port >= 1 && testbox_ssh_port <= 65535 )); then
+            timeout --signal=KILL 5s sudo ss -K state established \
+              "( sport = :${testbox_ssh_port} )" || true
+          fi
