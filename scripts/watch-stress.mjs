@@ -16,9 +16,9 @@ if (args.length !== 2 || args[0] !== "--scenario" || ![...Object.keys(scenarios)
 }
 process.env.NODE_ENV = "test";
 const selected = args[1];
-if (selected === "all") {
-  for (const name of Object.keys(scenarios)) {
-    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--scenario", name], { stdio: "inherit" });
+if (selected === "all" || (selected === "soak" && typeof global.gc !== "function")) {
+  for (const name of selected === "all" ? Object.keys(scenarios) : [selected]) {
+    const child = spawn(process.execPath, [...(name === "soak" ? ["--expose-gc"] : []), fileURLToPath(import.meta.url), "--scenario", name], { stdio: "inherit" });
     const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code, signal) => resolve(signal ? 1 : code)); });
     if (code !== 0) { process.exitCode = code ?? 1; break; }
   }
