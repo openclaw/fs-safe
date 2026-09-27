@@ -137,11 +137,14 @@ async function fixture(synchronous: boolean, hooks: Hooks = {}) {
       }) as FileHandle;
     }) as typeof fsp.open,
   };
-  const run = async (options: Omit<ReplaceFileAtomicOptions, "filePath" | "content" | "fileSystem"> = {}) => {
+  const run = async (options: Omit<Parameters<typeof replaceFileAtomicSync>[0], "filePath" | "content" | "fileSystem"> = {}) => {
     const common = { filePath, content: "replacement", ...options };
-    return synchronous
-      ? replaceFileAtomicSync({ ...common, fileSystem: sync })
-      : await replaceFileAtomic({ ...common, fileSystem: { promises: async } });
+    if (synchronous) return replaceFileAtomicSync({ ...common, fileSystem: sync });
+    const hook = common.beforeRename;
+    const beforeRename: ReplaceFileAtomicOptions["beforeRename"] = hook && async function (this: unknown, params) {
+      return hook.call(this, params);
+    };
+    return await replaceFileAtomic({ ...common, beforeRename, fileSystem: { promises: async } });
   };
   return {
     directory, filePath, run,
@@ -235,7 +238,7 @@ for (const synchronous of [false, true]) {
         copyFallbackOnPermissionError: true,
         renameMaxRetries: 1,
         renameRetryBaseDelayMs: 0,
-        beforeRename: async () => { live = false; },
+        beforeRename: () => { live = false; },
         assertBeforeMutation: () => { if (!live) { refusals++; throw refusal; } },
       })).rejects.toBe(refusal);
       expect(refusals).toBe(1);
@@ -369,7 +372,7 @@ for (const synchronous of [false, true]) {
       if (timing === "rename") hooks.afterRename = () => { substitute(item.filePath); };
       const receipts: DestinationState[] = [];
       await expect(item.run({
-        beforeRename: async ({ tempPath }) => { stage = tempPath; },
+        beforeRename: ({ tempPath }) => { stage = tempPath; },
         assertBeforeMutation: () => { if (timing === "authority" && stage) { const current = stage; stage = ""; substitute(current); } },
         onDestinationState: receipt => { receipts.push(receipt); },
       })).rejects.toMatchObject({ code: "path-mismatch" });
