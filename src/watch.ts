@@ -75,6 +75,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let pendingWaiter: ReturnType<typeof deferred> | undefined;
   let runningWaiter: ReturnType<typeof deferred> | undefined;
   let pendingHint = false;
+  let pendingBackendOverflow = false;
   let pendingChanges: Map<string, NativeWatchHint> | undefined = new Map();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let hintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -106,6 +107,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const clearTimers = () => {
     clearTimeout(timer); clearTimeout(hintTimer);
     timer = undefined; hintTimer = undefined; pending = false; pendingHint = false; pendingChanges = new Map();
+    pendingBackendOverflow = false;
   };
   const notifyHealth = () => {
     try {
@@ -159,7 +161,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const onHint = (g: Generation, batch: NativeWatchBatch) => {
     if (terminal || current !== g || g.abort.signal.aborted || failure !== undefined) return;
     if (batch.overflow) {
-      try { assertSynchronousCallbackResult(getFsSafeTestHooks()?.afterWatchBackendOverflow?.(context.rootReal), "afterWatchBackendOverflow"); }
+      pendingBackendOverflow = true;
+      try { assertSynchronousCallbackResult(getFsSafeTestHooks()?.afterWatchBackendOverflow?.(context.rootReal, "received"), "afterWatchBackendOverflow"); }
       catch (error) { lose(error, "callback"); return; }
     }
     if (batch.error === "ESTALE") refreshBackend = true;
@@ -202,8 +205,10 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     notifyHealth();
     check(g);
     const hadHints = pendingHint;
+    const hadBackendOverflow = pendingBackendOverflow;
     const hints = pendingChanges;
     pendingHint = false; pendingChanges = new Map();
+    pendingBackendOverflow = false;
     clearTimeout(hintTimer); hintTimer = undefined;
     if (mode === "events" && !backend && g.scopes.length) {
       try {
@@ -272,6 +277,9 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       ? guardedHintChanges(g.scopes, snapshot, next, admittedHints, observed, maxPendingPaths)
       : observed;
     snapshot = next;
+    if (!initial && !details && hadBackendOverflow) {
+      assertSynchronousCallbackResult(getFsSafeTestHooks()?.afterWatchBackendOverflow?.(context.rootReal, "reconciled"), "afterWatchBackendOverflow");
+    }
     // Publish before readiness; callbacks may synchronously retire this generation.
     if (initial || !details || details.length) dirty(g, initial ? "reconcile" : !details ? "overflow" : hadHints ? "event" : "reconcile", initial ? undefined : details);
     check(g);

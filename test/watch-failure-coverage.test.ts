@@ -286,3 +286,20 @@ it("drops guarded unselected sibling hints and preserves selected detail", async
   await owner.reconcile();
   expect(invalidations).toEqual([{ reason: "event", changes: [{ path: "config.json", type: "content" }] }]);
 });
+
+it("attributes overflow flags to the pass that consumed them", async () => {
+  backend(); let emit!: (batch: nativeWatch.NativeWatchBatch) => void;
+  hooks({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const phases: string[] = [];
+  let ready = false;
+  const owner = make({ mode: "events", onInvalidate: value => { if (ready) phases.push(value.reason); } });
+  await owner.ready; await owner.reconcile(); ready = true;
+  let passes = 0;
+  hooks({
+    afterWatchBackendOverflow: (_, phase) => { phases.push(phase); },
+    beforeWatchRegistration: () => { if (++passes === 1) emit({ hints: [], overflow: true }); },
+  });
+  emit({ hints: [], overflow: true });
+  await owner.reconcile(); await owner.reconcile();
+  expect(phases).toEqual(["received", "received", "reconciled", "overflow", "reconciled", "overflow"]);
+});

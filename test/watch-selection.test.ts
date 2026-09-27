@@ -37,8 +37,10 @@ describe.each(["events", "poll"] as const)("selected observation (%s)", mode => 
     await fs.mkdir(path.join(directory, "dist"));
     await fs.writeFile(path.join(directory, "selected.ts"), "before");
     const values: WatchInvalidation[] = [];
-    let backendOverflows = 0, consumedOverflows = 0, spuriousOverflows = 0;
-    hooks({ afterWatchBackendOverflow: () => { backendOverflows++; } });
+    let backendOverflows = 0, reconciledOverflows = 0, consumedOverflows = 0, spuriousOverflows = 0;
+    hooks({ afterWatchBackendOverflow: (_, phase) => {
+      if (phase === "received") backendOverflows++; else reconciledOverflows++;
+    } });
     const allowBackendOverflow = mode === "events" && process.platform !== "linux";
     const assertBurst = () => {
       expect(spuriousOverflows).toBe(0);
@@ -53,8 +55,8 @@ describe.each(["events", "poll"] as const)("selected observation (%s)", mode => 
       maxPendingPaths: 4096, exclude: entry => entry.kind === "directory" && entry.path === "dist",
       onInvalidate: value => {
         if (value.reason === "overflow") {
-          if (backendOverflows <= consumedOverflows) spuriousOverflows++;
-          consumedOverflows = backendOverflows;
+          if (reconciledOverflows <= consumedOverflows) spuriousOverflows++;
+          consumedOverflows = reconciledOverflows;
         }
         values.push(value);
       },
