@@ -172,6 +172,47 @@ actual edit latency. Run `FS_SAFE_TEST_SERIAL=1 pnpm check` to isolate local tim
 checks from the other filesystem stress suites. Watch fixtures use normal OS
 temporary storage; session scratch trees may suppress macOS filesystem events.
 
+### Optional Linux Testbox
+
+The manual `testbox-validation.yml` workflow prepares a 16-vCPU Ubuntu 24.04
+Blacksmith Testbox with Node 24.21.0, pnpm 12.4.2, dependencies, the Rust WASM
+target, and the pinned portable archive compiler. It leaves library builds and
+validation commands to the caller and does not replace required CI checks.
+
+Use an authenticated Blacksmith CLI with access to the repository and its
+Blacksmith organization. From a full repository checkout, warm one session
+through Crabbox:
+
+```sh
+CRABBOX_BLACKSMITH_IDLE_TIMEOUT=240m crabbox warmup --provider blacksmith-testbox \
+  --blacksmith-org openclaw \
+  --blacksmith-workflow .github/workflows/testbox-validation.yml \
+  --blacksmith-job validate --blacksmith-ref main \
+  --idle-timeout 240m --timing-json
+```
+
+Use a branch or tag containing the workflow for `--blacksmith-ref`; GitHub must
+first have registered the workflow on the default branch. The job has a fixed
+240-minute limit. Keep the idle timeout at that limit (240 minutes in the native
+Blacksmith CLI) because the pinned Testbox action can miss active SSH sessions
+behind a forwarded port. Bound commands by the remaining job time and leave time
+to collect results and stop before the deadline.
+
+Use the returned `tbx_...` ID for subsequent commands. The `fs-safe-testbox`
+wrapper restores the prepared tool paths and WASM compiler settings in the SSH
+shell. For example:
+
+```sh
+crabbox run --provider blacksmith-testbox --id <tbx_id> --timing-json -- \
+  fs-safe-testbox pnpm check
+crabbox stop --provider blacksmith-testbox <tbx_id>
+```
+
+Stop the session when finished and verify its terminal status. Blacksmith owns
+checkout synchronization; record the tested source revision or diff, Testbox ID,
+and Actions run. This backend is Linux-only and does not accept Crabbox's direct
+SSH `--script` or `--download` flags. The workflow provides no application secrets.
+
 ### Method benchmarks
 
 `pnpm benchmark:methods` measures the callable library surface against synthetic

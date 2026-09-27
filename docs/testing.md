@@ -1,5 +1,28 @@
 # Testing
 
+## Coverage gates
+
+The coverage workflow measures `src/**/*.ts` with V8 on Linux, macOS, and
+Windows, then merges their counters before enforcing the thresholds in
+`vitest.config.ts`: lines 94%, statements 92%, functions 95%, and branches 89%.
+`pnpm test:coverage:collect` disables per-OS thresholds so platform-only paths
+are credited by their own OS; `pnpm test:coverage:merge` requires all three
+reports and enforces the combined gate. The DACL batch child entrypoint also
+runs in-process in a unit test so its protocol and budget handling are measured.
+
+The Linux Rust job uses pinned `cargo-llvm-cov` and a pinned nightly compiler
+for line and branch instrumentation. It combines native crate unit tests with
+TS native suites running the instrumented addon, and exports LCOV plus separate
+unit-only and combined summaries. The Rust line threshold is 71%; addon execution
+must also increase covered Rust lines beyond the unit tests. Only native crate sources compiled on Linux are measured;
+macOS/Windows Rust implementations and the archive WASM crate are outside this
+report. Run `pnpm build` followed by `bash scripts/native-coverage.sh` on Linux
+after installing the toolchain versions specified in `coverage.yml`.
+
+Percentages complement behavioral gates: mutation-policy proof, nightly watch
+stress, and platform lanes are equally important. High coverage cannot establish
+root confinement, race safety, event delivery, or bounded resource retirement.
+
 ## Manual watch stress campaign
 
 Build from the exact revision being qualified with `pnpm install --frozen-lockfile`,

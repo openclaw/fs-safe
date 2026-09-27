@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type { BigIntStats, Dir, Stats } from "node:fs";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -33,6 +34,25 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 
 const METADATA_BATCH_SIZE = 32;
+
+function directoryEntryName(bytes: Buffer): string {
+  if (!isUtf8(bytes)) {
+    throw new FsSafeError("invalid-path", "directory entry name is not valid UTF-8");
+  }
+  return bytes.toString("utf8");
+}
+
+async function readDirectoryEntryName(handle: Dir): Promise<string | undefined> {
+  const entry = await handle.read();
+  // Bun returns the raw Buffer directly; Node returns a Dirent whose name is a Buffer.
+  // Node's Dir types still declare only string names.
+  return entry === null ? undefined
+    : directoryEntryName(Buffer.isBuffer(entry) ? entry : entry.name as unknown as Buffer);
+}
+
+function openDirectoryNames(directory: string): Promise<Dir> {
+  return fs.opendir(directory, { bufferSize: 1, encoding: "buffer" as BufferEncoding });
+}
 
 export function pathStatFromStats(stat: Stats | BigIntStats): PathStat {
   const mtimeMs = typeof stat.mtimeMs === "bigint"
@@ -273,7 +293,7 @@ async function listGuardedDirectoryPath(
   try {
     const beforeObservation = getFsSafeTestHooks()?.beforeRootListObservation;
     if (beforeObservation) await beforeObservation(guard.realPath, withFileTypes);
-    const names = (await fs.readdir(guard.realPath)).sort();
+    const names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName).sort();
     entries = withFileTypes
       ? names.map(name => ({
         name,
@@ -357,15 +377,15 @@ export async function openRootDirectoryListing(
     await assertCurrent();
     if (options.order === "filesystem") {
       // A one-entry buffer keeps the truncation lookahead independent of width.
-      handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
+      handle = await openDirectoryNames(guard.realPath);
     } else if (options.snapshot) {
       snapshot = await listGuardedDirectoryPath(root, guard, true, receipt);
     } else if (options.maxNames !== undefined) {
       names = [];
-      handle = await fs.opendir(guard.realPath, { bufferSize: 1 });
+      handle = await openDirectoryNames(guard.realPath);
       while (true) {
         await assertCurrent();
-        const name = (await handle.read())?.name;
+        const name = await readDirectoryEntryName(handle);
         await assertCurrent();
         if (name === undefined) break;
         if (names.length >= options.maxNames) {
@@ -375,7 +395,7 @@ export async function openRootDirectoryListing(
       }
       await close();
     } else {
-      names = await fs.readdir(guard.realPath);
+      names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName);
     }
     await assertCurrent();
     names?.sort();
@@ -452,7 +472,7 @@ export async function openRootDirectoryListing(
           return;
         }
         await assertCurrent();
-        const name = (await handle!.read())?.name;
+        const name = await readDirectoryEntryName(handle!);
         await assertCurrent();
         if (name === undefined) return;
         if (!options.admitEntry()) return { kind: "limit", name };
