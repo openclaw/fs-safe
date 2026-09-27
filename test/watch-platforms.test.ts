@@ -2,11 +2,12 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
 import { watchBinding } from "../src/watch-native.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { watchDiagnostics } from "./helpers/watch-diagnostics.js";
 const binding = watchBinding("auto");
 const mac = it.skipIf(process.platform !== "darwin" || !binding);
 const win = it.skipIf(process.platform !== "win32" || !binding);
@@ -20,6 +21,7 @@ beforeEach(async () => {
 afterEach(async () => {
   __setFsSafeTestHooksForTest();
   await Promise.all(owners.map(owner => owner.close()));
+  vi.restoreAllMocks();
   await fs.rm(directory, { recursive: true, force: true });
 }, 30_000);
 async function observe(location = directory) {
@@ -41,11 +43,18 @@ mac("maps FSEvents dropped/wrapped/unmount flags to whole-scope invalidation", a
   }
 }, 30_000);
 mac("admits inside FSEvents detail and discards outside and dotdot pathnames", async () => {
+  const diagnostics = watchDiagnostics("kept");
   await fs.writeFile(path.join(directory, "kept"), "data");
   const { owner, invalidations, nativeEvent } = await observe();
+  await diagnostics.quiet(owner);
+  invalidations.length = 0;
   nativeEvent(path.join(directory, "kept"), 0x1000);
   await expect.poll(() => invalidations.length).toBeGreaterThan(0);
   expect(invalidations.flatMap(value => value.changes ?? []).every(change => change.path === "kept")).toBe(true);
+  // Reproduce a delayed legitimate creation hint, then drain it before testing
+  // absence of outside events. Coverage can delay real FSEvents setup delivery.
+  nativeEvent(path.join(directory, "kept"), 0x100);
+  await diagnostics.quiet(owner);
   for (const outside of [directory + "-sibling/private", directory + "/../private", "/unadmitted/private"]) {
     invalidations.length = 0; nativeEvent(outside, 0x1000);
     await new Promise(resolve => setTimeout(resolve, 100));
