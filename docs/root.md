@@ -391,6 +391,12 @@ fs.entries(rel, options?)        // nonrecursive AsyncIterable<DirEntry>, includ
 fs.resolve(rel)                  // absolute path inside the root, after canonicalization
 ```
 
+Directory enumeration (`list`, `entries`, and `walk`) requires UTF-8 filenames.
+A discovered name that cannot be represented losslessly as a JavaScript string
+rejects with `invalid-path`, before looking up metadata through that name.
+Streaming traversal may already have yielded earlier entries. Literal Unicode
+replacement characters (`U+FFFD`) remain valid names.
+
 These do not pin a later operation. During `stat()`, the exact selected target and
 parent are checked around metadata collection; `list()` checks one exact selected
 directory around the complete name/metadata batch instead of repeating containment

@@ -1,5 +1,5 @@
 import { ArchiveFormatError, ArchiveSecurityError } from "./archive-errors.js";
-import { validateArchiveEntryPath } from "./archive-entry.js";
+import { createArchiveOutputPathTracker, validateArchiveEntryPath } from "./archive-entry.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
 import { createAdmittedZipEntry, type AdmittedZipEntry, type ZipEntry } from "./archive-zip-entry.js";
 import { zipPathKey } from "./archive-zip-names.js";
@@ -49,7 +49,9 @@ export async function loadAdmittedZipArchive(
   admitted: ZipDirectoryEntry[],
 ): Promise<ZipArchiveAdmission> {
   const physicalByPath = new Map<string, ZipDirectoryEntry>();
+  const trackOutputPath = createArchiveOutputPathTracker();
   for (const entry of admitted) {
+    trackOutputPath(entry.portableKey, entry.portableKey);
     if (physicalByPath.has(entry.portableKey)) collision();
     physicalByPath.set(entry.portableKey, entry);
   }
