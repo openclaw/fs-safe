@@ -243,3 +243,29 @@ it("keeps rename hints when later change hints arrive and bounds distinct pendin
   await owner.reconcile();
   expect(changes.at(-1)).toEqual({ reason: "overflow", changes: undefined });
 });
+
+it("coalesces hints during a slow pass and reports undetailed overflow", async () => {
+  backend(); let emit!: (batch: nativeWatch.NativeWatchBatch) => void;
+  hooks({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const changes: WatchInvalidation[] = [];
+  let passes = 0, now = 0;
+  const secondPass = gate();
+  const owner = make({ mode: "events", onInvalidate: value => { changes.push(value); },
+    onHealth: value => { if (value.state === "ready" && passes === 2) secondPass.resolve(); },
+  });
+  await owner.ready; changes.length = 0;
+  // Isolate coalescing from OS hints and advance only the scan-duration clock.
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  hooks({ beforeWatchRegistration: () => {
+    if (++passes === 1) {
+      for (let index = 0; index < 100; index++) emit({ hints: [], overflow: true });
+      now = 40;
+    }
+  } });
+  await owner.reconcile(); await secondPass.promise;
+  expect(passes).toBe(2);
+  expect(changes).toEqual([
+    { reason: "overflow", changes: undefined },
+    { reason: "overflow", changes: undefined },
+  ]);
+});
