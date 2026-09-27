@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import fc from "fast-check";
+import { createRenameWriter } from "./rename-writer.mjs";
 
 export const below = (parent, child) => parent === child || !parent || child.startsWith(parent + path.sep);
 export const scopeSets = [
@@ -32,7 +33,7 @@ export function selectedDepth(scopes, name) {
 }
 
 // Mutations deliberately use raw fs as an external actor. All observation uses Root.
-export function mutations(directory, outside, model) {
+export function mutations(directory, outside, model, writer = createRenameWriter()) {
   let serial = 0;
   const full = name => path.join(directory, name);
   const forget = name => { for (const key of model.keys()) if (below(name, key)) model.delete(key); };
@@ -58,7 +59,7 @@ export function mutations(directory, outside, model) {
   async function rename(from, to) {
     if (from === to || !model.has(from)) return;
     await remove(to);
-    await fs.rename(full(from), full(to));
+    await writer.rename(full(from), full(to));
     const moved = [...model].filter(([name]) => below(from, name));
     forget(from);
     for (const [name, value] of moved) model.set(to + name.slice(from.length), value);
@@ -79,7 +80,7 @@ export function mutations(directory, outside, model) {
         // Exercise stale inode watches with activity outside the admitted Root.
         if (model.has(dir)) {
           const retired = path.join(outside, `retired-${++serial}`);
-          await fs.rename(full(dir), retired); forget(dir);
+          await writer.rename(full(dir), retired); forget(dir);
           if ((await fs.stat(retired)).isDirectory()) await fs.writeFile(path.join(retired, "OUTSIDE_SENTINEL"), "outside");
         }
         await put(path.join(dir, "replacement"), op.value);

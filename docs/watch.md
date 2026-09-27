@@ -130,6 +130,12 @@ invalidate every scope. Buffers are 1 MiB on confirmed local volumes, and 64 KiB
 on network/UNC or unclassified volumes. Cancellation waits for IOCP completion before closing
 the handle or freeing its buffer; there are no detached retirement waits.
 
+On Windows, an open file handle—including fs-safe's pinned reads, editors, and
+antivirus—blocks renaming that file's ancestor directories, even with delete
+sharing. The watch backend retains only the Root's `ReadDirectoryChangesW` handle,
+which permits renames beneath the Root. Callers renaming directories concurrently
+with reads should use bounded retries, as Windows tools do.
+
 Windows prevents ordinary renames of the Root's own ancestors while its directory
 handle is open, even with DELETE sharing. Use `mode: "poll"` when callers must not
 retain that handle. Renaming or replacing the Root still fails guarded observation;

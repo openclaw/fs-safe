@@ -3,6 +3,7 @@ import { assert, fs, path, delay, fixture, observe, populate, isolatedEdit, clea
 import { resources, percentile, trend } from "./metrics.mjs";
 import { writeFileSync } from "node:fs";
 import { assessSoakMemory, collectedMemory } from "./memory-policy.mjs";
+import { renameWriter } from "./rename-writer.mjs";
 
 // Exactly 10,000 awaited mutations, covering files and directory identities.
 export async function burst(f, batch, onMutation) {
@@ -11,16 +12,16 @@ export async function burst(f, batch, onMutation) {
     await fs.mkdir(a);
     await fs.writeFile(path.join(a, "a"), `${batch}-${n}`);
     await fs.appendFile(path.join(a, "a"), "-modified");
-    await fs.rename(path.join(a, "a"), path.join(a, "b"));
+    await renameWriter.rename(path.join(a, "a"), path.join(a, "b"));
     await fs.mkdir(path.join(a, "child"));
-    await fs.rename(a, b);
+    await renameWriter.rename(a, b);
     await fs.writeFile(path.join(b, "child", "kept"), "content");
     if (n === 999) {
       await fs.writeFile(path.join(f.directory, "dir-0", "file-0"), `persisted-${batch}`);
       if (f.retained) await fs.rm(f.retained, { recursive: true });
       else await fs.unlink(path.join(b, "b"));
       f.retained = path.join(f.directory, "retained-" + batch);
-      await fs.rename(b, f.retained);
+      await renameWriter.rename(b, f.retained);
     } else {
       await fs.unlink(path.join(b, "b"));
       await fs.rm(path.join(b, "child"), { recursive: true });

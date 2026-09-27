@@ -1,6 +1,7 @@
 import { settings } from "./config.mjs";
 import { assert, fs, path, delay, fixture, observe, watch, wholeTree, compare, truthWalk, cleanup } from "./oracle.mjs";
 import { resources, threads, trend } from "./metrics.mjs";
+import { renameWriter } from "./rename-writer.mjs";
 import { __setFsSafeTestHooksForTest as hooks } from "../../dist/test-hooks.js";
 
 async function warm() {
@@ -105,7 +106,7 @@ export async function adversarial() {
     try {
       await fs.writeFile(path.join(f.directory, "original"), "kept");
       observer = observe(f); await observer.subscription.ready; await observer.flush();
-      await fs.rename(f.directory, previous);
+      await renameWriter.rename(f.directory, previous);
       if (replacement) { await fs.mkdir(f.directory); await fs.writeFile(path.join(f.directory, "OUTSIDE_SENTINEL-replacement"), "private"); }
       await assert.rejects(observer.subscription.reconcile());
       assert.equal(observer.subscription.health().state, "unavailable");
@@ -118,7 +119,7 @@ export async function adversarial() {
     await fs.mkdir(path.join(f.directory, "watched"));
     await fs.writeFile(path.join(f.directory, "watched", "inside"), "inside");
     observer = observe(f); await observer.subscription.ready; await observer.flush();
-    await fs.rename(path.join(f.directory, "watched"), path.join(f.directory, "retired"));
+    await renameWriter.rename(path.join(f.directory, "watched"), path.join(f.directory, "retired"));
     await fs.symlink(outside.directory, path.join(f.directory, "watched"), process.platform === "win32" ? "junction" : "dir");
     for (let n = 0; n < 1000; n++) {
       await fs.writeFile(path.join(outside.directory, "OUTSIDE_SENTINEL-" + n), "private");

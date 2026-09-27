@@ -9,6 +9,7 @@ import { idle, limits, limitChild } from "./watch-stress/platform.mjs";
 import { errorInfo, diagnostics } from "./watch-stress/oracle.mjs";
 import { soakShort } from "./watch-stress/soak-short.mjs";
 import { selftest } from "./watch-stress/selftest.mjs";
+import { renameWriter } from "./watch-stress/rename-writer.mjs";
 
 const scenarios = { scale, fanout, churn, lifecycle, adversarial, limits, idle, soak, "soak-short": soakShort };
 const args = process.argv.slice(2);
@@ -36,6 +37,7 @@ if (selected === "all" || (["soak", "soak-short"].includes(selected) && typeof g
   if (diagnostics.cleanupErrors.length && !failure) failure = { message: "cleanup failed", errors: diagnostics.cleanupErrors };
   process.stdout.write(JSON.stringify({ scenario: selected, result: failure ? "fail" : "pass", platform: process.platform,
     arch: process.arch, settings, node: process.version, durationMs: performance.now() - started,
-    metrics: metrics ?? diagnostics.scenarioMetrics ?? { diagnostics, rss: process.memoryUsage().rss, peakRss: process.resourceUsage().maxRSS * 1024 }, failure, unhandled }) + "\n");
+    metrics: { ...(metrics ?? diagnostics.scenarioMetrics ?? { diagnostics, rss: process.memoryUsage().rss, peakRss: process.resourceUsage().maxRSS * 1024 }),
+      ...renameWriter.metrics }, failure, unhandled }) + "\n");
   if (failure) process.exitCode = 1;
 }

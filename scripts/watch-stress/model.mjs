@@ -5,13 +5,15 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { mutations, scopeSets, selectedDepth } from "./model-operations.mjs";
 import { consumer, guardedSnapshot, sorted } from "./model-oracle.mjs";
+import { createRenameWriter } from "./rename-writer.mjs";
 
 export async function runSequence({ root, watch }, operations, { mode = "poll", settleMs = 40, maxPendingPaths = 8 } = {}) {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "watch-model-"));
   const directory = path.join(temporary, "root"), outside = path.join(temporary, "outside");
   await fs.mkdir(directory); await fs.mkdir(outside);
   const model = new Map([["", "directory"]]);
-  const mutate = mutations(directory, outside, model);
+  const writer = createRenameWriter();
+  const mutate = mutations(directory, outside, model, writer);
   const capability = await root(directory);
   let owner;
   let step = -1, checkpoints = 0, invalidations = 0;
@@ -70,9 +72,10 @@ export async function runSequence({ root, watch }, operations, { mode = "poll", 
     }
     await checkpoint();
     invalidations += owner.events.length;
-    return { checkpoints, invalidations, operations: operations.length };
+    return { checkpoints, invalidations, operations: operations.length, ...writer.metrics };
   } catch (cause) {
-    throw new Error(`watch model ${mode}, step ${step}: ${cause.message}`, { cause });
+    throw Object.assign(new Error(`watch model ${mode}, step ${step}: ${cause.message}; rename metrics: ${JSON.stringify(writer.metrics)}`, { cause }),
+      { renameMetrics: { ...writer.metrics } });
   } finally {
     try {
       await owner?.close();

@@ -103,9 +103,13 @@ recorded in every JSON result.
 | `FS_SAFE_STRESS_IDLE_SECONDS` | 600 | 120 |
 | `FS_SAFE_STRESS_SOAK_MINUTES` (minimum 10) | 60 | 10 |
 
-Short soaks keep the same peak/live-memory limits and second-half RSS slope
-check, and explicitly report `memory.qualification: false`. They do not prove
-60-minute stability. Lifecycle memory is sampled across ten intervals, with
+Soaks shorter than 30 minutes keep the hard peak-RSS, collected-heap, and external-memory
+growth gates, but report the second-half RSS slope and its limit without using it
+to pass or fail (`memory.rssSlopeGated: false`): [#701](https://github.com/openclaw/fs-safe/pull/701)
+found that V8 capacity expansion and allocator retention can raise RSS while live memory stays flat.
+Runs of 30 minutes or longer enforce the same second-half slope limit; only runs of
+at least 60 minutes report `memory.qualification: true`.
+Lifecycle memory is sampled across ten intervals, with
 the first two excluded as warm-up; idle's Linux wakeup bound scales with the
 requested duration (three per minute). Adversarial cases remain unchanged.
 

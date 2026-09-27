@@ -124,17 +124,25 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     const states: string[] = [];
     let refresh = Promise.resolve();
     let refreshPending = false, refreshing = false;
+    let refreshAll = false;
+    const pendingNames = new Set<string>();
     const owner = own(watch(capability, { mode, scopes, intervalMs: mode === "poll" ? 20 : 60_000,
       onHealth: value => { states.push(value.state); },
-      onInvalidate: () => {
+      onInvalidate: event => {
+        if (!event.changes) { refreshAll = true; pendingNames.clear(); }
+        else if (!refreshAll) for (const change of event.changes) pendingNames.add(change.path);
         refreshPending = true;
         if (refreshing) return;
         refreshing = true;
         refresh = Promise.resolve().then(async () => {
           do {
             refreshPending = false;
-            const next = new Map<string, string>();
-            const names = await capability.list("");
+            const all = refreshAll, changed = [...pendingNames];
+            refreshAll = false; pendingNames.clear();
+            // A detailed invalidation refreshes only its files. Re-reading all
+            // 1,024 files made consumer latency look like missed Windows polls.
+            const next = all ? new Map<string, string>() : new Map(cache);
+            const names = all ? await capability.list("") : changed;
             for (let i = 0; i < names.length; i += 16) {
               await Promise.all(names.slice(i, i + 16).map(async name => { next.set(name, await capability.readText("./" + name)); }));
             }
