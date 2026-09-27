@@ -74,6 +74,17 @@ impl Pending {
                 .collect(),
         })
     }
+    fn restore(&mut self, batch: WatchBatch) {
+        if batch.overflow {
+            self.overflow();
+        }
+        for hint in batch.hints {
+            self.push(hint.directory, hint.name, hint.structural);
+        }
+        if batch.error.is_some() {
+            self.error = batch.error;
+        }
+    }
 }
 pub(super) type SharedPending = Arc<Mutex<Pending>>;
 pub(super) struct Registration {
@@ -106,6 +117,8 @@ enum Command {
     Stop,
     #[cfg(target_os = "macos")]
     TestEvent(u32, String, u32, Reply),
+    #[cfg(target_os = "macos")]
+    Configure(u32, Vec<String>, Vec<String>, Reply),
 }
 #[derive(Clone)]
 struct Commands {
@@ -214,14 +227,18 @@ fn run(receiver: mpsc::Receiver<Command>, started: mpsc::SyncSender<NativeResult
                 Command::TestEvent(id, path, flags, reply) => {
                     let _ = reply.send(backend.test_event(id, &path, flags));
                 }
+                #[cfg(target_os = "macos")]
+                Command::Configure(id, anchors, exclusions, reply) => {
+                    let _ = reply.send(backend.configure(id, &anchors, &exclusions));
+                }
             }
         }
         for registration in registrations.values_mut() {
             let mut pending = registration.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(batch) = pending.take() {
-                // A full queue retries only when JS consumes the queued batch.
-                if !registration.callback.send(batch, registration.notify.clone()) {
-                    pending.overflow();
+                // A full queue retains bounded detail until JS acknowledges delivery.
+                if let Err(batch) = registration.callback.send(batch, registration.notify.clone()) {
+                    pending.restore(batch);
                 }
             }
         }
@@ -282,7 +299,8 @@ fn register_impl(
     }
     hub.registrations += 1;
     drop(slot);
-    let status = unsafe { napi::sys::napi_add_env_cleanup_hook(env.raw(), Some(cleanup_env), cleanup_data(id)) };
+    let status =
+        unsafe { napi::sys::napi_add_env_cleanup_hook(env.raw(), Some(cleanup_env), cleanup_data(id)) };
     if status != napi::sys::Status::napi_ok {
         unregister(id)?;
         return Err(native_error("EIO", "install watch environment cleanup"));
@@ -319,7 +337,9 @@ fn unregister(id: u32) -> NativeResult<()> {
 }
 fn unregister_impl(env: Env, id: u32) -> NativeResult<()> {
     if CLEANUPS.with(|hooks| hooks.borrow().contains(&id)) {
-        let status = unsafe { napi::sys::napi_remove_env_cleanup_hook(env.raw(), Some(cleanup_env), cleanup_data(id)) };
+        let status = unsafe {
+            napi::sys::napi_remove_env_cleanup_hook(env.raw(), Some(cleanup_env), cleanup_data(id))
+        };
         if status != napi::sys::Status::napi_ok {
             return Err(native_error("EIO", "remove watch environment cleanup"));
         }
@@ -329,7 +349,13 @@ fn unregister_impl(env: Env, id: u32) -> NativeResult<()> {
     Ok(())
 }
 #[napi]
-pub fn watch_register(env: Env, root: String, limit: u32, callback: Function<WatchBatch, ()>, persistent: bool) -> Result<u32> {
+pub fn watch_register(
+    env: Env,
+    root: String,
+    limit: u32,
+    callback: Function<WatchBatch, ()>,
+    persistent: bool,
+) -> Result<u32> {
     crate::into_napi(env, register_impl(env, root, limit, callback, persistent))
 }
 #[napi]
@@ -346,13 +372,22 @@ pub fn watch_thread_count() -> u32 {
 }
 #[napi]
 pub fn watch_memory_stats() -> Result<memory::WatchMemoryStats> {
-    if std::env::var("NODE_ENV").as_deref() != Ok("test")
-        && std::env::var("VITEST").as_deref() != Ok("true")
+    if std::env::var("NODE_ENV").as_deref() != Ok("test") && std::env::var("VITEST").as_deref() != Ok("true")
     {
         return Err(napi::Error::from_reason("watch memory statistics are test-only"));
     }
     let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     Ok(memory::snapshot(slot.as_ref().map_or(0, |hub| hub.registrations as u32)))
+}
+#[cfg(target_os = "macos")]
+#[napi]
+pub fn watch_configure(env: Env, id: u32, anchors: Vec<String>, exclusions: Vec<String>) -> Result<()> {
+    let result = (|| {
+        let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let hub = slot.as_ref().ok_or_else(unavailable)?;
+        request(hub, |reply| Command::Configure(id, anchors, exclusions, reply))
+    })();
+    crate::into_napi(env, result)
 }
 #[cfg(target_os = "macos")]
 #[napi]
@@ -377,6 +412,19 @@ mod tests {
         let batch = pending.take().unwrap();
         assert!(batch.overflow && batch.hints.is_empty());
         assert!(pending.take().is_none());
+    }
+    #[test]
+    fn undelivered_detail_is_retained_and_still_bounded() {
+        let mut pending = Pending { limit: 1, ..Pending::default() };
+        pending.push("".into(), "a".into(), false);
+        let batch = pending.take().unwrap();
+        pending.restore(batch);
+        pending.push("".into(), "a".into(), true);
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow && batch.hints[0].structural);
+        pending.restore(batch);
+        pending.push("".into(), "b".into(), false);
+        assert!(pending.take().unwrap().overflow);
     }
     #[test]
     fn drains_are_coalesced_and_poisoned_pending_is_recovered() {

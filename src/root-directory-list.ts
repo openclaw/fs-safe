@@ -326,6 +326,8 @@ export type RootDirectoryListingOptions = {
   metadataBatchSize?: number;
   /** Internal exact metadata lane, supported by streaming filesystem order. */
   exactIdentity?: boolean;
+  /** Advisory scans may omit vanished leaves after revalidating their parent. */
+  skipVanished?: boolean;
   /** Internal owner receives cleanup failures, including acquisition rollback. */
   onCleanupFailure?: (error: unknown) => void;
   admitEntry(): boolean;
@@ -453,8 +455,7 @@ export async function openRootDirectoryListing(
 
   return {
     assertCurrent,
-    async next() {
-      try {
+    async next() { try {
         options.signal?.throwIfAborted();
         if (snapshot) {
           const entry = snapshot[index++];
@@ -471,23 +472,27 @@ export async function openRootDirectoryListing(
           if (pendingLimit !== undefined) return { kind: "limit", name: pendingLimit };
           return;
         }
-        await assertCurrent();
-        const name = await readDirectoryEntryName(handle!);
-        await assertCurrent();
-        if (name === undefined) return;
-        if (!options.admitEntry()) return { kind: "limit", name };
-        // The stream's post-read fence is also the pre-stat fence in this owned operation.
-        const pathname = path.join(guard.realPath, name);
-        const observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint
-          ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : undefined;
-        const stat = observed?.stat ?? fsSync.lstatSync(pathname);
-        await assertCurrent();
-        const entry = { name, ...pathStatFromStats(stat) };
-        return observed ? { kind: "entry", entry, identity: observed.identity } : { kind: "entry", entry };
-      } catch (error) {
-        throw normalizeDirectoryError(error);
-      }
-    },
+        for (;;) {
+          await assertCurrent();
+          const name = await readDirectoryEntryName(handle!);
+          await assertCurrent();
+          if (name === undefined) return;
+          if (!options.admitEntry()) return { kind: "limit", name };
+          // The stream's post-read fence is also the pre-stat fence in this owned operation.
+          const pathname = path.join(guard.realPath, name);
+          let observed: { stat: Stats | BigIntStats; identity?: ExactStatIdentity };
+          try {
+            observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint
+              ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : { stat: fsSync.lstatSync(pathname) };
+          } catch (error) {
+            await assertCurrent();
+            if (options.skipVanished && isNotFoundPathError(error)) continue;
+            throw error;
+          }
+          await assertCurrent();
+          return { kind: "entry", entry: { name, ...pathStatFromStats(observed.stat) }, identity: observed.identity };
+        }
+    } catch (error) { throw normalizeDirectoryError(error); } },
     [Symbol.asyncDispose]: close,
   };
 }

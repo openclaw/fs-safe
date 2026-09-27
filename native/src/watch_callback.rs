@@ -19,16 +19,17 @@ pub(super) struct Callback(sys::napi_threadsafe_function);
 // Node-API explicitly permits transferring a TSFN's thread permit to the hub.
 unsafe impl Send for Callback {}
 
-fn enqueue<T>(value: T, call: impl FnOnce(*mut c_void) -> sys::napi_status) -> sys::napi_status {
+fn enqueue<T>(
+    value: T,
+    call: impl FnOnce(*mut c_void) -> sys::napi_status,
+) -> std::result::Result<(), (sys::napi_status, T)> {
     let payload = Box::into_raw(Box::new(value));
     let status = call(payload.cast());
     if status != sys::Status::napi_ok {
         // Node-API takes ownership only on success, including during env teardown.
-        unsafe {
-            drop(Box::from_raw(payload));
-        }
+        return Err((status, unsafe { *Box::from_raw(payload) }));
     }
-    status
+    Ok(())
 }
 unsafe extern "C" fn deliver(
     env: sys::napi_env,
@@ -94,18 +95,20 @@ impl Callback {
         }
         Ok(callback)
     }
-    pub fn send(&mut self, batch: WatchBatch, notify: Notify) -> bool {
+    pub fn send(&mut self, batch: WatchBatch, notify: Notify) -> std::result::Result<(), WatchBatch> {
         if self.0.is_null() {
-            return false;
+            return Err(batch);
         }
-        let status = enqueue(Payload { batch, notify, _lifetime: Default::default() }, |payload| unsafe {
+        let result = enqueue(Payload { batch, notify, _lifetime: Default::default() }, |payload| unsafe {
             sys::napi_call_threadsafe_function(self.0, payload, sys::ThreadsafeFunctionCallMode::nonblocking)
         });
         // napi_closing revokes this thread's permit. Never touch that TSFN again.
-        if status == sys::Status::napi_closing {
-            self.0 = null_mut();
-        }
-        status == sys::Status::napi_ok
+        result.map_err(|(status, payload)| {
+            if status == sys::Status::napi_closing {
+                self.0 = null_mut();
+            }
+            payload.batch
+        })
     }
 }
 impl Drop for Callback {
@@ -131,9 +134,14 @@ mod tests {
         }
         let dropped = AtomicUsize::new(0);
         for _ in 0..1000 {
-            enqueue(Payload(&dropped), |_| sys::Status::napi_queue_full);
-            enqueue(Payload(&dropped), |_| sys::Status::napi_closing);
+            drop(enqueue(Payload(&dropped), |_| sys::Status::napi_queue_full));
+            drop(enqueue(Payload(&dropped), |_| sys::Status::napi_closing));
         }
         assert_eq!(dropped.load(Ordering::SeqCst), 2000);
+    }
+    #[test]
+    fn full_queue_returns_the_undelivered_value() {
+        let result = enqueue(String::from("retained detail"), |_| sys::Status::napi_queue_full);
+        assert_eq!(result, Err((sys::Status::napi_queue_full, String::from("retained detail"))));
     }
 }

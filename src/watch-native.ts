@@ -3,6 +3,7 @@ import { getNativeBinding, type NativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import type { RootContext } from "./root-context.js";
 import type { DirectoryIdentity } from "./watch-scan.js";
+import type { WatchStreamPaths } from "./watch-stream.js";
 
 export type NativeWatchHint = { directory: string; name: string; event: "rename" | "change" };
 export type NativeWatchBatch = { hints: NativeWatchHint[]; overflow: boolean; error?: string };
@@ -11,14 +12,16 @@ export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | 
   if (mode === "poll") return;
   const binding = getNativeBinding(); // Preserves require + missing-addon failure.
   // Bun TSFN teardown remains unqualified; guarded native scans remain usable.
-  if (binding?.watchRegister && !process.versions.bun && !process.versions.deno && ["linux", "darwin", "win32"].includes(process.platform)) return binding;
+  if (binding?.watchRegister && (process.platform !== "darwin" || binding.watchConfigure) && !process.versions.bun && !process.versions.deno && ["linux", "darwin", "win32"].includes(process.platform)) return binding;
   if (mode === "events" || getFsSafeNativeConfig().mode === "require") {
     throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { details: { operation: "watch" } });
   }
 }
 export class NativeWatchBackend {
   private id: number | undefined;
+  private streamPaths: string | undefined;
   constructor(private binding: NativeBinding, private root: RootContext, callback: (batch: NativeWatchBatch) => void, limit: number, persistent: boolean) {
+    this.streamPaths = JSON.stringify({ anchors: [root.rootReal], exclusions: [] });
     try { this.id = binding.watchRegister!(root.rootReal, limit, batch => {
       if (this.id !== undefined) callback({ overflow: batch.overflow, error: batch.error, hints: batch.hints.map(hint => ({
         directory: hint.directory, name: hint.name, event: hint.structural ? "rename" : "change",
@@ -34,6 +37,15 @@ export class NativeWatchBackend {
     }
   }
   testEvent(path: string, flags: number): void { this.binding.watchTestEvent!(this.id!, path, flags); }
+  configure(paths: WatchStreamPaths): boolean {
+    if (process.platform !== "darwin") return false;
+    const key = JSON.stringify(paths);
+    if (this.streamPaths === key) return false;
+    try { this.binding.watchConfigure!(this.id!, paths.anchors, paths.exclusions); }
+    catch (cause) { throw watchError(cause); }
+    this.streamPaths = key;
+    return true;
+  }
   close(): void {
     const id = this.id;
     this.id = undefined; // Fence queued TSFN callbacks before synchronous native join.

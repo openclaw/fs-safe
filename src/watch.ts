@@ -6,7 +6,9 @@ import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { admittedNativeChanges } from "./watch-alias.js";
-import { changedEntries, guardedHintChanges, scopedChanges } from "./watch-hints.js";
+import { watchStreamPaths } from "./watch-stream.js";
+import { changedEntries, excludedWatchPath, guardedHintChanges, scopedChanges } from "./watch-hints.js";
+import path from "node:path";
 import { watchBinding, NativeWatchBackend, type NativeWatchBatch, type NativeWatchHint } from "./watch-native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import type { NativeBinding } from "./native.js";
@@ -156,10 +158,15 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const onHint = (g: Generation, batch: NativeWatchBatch) => {
     if (terminal || current !== g || g.abort.signal.aborted || failure !== undefined) return;
+    if (batch.overflow) {
+      try { assertSynchronousCallbackResult(getFsSafeTestHooks()?.afterWatchBackendOverflow?.(context.rootReal), "afterWatchBackendOverflow"); }
+      catch (error) { lose(error, "callback"); return; }
+    }
     if (batch.error === "ESTALE") refreshBackend = true;
     else if (batch.error) { lose(new FsSafeError("helper-failed", "native watch failed", { details: { operation: "watch", code: batch.error } })); return; }
     if (batch.overflow) pendingChanges = undefined;
     else if (pendingChanges) for (const hint of batch.hints) {
+      if (typeof hint.name === "string" && excludedWatchPath(snapshot, hint.directory ? path.join(hint.directory, hint.name) : hint.name)) continue;
       const key = JSON.stringify([hint.directory, hint.name]);
       if (!pendingChanges.has(key) && pendingChanges.size >= maxPendingPaths) { pendingChanges = undefined; break; }
       const previous = pendingChanges.get(key);
@@ -194,7 +201,6 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     state = snapshot ? "reconciling" : "starting";
     notifyHealth();
     check(g);
-    const started = performance.now();
     const hadHints = pendingHint;
     const hints = pendingChanges;
     pendingHint = false; pendingChanges = new Map();
@@ -205,6 +211,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
           if (backend === candidate) onHint(g, batch);
         }, maxPendingPaths, persistent);
         backend = candidate;
+        if (snapshot) candidate.configure(watchStreamPaths(snapshot, g.scopes));
         const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
           if (backend === candidate) onHint(g, batch);
         }, (path, flags) => candidate.testEvent(path, flags));
@@ -212,7 +219,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       } catch (error) { if (!fallBack(error)) throw error; }
       check(g);
     }
-    const next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot }, g.abort.signal,
+    const next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
       async (name, identity, guard) => {
         check(g);
         const existing = registered.get(name);
@@ -231,6 +238,10 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         if (acquire) registered.set(name, identity);
       }, retainRetirement);
     check(g);
+    if (backend?.configure(watchStreamPaths(next, g.scopes))) {
+      // The replacement stream is live before the next guarded pass covers the handover.
+      pending = true;
+    }
     // Retire stale inventory before the next pass; that crawl installs fresh anchors first.
     if ([...registered.keys()].some(name => !next.directories.has(name))) {
       refreshBackend = true;
@@ -260,8 +271,6 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     let details = hadHints
       ? guardedHintChanges(g.scopes, snapshot, next, admittedHints, observed, maxPendingPaths)
       : observed;
-    const behind = (hadHints || pendingHint) && performance.now() - started > coalesceMs;
-    if (behind) details = undefined;
     snapshot = next;
     // Publish before readiness; callbacks may synchronously retire this generation.
     if (initial || !details || details.length) dirty(g, initial ? "reconcile" : !details ? "overflow" : hadHints ? "event" : "reconcile", initial ? undefined : details);

@@ -4,7 +4,7 @@ import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, resolvePathInRoot, type RootContext } from "./root-context.js";
 import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
-import { nativeChanges, scopedChanges } from "./watch-hints.js";
+import { excludedWatchPath, nativeChanges, scopedChanges } from "./watch-hints.js";
 import type { NativeWatchBatch } from "./watch-native.js";
 import type { WatchSnapshot } from "./watch-scan.js";
 import type { WatchChange, WatchScope } from "./watch-types.js";
@@ -14,7 +14,7 @@ export async function admittedNativeChanges(
   root: RootContext, scopes: readonly WatchScope[], before: WatchSnapshot | undefined,
   after: WatchSnapshot, batch: NativeWatchBatch, signal: AbortSignal, limit: number,
 ): Promise<WatchChange[] | undefined> {
-  if (!nativeChanges(scopes, before, batch, limit)) return undefined;
+  if (!nativeChanges(scopes, before, batch, limit, after)) return undefined;
   const result = new Map<string, WatchChange>();
   const candidates = new Map([...before?.targets ?? [], ...after.targets, ...after.directories]);
   const add = (change: WatchChange) => {
@@ -27,6 +27,8 @@ export async function admittedNativeChanges(
     signal.throwIfAborted();
     const name = hint.name!; // nativeChanges rejected unknown or non-literal names.
     let parent = hint.directory;
+    const relative = parent ? path.join(parent, name) : name;
+    if (excludedWatchPath(before, relative) || excludedWatchPath(after, relative)) continue;
     let guard: RootDirectoryObservationGuard | undefined;
     let expected = after.directories.get(parent);
     if (!expected) {
@@ -46,6 +48,7 @@ export async function admittedNativeChanges(
       [parent, expected] = admitted;
     }
     const candidate = parent ? path.join(parent, name) : name;
+    if (excludedWatchPath(before, candidate) || excludedWatchPath(after, candidate)) continue;
     const selected = scopedChanges(scopes, { path: candidate,
       type: hint.event === "change" && before?.entries.get(candidate)?.startsWith("file:") ? "content" : "structural" });
     if (selected.length) {
@@ -61,7 +64,9 @@ export async function admittedNativeChanges(
     }
     const found = await lookupRootDirectoryEntry(root, guard, name);
     signal.throwIfAborted();
-    if (!found) return undefined; // Could be a deleted short-name/case alias.
+    // A missing unselected sibling is not evidence of lost selected detail.
+    // Deleted aliases remain observable through the guarded snapshot comparison.
+    if (!found) continue;
     for (const [relative, identity] of candidates) {
       if (!relative || (path.dirname(relative) === "." ? "" : path.dirname(relative)) !== parent) continue;
       if (identity.dev !== found.identity.dev || identity.ino !== found.identity.ino) continue;

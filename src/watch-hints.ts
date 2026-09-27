@@ -9,6 +9,16 @@ function below(parent: string, child: string): boolean {
 function distance(parent: string, child: string): number {
   return (parent === "" ? child : child.slice(parent.length + 1)).split(path.sep).length;
 }
+export function excludedWatchPath(snapshot: WatchSnapshot | undefined, name: string): boolean {
+  const exclusions = snapshot?.excluded;
+  if (exclusions?.has(name)) return true;
+  while (name) {
+    const parent = path.dirname(name);
+    name = parent === "." ? "" : parent;
+    if (exclusions?.get(name) === "directory") return true;
+  }
+  return false;
+}
 export function scopedChanges(scopes: readonly WatchScope[], change: WatchChange): WatchChange[] {
   const result = new Map<string, WatchChange>();
   for (const scope of scopes) {
@@ -21,7 +31,7 @@ export function scopedChanges(scopes: readonly WatchScope[], change: WatchChange
   }
   return [...result.values()];
 }
-export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnapshot | undefined, batch: NativeWatchBatch, limit = 256): WatchChange[] | undefined {
+export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnapshot | undefined, batch: NativeWatchBatch, limit = 256, after?: WatchSnapshot): WatchChange[] | undefined {
   if (batch.overflow) return undefined;
   const result = new Map<string, WatchChange>();
   for (const hint of batch.hints) {
@@ -29,6 +39,7 @@ export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnap
     // Backend filenames are untrusted hints. Never resolve or perform I/O on them.
     if (typeof name !== "string" || !name || name === "." || name === ".." || name.includes("\0") || name.includes("/") || (process.platform === "win32" && /[\\:]/.test(name))) return undefined;
     const relative = hint.directory ? path.join(hint.directory, name) : name;
+    if (excludedWatchPath(snapshot, relative) || excludedWatchPath(after, relative)) continue;
     for (const change of scopedChanges(scopes, {
       path: relative,
       type: hint.event === "change" && snapshot?.entries.get(relative)?.startsWith("file:") ? "content" : "structural",

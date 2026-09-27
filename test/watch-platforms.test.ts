@@ -42,14 +42,15 @@ mac("maps FSEvents dropped/wrapped/unmount flags to whole-scope invalidation", a
 }, 30_000);
 mac("admits inside FSEvents detail and discards outside and dotdot pathnames", async () => {
   await fs.writeFile(path.join(directory, "kept"), "data");
-  const { invalidations, nativeEvent } = await observe();
+  const { owner, invalidations, nativeEvent } = await observe();
   nativeEvent(path.join(directory, "kept"), 0x1000);
   await expect.poll(() => invalidations.length).toBeGreaterThan(0);
   expect(invalidations.flatMap(value => value.changes ?? []).every(change => change.path === "kept")).toBe(true);
   for (const outside of [directory + "-sibling/private", directory + "/../private", "/unadmitted/private"]) {
     invalidations.length = 0; nativeEvent(outside, 0x1000);
-    await expect.poll(() => invalidations.some(value => value.reason === "overflow")).toBe(true);
-    expect(invalidations.flatMap(value => value.changes ?? []).every(change => change.path === "kept")).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await owner.reconcile();
+    expect(invalidations).toEqual([]);
   }
 }, 30_000);
 mac("RootChanged forces guarded reconciliation and rejects a replacement Root", async () => {
@@ -85,15 +86,16 @@ win("observes deep edits using recursive RDCW and joins cancellation during recu
 }, 30_000);
 
 mac("retries a full native callback queue when JS consumes a batch, without another event", async () => {
-  const batches: { overflow: boolean }[] = [];
+  const batches: { overflow: boolean; hints: { name: string }[] }[] = [];
   const id = binding!.watchRegister!(directory, 256, batch => { batches.push(batch); }, true);
   try {
-    // Keep JS blocked while the hub fills the one-batch TSFN queue and overflows it.
+    // Keep JS blocked while the hub fills the one-batch TSFN queue.
     for (let i = 0; i < 3; i++) {
       binding!.watchTestEvent!(id, path.join(directory, "kept"), 0x1000);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30);
     }
-    await expect.poll(() => batches.some(batch => batch.overflow), { timeout: 1000 }).toBe(true);
+    await expect.poll(() => batches.length, { timeout: 1000 }).toBe(2);
+    expect(batches.every(batch => !batch.overflow && batch.hints.length === 1 && batch.hints[0]!.name === "kept")).toBe(true);
   } finally { binding!.watchUnregister!(id); }
   expect(binding!.watchThreadCount!()).toBe(0);
 });

@@ -1,0 +1,131 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { root } from "../src/root.js";
+import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
+import { watchBinding } from "../src/watch-native.js";
+import type { NativeWatchBatch } from "../src/watch-native.js";
+import { getNativeBinding } from "../src/native.js";
+import { __setFsSafeTestHooksForTest as hooks } from "../src/test-hooks.js";
+
+const events = !!watchBinding("auto");
+if (process.env.FS_SAFE_TEST_WATCH_EVENTS === "1" && !events) throw new Error("selection proof requires the source-built native binding");
+let directory: string;
+let owner: WatchSubscription | undefined;
+beforeEach(async () => {
+  directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "watch-selection-")));
+});
+afterEach(async () => {
+  hooks(); await owner?.close(); owner = undefined; vi.restoreAllMocks();
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+async function settle() {
+  // Drain native delivery, including FSEvents batching, before the explicit checkpoint.
+  await delay(150); await owner!.reconcile();
+}
+function detailed(values: WatchInvalidation[], name: string) {
+  expect(values.length).toBeGreaterThan(0);
+  expect(values.every(value => value.reason !== "overflow" && value.changes?.every(change => change.path === name))).toBe(true);
+}
+
+describe.each(["events", "poll"] as const)("selected observation (%s)", mode => {
+  const test = it.skipIf(mode === "events" && !events);
+  test("ignores creation, deletion and recreation of an excluded build tree with thousands of files", async () => {
+    await fs.mkdir(path.join(directory, "dist"));
+    await fs.writeFile(path.join(directory, "selected.ts"), "before");
+    const values: WatchInvalidation[] = [];
+    let backendOverflows = 0, consumedOverflows = 0, spuriousOverflows = 0;
+    hooks({ afterWatchBackendOverflow: () => { backendOverflows++; } });
+    const allowBackendOverflow = mode === "events" && process.platform !== "linux";
+    const assertBurst = () => {
+      expect(spuriousOverflows).toBe(0);
+      if (allowBackendOverflow) {
+        expect(values.every(value => value.reason === "overflow" && value.changes === undefined)).toBe(true);
+        expect(values.length).toBeLessThanOrEqual(8);
+      } else expect(values).toEqual([]);
+    };
+    owner = watch(await root(directory), {
+      mode, scopes: [{ path: "", kind: "tree" }], intervalMs: 60_000,
+      // The workload tests selection; genuine native detail exhaustion is a separate contract.
+      maxPendingPaths: 4096, exclude: entry => entry.kind === "directory" && entry.path === "dist",
+      onInvalidate: value => {
+        if (value.reason === "overflow") {
+          if (backendOverflows <= consumedOverflows) spuriousOverflows++;
+          consumedOverflows = backendOverflows;
+        }
+        values.push(value);
+      },
+    });
+    await owner.ready; await settle(); values.length = 0;
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await fs.rm(path.join(directory, "dist"), { recursive: true }); await settle();
+      assertBurst();
+      await fs.mkdir(path.join(directory, "dist"));
+      for (let start = 0; start < 2048; start += 32) {
+        await Promise.all(Array.from({ length: 32 }, (_, index) => fs.writeFile(path.join(directory, "dist", `file-${start + index}`), "build output")));
+      }
+      await settle(); assertBurst();
+    }
+    const overflows = values.length;
+    values.length = 0;
+    await fs.writeFile(path.join(directory, "selected.ts"), "selected edit");
+    if (mode === "events") await expect.poll(() => values.length, { timeout: 5000 }).toBeGreaterThan(0);
+    await settle(); detailed(values, "selected.ts");
+    expect(owner.health().failure).toBeUndefined();
+    console.log(JSON.stringify({ proof: "watch-excluded-build", platform: process.platform, mode, files: 4096, overflows, backendOverflows, spuriousOverflows, detailedDeliveryResumed: true }));
+  }, 60_000);
+
+  test("keeps Config entry scopes quiet during heavy sibling churn and details selected edits", async () => {
+    await fs.writeFile(path.join(directory, "config.json"), "before");
+    const values: WatchInvalidation[] = [];
+    owner = watch(await root(directory), { mode, scopes: [{ path: "config.json", kind: "entry" }], intervalMs: 60_000,
+      onInvalidate: value => { values.push(value); },
+    });
+    await owner.ready; await settle(); values.length = 0;
+    for (let cycle = 0; cycle < 32; cycle++) {
+      const names = Array.from({ length: 32 }, (_, n) => path.join(directory, `sibling-${n}`));
+      await Promise.all(names.map(name => fs.mkdir(name)));
+      await Promise.all(names.map(name => fs.writeFile(path.join(name, "unselected"), "noise")));
+      await Promise.all(names.map(name => fs.rm(name, { recursive: true })));
+    }
+    await settle(); expect(values).toEqual([]);
+    await fs.writeFile(path.join(directory, "config.json"), "selected config edit");
+    if (mode === "events") await expect.poll(() => values.length, { timeout: 5000 }).toBeGreaterThan(0);
+    await settle(); detailed(values, "config.json");
+    console.log(JSON.stringify({ proof: "watch-config-siblings", platform: process.platform, mode, siblingOperations: 3072, overflows: 0 }));
+  }, 60_000);
+});
+
+it.skipIf(!events)("preserves detail through slow selected-path passes and coalesces pending hints", async () => {
+  const native = getNativeBinding()!;
+  const register = native.watchRegister!;
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
+  let emit!: (batch: NativeWatchBatch) => void;
+  hooks({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  await fs.writeFile(path.join(directory, "selected"), "before");
+  const values: WatchInvalidation[] = [];
+  owner = watch(await root(directory), { mode: "events", scopes: [{ path: "selected", kind: "entry" }], intervalMs: 60_000,
+    onInvalidate: value => { values.push(value); },
+  });
+  await owner.ready; await owner.reconcile(); values.length = 0;
+  let passes = 0;
+  const hint = () => emit({ overflow: false, hints: [{ directory: "", name: "selected", event: "change" }] });
+  let done!: () => void;
+  const completed = new Promise<void>(resolve => { done = resolve; });
+  hooks({ beforeWatchRegistration: async () => {
+    const pass = ++passes;
+    await delay(40); // Deterministically exceed the old 25 ms scan-duration rule.
+    if (pass < 4) {
+      await fs.writeFile(path.join(directory, "selected"), `edit-${pass}`);
+      for (let n = 0; n < 100; n++) hint();
+    } else done();
+  } });
+  hint(); await owner.reconcile(); await completed; await owner.reconcile();
+  detailed(values, "selected");
+  expect(values.every(value => value.reason === "event")).toBe(true);
+  expect(passes).toBeGreaterThanOrEqual(4);
+  expect(passes).toBeLessThanOrEqual(5);
+});

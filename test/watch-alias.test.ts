@@ -64,3 +64,29 @@ describe.each(["events", "poll"] as const)("filesystem scope spelling (%s)", mod
     }
   });
 });
+
+it.skipIf(!nativeWatchSupported)("retains ambiguity under pending pressure instead of dropping a selected spelling alias", async context => {
+  await fs.writeFile(path.join(dir, "Entry.TXT"), "unchanged metadata");
+  const actual = await fs.lstat(path.join(dir, "Entry.TXT"), { bigint: true });
+  const alias = await fs.lstat(path.join(dir, "entry.txt"), { bigint: true }).catch(() => undefined);
+  if (alias?.dev !== actual.dev || alias?.ino !== actual.ino) { context.skip("filesystem has no case alias"); return; }
+  const native = getNativeBinding()!;
+  const register = native.watchRegister!;
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
+  let emit!: (batch: NativeWatchBatch) => void;
+  __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const values: WatchInvalidation[] = [];
+  const owner = watch(await root(dir), { mode: "events", scopes: [{ path: "entry.txt", kind: "entry" }], maxPendingPaths: 1,
+    onInvalidate: value => { values.push(value); },
+  });
+  owners.push(owner); await owner.ready; await owner.reconcile(); values.length = 0;
+  for (const names of [["unrelated", "Entry.TXT"], ["Entry.TXT", "unrelated"]]) {
+    emit({ overflow: false, hints: names.map(name => ({ directory: "", name, event: "change" })) });
+    await owner.reconcile();
+    expect(values).toEqual([{ reason: "overflow", changes: undefined }]);
+    values.length = 0;
+  }
+  emit({ overflow: false, hints: [{ directory: "", name: "Entry.TXT", event: "change" }] });
+  await owner.reconcile();
+  expect(values).toEqual([{ reason: "event", changes: [{ path: "entry.txt", type: "structural" }] }]);
+});
