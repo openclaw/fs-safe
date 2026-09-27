@@ -70,7 +70,8 @@ describe.runIf(native)("native filesystem primitives", () => {
     try {
       const opened = native!.openBeneath(rootFd, "nested/value", fsSync.constants.O_RDONLY);
       expect(opened.containment).toBe(
-        process.platform === "linux" ? "kernel-atomic" : "best-effort",
+        process.platform === "linux" && process.env.FS_SAFE_TEST_NO_OPENAT2 !== "1"
+          ? "kernel-atomic" : "best-effort",
       );
       try {
         expect(native!.fstatIdentity(opened.fd)).toMatchObject({ isFile: true, size: 2 });

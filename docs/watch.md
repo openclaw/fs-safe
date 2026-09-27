@@ -189,3 +189,25 @@ work remains application-owned and is not joined by the subscription.
 health but do not make successful retirement reject. Retirement failures do
 reject, with a `SuppressedError` retaining an earlier observation failure when
 both exist. No new generation or callback can be admitted after close.
+
+## Seeded consumer-cache stress test
+
+After building the package and host binding, run the model against real temporary
+Roots in both modes:
+
+```sh
+node scripts/watch-stress/model-runner.mjs --seeds 2000 --mode both --output watch-model-results.json
+```
+
+Each seed generates file and directory edits, renames, replacements, deep trees,
+symlink retargets, bursts, scope changes, and subscription retirement. A consumer
+queues refreshes only from `onInvalidate`; checkpoints drain those requests after
+quiescence and `reconcile()`, then compare its cache with a guarded Root walk and
+an independent mutation model. Native hints never authorize consumer reads.
+
+`--seed`, `--steps`, `--settle` (milliseconds), and `--concurrency` control a run.
+Failures are shrunk by fast-check and saved beside the report as `.<mode>-<seed>.failure.json`;
+replay one with `--replay <failure.json>`. Event mode requires a working native
+binding and never silently falls back to polling. The small
+`test/watch-model.test.ts` corpus runs in ordinary CI; native-event cases also run
+when `FS_SAFE_TEST_WATCH_EVENTS=1`. Keep fixtures on normal `os.tmpdir()` storage.

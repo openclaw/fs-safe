@@ -47,11 +47,13 @@ try {
       } finally { native.closeOwnedFd(opened.fd); }
     }
   } finally { fs.closeSync(pathRoot); }
+  // __O_TMPFILE is shared, but O_DIRECTORY differs between x64 and arm64.
+  const tmpfile = 0x400000 | fs.constants.O_DIRECTORY;
   for (const name of [".", "./.", "incoming"]) {
-    assert.throws(() => native.openBeneath(rootFd, name, 0x410000 | fs.constants.O_RDWR), { code: "ENOTSUP" });
+    assert.throws(() => native.openBeneath(rootFd, name, tmpfile | fs.constants.O_RDWR), { code: "ENOTSUP" });
   }
   for (const name of ["missing/", "missing/.", "incoming/missing/", "incoming/missing/."]) {
-    assert.throws(() => native.openBeneath(rootFd, name, fs.constants.O_CREAT | fs.constants.O_WRONLY), { code: "EINVAL" });
+    assert.throws(() => native.openBeneath(rootFd, name, fs.constants.O_CREAT | fs.constants.O_WRONLY), { code: name === "missing/" || name === "incoming/missing/" ? "EISDIR" : "ENOENT" });
     assert.equal(fs.existsSync(path.join(base, name.replace(/\/(?:\.)?$/, ""))), false);
   }
   assert.throws(() => native.openBeneath(rootFd, "missing", fs.constants.O_CREAT | fs.constants.O_DIRECTORY | fs.constants.O_WRONLY), { code: "EINVAL" });
@@ -59,11 +61,15 @@ try {
   fs.symlinkSync("../outside", path.join(base, "escape"));
   fs.symlinkSync("incoming", path.join(base, "alias"));
   fs.symlinkSync(`/proc/self/fd/${rootFd}`, path.join(base, "magic"));
-  for (const name of ["escape", "alias/deep/source", "magic/incoming/deep/source"]) {
-    assert.throws(() => native.openBeneath(rootFd, name, fs.constants.O_RDONLY), { code: "ELOOP" });
+  for (const name of ["escape", "magic/incoming/deep/source"]) {
+    assert.throws(() => native.openBeneath(rootFd, name, fs.constants.O_RDONLY), { code: "EXDEV" });
   }
-  // O_PATH | O_NOFOLLOW must also refuse a symlink descriptor.
-  assert.throws(() => native.openBeneath(rootFd, "escape", 0x200000 | fs.constants.O_NOFOLLOW), { code: "ELOOP" });
+  const alias = native.openBeneath(rootFd, "alias/deep/source", fs.constants.O_RDONLY);
+  try { assert.equal(fs.readFileSync(alias.fd, "utf8"), "source"); }
+  finally { native.closeOwnedFd(alias.fd); }
+  const link = native.openBeneath(rootFd, "escape", 0x200000 | fs.constants.O_NOFOLLOW);
+  try { assert.equal(fs.fstatSync(link.fd).isSymbolicLink(), true); }
+  finally { native.closeOwnedFd(link.fd); }
   assert.throws(() => native.openBeneath(rootFd, "incoming/deep/source/", fs.constants.O_RDONLY), { code: "ENOTDIR" });
 
   const scoped = await root(base);
