@@ -4,6 +4,7 @@ import {
 } from "./archive-limits.js";
 import { admitZipNames, zipExtraFields, zipFormat, zipUInt64 } from "./archive-zip-names.js";
 import type { ArchiveEntryKind } from "./archive-plan.js";
+import { createArchiveOutputPathTracker } from "./archive-entry.js";
 
 export type ZipRead = { offset: number; length: number };
 export type ZipScan = Generator<ZipRead, number, Buffer>;
@@ -187,6 +188,7 @@ export function* scanZipDirectory(
   const directory = yield* layout(size);
   assertArchiveEntryCountWithinLimit(directory.count, limits);
   const seen = new Set<string>();
+  const trackKnownPath = createArchiveOutputPathTracker();
   const spans: Array<{ start: number; end: number }> = [];
   let at = directory.start;
   let count = 0;
@@ -222,6 +224,7 @@ export function* scanZipDirectory(
     const localNames = yield* read(localAt + 30, localNameLength + localExtraLength, directory.start);
     const localExtra = zipExtraFields(localNames.subarray(localNameLength));
     const admittedName = admitZipNames({ central: centralName, local: localNames.subarray(0, localNameLength), flags, centralExtra, localExtra, seen });
+    if (admittedName.path !== undefined) trackKnownPath(admittedName.path, admittedName.path);
     const localValues = wideValues(local, localExtra, false);
     const crc = central.readUInt32LE(16);
     if (!(flags & 8) && (local.readUInt32LE(14) !== crc || localValues.compressed !== values.compressed || localValues.uncompressed !== values.uncompressed)) {
