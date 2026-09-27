@@ -40,11 +40,11 @@ export async function pruneExpiredStoreEntries(params: {
   const rootGuard = {
     dir: rootReal,
     realPath: rootReal,
-    stat: fsSync.lstatSync(rootReal),
+    stat: fsSync.lstatSync(rootReal, { bigint: true }),
   };
 
   async function assertRootGuard(): Promise<void> {
-    const stat = fsSync.lstatSync(rootGuard.dir);
+    const stat = fsSync.lstatSync(rootGuard.dir, { bigint: true });
     if (
       stat.isSymbolicLink() ||
       !stat.isDirectory() ||
@@ -57,7 +57,7 @@ export async function pruneExpiredStoreEntries(params: {
   }
 
   async function readStableDirectory(dir: string): Promise<Dirent[] | null> {
-    const before = observeOrNull(() => fsSync.lstatSync(dir));
+    const before = observeOrNull(() => fsSync.lstatSync(dir, { bigint: true }));
     if (!before || before.isSymbolicLink() || !before.isDirectory()) {
       return null;
     }
@@ -69,7 +69,7 @@ export async function pruneExpiredStoreEntries(params: {
     if (!entries) {
       return null;
     }
-    const after = observeOrNull(() => fsSync.lstatSync(dir));
+    const after = observeOrNull(() => fsSync.lstatSync(dir, { bigint: true }));
     if (!after || before.dev !== after.dev || before.ino !== after.ino) {
       return null;
     }

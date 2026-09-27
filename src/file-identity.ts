@@ -44,13 +44,20 @@ export function sameFileIdentity(
   );
 }
 
+function sameCleanupStatValue(left: number | bigint, right: number | bigint): boolean {
+  // Converting an unsafe number to bigint cannot recover an already rounded ID.
+  if (typeof left === "number" && !Number.isSafeInteger(left)) return false;
+  if (typeof right === "number" && !Number.isSafeInteger(right)) return false;
+  return sameStatValue(left, right);
+}
+
 export function sameFileIdentityForCleanup(
   left: FileIdentityStat,
   right: FileIdentityStat,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (platform !== "win32") {
-    return sameStatValue(left.dev, right.dev) && sameStatValue(left.ino, right.ino);
+    return sameCleanupStatValue(left.dev, right.dev) && sameCleanupStatValue(left.ino, right.ino);
   }
 
   // A zero Windows device or inode is unknown, not proof that a pathname still
@@ -68,5 +75,5 @@ export function sameFileIdentityForCleanup(
   const rightIno = right.ino;
   if (isZero(rightIno)) return false;
 
-  return sameStatValue(leftDev, rightDev) && sameStatValue(leftIno, rightIno);
+  return sameCleanupStatValue(leftDev, rightDev) && sameCleanupStatValue(leftIno, rightIno);
 }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Linux fallback:** native opens without `openat2` now follow in-root relative symlinks and preserve canonical policy errors, while retaining identity checks and rejecting escapes.
+
 - **Native move diagnostics:** no-clobber `Root.move()` preserves the original native loader error as its cause, including missing libraries or incompatible glibc versions.
 - **Remote validation:** add an optional 16-vCPU Linux Blacksmith Testbox workflow for maintainer checks through Crabbox, with the existing Node, pnpm, and portable archive toolchain.
 
