@@ -35,6 +35,7 @@ import { sleep, sleepSync } from "./timing.js";
 import { serializePathWrite } from "./write-queue.js";
 import { hasErrorCode, readErrorCode } from "./file-cleanup.js";
 import { AtomicMutation } from "./replace-file-mutation.js";
+import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import type {
   ReplaceFileAtomicFileSystem,
   ReplaceFileAtomicSyncFileSystem,
@@ -385,7 +386,7 @@ function replaceFileAtomicSyncUnserialized(
     }));
     tempOwner.assertCurrent(fsModule);
     if (options.beforeRename) {
-      options.beforeRename({ filePath, tempPath });
+      assertSynchronousCallbackResult(options.beforeRename({ filePath, tempPath }), "beforeRename");
       tempOwner.assertCurrent(fsModule);
     }
     if (options.destinationHardlinks === "reject") {

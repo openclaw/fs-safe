@@ -292,6 +292,10 @@ through short reads and EOF, grow only as data arrives, and enforce the same
 `beforeRename` callback, and `ReplaceFileAtomicSyncFileSystem`. Use it inside
 synchronous boot paths or test setup code. It returns the same
 `{ method: "rename" | "copy-fallback" }` receipt as the async variant.
+Promise, thenable, and synchronous or asynchronous generator results from the
+hook reject with `TypeError` before publication; rejected promises are consumed
+and generators are never advanced. Other synchronous return values are ignored.
+The replacement is not published; owned-temp cleanup follows the rules above.
 
 ## `replaceDirectoryAtomic`
 
