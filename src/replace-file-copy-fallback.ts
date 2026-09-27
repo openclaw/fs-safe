@@ -248,8 +248,8 @@ async function replacePinnedWithRestore(
   } catch (writeError) {
     mutation.rethrowRefusal();
     try {
-      await writeAtomicDestination(handle, original, destination?.beforeWrite, destination?.assertBeforeMutation, destination?.writing);
-      if (destination) await destination.verify();
+      await writeAtomicDestination(handle, original, destination?.beforeRestore, destination?.assertBeforeMutation, destination?.writing);
+      if (destination) await destination.verifyRestore();
       await handle.chmod(originalMode);
       await handle.sync();
       throw restoreFailure(writeError, "restored");
@@ -284,8 +284,8 @@ function replacePinnedWithRestoreSync(
   } catch (writeError) {
     mutation?.rethrowRefusal();
     try {
-      writeAtomicDestinationSync(fsModule, fd, original, destination?.beforeWrite, destination?.writing);
-      destination?.verify();
+      writeAtomicDestinationSync(fsModule, fd, original, destination?.beforeRestore, destination?.writing);
+      destination?.verifyRestore();
       fchmodSync?.(fd, originalMode);
       fsModule.fsyncSync(fd);
       throw restoreFailure(writeError, "restored");
