@@ -29,6 +29,8 @@ mod file_copy;
 mod owned_tree;
 #[cfg(unix)]
 mod root_remove;
+#[cfg(windows)]
+mod root_remove_windows;
 #[cfg(unix)]
 mod realpath;
 #[cfg(target_os = "macos")]

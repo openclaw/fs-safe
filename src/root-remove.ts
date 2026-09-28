@@ -65,6 +65,7 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
 type RemovalDirectoryReceipt = RemovalDirectoryAssertion;
 
 type NonrecursiveRemovalAdmission = Readonly<{
+  parentIdentity: Readonly<Pick<BigIntStats, "dev" | "ino">>;
   assertAfterMutation(): void;
   assertCurrent(): void;
 }>;
@@ -148,6 +149,7 @@ export async function captureNonrecursiveRemovalAdmission(
       rootGuard.realPath,
     );
     return Object.freeze({
+      parentIdentity: rootAssertion,
       assertAfterMutation(): void {
         // Here Root is also the immediate parent, so retain its established
         // post-dispatch error classification while checking it only once.
@@ -234,6 +236,7 @@ export async function captureNonrecursiveRemovalAdmission(
   };
 
   return Object.freeze({
+    parentIdentity: parentAssertion,
     assertAfterMutation(): void {
       assertPrefixCurrent();
       // Preserve the established nonrecursive post-dispatch mapping for the
