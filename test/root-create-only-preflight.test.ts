@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root } from "../src/index.js";
-import { getNativeBinding } from "../src/native.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
@@ -22,7 +21,7 @@ it.each(["off", "auto"] as const)("create-only keeps type, alias, hardlink, and 
   await expect(fs.readFile(target, "utf8")).resolves.toBe("owner");
   await fs.mkdir(path.join(capability.rootReal, "directory"));
   await expect(capability.create("directory", "replacement")).rejects.toMatchObject({
-    code: process.platform === "win32" && !getNativeBinding() ? "already-exists" : "not-file",
+    code: "already-exists",
   });
   await fs.link(target, `${target}.link`);
   await expect(capability.create("target", "replacement")).rejects.toMatchObject({ code: "path-alias" });

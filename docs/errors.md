@@ -115,6 +115,12 @@ type FsSafeErrorCode =
 
 ## Code reference
 
+Create-only Root writes to an existing regular file or directory report
+`already-exists` in every native mode, including atomic and streamed creation.
+Policy failures such as an explicit symlink rejection or a denied path retain
+their precedence. A non-directory ancestor still reports its path/type failure;
+it is not an existing destination.
+
 | Code | When it fires | Common causes |
 |---|---|---|
 | `already-exists` | `create()`, `createJson()`, `move({ overwrite: false })`. | Target file or directory already at the destination. |
