@@ -14,6 +14,8 @@ fn inspect(parent: i32, name: &str) -> NativeResult<Stat> {
         .map_err(|error| os_error(error, "inspect removal entry"))
 }
 
+// Darwin's device type differs from Linux's; keep the same unsigned identity projection.
+#[allow(clippy::unnecessary_cast)]
 fn verify(stat: &Stat, expected: ExactFileIdentity) -> NativeResult<()> {
     if stat.st_dev as u64 != expected.dev || stat.st_ino as u64 != expected.ino {
         return Err(native_error("path-mismatch", "removal entry identity changed"));
@@ -49,6 +51,7 @@ pub struct RootRemovalEntry {
 }
 
 #[napi(js_name = "rootRemovalStat")]
+#[allow(clippy::unnecessary_cast)] // Platform-dependent stat device/inode widths.
 pub fn root_removal_stat(env: Env, parent: i32, name: String) -> Result<RootRemovalEntry> {
     into_napi(env, inspect(parent, &name).map(|stat| RootRemovalEntry {
         dev: BigInt::from(stat.st_dev as u64), ino: BigInt::from(stat.st_ino as u64),

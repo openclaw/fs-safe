@@ -21,6 +21,7 @@ import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-w
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
+import { getFsSafeNativeConfig } from "./native-config.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -982,7 +983,8 @@ async function removePathInRoot(
   params: RootRemoveOptions & { relativePath: string },
 ): Promise<void> {
   validatePinnedRelativePath(params.relativePath);
-  params = { ...params, ...snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) };
+  const requireNative = getFsSafeNativeConfig().mode === "require";
+  if (requireNative) params = { ...params, ...snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) };
   const removalReceipts = params.recursive ? undefined : new RemovalPathReceipts();
   const resolved = await resolvePinnedPathInRoot(root, {
     relativePath: params.relativePath,
@@ -992,7 +994,7 @@ async function removePathInRoot(
     removalReceipts,
   });
   try {
-    if (await tryRemovePathInRootNative(root, resolved.resolved, params, removalReceipts)) return;
+    if (requireNative && await tryRemovePathInRootNative(root, resolved.resolved, params, removalReceipts)) return;
     await removePathInRootFallback(root, resolved.resolved, params, removalReceipts);
   } catch (error) {
     if (params.recursive) throw error;

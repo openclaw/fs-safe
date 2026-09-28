@@ -18,6 +18,21 @@ afterEach(() => {
   __setFsSafeTestHooksForTest();
 });
 
+it("keeps auto removal on its existing path even with native removal available", async () => {
+  const nativeMutation = vi.fn(() => { throw new Error("require-only primitive"); });
+  __setNativeLoaderForTest(() => ({ ...native, rootRemovalStat: nativeMutation, rootRemovalUnlink: nativeMutation } as unknown as NativeBinding));
+  configureFsSafeNative({ mode: "auto" });
+  const directory = await tempRoot("fs-safe-auto-remove-");
+  await fs.mkdir(path.join(directory, "tree"));
+  await fs.writeFile(path.join(directory, "value"), "inside");
+  await fs.writeFile(path.join(directory, "tree/value"), "inside");
+  const scoped = await root(directory);
+  await scoped.remove("value");
+  await scoped.remove("tree", { recursive: true });
+  expect(await fs.readdir(directory)).toEqual([]);
+  expect(nativeMutation).not.toHaveBeenCalled();
+});
+
 describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
   function requireNative(): void {
     __setNativeLoaderForTest(() => native!);

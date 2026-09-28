@@ -6,7 +6,6 @@ import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError, type FsSafeErrorDetails } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
 import { getNativeBinding } from "./native.js";
-import { getFsSafeNativeConfig } from "./native-config.js";
 import type { NativeRootRemovalEntry, NativeRootRemovalDirectory } from "./native-binding.js";
 import { openNativeParentAdmission, openNativeRootAdmission, type NativeParentAdmission } from "./native-parent-admission.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -18,10 +17,7 @@ import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 function unavailable(): false {
-  if (getFsSafeNativeConfig().mode === "require") {
-    throw new FsSafeError("helper-unavailable", "native confined removal is unavailable on this platform");
-  }
-  return false;
+  throw new FsSafeError("helper-unavailable", "native confined removal is unavailable on this platform");
 }
 
 function normalize(error: unknown, details?: FsSafeErrorDetails): unknown {
@@ -234,7 +230,9 @@ export async function tryRemovePathInRootNative(
       }
       if (options.assertBeforeMutation) {
         options.assertBeforeMutation();
-        if (!observe(fd, name, entryPath, initial)) return;
+        // The native call repeats the exact entry identity/type check; refresh
+        // only pathname authority here, with no await before that call.
+        assertCurrent();
       }
       // No await separates the final admission from native identity-checked unlink.
       try { unlink(fd, name, initial.dev, initial.ino, initial.directory); } catch (error) {
