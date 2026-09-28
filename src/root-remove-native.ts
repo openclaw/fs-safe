@@ -16,7 +16,7 @@ import type { RemovalPathReceipts } from "./root-remove-receipt.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
-function unavailable(): false {
+function unavailable(): never {
   throw new FsSafeError("helper-unavailable", "native confined removal is unavailable on this platform");
 }
 
@@ -31,18 +31,18 @@ function normalize(error: unknown, details?: FsSafeErrorDetails): unknown {
   return normalizeRemovePathError(error, details);
 }
 
-export async function tryRemovePathInRootNative(
+export async function removePathInRootNative(
   root: RootContext, target: string, options: InternalRemoveOptions, receipts?: RemovalPathReceipts,
-): Promise<boolean> {
+): Promise<void> {
   const binding = getNativeBinding();
   if (!binding?.rootRemovalStat || !binding.rootRemovalUnlink) {
-    return unavailable();
+    unavailable();
   }
   const inspect = binding.rootRemovalStat.bind(binding);
   const unlink = binding.rootRemovalUnlink.bind(binding);
   const openDirectory = binding.openRootRemovalDirectory?.bind(binding);
   const boundary = await captureNonrecursiveRemovalAdmission(root, target, options, receipts);
-  if (!boundary) return true;
+  if (!boundary) return;
   const rootAdmission = await openNativeRootAdmission(binding, {
     rootPath: root.rootReal, rootIdentity: root.rootIdentity, operation: "remove", reportCloseErrors: true, searchOnly: true,
   }).catch(error => { throw normalizeRemoveGuardError(error); });
@@ -52,7 +52,6 @@ export async function tryRemovePathInRootNative(
   let initialDirectoryAttempted = false;
   let operationError: unknown;
   let failed = false;
-  let handled = true;
   try {
     const parentPath = path.dirname(target);
     if (!isPathInside(root.rootReal, parentPath)) throw new FsSafeError("outside-workspace", "removal parent is outside root");
@@ -77,22 +76,20 @@ export async function tryRemovePathInRootNative(
           if (!(options.force && isNotFoundPathError(error))) throw error;
         }
         if (initialEntry?.directory) {
-          if (!openDirectory) handled = unavailable();
-          else {
-            initialDirectoryAttempted = true;
-            try { initialDirectory = openDirectory(parent.fd, path.basename(target), initialEntry.dev, initialEntry.ino); }
-            catch (error) {
-              boundary.assertCurrent();
-              const code = (error as NodeJS.ErrnoException)?.code;
-              if (["ENOTSUP", "ENOSYS", "EOPNOTSUPP"].includes(code ?? "")) handled = unavailable();
-              else if (!(options.force && isNotFoundPathError(error))) {
-                throw normalize(error, { operation: "remove", phase: "enumerate", relativePath: "" });
-              }
+          if (!openDirectory) unavailable();
+          initialDirectoryAttempted = true;
+          try { initialDirectory = openDirectory(parent.fd, path.basename(target), initialEntry.dev, initialEntry.ino); }
+          catch (error) {
+            boundary.assertCurrent();
+            const code = (error as NodeJS.ErrnoException)?.code;
+            if (["ENOTSUP", "ENOSYS", "EOPNOTSUPP"].includes(code ?? "")) unavailable();
+            else if (!(options.force && isNotFoundPathError(error))) {
+              throw normalize(error, { operation: "remove", phase: "enumerate", relativePath: "" });
             }
           }
         }
       }
-      if (handled && (!options.recursive || initialEntry)) await removeEntries(parent);
+      if (!options.recursive || initialEntry) await removeEntries(parent);
     }
   } catch (error) {
     failed = true;
@@ -110,7 +107,6 @@ export async function tryRemovePathInRootNative(
     throw error;
   }
   if (failed) throw operationError;
-  return handled;
 
   async function removeEntries(admitted: NativeParentAdmission): Promise<void> {
     // The admission already checks Root through the retained parent. This list
