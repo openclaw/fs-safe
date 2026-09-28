@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { root } from "../src/root.js";
@@ -11,6 +11,19 @@ let native: NativeBinding | undefined;
 try { native = __loadBundledNativeForTest(); } catch { /* Native lanes build the binding. */ }
 const { tempRoot } = useRealTempDirs();
 afterEach(() => { configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); });
+
+it("keeps auto overwrite move on its existing path with native replacement available", async () => {
+  const nativeMutation = vi.fn(() => { throw new Error("require-only primitive"); });
+  __setNativeLoaderForTest(() => ({ ...native, renameReplaceWithIdentity: nativeMutation } as unknown as NativeBinding));
+  configureFsSafeNative({ mode: "auto" });
+  const directory = await tempRoot("fs-safe-auto-move-");
+  await fs.writeFile(path.join(directory, "source"), "inside");
+  await fs.writeFile(path.join(directory, "target"), "old");
+  const scoped = await root(directory);
+  await scoped.move("source", "target", { overwrite: true });
+  expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("inside");
+  expect(nativeMutation).not.toHaveBeenCalled();
+});
 
 describe.runIf(native?.renameReplaceWithIdentity)("native overwrite Root move", () => {
   it.each([undefined, "follow-parents-within-root"] as const)("rechecks an original source alias after the authority callback (%s)", async mutationSymlinks => {
@@ -87,13 +100,20 @@ describe.runIf(native?.renameReplaceWithIdentity)("native overwrite Root move", 
     await fs.mkdir(path.join(directory, "target"));
     await fs.writeFile(path.join(directory, "source/value"), "inside");
     const scoped = await root(directory);
-    if (process.platform === "win32") {
-      await expect(scoped.move("source", "target", { overwrite: true })).rejects.toBeTruthy();
+    const original = await fs.stat(path.join(directory, "source"), { bigint: true });
+    let failure: unknown;
+    try { await scoped.move("source", "target", { overwrite: true }); }
+    catch (error) { failure = error; }
+    if (failure) {
+      expect(process.platform).toBe("win32");
+      expect(["EACCES", "EPERM", "EEXIST", "ENOTEMPTY", "already-exists"]).toContain((failure as NodeJS.ErrnoException).code);
       expect(await fs.readFile(path.join(directory, "source/value"), "utf8")).toBe("inside");
       expect(await fs.readdir(path.join(directory, "target"))).toEqual([]);
     } else {
-      await scoped.move("source", "target", { overwrite: true });
       expect(await fs.readFile(path.join(directory, "target/value"), "utf8")).toBe("inside");
+      const moved = await fs.stat(path.join(directory, "target"), { bigint: true });
+      expect({ dev: moved.dev, ino: moved.ino }).toEqual({ dev: original.dev, ino: original.ino });
+      await expect(fs.lstat(path.join(directory, "source"))).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
 });
@@ -105,6 +125,8 @@ it("fails closed for overwrite when a required binding lacks the primitive", asy
   await fs.writeFile(path.join(directory, "source"), "source");
   await fs.writeFile(path.join(directory, "target"), "target");
   const scoped = await root(directory);
-  await expect(scoped.move("source", "target", { overwrite: true })).rejects.toMatchObject({ code: "helper-unavailable" });
+  const pending = scoped.move("source", "target", { overwrite: true });
+  configureFsSafeNative({ mode: "auto" });
+  await expect(pending).rejects.toMatchObject({ code: "helper-unavailable" });
   expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("target");
 });

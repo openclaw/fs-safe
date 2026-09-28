@@ -548,12 +548,14 @@ export class RootHandle implements Root {
       mutationOptions.denyMutations, mutationOptions.mutationSymlinks,
     ) ?? {};
     const overwrite = options.overwrite ?? false;
+    const requireNative = getFsSafeNativeConfig().mode === "require";
     await assertMoveMutationAllowed(this.context, {
       fromRelative,
       toRelative,
       denyMutations,
     });
     await movePathFallback(this.context, {
+      requireNative,
       fromRelative,
       denyMutations,
       assertBeforeMutation,
@@ -1361,6 +1363,7 @@ async function movePathFallback(
   root: RootContext,
   params: RootMoveOptions & Parameters<typeof assertMoveMutationAllowed>[1] & {
     overwrite: boolean;
+    requireNative: boolean;
   },
 ): Promise<void> {
   const originalRoutes = params.overwrite && params.assertBeforeMutation
@@ -1415,8 +1418,9 @@ async function movePathFallback(
   if (!pinnedTarget) {
     throw new FsSafeError("path-mismatch", "destination admission was not completed");
   }
-  const nativeReplace = params.overwrite ? getNativeBinding()?.renameReplaceWithIdentity : undefined;
-  if (params.overwrite && !nativeReplace && getFsSafeNativeConfig().mode === "require") {
+  const nativeReplace = params.overwrite && params.requireNative
+    ? getNativeBinding()?.renameReplaceWithIdentity : undefined;
+  if (params.overwrite && !nativeReplace && params.requireNative) {
     throw new FsSafeError("helper-unavailable", "native overwrite move is unavailable");
   }
   if (!params.overwrite || nativeReplace) {
