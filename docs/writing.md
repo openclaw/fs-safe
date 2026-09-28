@@ -403,7 +403,11 @@ paths are rechecked after the live mutation-authority callback and before
 dispatch. The Root and retained parents are fenced again after any such callback.
 These checks retain the documented final check-to-syscall race.
 
-For `{ overwrite: true }`, the JavaScript path checks both parent directories
+For `{ overwrite: true }`, native mode retains both parents, checks the source
+identity relative to its parent, and renames through those descriptors (or the
+corresponding Windows handles). It then rechecks the parents and destination
+identity. `require` rejects with `helper-unavailable` if this operation's native
+entry point is absent. In `off`, or `auto` without that capability, the JavaScript path checks both parent directories
 before and after the rename. A failed post-operation check rejects even though
 the rename may already have completed; rejection does not imply rollback.
 
@@ -514,14 +518,33 @@ reasons, are propagated without adding or changing their details. Context is
 diagnostic; it is not permission to retry or mutate an entry.
 
 Removal is incremental, not atomic. A later budget, cancellation, identity, or
-filesystem failure does not restore already removed entries. As with existing
-`remove`, this is a guarded JavaScript operation in every native mode: pathname
-checks are best-effort against a hostile concurrent process and do not create
-an atomic check-and-delete syscall. Use OS isolation for that threat model.
+filesystem failure does not restore already removed entries. Native POSIX
+removal checks the entry without following links and uses `unlinkat` relative
+to a retained parent; empty directories use `AT_REMOVEDIR`. Recursive native
+removal enumerates through retained directory descriptors and retains its
+ordering, budgets, abort checks, and denied-descendant preflight. Linux descent
+requires `openat2` with `RESOLVE_NO_XDEV`; macOS checks mount identity.
+
+Windows nonrecursive removal checks the identity of the exact handle opened
+relative to the parent and deletes that object with `FileDispositionInfoEx`,
+without following a final reparse point. `require` rejects recursive removal
+on Windows and on Linux without that mount-bounded capability. `off`, and `auto` when an operation capability is
+absent, retain the JavaScript implementation: its pathname checks are best-effort
+against a hostile concurrent process and cannot prevent every outside side
+effect. POSIX native deletion is also not an atomic expected-inode conditional
+unlink. See the [platform matrix](security-model.md#native-root-mutation-capabilities)
+for the precise parent-pinning guarantee and remaining same-call limitations.
 
 ### `fs.mkdir(rel)`
 
 `mkdir -p`. Creates missing parents.
+
+Native mode creates each missing component relative to a retained directory,
+opens the child without following a final symlink, and checks its identity before
+continuing. Windows private creation retains its protected native creator,
+which verifies the admitted parent identity and calls handle-relative
+`NtCreateFile` with a protected security descriptor. `require` refuses a missing
+native capability; `auto` retains the best-effort fallback.
 
 ```ts
 await fs.mkdir("snapshots/2026/05");
@@ -570,6 +593,20 @@ files; `update` keeps existing contents. Streaming writes go directly to the
 destination — there is no atomic-rename step. For exclusive publication of a
 complete stream, use [`create()`](#streamed-creation). For streamed replacement,
 the [`atomic`](atomic.md) helpers provide a staged writer.
+
+When creating a missing file, native mode uses an exclusive no-follow open
+beneath a retained parent and verifies the same inode during handoff to the
+returned Node `FileHandle`. `append()` uses this path too. Required creation
+fails with `helper-unavailable` with an incomplete addon, or when a
+restrictive mode or umask prevents that handoff without widening initial permissions.
+`auto` retains its JavaScript fallback for these cases. Creation confinement
+does not upgrade the returned `containment: "best-effort"` label or provide a
+transaction around later caller writes.
+
+The native creation syscall applies the requested mode and inherited ACLs.
+If those kernel-created permissions prevent the subsequent FileHandle handoff,
+the operation fails and attempts identity-bound cleanup; it does not widen an
+inherited ACL with a later `chmod`.
 
 For all three write modes, `mode` only selects new-file creation permissions,
 defaulting to `0o600` when neither the call nor the Root supplies it. POSIX

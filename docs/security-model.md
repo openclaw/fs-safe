@@ -175,7 +175,9 @@ It asserts directory identity around a pathname mutation and detects many
 swaps, but detection occurs after the kernel may already have followed a new
 parent symlink. A same-privilege peer with write access to the parent can
 therefore cause an out-of-root side effect before the operation throws. Use
-native `require` mode when concurrent hostile mutation is in scope.
+native `require` mode to refuse implicit pathname mutation fallbacks, then check
+the operation capabilities below. Loading an addon alone does not establish
+confinement for every method.
 
 The separate [retained-directory staging lifecycle](staged-file.md) keeps abort
 cleanup anchored to the original directory after a parent or ancestor move.
@@ -260,6 +262,57 @@ The macOS `F_GETPATH` verification is an escape detector, not a race-atomic guar
 The Linux fallback's identity checks are also detection-based: a directory can be renamed between chain samples or before a later descriptor-relative mutation. It cannot provide atomic resolution, and rejection after a mutating open does not promise rollback. See [Linux without openat2](native.md#linux-without-openat2) for the cached capability probe, conservative symlink rejection, and operations that remain unavailable.
 
 The public `OpenResult`, `ReadResult`, and `WritableOpenResult` expose `containment`. Those root APIs currently report `best-effort`; direct native `openBeneath()` reports the platform value above. No-replace publication uses `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS, and `FileRenameInfoEx` with replacement disabled on Windows, but those separate mutation semantics do not upgrade an open result's containment label.
+
+### Native Root mutation capabilities
+
+`require` selects each operation's native capability or rejects with
+`helper-unavailable`; it does not silently perform the corresponding Node
+pathname mutation. `auto` uses the same native paths when their capabilities
+exist, and keeps its best-effort JavaScript fallback otherwise. No-clobber move
+continues to require native support in every mode.
+
+| Root operation | Linux with `openat2` | Linux guarded fallback | macOS native | Windows native |
+|---|---|---|---|---|
+| `write`, `create`, `writeJson`, `copyIn` publication | Retained parent descriptors | Retained parents; best-effort admission | Retained parents; best-effort admission | Handle-relative publication; best-effort admission |
+| `remove` file, symlink, or empty directory | Identity check and `unlinkat` at retained parent | Same unlink; best-effort parent admission | Same unlink; best-effort parent admission | Handle-relative open and identity-checked `FileDispositionInfoEx`; best-effort parent admission |
+| Recursive `remove` | Descriptor-relative enumeration and deletion; `RESOLVE_NO_XDEV` on descent | `require` rejects; `auto` uses JavaScript | Descriptor-relative traversal with mount-identity checks; best-effort admission | `require` rejects; `auto` uses JavaScript |
+| `mkdir` | `mkdirat` and retained child identity checks | Same creation; best-effort admission | Same creation plus guarded admission | Handle-relative directory creation, including the existing protected private creator; best-effort admission |
+| `move` with overwrite | Retained parents, source identity check, `renameat` | Same rename; best-effort admission | Retained parents and rename; best-effort admission | Source handle identity check and handle-relative rename; best-effort admission |
+| `append` / `openWritable` creating a file | Beneath exclusive open, no-follow final component, identity-checked FileHandle handoff | Same creation through guarded native open; best-effort admission | Guarded native creation and identity-checked FileHandle handoff; best-effort admission | Handle-relative exclusive creation, identity-checked FileHandle handoff and handle-bound cleanup; best-effort admission |
+
+On Linux, `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` admits the parent
+under the Root atomically. Later mutations use that retained parent, so replacing
+its pathname with a symlink cannot redirect the syscall to the link's target.
+Recursive removal never follows an enumerated symlink; it unlinks the link itself
+unless an explicit mutation policy rejects it. The fallback Linux walk rejects
+symlinks and keeps its `best-effort` label. macOS uses the existing guarded
+`O_RESOLVE_BENEATH`/`F_GETPATH` admission and also remains `best-effort`.
+
+Directory pinning is not an atomic check of the entire namespace at mutation
+time. A peer can move an admitted directory, and POSIX has no expected-inode
+conditional unlink or rename: a final name can change after its identity check.
+Post-operation rejection does not roll back a completed mutation. Policy and
+identity checks remain defense in depth; OS isolation is needed for stronger
+same-privilege namespace or authorization guarantees.
+
+Writable-open creation retains a native descriptor while reopening the same
+inode as a Node `FileHandle`, without create or truncate flags. If the requested
+mode or umask cannot be preserved through initial creation and that handoff,
+`require` rejects rather than widening permissions; `auto` uses its JavaScript
+fallback when this limitation is known before native dispatch. The native
+creation syscall receives the requested mode, preserving inherited ACLs.
+If the resulting kernel permissions prevent handoff, the call fails closed and
+attempts identity-bound cleanup of its empty created file; it never broadens
+those permissions with `chmod`.
+Existing-file writable opens, reads, advisory methods, and caller operations on
+returned handles retain their existing `best-effort` contracts. Explicit
+`renameIdentity: "verify-content-with-lock"` also retains its documented
+JavaScript compatibility path, including in `require` mode.
+
+Compatibility: an older or incomplete addon, unavailable mount-bounded descent,
+or another missing operation capability now causes `helper-unavailable` in
+`require`, including cases that previously fell through to JavaScript. The
+public result types and containment labels are unchanged.
 
 ## Limitations to keep in mind
 
