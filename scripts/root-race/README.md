@@ -14,6 +14,10 @@ isolated disposable fixtures, races selected Root operations against separate
 attacker processes, joins those processes, and records exact sentinel snapshots.
 The output path must not already exist.
 
+`appendCreate` uses a unique basename for every attempt, including longer dwell
+intervals, so a successful append cannot merely reopen a previous created file.
+Attackers reclaim these names only after restoring their owned real directories.
+
 ```sh
 pnpm build
 pnpm native:build

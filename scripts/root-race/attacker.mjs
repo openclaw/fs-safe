@@ -29,7 +29,9 @@ function replenish(directory) {
     attempt(() => fs.writeFileSync(path.join(directory, 'tree', 'data'), 'IN_ROOT\n', { flag: 'wx' }));
     attempt(() => fs.writeFileSync(path.join(directory, 'data'), 'IN_ROOT\n', { flag: 'wx' }));
     attempt(() => fs.rmSync(path.join(directory, 'new'), { force: true }));
-    attempt(() => fs.rmSync(path.join(directory, 'append-created'), { force: true }));
+    for (const name of fs.readdirSync(directory)) {
+      if (name.startsWith('append-created-')) attempt(() => fs.rmSync(path.join(directory, name), { force: true }));
+    }
     attempt(() => fs.rmSync(path.join(directory, 'moved'), { force: true }));
     attempt(() => fs.rmSync(path.join(directory, 'new-dir'), { recursive: true, force: true }));
   } catch {}

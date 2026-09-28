@@ -188,7 +188,7 @@ async function runSeed(seed) {
     write: p => rootHandle.write(`${p}/data`, payload, { mode: 0o600 }),
     create: p => rootHandle.create(`${p}/new`, payload, { mode: 0o600 }),
     append: p => rootHandle.append(`${p}/data`, payload),
-    appendCreate: p => rootHandle.append(`${p}/append-created`, payload),
+    appendCreate: p => rootHandle.append(`${p}/append-created-${seed}-${operations}`, payload),
     mkdir: p => rootHandle.mkdir(`${p}/new-dir/deep`),
     move: p => rootHandle.move(`${p}/data`, `${p}/moved`),
     rename: p => rootHandle.move(`${p}/data`, `${p}/target`, { overwrite: true }),
