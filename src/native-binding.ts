@@ -73,6 +73,19 @@ export interface NativeOwnedTreeRemovalResult {
   errorMessage?: string;
 }
 
+export interface NativeRootRemovalEntry {
+  dev: bigint;
+  ino: bigint;
+  directory: boolean;
+  symlink: boolean;
+}
+
+export interface NativeRootRemovalDirectory {
+  readonly fd: number;
+  read(): string | null;
+  close(): void;
+}
+
 export interface NativeWindowsAccessControlEntry {
   sid: string;
   mask: number;
@@ -119,11 +132,17 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  rootRemovalStat?(parent: number, name: string): NativeRootRemovalEntry;
+  rootRemovalUnlink?(parent: number, name: string, dev: bigint, ino: bigint, directory: boolean): void;
+  openRootRemovalDirectory?(parent: number, name: string, dev: bigint, ino: bigint): NativeRootRemovalDirectory;
+  openCreateBeneath?(parentFd: number, basename: string, flags: number, mode: number): number;
+  renameReplaceWithIdentity?(sourceParent: number, source: string, targetParent: number, target: string, dev: bigint, ino: bigint): void;
   /** Windows-only, private handle custody; no borrowed/runtime descriptors. */
   retainWindowsFile?(directory: string, basename: string, parentDev: bigint, parentIno: bigint,
     dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, ctimeNs: bigint, sha256: string, maxBytes: number): NativeRetainedFile;
   watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void, persistent: boolean): number;
   watchConfigure?(id: number, anchors: string[], exclusions: string[]): void;
+  watchEntries?(id: number, entries: import("./watch-native.js").NativeWatchEntry[]): { directories: number; changed: boolean };
   watchAdd?(id: number, directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }): void;
   watchTestEvent?(id: number, path: string, flags: number): void;
   watchUnregister?(id: number): void;
@@ -226,6 +245,7 @@ export interface NativeBinding {
   linkBeneath(...args: NativeTwoPathArgs): void;
   /** Direct-child mkdir; true is receipt provenance only, never cleanup ownership. */
   mkdirChildBeneath?(parentFd: number, basename: string, mode: number): boolean;
+  mkdirOpenChildBeneath?(parentFd: number, basename: string, mode: number, flags: number): { fd: number; created: boolean };
   mkdirBeneath(rootFd: number, relPath: string, mode: number): void;
   openBeneath(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
   readArchiveEntryNative(

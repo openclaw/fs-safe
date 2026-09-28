@@ -36,7 +36,7 @@ function gate() {
   return { promise, resolve };
 }
 function backend() {
-  const binding = { watchRegister: vi.fn(() => 1), watchAdd: vi.fn(), watchConfigure: vi.fn(), watchUnregister: vi.fn() };
+  const binding = { watchRegister: vi.fn(() => 1), watchAdd: vi.fn(), watchConfigure: vi.fn(), watchEntries: vi.fn(() => ({ changed: false, directories: 0 })), watchUnregister: vi.fn() };
   vi.spyOn(nativeWatch, "watchBinding").mockReturnValue(binding as unknown as NativeBinding);
   return binding;
 }

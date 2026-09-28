@@ -10,6 +10,7 @@ import {
   resolveRegularFileAppendFlags,
 } from "../src/regular-file.js";
 import { root as openRoot } from "../src/root.js";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
   isNonRegularWriteOpenError,
@@ -21,6 +22,7 @@ import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 const constants = fsSync.constants;
 afterEach(() => {
+  __resetFsSafeNativeConfigForTest();
   __setFsSafeTestHooksForTest(undefined);
   vi.restoreAllMocks();
 });
@@ -172,8 +174,9 @@ describe("nonblocking writable admission", () => {
   );
 
   it.each(["replace", "update", "append"] as const)(
-    "keeps Root %s creation exclusive and unchanged",
+    "keeps JavaScript Root %s creation exclusive and unchanged",
     async (writeMode) => {
+      configureFsSafeNative({ mode: "off" });
       const dir = await tempRoot("fs-safe-write-create-flags-");
       const scoped = await openRoot(dir);
       const realOpen = fs.open.bind(fs);

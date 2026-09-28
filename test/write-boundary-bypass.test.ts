@@ -5,16 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest, getNativeBinding } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest, getNativeBinding } from "../src/native.js";
 import { ESCAPING_DIRECTORY_PAYLOADS, ESCAPING_WRITE_PAYLOADS, expectFsSafeCode, expectNoOutsideWrite, LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS, LITERAL_SUSPICIOUS_WRITE_PAYLOADS, makeTempLayout as makeSecurityTempLayout, POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS, SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, expectFsSafeError } from "./helpers/security.js";
-
-let bundledNativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  bundledNativeAvailable = true;
-} catch {
-  // JavaScript-only test runs intentionally have no host binding.
-}
 
 const tempDirs: string[] = [];
 
@@ -265,10 +257,11 @@ describe("write, move, and delete boundary bypass attempts", () => {
       { operation: "openWritable", mode: "off" },
       { operation: "openWritable", mode: "auto" },
       { operation: "copyIn", mode: "off" },
-    ] as const)("$operation ($mode) rejects after the bounded mkdir side effect", async ({ operation, mode }) => {
+    ] as const)("$operation ($mode fallback) rejects after the bounded mkdir side effect", async ({ operation, mode }) => {
       configureFsSafeNative({ mode });
-      // Load the real host binding in auto mode when available; parent preparation stays in JS.
-      expect(Boolean(getNativeBinding())).toBe(mode === "auto" && bundledNativeAvailable);
+      // Both configurations exercise pathname mkdir; native admission is covered separately.
+      if (mode === "auto") __setNativeLoaderForTest(() => { throw new Error("native unavailable for fallback proof"); });
+      expect(getNativeBinding()).toBeUndefined();
       const layout = await makeTempLayout("fs-safe-write-mkdir-swap");
       const safeRoot = await openRoot(layout.root);
       const parent = path.join(safeRoot.rootReal, "data");

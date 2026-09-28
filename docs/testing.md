@@ -1,5 +1,10 @@
 # Testing
 
+The [seeded differential harness](https://github.com/openclaw/fs-safe/blob/main/scripts/differential-root.md) compares
+isolated Node/Bun, native/fallback and sync/async public API runs, retaining
+replayable return/error/tree receipts and bounded reduced repros. Its small
+`node scripts/differential-root.mjs --ci` corpus runs in native CI lanes.
+
 ## Coverage gates
 
 The coverage workflow measures `src/**/*.ts` with V8 on Linux, macOS, and

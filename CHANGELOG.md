@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- **Native parent validation:** reuse the retained descriptor's captured identity during ordinary POSIX policy checks, avoiding a duplicate metadata read while keeping the final pathname inspection fresh. ([#735](https://github.com/openclaw/fs-safe/pull/735))
+
 ## 0.21.1 - 2026-09-27
 
 ### Fixes

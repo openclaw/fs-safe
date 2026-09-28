@@ -123,6 +123,7 @@ export async function capturePolicyAwareNativeParent(
   rootAdmission: NativeRootAdmission,
   windows: boolean,
   directoryFlags: number,
+  fuseChildCreation = false,
 ): Promise<NativePolicyParent> {
   const rootFd = rootAdmission.root.fd;
   const closeFd = captureNativeFdClose(binding);
@@ -291,11 +292,19 @@ export async function capturePolicyAwareNativeParent(
           );
           childFd = child.fd;
         } else {
-          createdByMkdir = mkdirPosixPolicyChild(binding, current.fd, segment);
-          try {
-            childFd = binding.openBeneath(current.fd, segment, secureDirectoryFlags).fd;
-          } catch (error) {
-            throw normalizePosixParentOpenError(error, params);
+          if (fuseChildCreation && binding.mkdirOpenChildBeneath) {
+            try {
+              const child = binding.mkdirOpenChildBeneath(current.fd, segment, 0o777, secureDirectoryFlags);
+              childFd = child.fd;
+              createdByMkdir = child.created;
+            } catch (error) { throw normalizePosixParentOpenError(error, params); }
+          } else {
+            createdByMkdir = mkdirPosixPolicyChild(binding, current.fd, segment);
+            try {
+              childFd = binding.openBeneath(current.fd, segment, secureDirectoryFlags).fd;
+            } catch (error) {
+              throw normalizePosixParentOpenError(error, params);
+            }
           }
         }
       }
@@ -353,10 +362,15 @@ export async function capturePolicyAwareNativeParent(
           };
           if (!windows) {
             Object.freeze(request);
-            childAuthorization ??= params.mutationAdmission?.tryAuthorizeAtParent?.(
-              request,
-              child.observation,
-            );
+            // Existing prefixes are not the epoch's nearest parent. Their
+            // admission uses the full epoch fence below; offering an unrelated
+            // parent receipt would discard otherwise-current target evidence.
+            if (createdByMkdir) {
+              childAuthorization ??= params.mutationAdmission?.tryAuthorizeAtParent?.(
+                request,
+                child.observation,
+              );
+            }
           }
           if (!childAuthorization) {
             await authorize(request);

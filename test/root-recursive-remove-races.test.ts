@@ -1,14 +1,18 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { FsSafeError } from "../src/errors.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+// These injections exercise the pathname fallback's Node filesystem dispatch.
+beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
   __setFsSafeTestHooksForTest();
 });

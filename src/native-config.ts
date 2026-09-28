@@ -91,6 +91,16 @@ export function getFsSafeNativeConfig(): FsSafeNativeConfig {
   };
 }
 
+// Routing needs the selected mode, not the legacy-path warning scan. Keep
+// environment precedence live without charging unrelated auto operations for diagnostics.
+export function isFsSafeNativeRequired(): boolean {
+  return (overrideConfig.mode ??
+    parseMode(process.env.FS_SAFE_NATIVE_MODE) ??
+    parseMode(process.env.OPENCLAW_FS_SAFE_NATIVE_MODE) ??
+    parseMode(process.env.FS_SAFE_PYTHON_MODE ?? process.env.OPENCLAW_FS_SAFE_PYTHON_MODE) ??
+    "auto") === "require";
+}
+
 export function __resetFsSafeNativeConfigForTest(): void {
   overrideConfig = {};
   legacyWarningEmitted = false;

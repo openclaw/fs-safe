@@ -8,6 +8,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 
 const PARENT_CREATION_OPERATIONS = ["write", "create", "copy", "rename", "mkdirp"] as const;
+const ROUND_TRIP_CHILD_TIMEOUT_MS = 10_000;
 
 function parentCreationArgs(
   operation: (typeof PARENT_CREATION_OPERATIONS)[number],
@@ -217,33 +218,36 @@ describe.skipIf(process.platform === "win32")("guest parent creation races", () 
 
 describe.skipIf(process.platform === "win32")("guest filesystem protocol", () => {
   it("round-trips binary bytes and literal POSIX names across filesystem operations", async () => {
+    // Instrumented macOS runs can exceed five seconds in an individual guest operation.
+    const run = (args: string[], input?: Buffer | string) =>
+      runGuest(args, input, undefined, ROUND_TRIP_CHILD_TIMEOUT_MS);
     const root = await tempRoot("fs-safe-guest-roundtrip-");
     const basename = "-quoted ' name:$()\\literal.bin";
     const payload = Buffer.alloc(128 * 1024 + 17);
     for (let index = 0; index < payload.length; index += 1) payload[index] = index % 256;
 
-    const write = runGuest(["write", root, "nested", basename, "1"], payload);
+    const write = run(["write", root, "nested", basename, "1"], payload);
     expect(write.error).toBeUndefined();
     expect(write.status, write.stderr.toString()).toBe(0);
-    const read = runGuest(["read", root, "nested", basename, String(payload.length)]);
+    const read = run(["read", root, "nested", basename, String(payload.length)]);
     expect(read.error).toBeUndefined();
     expect(read.status, read.stderr.toString()).toBe(0);
     expect(read.stdout).toEqual(payload);
 
-    const copy = runGuest(["copy", root, "nested", basename, root, "copies", "copy.bin", "1"]);
+    const copy = run(["copy", root, "nested", basename, root, "copies", "copy.bin", "1"]);
     expect(copy.error).toBeUndefined();
     expect(copy.status, copy.stderr.toString()).toBe(0);
-    const rename = runGuest(["rename", root, "copies", "copy.bin", root, "moved", "copy.bin", "1"]);
+    const rename = run(["rename", root, "copies", "copy.bin", root, "moved", "copy.bin", "1"]);
     expect(rename.error).toBeUndefined();
     expect(rename.status, rename.stderr.toString()).toBe(0);
     expect(await fs.readFile(path.join(root, "moved", "copy.bin"))).toEqual(payload);
     await expect(fs.lstat(path.join(root, "copies", "copy.bin"))).rejects.toMatchObject({ code: "ENOENT" });
 
-    const mkdir = runGuest(["mkdirp", root, "moved/deeper"]);
+    const mkdir = run(["mkdirp", root, "moved/deeper"]);
     expect(mkdir.error).toBeUndefined();
     expect(mkdir.status, mkdir.stderr.toString()).toBe(0);
     await fs.symlink("deeper", path.join(root, "moved", "alias"));
-    const listing = runGuest(["readdir", root, "moved"]);
+    const listing = run(["readdir", root, "moved"]);
     expect(listing.error).toBeUndefined();
     expect(listing.status, listing.stderr.toString()).toBe(0);
     expect(JSON.parse(listing.stdout.toString()).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))).toEqual([
@@ -252,12 +256,12 @@ describe.skipIf(process.platform === "win32")("guest filesystem protocol", () =>
       { name: "deeper", isDirectory: true, isFile: false },
     ]);
 
-    const remove = runGuest(["remove", root, "", "moved", "1", "0"]);
+    const remove = run(["remove", root, "", "moved", "1", "0"]);
     expect(remove.error).toBeUndefined();
     expect(remove.status, remove.stderr.toString()).toBe(0);
     await expect(fs.lstat(path.join(root, "moved"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await fs.readFile(path.join(root, "nested", basename))).toEqual(payload);
-  }, 40_000); // Seven Python operations retain their individual five-second deadlines.
+  }, 7 * ROUND_TRIP_CHILD_TIMEOUT_MS + 5_000);
 
   it.each([
     { mode: 0o600, basename: "value", length: 5 },

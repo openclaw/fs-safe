@@ -119,15 +119,17 @@ async function observeBufferedCreation(target, content, create) {
 }
 
 async function proveCreation(capability) {
-  if (!missingRequired || process.platform !== "win32") {
+  if (!missingRequired) {
     await capability.mkdir("private/nested", { private: privateCreation });
     rows.push({ scenario: `root-${privateCreation ? "private" : "ordinary"}-directory`, parents: ["private", "private/nested"].map((name) =>
       creationPermissions(path.join(sandbox, name), true, privateCreation ? 0o700 : 0o777, privateCreation)) });
   }
   if (missingRequired) {
     for (const [scenario, relative, operation] of [
-      ...(process.platform === "win32"
-        ? [["require-root-mkdir", "root-directory", () => capability.mkdir("root-directory", { private: true })]] : []),
+      ["require-root-mkdir", "root-directory", () => capability.mkdir("root-directory", { private: true })],
+      ["require-root-mkdir-ordinary", "ordinary-directory", () => capability.mkdir("ordinary-directory")],
+      ["require-root-append", "append-file", () => capability.append("append-file", "inside", { mkdir: false })],
+      ["require-root-open-create", "open-file", () => capability.openWritable("open-file", { mkdir: false })],
       ["require-root-create", "root-file", () => capability.create("root-file", "private", { private: true, atomic: true, durable: "file" })],
       ["require-root-create-json", "root-json", () => capability.createJson("root-json", { value: "private" }, { private: true, atomic: true, durable: "file" })],
       ["require-root-stream", "root-stream", () => capability.create("root-stream",

@@ -27,6 +27,14 @@ mod copy_linux;
 #[cfg(unix)]
 mod file_copy;
 mod owned_tree;
+#[cfg(all(test, unix))]
+mod root_creation_tests;
+#[cfg(windows)]
+mod root_create_windows;
+#[cfg(unix)]
+mod root_remove;
+#[cfg(windows)]
+mod root_remove_windows;
 #[cfg(unix)]
 mod realpath;
 #[cfg(target_os = "macos")]
@@ -260,6 +268,12 @@ pub fn open_beneath(
     into_napi(env, result)
 }
 
+#[napi(js_name = "openCreateBeneath")]
+pub fn open_create_beneath(env: Env, parent_fd: i32, basename: String, flags: i32, mode: u32) -> Result<i32> {
+    into_napi(env, validate_child_basename(&basename)
+        .and_then(|()| platform::open_create_beneath(parent_fd, &basename, flags, mode & 0o7777)))
+}
+
 #[napi(js_name = "mkdirBeneath")]
 pub fn mkdir_beneath(env: Env, root_fd: i32, rel_path: String, mode: u32) -> Result<()> {
     into_napi(
@@ -281,6 +295,20 @@ pub fn mkdir_child_beneath(
         validate_child_basename(&basename)
             .and_then(|()| platform::mkdir_child_beneath(parent_fd, &basename, mode)),
     )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[napi(object)]
+pub struct CreatedDirectory {
+    pub fd: i32,
+    pub created: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[napi(js_name = "mkdirOpenChildBeneath")]
+pub fn mkdir_open_child_beneath(env: Env, parent_fd: i32, basename: String, mode: u32, flags: i32) -> Result<CreatedDirectory> {
+    into_napi(env, platform::mkdir_open_child_beneath(parent_fd, &basename, mode, flags)
+        .map(|(fd, created)| CreatedDirectory { fd, created }))
 }
 
 macro_rules! native_path_pair_operation {
@@ -341,6 +369,19 @@ pub fn rename_no_replace_with_identity(
 }
 
 native_path_pair_operation!(rename_replace, "renameReplace");
+
+#[napi(js_name = "renameReplaceWithIdentity")]
+pub fn rename_replace_with_identity(
+    env: Env, source_root_fd: i32, source_rel_path: String,
+    target_root_fd: i32, target_rel_path: String, dev: BigInt, ino: BigInt,
+) -> Result<()> {
+    into_napi(env, (|| {
+        validate_child_basename(&source_rel_path)?;
+        validate_child_basename(&target_rel_path)?;
+        platform::rename_replace_with_identity(source_root_fd, &source_rel_path,
+            target_root_fd, &target_rel_path, exact_file_identity(&dev, &ino)?)
+    })())
+}
 
 #[napi(js_name = "fstatIdentity")]
 pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {

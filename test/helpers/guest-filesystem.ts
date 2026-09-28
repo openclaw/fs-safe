@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { GUEST_FILESYSTEM_PYTHON } from "../../src/guest.js";
 
 /** Fault injection runs inside the one-shot guest, without modifying its source. */
-export function runGuest(args: string[], input?: Buffer | string, setup?: string) {
+export function runGuest(args: string[], input?: Buffer | string, setup?: string, timeout = 5_000) {
   const source = setup === undefined ? GUEST_FILESYSTEM_PYTHON : [
     "import base64, errno, os, sys",
     setup,
@@ -12,7 +12,7 @@ export function runGuest(args: string[], input?: Buffer | string, setup?: string
     input,
     maxBuffer: 4 * 1024 * 1024,
     stdio: ["pipe", "pipe", "pipe"],
-    timeout: 5_000,
+    timeout,
     killSignal: "SIGKILL",
   });
 }

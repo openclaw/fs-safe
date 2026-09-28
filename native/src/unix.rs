@@ -41,6 +41,8 @@ pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error
         rustix::io::Errno::INVAL => "EINVAL",
         rustix::io::Errno::ISDIR => "EISDIR",
         rustix::io::Errno::MLINK => "EMLINK",
+        rustix::io::Errno::MFILE => "EMFILE",
+        rustix::io::Errno::NFILE => "ENFILE",
         rustix::io::Errno::NAMETOOLONG => "ENAMETOOLONG",
         rustix::io::Errno::NOSPC => "ENOSPC",
         rustix::io::Errno::NOSYS => "ENOSYS",
@@ -137,6 +139,25 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
     open_owned_beneath(root_fd, rel_path, flags).map(OwnedFd::into_raw_fd)
 }
 
+pub fn open_create_beneath(parent_fd: i32, name: &str, flags: i32, mode: u32) -> NativeResult<i32> {
+    nonnegative_fd(parent_fd, "create beneath parent")?;
+    crate::validate_child_basename(name)?;
+    let flags = OFlags::from_bits_retain(flags as u32) | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    #[cfg(target_os = "linux")]
+    let opened = {
+        if crate::linux_open::openat2_available() {
+            rustix::fs::openat2(borrowed(parent_fd), name, flags, Mode::from_bits_retain(mode as _),
+                rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_MAGICLINKS)
+                .map_err(|error| os_error(error, "create beneath parent"))
+        } else {
+            crate::linux_open::open_fallback(parent_fd, name, flags, Mode::from_bits_retain(mode as _))
+        }
+    };
+    #[cfg(target_os = "macos")]
+    let opened = macos::open_beneath_with_mode(parent_fd, name, flags.bits() as i32, mode);
+    opened.map(OwnedFd::into_raw_fd)
+}
+
 fn split_parent(path: &str) -> NativeResult<(&str, &str)> {
     match path.rsplit_once('/') {
         Some((parent, basename)) if !basename.is_empty() => Ok((parent, basename)),
@@ -167,6 +188,13 @@ pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, mode: u32) -> NativeR
         Err(rustix::io::Errno::EXIST) => Ok(false),
         Err(error) => Err(os_error(error, "mkdirat direct child")),
     }
+}
+
+pub fn mkdir_open_child_beneath(parent_fd: i32, basename: &str, mode: u32, flags: i32) -> NativeResult<(i32, bool)> {
+    let created = mkdir_child_beneath(parent_fd, basename, mode)?;
+    let flags = flags | libc::O_DIRECTORY | libc::O_NOFOLLOW;
+    let child = open_owned_beneath(parent_fd, basename, flags)?;
+    Ok((child.into_raw_fd(), created))
 }
 
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()> {
@@ -339,6 +367,40 @@ pub fn rename_replace(
     )
     .map_err(|error| os_error(error, "rename with replacement"))
 }
+
+fn rename_replace_with_identity_and_hook(
+    source_fd: i32, source_name: &str, target_fd: i32, target_name: &str,
+    expected: ExactFileIdentity, before_final: impl FnOnce(),
+) -> NativeResult<()> {
+    nonnegative_fd(source_fd, "rename source parent")?;
+    nonnegative_fd(target_fd, "rename target parent")?;
+    crate::validate_child_basename(source_name)?;
+    crate::validate_child_basename(target_name)?;
+    before_final();
+    let source = rustix::fs::statat(borrowed(source_fd), source_name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| os_error(error, "inspect rename source"))?;
+    if source.st_dev as u64 != expected.dev || source.st_ino as u64 != expected.ino {
+        return Err(native_error("path-mismatch", "rename source identity changed"));
+    }
+    let kind = FileType::from_raw_mode(source.st_mode);
+    if kind.is_symlink() { return Err(native_error("ELOOP", "rename source is a symlink")); }
+    if kind.is_file() && source.st_nlink > 1 { return Err(native_error("hardlink", "rename source is hardlinked")); }
+    // A name replacement after stat is not a conditional rename. Neither
+    // basename is followed and both retained parent descriptors stay fixed.
+    rustix::fs::renameat(borrowed(source_fd), source_name, borrowed(target_fd), target_name)
+        .map_err(|error| os_error(error, "rename with replacement and identity"))
+}
+
+pub fn rename_replace_with_identity(
+    source_fd: i32, source_name: &str, target_fd: i32, target_name: &str,
+    expected: ExactFileIdentity,
+) -> NativeResult<()> {
+    rename_replace_with_identity_and_hook(source_fd, source_name, target_fd, target_name, expected, || {})
+}
+
+#[cfg(test)]
+#[path = "root_move_tests.rs"]
+mod root_move_tests;
 
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     let fd = nonnegative_fd(fd, "fstat")?;
@@ -1387,7 +1449,7 @@ mod macos {
         Ok(opened)
     }
 
-    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
+    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32, mode: u32) -> NativeResult<OwnedFd> {
         let path = CString::new(rel_path.as_bytes())
             .map_err(|_| native_error("EINVAL", "path contains a NUL byte"))?;
         let root_fd = super::nonnegative_fd(root_fd, "open path with O_RESOLVE_BENEATH")?;
@@ -1397,7 +1459,7 @@ mod macos {
                 root_fd,
                 path.as_ptr(),
                 flags | libc::O_CLOEXEC | O_RESOLVE_BENEATH,
-                0o600,
+                mode,
             )
         };
         if opened < 0 {
@@ -1451,11 +1513,15 @@ mod macos {
     }
 
     pub fn open_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
+        open_beneath_with_mode(root_fd, rel_path, flags, 0o600)
+    }
+
+    pub fn open_beneath_with_mode(root_fd: RawFd, rel_path: &str, flags: i32, mode: u32) -> NativeResult<OwnedFd> {
         if rel_path.is_empty() || rel_path == "." {
             return verify_opened_beneath(root_fd, super::duplicate_cloexec(root_fd)?);
         }
         if resolve_beneath_available() {
-            return open_with_resolve_beneath(root_fd, rel_path, flags);
+            return open_with_resolve_beneath(root_fd, rel_path, flags, mode);
         }
         let mut queue: VecDeque<String> = rel_path
             .split('/')
@@ -1477,7 +1543,7 @@ mod macos {
             };
             // SAFETY: current and name stay valid for the duration of openat.
             let opened =
-                unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), open_flags, 0o600) };
+                unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), open_flags, mode) };
             if opened >= 0 {
                 if is_final {
                     // SAFETY: openat returned a new descriptor owned by this call.

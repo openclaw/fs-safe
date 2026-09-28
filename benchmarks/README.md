@@ -1,5 +1,38 @@
 # Method performance audit
 
+## Watch ready and reconcile
+
+`scripts/watch-scan-benchmark.mjs` measures complete public watch admission and
+one explicit reconcile on a fixed tree of 25 files per child directory. Build
+both distributions and their matching native bindings first. Create the shared
+fixture outside measurement, then compare the builds in one process:
+
+```sh
+node scripts/watch-scan-benchmark.mjs setup /tmp/fs-safe-watch-study-50k 2000
+node scripts/watch-scan-benchmark.mjs compare /tmp/fs-safe-watch-study-50k 2000 /absolute/baseline/dist /absolute/candidate/dist > watch-ab.jsonl
+node scripts/watch-scan-benchmark.mjs compare /tmp/fs-safe-watch-study-50k 2000 /absolute/baseline/dist /absolute/baseline/dist > watch-aa.jsonl
+```
+
+The fixture path must not already exist. Each transport (`poll` and `events`)
+gets one warmup per arm, followed by five ABBA and five BAAB blocks: ten samples
+per arm per order, twenty pooled. A is baseline and B is candidate. The A/A
+command uses the identical baseline artifact for both labels. Root creation and
+subscription close are outside the two timers; callbacks perform no consumer
+work. Both builds observe the same unchanged fixture with one-hour automatic
+intervals, and every pass checks the expected directory count and ready state.
+Use `once` instead of `compare` for a separate syscall trace, with the transport
+as the final argument. For example:
+
+```sh
+strace -c -f node scripts/watch-scan-benchmark.mjs once /tmp/fs-safe-watch-study-50k 2000 /absolute/candidate/dist /absolute/candidate/dist poll
+```
+
+Traced durations include tracing overhead and are not latency evidence. Use 400
+directories for a 10,000-file fixture. Keep the full method audit below as the
+broader regression gate; this focused workload does not replace it.
+
+## Complete method audit
+
 Run from a built checkout with the declared pnpm version:
 
 ```sh

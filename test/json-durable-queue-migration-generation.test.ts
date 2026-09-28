@@ -1,5 +1,5 @@
 import type { BigIntStats } from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
@@ -15,6 +15,7 @@ import {
 } from "../src/json-durable-queue.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { skipDeviceFlushes } from "./helpers/device-flush.js";
 
 type Entry = { generation: number; migrated?: boolean };
 type Loader = "single" | "batch";
@@ -29,16 +30,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });
 });
-
-// These cases prove generation ownership, not durability; the queue durability
-// suites own flush ordering. Hosted Windows flushes can stall for seconds, so
-// keep every filesystem operation real except the device flush itself.
-async function skipDeviceFlushes(): Promise<void> {
-  const probe = await fs.open(process.execPath, "r");
-  const prototype = Object.getPrototypeOf(probe) as FileHandle;
-  await probe.close();
-  vi.spyOn(prototype, "sync").mockResolvedValue();
-}
 
 async function fixture(loader: Loader) {
   const root = await tempRoot("fs-safe-queue-migration-generation-");

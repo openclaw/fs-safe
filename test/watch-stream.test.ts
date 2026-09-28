@@ -15,13 +15,14 @@ const snapshot = (): WatchSnapshot => ({ entries: new Map(), targets: new Map(),
   directoryPaths: new Map(["", "selected", "selected/deep", "other"].map(name => [name, canonical(name)])),
   excludedDirectories: new Map(),
 });
-it("deduplicates canonical entry parents, tree anchors and missing-target ancestors", () => {
+it("deduplicates tree anchors and missing-target ancestors without entry parents", () => {
   const result = watchStreamPaths(snapshot(), watchScopes([
     { path: "selected/file", kind: "entry" }, { path: "selected", kind: "tree" },
     { path: "selected/deep", kind: "tree" }, { path: "other/missing/deep", kind: "tree" },
   ]));
   expect(new Set(result.anchors)).toEqual(new Set([canonical("selected"), canonical("other")]));
   expect(watchStreamPaths(snapshot(), watchScopes([{ path: "", kind: "tree" }])).anchors).toEqual([canonical("")]);
+  expect(watchStreamPaths(snapshot(), watchScopes([{ path: "other/file", kind: "entry" }])).anchors).toEqual([]);
 });
 it("chooses no more than eight shallow non-overlapping exclusions", () => {
   const value = snapshot();

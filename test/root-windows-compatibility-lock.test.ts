@@ -7,6 +7,7 @@ import { acquireFileLock } from "../src/file-lock.js";
 import { configureFsSafeNative, root } from "../src/index.js";
 import * as queues from "../src/write-queue.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { skipDeviceFlushes } from "./helpers/device-flush.js";
 
 const { tempRoot } = useRealTempDirs();
 const policy = "verify-content-with-lock" as const;
@@ -35,7 +36,11 @@ async function holdLock(directory: string, relative: string) {
 
 describe.skipIf(process.platform !== "win32")("Windows buffered compatibility lock spelling", () => {
   describe.each(["off", "auto"] as const)("native %s", nativeMode => {
-    beforeEach(() => configureFsSafeNative({ mode: nativeMode }));
+    beforeEach(async () => {
+      configureFsSafeNative({ mode: nativeMode });
+      // Lock spelling and publication ownership do not depend on device durability.
+      await skipDeviceFlushes();
+    });
 
     it.for(["actual/target", "alias/target", "actual/TARGET"])(
       "coordinates %s with an existing effective-target holder or refuses the spelling",

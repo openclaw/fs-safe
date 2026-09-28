@@ -198,7 +198,8 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     const owner = own(watch(await root(dir), { mode, scopes: [{ path: "child", kind: "tree" }], onInvalidate: () => { baselineRegistrations ||= registrations; } }));
     await owner.ready;
     expect(["ready", "reconciling"]).toContain(owner.health().state);
-    expect(baselineRegistrations).toBe(2);
+    // Darwin also scans after installing the admitted stream paths, before readiness.
+    expect(baselineRegistrations).toBe(mode === "events" && process.platform === "darwin" ? 3 : 2);
     expect(backends).toBe(mode === "events" ? 1 : 0);
   });
   test("treats a directory changing kind mid-pass as structural churn", async () => {

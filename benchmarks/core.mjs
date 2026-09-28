@@ -107,6 +107,15 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
     }
   }
   add("Root.ensureRoot", () => safe.ensureRoot());
+  let recursiveRemovalSkip;
+  if (args.mode === "require") {
+    const parent = fs.openSync(w, fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0));
+    try {
+      if (!binding?.openRootRemovalDirectory || !binding.ownedTreeRemovalAvailable?.(parent)) {
+        recursiveRemovalSkip = "native mount-bounded recursive removal is unavailable";
+      }
+    } finally { fs.closeSync(parent); }
+  }
   add("Root.remove", () => safe.remove("remove.txt"), { before: () => fs.writeFileSync(path.join(w, "remove.txt"), data) });
   for (const depth of [8, 32]) {
     const segments = [`remove-depth-${depth}`, ...Array.from({ length: depth - 1 }, (_, index) => String(index))];
@@ -123,6 +132,7 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   for (const order of ["filesystem", "sorted"]) {
     const rel = `remove-tree-${order}`;
     add(`Root.remove/recursive-${order}`, () => safe.remove(rel, { recursive: true, order, maxEntries: 103 }), {
+      skip: recursiveRemovalSkip,
       divisor: 10,
       before: () => fs.cpSync(path.join(w, "tree"), path.join(w, rel), { recursive: true }),
       verify: () => assert.equal(fs.existsSync(path.join(w, rel)), false),
@@ -132,6 +142,7 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
   add("Root.remove/recursive-sorted-unbounded", () => safe.remove("remove-tree-unbounded", {
     recursive: true, order: "sorted", maxEntries: Infinity, maxDepth: Infinity,
   }), {
+    skip: recursiveRemovalSkip,
     divisor: 10,
     before: () => fs.cpSync(path.join(w, "tree"), path.join(w, "remove-tree-unbounded"), { recursive: true }),
     verify: () => assert.equal(fs.existsSync(path.join(w, "remove-tree-unbounded")), false),
