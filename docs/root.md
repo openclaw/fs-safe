@@ -196,6 +196,11 @@ and parent-directory fsync calls. Use it only for reconstructible data: a crash
 may lose the write or leave the previous file. See [Writing](writing.md#write-options)
 for platform details.
 
+`mkdir: false` requires the parent directories to exist and never creates a
+missing parent. On POSIX, otherwise permitted relative in-root parent aliases
+remain available to buffered and streamed writes and copies with native support
+enabled or disabled. An explicit mutation symlink policy still applies.
+
 `create` and `createJson` additionally accept `durable: "file"` to require file
 synchronization, including propagating `EPERM`. Parent-directory synchronization
 retains its existing best-effort behavior. This option applies to buffered and
