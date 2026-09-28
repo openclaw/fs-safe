@@ -867,6 +867,21 @@ pub fn rename_replace(
     )
 }
 
+pub fn rename_replace_with_identity(
+    source_root_fd: i32, source_rel_path: &str, target_root_fd: i32, target_rel_path: &str,
+    expected: ExactFileIdentity,
+) -> NativeResult<()> {
+    crate::validate_child_basename(source_rel_path)?;
+    crate::validate_child_basename(target_rel_path)?;
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
+    let (dev, ino, _) = handle_identity(source.0)?;
+    if u64::from(dev) != expected.dev || ino != expected.ino {
+        return Err(native_error("path-mismatch", "rename source identity changed"));
+    }
+    set_rename_information(source.0, root_handle(target_root_fd)?, target_rel_path, true,
+        "rename with replacement and identity")
+}
+
 pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {
     handle_identity_and_size(handle).map(|(identity, _)| identity)
 }

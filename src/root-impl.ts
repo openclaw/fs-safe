@@ -20,7 +20,7 @@ import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-w
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
-import { isFsSafeNativeRequired } from "./native-config.js";
+import { getFsSafeNativeConfig, isFsSafeNativeRequired } from "./native-config.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -94,7 +94,7 @@ import { finishRootFallbackWrite } from "./root-write-publication.js";
 import { withRootFallbackCompatibilityLock } from "./root-write-compatibility.js";
 import { assertRootFallbackWritePath } from "./root-write-lock-binding.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
-import { admitMoveSourceStat, movePathNoReplaceNative } from "./root-move-noreplace.js";
+import { admitMoveSourceStat, movePathNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { createCopyPublicationObserver, onCopyPublication, onCopySourceAdmission, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
@@ -1415,13 +1415,22 @@ async function movePathFallback(
   if (!pinnedTarget) {
     throw new FsSafeError("path-mismatch", "destination admission was not completed");
   }
-  if (!params.overwrite) {
-    await movePathNoReplaceNative(root, params, {
+  const nativeReplace = params.overwrite ? getNativeBinding()?.renameReplaceWithIdentity : undefined;
+  if (params.overwrite && !nativeReplace && getFsSafeNativeConfig().mode === "require") {
+    throw new FsSafeError("helper-unavailable", "native overwrite move is unavailable");
+  }
+  if (!params.overwrite || nativeReplace) {
+    await movePathNative(root, params, {
       sourcePath: source.resolved,
       sourceParentPath: path.dirname(pinnedSource.canonicalPath),
       targetPath: target.resolved,
       targetParentPath: path.dirname(pinnedTarget.canonicalPath),
-    });
+      sourceOriginalPath: originalRoutes?.[0],
+      targetOriginalPath: originalRoutes?.[1],
+      sourceCanonicalPath: pinnedSource.canonicalPath,
+      targetCanonicalPath: pinnedTarget.canonicalPath,
+      expectedSourceIdentity: sourceIdentity,
+    }, params.overwrite);
     return;
   }
 

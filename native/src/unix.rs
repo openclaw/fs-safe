@@ -368,6 +368,40 @@ pub fn rename_replace(
     .map_err(|error| os_error(error, "rename with replacement"))
 }
 
+fn rename_replace_with_identity_and_hook(
+    source_fd: i32, source_name: &str, target_fd: i32, target_name: &str,
+    expected: ExactFileIdentity, before_final: impl FnOnce(),
+) -> NativeResult<()> {
+    nonnegative_fd(source_fd, "rename source parent")?;
+    nonnegative_fd(target_fd, "rename target parent")?;
+    crate::validate_child_basename(source_name)?;
+    crate::validate_child_basename(target_name)?;
+    before_final();
+    let source = rustix::fs::statat(borrowed(source_fd), source_name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| os_error(error, "inspect rename source"))?;
+    if source.st_dev as u64 != expected.dev || source.st_ino as u64 != expected.ino {
+        return Err(native_error("path-mismatch", "rename source identity changed"));
+    }
+    let kind = FileType::from_raw_mode(source.st_mode);
+    if kind.is_symlink() { return Err(native_error("ELOOP", "rename source is a symlink")); }
+    if kind.is_file() && source.st_nlink > 1 { return Err(native_error("hardlink", "rename source is hardlinked")); }
+    // A name replacement after stat is not a conditional rename. Neither
+    // basename is followed and both retained parent descriptors stay fixed.
+    rustix::fs::renameat(borrowed(source_fd), source_name, borrowed(target_fd), target_name)
+        .map_err(|error| os_error(error, "rename with replacement and identity"))
+}
+
+pub fn rename_replace_with_identity(
+    source_fd: i32, source_name: &str, target_fd: i32, target_name: &str,
+    expected: ExactFileIdentity,
+) -> NativeResult<()> {
+    rename_replace_with_identity_and_hook(source_fd, source_name, target_fd, target_name, expected, || {})
+}
+
+#[cfg(test)]
+#[path = "root_move_tests.rs"]
+mod root_move_tests;
+
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     let fd = nonnegative_fd(fd, "fstat")?;
     let stat = rustix::fs::fstat(borrowed(fd)).map_err(|error| os_error(error, "fstat"))?;
