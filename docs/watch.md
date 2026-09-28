@@ -166,6 +166,11 @@ uses 25 ms polling when needed and retains the 30-second events reconciliation.
 Scans are metadata comparisons: content changes preserving all compared
 metadata may be missed in polling mode. No mode promises transactional
 snapshots, complete history, or hard real-time delivery.
+On Node.js, directory name reads avoid a thread-pool round trip per entry. Scans yield to
+the event loop between bounded groups of at most 32 names so cancellation and
+other work can progress; every entry still receives the same identity checks
+and entry-budget admission before its metadata is read.
+Bun and Deno retain asynchronous name reads.
 
 `ready` resolves after the first complete guarded scan establishes the baseline,
 even while writes continue. Events mode installs each directory registration
