@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Performance
+
+- **Linux fallback resolution:** reuse the file type from each component's checked descriptor observation, avoiding a duplicate metadata read while retaining fresh identity, symlink-target, and mount-policy checks.
+- **Native parent validation:** reuse the retained descriptor's captured identity during ordinary POSIX policy checks, avoiding a duplicate metadata read while keeping the final pathname inspection fresh. ([#735](https://github.com/openclaw/fs-safe/pull/735))
+
+## 0.21.2 - 2026-09-28
+
+### Highlights
+
+- **`require` mode confines mutations under hostile concurrency:** with `FS_SAFE_NATIVE_MODE=require` (or `configureFsSafeNative({ mode: "require" })`), remove, recursive remove, `mkdir`, writable-open creation and overwrite `move` now run through retained, identity-checked native parents: descriptor-relative `unlinkat`, `mkdirat` and `renameat2` on POSIX, and handle-relative operations on Windows. An adversarial race fuzzer observed no outside or denied-path effects across about 2.8 million racing calls on Linux (with and without `openat2`), macOS and Windows. `auto` keeps its documented best-effort paths and performance. See the [operation/platform matrix](docs/security-model.md#native-root-mutation-capabilities). ([#744](https://github.com/openclaw/fs-safe/pull/744), [#751](https://github.com/openclaw/fs-safe/pull/751), [#750](https://github.com/openclaw/fs-safe/pull/750), [#752](https://github.com/openclaw/fs-safe/pull/752))
+- **Watch on macOS:** entry scopes use identity-checked kqueue descriptors instead of recursive FSEvents streams, ending overflow storms for shallow ancestor scopes above busy trees. ([#753](https://github.com/openclaw/fs-safe/pull/753))
+- **Faster watch scans:** watch readiness and reconciliation are 27–34% faster on large trees. ([#747](https://github.com/openclaw/fs-safe/pull/747))
+
+### Fixes
+
+- **Watch cancellation:** a subscription's `signal` closes it even when another abort listener stops event propagation. ([#738](https://github.com/openclaw/fs-safe/pull/738))
+- **Walk cancellation:** walks stop without yielding the current entry when a synchronous filter aborts the signal. ([#739](https://github.com/openclaw/fs-safe/pull/739))
+- **Writes with `mkdir: false`:** the JavaScript fallback writes through existing in-root parent aliases using the same guarded walk, instead of rejecting them. ([#740](https://github.com/openclaw/fs-safe/pull/740))
+- **Descriptor exhaustion:** native writes that fail with `EMFILE`/`ENFILE` report `helper-failed` with the exhaustion code, the indeterminate publication outcome and the preserved stage, instead of a misleading path error. ([#742](https://github.com/openclaw/fs-safe/pull/742))
+- **Walk memory:** `walkDirectory()` and `walkDirectorySync()` stop reading a directory once `maxEntries` is reached instead of enumerating it completely first. `Root.walk()` sorted mode stays deterministic. ([#743](https://github.com/openclaw/fs-safe/pull/743))
+
+### Compatibility
+
+- In `require` mode, the operations above now reject with `helper-unavailable` where no confining native primitive exists, instead of silently falling back to JavaScript. Examples are recursive removal on Linux without `openat2` and recursive directory removal on Windows. Use `auto` for the best-effort fallback. These `require`-mode mutations also do more identity-checked work and are slower than before, while `auto` is unchanged. ([#744](https://github.com/openclaw/fs-safe/pull/744), [#751](https://github.com/openclaw/fs-safe/pull/751), [#750](https://github.com/openclaw/fs-safe/pull/750))
+- Create-only writes to an existing directory report `already-exists` in every implementation (previously `not-file` on some Windows paths). With `mutationSymlinks` omitted, Windows native and legacy JavaScript writes still differ for final links and parent junctions; set `mutationSymlinks: "reject"` for uniform behavior. ([#745](https://github.com/openclaw/fs-safe/pull/745))
+
 ## 0.21.1 - 2026-09-27
 
 ### Fixes

@@ -3,6 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
+import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -17,6 +18,7 @@ import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-pa
 type RootIdentity = Pick<FileIdentityStat, "dev" | "ino">;
 
 export type NativeRootAdmission = {
+  directoryFlags?: number;
   exactRoot: boolean;
   reportCloseErrors?: boolean;
   operation: string;
@@ -51,10 +53,11 @@ function assertParentAdmissionAvailable(binding: NativeBinding): void {
 
 export async function openNativeRootAdmission(
   binding: NativeBinding,
-  params: { rootPath: string; rootIdentity?: RootIdentity; operation?: string; reportCloseErrors?: boolean },
+  params: { rootPath: string; rootIdentity?: RootIdentity; operation?: string; reportCloseErrors?: boolean; searchOnly?: boolean },
 ): Promise<NativeRootAdmission> {
   assertParentAdmissionAvailable(binding);
-  const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
+  const directoryFlags = (params.searchOnly ? nodeDirectorySearchOnlyFlags()?.flags ?? fsSync.constants.O_RDONLY : fsSync.constants.O_RDONLY) |
+    (fsSync.constants.O_DIRECTORY ?? 0);
   assertNoWindowsPathAlias(params.rootPath, "filesystem", "native root uses a Windows filesystem namespace alias");
   const root = await fs.open(pathForWindowsFilesystem(params.rootPath), directoryFlags);
   try {
@@ -84,6 +87,7 @@ export async function openNativeRootAdmission(
       );
     }
     return {
+      directoryFlags,
       exactRoot,
       reportCloseErrors: params.reportCloseErrors,
       operation: params.operation ?? "native admission",
@@ -111,7 +115,7 @@ export async function openNativeParentAdmission(
 ): Promise<NativeParentAdmission> {
   assertParentAdmissionAvailable(binding);
   const closeFd = captureNativeFdClose(binding);
-  const directoryFlags = fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0);
+  const directoryFlags = rootAdmission.directoryFlags ?? (fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0));
   assertNoWindowsPathAlias(relativeParentPath, "relative", "native parent uses a Windows filesystem namespace alias");
   const opened = binding.openBeneath(
     rootAdmission.root.fd,

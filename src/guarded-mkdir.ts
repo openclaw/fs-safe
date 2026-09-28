@@ -132,8 +132,8 @@ async function realpathOrThrowNotFile(target: string): Promise<string> {
 }
 
 /**
- * Creates each missing path component from `rootReal` down to `targetPath`,
- * guarding every step. Returns the real (symlink-resolved) path of the final
+ * Walks from `rootReal` down to `targetPath`, creating missing components
+ * unless disabled and guarding every step. Returns the real path of the final
  * component so callers can guard/use that path directly instead of
  * re-deriving it from the original, possibly-symlinked, lexical path.
  */
@@ -156,6 +156,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     receipt: PinnedCreatedDirectoryReceipt,
   ) => PinnedMutationAuthorizationToken | undefined;
   assertBeforeMutation?: () => void;
+  createMissing?: boolean;
   mode?: number;
   private?: boolean;
   rejectSymlinks?: boolean;
@@ -266,7 +267,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         }
       }
     }
-    if (shouldCreate) {
+    if (shouldCreate && params.createMissing !== false) {
       params.assertBeforeMutation?.();
       // Both policy and ordinary mkdir must renew the parent after callbacks.
       inspectGuardCurrent(parentGuard);

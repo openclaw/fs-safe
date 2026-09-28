@@ -82,16 +82,17 @@ describe("documented defaults observed on real files", () => {
   it("uses distinct standalone and store JSON newline defaults", async () => {
     const rootDir = await tempRoot("fs-safe-doc-json-defaults-");
     const standalone = path.join(rootDir, "standalone.json");
-    await writeJson(standalone, { value: 1 });
+    // This checks formatting defaults; Windows device flushes can stall for seconds.
+    await writeJson(standalone, { value: 1 }, { durable: false });
     await expect(fs.readFile(standalone, "utf8")).resolves.toBe('{\n  "value": 1\n}');
 
-    const store = fileStore({ rootDir: path.join(rootDir, "store") });
+    const store = fileStore({ rootDir: path.join(rootDir, "store"), durable: false });
     await store.writeJson("value.json", { value: 1 });
     await expect(fs.readFile(path.join(rootDir, "store/value.json"), "utf8")).resolves.toBe(
       '{\n  "value": 1\n}\n',
     );
 
-    const state = jsonStore<{ value: number }>({ filePath: path.join(rootDir, "state/value.json") });
+    const state = jsonStore<{ value: number }>({ filePath: path.join(rootDir, "state/value.json"), durable: false });
     await state.write({ value: 1 });
     await expect(fs.readFile(path.join(rootDir, "state/value.json"), "utf8")).resolves.toBe(
       '{\n  "value": 1\n}\n',

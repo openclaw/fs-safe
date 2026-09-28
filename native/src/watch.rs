@@ -44,6 +44,7 @@ pub(super) struct Pending {
     overflow: bool,
     limit: usize,
     error: Option<String>,
+    rescan: bool,
     _lifetime: memory::PendingLifetime,
 }
 impl Pending {
@@ -77,9 +78,10 @@ impl Pending {
         }
     }
     fn take(&mut self) -> Option<WatchBatch> {
-        if self.paths.is_empty() && !self.overflow && self.error.is_none() {
+        if self.paths.is_empty() && !self.overflow && self.error.is_none() && !self.rescan {
             return None;
         }
+        self.rescan = false;
         Some(WatchBatch {
             error: self.error.clone(),
             overflow: std::mem::take(&mut self.overflow),
@@ -95,6 +97,7 @@ impl Pending {
         })
     }
     fn restore(&mut self, batch: WatchBatch) {
+        self.rescan = true;
         if batch.overflow {
             self.overflow();
         }
@@ -121,6 +124,27 @@ pub struct WatchDirectory {
     pub dev: BigInt,
     pub ino: BigInt,
 }
+#[cfg(target_os = "macos")]
+#[napi(object)]
+pub struct WatchEntryTarget {
+    pub dev: BigInt,
+    pub ino: BigInt,
+    pub kind: String,
+}
+#[cfg(target_os = "macos")]
+#[napi(object)]
+pub struct WatchEntryRegistration {
+    pub scope: String,
+    pub directory: WatchDirectory,
+    pub name: String,
+    pub target: Option<WatchEntryTarget>,
+}
+#[cfg(target_os = "macos")]
+#[napi(object)]
+pub struct WatchEntriesResult {
+    pub directories: u32,
+    pub changed: bool,
+}
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // macOS and Windows observe the entire Root.
 pub(super) struct Directory {
     root: String,
@@ -139,6 +163,8 @@ enum Command {
     TestEvent(u32, String, u32, Reply),
     #[cfg(target_os = "macos")]
     Configure(u32, Vec<String>, Vec<String>, Reply),
+    #[cfg(target_os = "macos")]
+    Entries(u32, Vec<WatchEntryRegistration>, mpsc::SyncSender<NativeResult<WatchEntriesResult>>),
 }
 #[derive(Clone)]
 struct Commands {
@@ -203,19 +229,9 @@ fn run(receiver: mpsc::Receiver<Command>, started: mpsc::SyncSender<NativeResult
     let mut registrations: HashMap<u32, Registration> = HashMap::new();
     let _ = started.send(Ok(backend.waker()));
     'running: loop {
-        // Darwin receives dispatch callbacks as commands. The other backends block
-        // on their kernel event source plus a command waker, without periodic ticks.
-        #[cfg(target_os = "macos")]
-        let first = match receiver.recv() {
-            Ok(command) => Some(command),
-            Err(_) => break,
-        };
-        #[cfg(not(target_os = "macos"))]
-        let first = {
-            backend.wait();
-            None
-        };
-        for command in first.into_iter().chain(receiver.try_iter()) {
+        // Each backend blocks on its kernel event source and command waker.
+        backend.wait();
+        for command in receiver.try_iter() {
             match command {
                 Command::Register(id, root, registration, reply) => {
                     let result = backend.register(
@@ -250,6 +266,10 @@ fn run(receiver: mpsc::Receiver<Command>, started: mpsc::SyncSender<NativeResult
                 #[cfg(target_os = "macos")]
                 Command::Configure(id, anchors, exclusions, reply) => {
                     let _ = reply.send(backend.configure(id, &anchors, &exclusions));
+                }
+                #[cfg(target_os = "macos")]
+                Command::Entries(id, entries, reply) => {
+                    let _ = reply.send(backend.entries(id, entries));
                 }
             }
         }
@@ -401,6 +421,18 @@ pub fn watch_memory_stats() -> Result<memory::WatchMemoryStats> {
 }
 #[cfg(target_os = "macos")]
 #[napi]
+pub fn watch_entries(env: Env, id: u32, entries: Vec<WatchEntryRegistration>) -> Result<WatchEntriesResult> {
+    let result = (|| {
+        let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let hub = slot.as_ref().ok_or_else(unavailable)?;
+        let (reply, result) = mpsc::sync_channel(1);
+        hub.commands.send(Command::Entries(id, entries, reply))?;
+        result.recv().unwrap_or_else(|_| Err(unavailable()))
+    })();
+    crate::into_napi(env, result)
+}
+#[cfg(target_os = "macos")]
+#[napi]
 pub fn watch_configure(env: Env, id: u32, anchors: Vec<String>, exclusions: Vec<String>) -> Result<()> {
     let result = (|| {
         let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -422,6 +454,21 @@ pub fn watch_test_event(env: Env, id: u32, path: String, flags: u32) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nameless_rescans_do_not_consume_detail_budget_and_survive_backpressure() {
+        let mut pending = Pending { limit: 1, rescan: true, ..Pending::default() };
+        pending.push("".into(), "entry".into(), false);
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow && batch.hints.len() == 1);
+        pending.restore(batch);
+        assert!(!pending.take().unwrap().overflow);
+        pending.rescan = true;
+        let batch = pending.take().unwrap();
+        assert!(batch.hints.is_empty() && !batch.overflow);
+        pending.restore(batch);
+        assert!(pending.take().is_some());
+        assert!(pending.take().is_none());
+    }
     #[test]
     fn pending_is_bounded_and_overflow_erases_names() {
         let mut pending = Pending { limit: 1, ..Pending::default() };

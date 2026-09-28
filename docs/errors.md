@@ -46,6 +46,16 @@ code and `policy` category for compatibility, along with the original `cause`;
 they do not expose native message text or paths. Already-classified `FsSafeError`
 instances and missing-path errors keep their existing classification.
 
+Descriptor exhaustion during writes uses `helper-failed` / `operational` and
+names `EMFILE` (process descriptor limit) or `ENFILE` (system descriptor limit)
+in its message. The original error remains in `cause`, including any
+`SuppressedError` linking publication and disposal failures. When native rename
+has an uncertain outcome, the message explicitly reports indeterminate
+publication and a preserved stage; `details.publication` and `details.cleanup`
+retain that receipt. Descriptors are still closed. An errno alone does not prove
+that publication never happened, so this diagnostic does not authorize removing
+the stage or retrying the write. Existing boundary/policy errors keep their codes.
+
 `details` is an operation-specific receipt, not an alternate error code. For
 example, `publishFileExclusive()` uses it to report the failing phase, created
 target identity, cleanup decision, and failed directory-sync outcome. Narrow
@@ -114,6 +124,12 @@ type FsSafeErrorCode =
 ```
 
 ## Code reference
+
+Create-only Root writes to an existing regular file or directory report
+`already-exists` in every native mode, including atomic and streamed creation.
+Policy failures such as an explicit symlink rejection or a denied path retain
+their precedence. A non-directory ancestor still reports its path/type failure;
+it is not an existing destination.
 
 | Code | When it fires | Common causes |
 |---|---|---|

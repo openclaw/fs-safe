@@ -2,17 +2,18 @@ import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import type { RootContext } from "./root-context.js";
-import type { DirectoryIdentity } from "./watch-scan.js";
+import type { DirectoryIdentity, WatchSnapshot } from "./watch-scan.js";
 import type { WatchStreamPaths } from "./watch-stream.js";
 
 export type NativeWatchHint = { directory: string; name: string; event: "rename" | "change" };
 export type NativeWatchBatch = { hints: NativeWatchHint[]; overflow: boolean; error?: string };
 export type NativeWatchWireBatch = { hints: { directory: string; name: string; structural: boolean; flags?: number }[]; overflow: boolean; error?: string };
+export type NativeWatchEntry = { scope: string; directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }; name: string; target?: DirectoryIdentity & { kind: string } };
 export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | undefined {
   if (mode === "poll") return;
   const binding = getNativeBinding(); // Preserves require + missing-addon failure.
   // Bun TSFN teardown remains unqualified; guarded native scans remain usable.
-  if (binding?.watchRegister && (process.platform !== "darwin" || binding.watchConfigure) && !process.versions.bun && !process.versions.deno && ["linux", "darwin", "win32"].includes(process.platform)) return binding;
+  if (binding?.watchRegister && (process.platform !== "darwin" || (binding.watchConfigure && binding.watchEntries)) && !process.versions.bun && !process.versions.deno && ["linux", "darwin", "win32"].includes(process.platform)) return binding;
   if (mode === "events" || getFsSafeNativeConfig().mode === "require") {
     throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { details: { operation: "watch" } });
   }
@@ -20,8 +21,9 @@ export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | 
 export class NativeWatchBackend {
   private id: number | undefined;
   private streamPaths: string | undefined;
+  directories: number | undefined;
   constructor(private binding: NativeBinding, private root: RootContext, callback: (batch: NativeWatchBatch) => void, limit: number, persistent: boolean) {
-    this.streamPaths = JSON.stringify({ anchors: [root.rootReal], exclusions: [] });
+    this.streamPaths = JSON.stringify({ anchors: [], exclusions: [] });
     try { this.id = binding.watchRegister!(root.rootReal, limit, batch => {
       if (this.id !== undefined) callback({ overflow: batch.overflow, error: batch.error, hints: batch.hints.map(hint => ({
         directory: hint.directory, name: hint.name, event: hint.structural ? "rename" : "change",
@@ -37,6 +39,19 @@ export class NativeWatchBackend {
     }
   }
   testEvent(path: string, flags: number): void { this.binding.watchTestEvent!(this.id!, path, flags); }
+  entries(snapshot: WatchSnapshot): boolean {
+    if (process.platform !== "darwin") return false;
+    const entries: NativeWatchEntry[] = [...snapshot.entryAnchors ?? []].map(([scope, anchor]) => ({
+      scope, name: anchor.name, target: anchor.target,
+      directory: { root: this.root.rootReal, relative: anchor.directory,
+        rootDev: BigInt(this.root.rootIdentity.dev), rootIno: BigInt(this.root.rootIdentity.ino), ...snapshot.directories.get(anchor.directory)! },
+    }));
+    try {
+      const result = this.binding.watchEntries!(this.id!, entries);
+      this.directories = result.directories;
+      return result.changed;
+    } catch (cause) { throw watchError(cause); }
+  }
   configure(paths: WatchStreamPaths): boolean {
     if (process.platform !== "darwin") return false;
     const key = JSON.stringify(paths);

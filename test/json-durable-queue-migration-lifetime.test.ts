@@ -13,6 +13,7 @@ import {
 } from "../src/json-durable-queue.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { skipDeviceFlushes } from "./helpers/device-flush.js";
 
 type Entry = { generation: number; migrated?: boolean };
 type Loader = "single" | "batch";
@@ -20,7 +21,11 @@ type Read = (entry: Entry, filePath: string) => Promise<JsonDurableQueueReadResu
 type TrackedRead = { filePath: string; handle: FileHandle; closed: boolean; closeCalls: number };
 
 const { tempRoot } = useRealTempDirs();
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
+beforeEach(async () => {
+  configureFsSafeNative({ mode: "off" });
+  // These assertions cover read-descriptor ownership across migration, not durability.
+  await skipDeviceFlushes();
+});
 afterEach(() => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });

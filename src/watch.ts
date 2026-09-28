@@ -55,6 +55,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const maxEntries = budget(options.maxEntries, 100_000, "maxEntries");
   const maxPendingPaths = budget(options.maxPendingPaths, 256, "maxPendingPaths", 4096);
   if (typeof options.onInvalidate !== "function") throw new TypeError("watch requires onInvalidate");
+  const callerSignal = options.signal ? AbortSignal.any([options.signal]) : undefined;
   const makeGeneration = (scopes: readonly WatchScope[]) => ({
     scopes: watchScopes(scopes), abort: new AbortController(), waiter: deferred(),
   });
@@ -227,34 +228,50 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       } catch (error) { if (!fallBack(error)) throw error; }
       check(g);
     }
-    const next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
-      async (name, identity, guard) => {
-        check(g);
-        const existing = registered.get(name);
-        const acquire = !existing || existing.dev !== identity.dev || existing.ino !== identity.ino;
-        await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
-        check(g);
-        if (acquire) {
-          try { backend?.add(name, identity); }
-          catch (error) {
-            if (snapshot || !fallBack(error)) throw error;
-            await retireBackend(); check(g);
+    let next: WatchSnapshot;
+    for (let attempt = 0; ; attempt++) {
+      next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
+        async (name, identity, guard) => {
+          check(g);
+          const existing = registered.get(name);
+          const acquire = !existing || existing.dev !== identity.dev || existing.ino !== identity.ino;
+          await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
+          check(g);
+          if (acquire) {
+            try { backend?.add(name, identity); }
+            catch (error) {
+              if (snapshot || !fallBack(error)) throw error;
+              await retireBackend(); check(g);
+            }
           }
+          await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+          check(g);
+          if (acquire) registered.set(name, identity);
+        }, retainRetirement);
+      check(g);
+      try {
+        const entriesChanged = backend?.entries(next);
+        const streamsChanged = backend?.configure(watchStreamPaths(next, g.scopes));
+        if (entriesChanged || streamsChanged) {
+          // Complete a guarded pass with the new transport before publishing readiness.
+          // Bound handovers under churn; later passes still reconcile ongoing changes.
+          if (attempt < 2) continue;
+          pending = true;
         }
-        await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+        break;
+      } catch (error) {
+        await assertRootIdentityCurrent(context);
         check(g);
-        if (acquire) registered.set(name, identity);
-      }, retainRetirement);
-    check(g);
-    if (backend?.configure(watchStreamPaths(next, g.scopes))) {
-      // The replacement stream is live before the next guarded pass covers the handover.
-      pending = true;
+        if (attempt >= 2 || !isWatchPathError(error)) throw error;
+        // A replacement between scan and descriptor admission requires a fresh identity.
+      }
     }
     // Retire stale inventory before the next pass; that crawl installs fresh anchors first.
     if ([...registered.keys()].some(name => !next.directories.has(name))) {
       refreshBackend = true;
     }
-    observedDirectories = next.directories.size;
+    observedDirectories = backend?.directories === undefined ? next.directories.size
+      : backend.directories + (g.scopes.some(scope => scope.kind === "tree") ? next.directories.size : 0);
     const initial = !snapshot;
     let observed = next.overflow ? undefined : changedEntries(snapshot, next, maxPendingPaths);
     if (observed) {
@@ -342,7 +359,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     pendingWaiter?.reject(retired()); runningWaiter?.reject(retired());
     pendingWaiter = undefined; runningWaiter = undefined;
     clearTimers();
-    options.signal?.removeEventListener("abort", abort);
+    if (callerSignal) callerSignal.onabort = null;
     // Start physical stop immediately, without waiting behind an in-flight scan.
     try { backend?.close(); } catch (error) { retainRetirement(error); }
     closing = Promise.resolve().then(async () => {
@@ -384,7 +401,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       return next.waiter.promise;
     },
   };
-  options.signal?.addEventListener("abort", abort, { once: true });
-  if (options.signal?.aborted) abort(); else pump();
+  if (callerSignal) callerSignal.onabort = abort;
+  if (callerSignal?.aborted) abort(); else pump();
   return subscription;
 }

@@ -109,6 +109,14 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node scripts/watch-stress.mjs --scenario idle | tee watch-stress-results/idle.json
 
+      - name: Model (500 seeds per mode)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress/model-runner.mjs --seed 1 --seeds 500 --mode both --concurrency 4 --steps 32 --settle 40 --output watch-stress-results/model.json
+
+      - name: Short soak (2 minutes)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/watch-stress.mjs --scenario soak-short | tee watch-stress-results/soak-short.json
+
       - name: Soak (10 minutes)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node scripts/watch-stress.mjs --scenario soak | tee watch-stress-results/soak.json

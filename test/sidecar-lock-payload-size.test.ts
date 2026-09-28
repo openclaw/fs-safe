@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import {
   acquireFileLockSync,
@@ -12,6 +12,7 @@ import * as nativeOperations from "../src/native-operations.js";
 import { root } from "../src/root.js";
 import { readSidecarLockOwnershipToken, serializeSidecarLockPayload } from "../src/sidecar-lock-reclaim.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { skipDeviceFlushes } from "./helpers/device-flush.js";
 
 const { tempRoot } = useRealTempDirs();
 const cap = 1024 * 1024;
@@ -26,6 +27,8 @@ const budgets = [
   { name: "omitted deadline and retries", timeoutMs: undefined, retry: {} },
 ];
 
+// Byte admission and ownership assertions do not require flushing the 1 MiB payloads.
+beforeEach(skipDeviceFlushes);
 afterEach(() => vi.restoreAllMocks());
 
 function sizedPayload(bytes: number, encoding: Encoding) {

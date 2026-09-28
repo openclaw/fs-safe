@@ -479,6 +479,7 @@ pub(crate) fn nt_open_relative_with_sharing(
         reparse_policy,
         share_access,
         null_mut(),
+        0,
     )
 }
 
@@ -489,7 +490,7 @@ pub(crate) fn open_retained_child(
 ) -> NativeResult<OwnedHandle> {
     nt_open_relative_with_security_descriptor(
         root, name, access, FILE_OPEN, options, ReparsePolicy::AllowLeaf,
-        sharing, null_mut(),
+        sharing, null_mut(), 0,
     )
 }
 
@@ -504,6 +505,7 @@ fn nt_open_relative_with_security_descriptor(
     reparse_policy: ReparsePolicy,
     share_access: u32,
     security_descriptor: *mut c_void,
+    file_attributes: u32,
 ) -> NativeResult<OwnedHandle> {
     if matches!(reparse_policy, ReparsePolicy::AllowLeaf) {
         crate::validate_relative_path(path, false)?;
@@ -539,7 +541,7 @@ fn nt_open_relative_with_security_descriptor(
             &attributes,
             &mut io,
             null(),
-            0,
+            file_attributes,
             share_access,
             disposition,
             // FILE_OPEN_REPARSE_POINT opens the final entry itself without reparsing.
@@ -580,6 +582,7 @@ pub(crate) fn nt_create_directory_relative(
         ReparsePolicy::Reject,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         security_descriptor,
+        0,
     )
 }
 
@@ -625,6 +628,19 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
         0,
     )?;
     runtime_fd_from_handle_with_bridge(handle, bridge)
+}
+
+pub fn open_create_beneath(parent_fd: i32, name: &str, flags: i32, mode: u32) -> NativeResult<i32> {
+    crate::validate_child_basename(name)?;
+    let bridge = uv_bridge()?;
+    bridge.require_close()?;
+    let attributes = if mode & 0o200 == 0 {
+        windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_READONLY
+    } else { 0 };
+    let created = nt_open_relative_with_security_descriptor(runtime_handle_from_fd(parent_fd, bridge)?,
+        name, access_from_flags(flags), FILE_CREATE, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+        ReparsePolicy::Reject, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null_mut(), attributes)?;
+    runtime_fd_from_handle_with_bridge(created, bridge)
 }
 
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<()> {
@@ -849,6 +865,21 @@ pub fn rename_replace(
         true,
         "rename with replacement",
     )
+}
+
+pub fn rename_replace_with_identity(
+    source_root_fd: i32, source_rel_path: &str, target_root_fd: i32, target_rel_path: &str,
+    expected: ExactFileIdentity,
+) -> NativeResult<()> {
+    crate::validate_child_basename(source_rel_path)?;
+    crate::validate_child_basename(target_rel_path)?;
+    let source = open_source_for_rename(root_handle(source_root_fd)?, source_rel_path)?;
+    let (dev, ino, _) = handle_identity(source.0)?;
+    if u64::from(dev) != expected.dev || ino != expected.ino {
+        return Err(native_error("path-mismatch", "rename source identity changed"));
+    }
+    set_rename_information(source.0, root_handle(target_root_fd)?, target_rel_path, true,
+        "rename with replacement and identity")
 }
 
 pub(crate) fn handle_identity(handle: HANDLE) -> NativeResult<(u32, u64, bool)> {

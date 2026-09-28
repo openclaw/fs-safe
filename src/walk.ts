@@ -157,36 +157,55 @@ export function walkDirectorySync(
     if (visitedDirs.has(realDir)) return;
     visitedDirs.add(realDir);
 
-    let entries: fsSync.Dirent[];
+    let entries: fsSync.Dirent[] | undefined;
+    let handle: fsSync.Dir | undefined;
     try {
-      entries = fsSync.readdirSync(operationPath, { withFileTypes: true });
+      if (options.maxEntries === undefined) {
+        entries = fsSync.readdirSync(operationPath, { withFileTypes: true });
+      } else {
+        handle = fsSync.opendirSync(operationPath);
+      }
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
     }
     const childPrefix = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`;
-    for (const dirent of entries) {
-      if (shouldStop(result, options)) {
-        result.truncated = true;
-        return;
+    let index = 0;
+    try {
+      while (true) {
+        let dirent: fsSync.Dirent | null | undefined;
+        try {
+          dirent = handle ? handle.readSync() : entries![index++];
+        } catch (error) {
+          recordFailedDir(result, root, dir, depth, error);
+          return;
+        }
+        if (!dirent) return;
+        if (shouldStop(result, options)) {
+          result.truncated = true;
+          return;
+        }
+        result.scannedEntryCount += 1;
+        const fullPath = childPrefix + dirent.name;
+        const kind = resolveKind(fullPath, dirent, symlinks);
+        if (!kind) continue;
+        const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
+        const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
+        if (options.include?.(entry) ?? true) {
+          result.entries.push(entry);
+        }
+        if (
+          kind === "directory" &&
+          (options.maxDepth === undefined || depth < options.maxDepth) &&
+          (options.descend?.(entry) ?? true)
+        ) {
+          visit(fullPath, relativePath, depth + 1);
+          if (result.truncated) return;
+        }
       }
-      result.scannedEntryCount += 1;
-      const fullPath = childPrefix + dirent.name;
-      const kind = resolveKind(fullPath, dirent, symlinks);
-      if (!kind) continue;
-      const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
-      const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
-      if (options.include?.(entry) ?? true) {
-        result.entries.push(entry);
-      }
-      if (
-        kind === "directory" &&
-        (options.maxDepth === undefined || depth < options.maxDepth) &&
-        (options.descend?.(entry) ?? true)
-      ) {
-        visit(fullPath, relativePath, depth + 1);
-        if (result.truncated) return;
-      }
+    } finally {
+      try { handle?.closeSync(); }
+      catch (error) { recordFailedDir(result, root, dir, depth, error); }
     }
   }
 
@@ -223,41 +242,60 @@ export async function walkDirectory(
     if (visitedDirs.has(realDir)) return;
     visitedDirs.add(realDir);
 
-    let entries: fsSync.Dirent[];
+    let entries: fsSync.Dirent[] | undefined;
+    let handle: fsSync.Dir | undefined;
     try {
-      entries = await fs.readdir(operationPath, { withFileTypes: true });
+      if (options.maxEntries === undefined) {
+        entries = await fs.readdir(operationPath, { withFileTypes: true });
+      } else {
+        handle = await fs.opendir(operationPath);
+      }
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
       return;
     }
     const childPrefix = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`;
-    for (const dirent of entries) {
-      if (shouldStop(result, options)) {
-        result.truncated = true;
-        return;
-      }
-      result.scannedEntryCount += 1;
-      const fullPath = childPrefix + dirent.name;
-      const kind = resolveKind(fullPath, dirent, symlinks);
-      if (!kind) continue;
-      const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
-      const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
-      const include = options.include;
-      const included: unknown = include == null ? true : Reflect.apply(include, options, [entry]);
-      if ((isObjectResult(included) ? await included : included) ?? true) {
-        result.entries.push(entry);
-      }
-      if (
-        kind === "directory" &&
-        (options.maxDepth === undefined || depth < options.maxDepth)
-      ) {
-        const descend = options.descend;
-        const descended: unknown = descend == null ? true : Reflect.apply(descend, options, [entry]);
-        if ((isObjectResult(descended) ? await descended : descended) ?? true) {
-          await visit(fullPath, relativePath, depth + 1);
-          if (result.truncated) return;
+    let index = 0;
+    try {
+      while (true) {
+        let dirent: fsSync.Dirent | null | undefined;
+        try {
+          dirent = handle ? await handle.read() : entries![index++];
+        } catch (error) {
+          recordFailedDir(result, root, dir, depth, error);
+          return;
+        }
+        if (!dirent) return;
+        if (shouldStop(result, options)) {
+          result.truncated = true;
+          return;
+        }
+        result.scannedEntryCount += 1;
+        const fullPath = childPrefix + dirent.name;
+        const kind = resolveKind(fullPath, dirent, symlinks);
+        if (!kind) continue;
+        const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
+        const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
+        const include = options.include;
+        const included: unknown = include == null ? true : Reflect.apply(include, options, [entry]);
+        if ((isObjectResult(included) ? await included : included) ?? true) {
+          result.entries.push(entry);
+        }
+        if (
+          kind === "directory" &&
+          (options.maxDepth === undefined || depth < options.maxDepth)
+        ) {
+          const descend = options.descend;
+          const descended: unknown = descend == null ? true : Reflect.apply(descend, options, [entry]);
+          if ((isObjectResult(descended) ? await descended : descended) ?? true) {
+            await visit(fullPath, relativePath, depth + 1);
+            if (result.truncated) return;
+          }
         }
       }
+    } finally {
+      try { await handle?.close(); }
+      catch (error) { recordFailedDir(result, root, dir, depth, error); }
     }
   }
 

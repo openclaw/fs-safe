@@ -1,13 +1,16 @@
 import fsSync, { type Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { FsSafeError } from "../src/errors.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-afterEach(() => vi.restoreAllMocks());
+// Node stream spies intentionally cover the fallback; native has its own cursor.
+beforeEach(() => configureFsSafeNative({ mode: "off" }));
+afterEach(() => { configureFsSafeNative({ mode: "auto" }); vi.restoreAllMocks(); });
 
 async function fixture(names: string[] = ["a", "b", "c"]) {
   const directory = await tempRoot("fs-safe-remove-sort-");
