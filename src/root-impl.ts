@@ -20,7 +20,7 @@ import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-w
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
-import { getFsSafeNativeConfig, isFsSafeNativeRequired } from "./native-config.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -682,7 +682,7 @@ function openWritableFileInRoot(root: RootContext, params: WritableFileInRootPar
 function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams): Promise<OpenedWritableFileInRoot>;
 async function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams,
   options?: { createIfMissing: false }): Promise<OpenedWritableFileInRoot | MissingWritableFileInRoot> {
-  const requireNative = getFsSafeNativeConfig().mode === "require";
+  const requireNative = isFsSafeNativeRequired();
   const policy = requireNative ? snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) : undefined;
   if (policy) params = { ...params, ...policy };
   const guardedTarget = params.denyMutations === undefined && params.mutationSymlinks === undefined
@@ -1012,7 +1012,7 @@ async function mkdirPathInRoot(
     allowRoot?: boolean;
   },
 ): Promise<void> {
-  const requireNative = getFsSafeNativeConfig().mode === "require";
+  const requireNative = isFsSafeNativeRequired();
   const privateMode = resolveCreationPermissions(params, true).private;
   validatePinnedRelativePath(params.relativePath);
   const policy = params.denyMutations === undefined && params.mutationSymlinks === undefined
