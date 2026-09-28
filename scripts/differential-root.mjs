@@ -36,8 +36,10 @@ function choices(value, defaults, allowed) {
 }
 
 function run(spec, lane) {
-  const fixture = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-diff-")));
+  const created = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-diff-"));
   try {
+    // Root uses native canonicalization, which also expands Windows temp aliases.
+    const fixture = fs.realpathSync.native(created);
     const child = spawnSync(lane.runtime, [script, "--worker", "--fixture", fixture, "--variant", lane.variant], {
       input: encode(spec), encoding: "utf8", timeout: 120_000, killSignal: "SIGKILL",
       maxBuffer: 32 * 1024 * 1024,
@@ -55,7 +57,7 @@ function run(spec, lane) {
     return result;
   } finally {
     // The supervisor owns cleanup even if a worker times out or crashes.
-    fs.rmSync(fixture, { recursive: true, force: true });
+    fs.rmSync(created, { recursive: true, force: true });
   }
 }
 
