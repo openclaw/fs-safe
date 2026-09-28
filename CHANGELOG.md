@@ -2,11 +2,29 @@
 
 ## Unreleased
 
+## 0.21.1 - 2026-09-27
+
 ### Fixes
 
-- **Mutation authority:** reject synchronous and asynchronous generator callback results before mutation, preventing lazy authority checks from being skipped.
-- **Native move diagnostics:** no-clobber `Root.move()` preserves the original native loader error as its cause, including missing libraries or incompatible glibc versions.
-- **Remote validation:** add an optional 16-vCPU Linux Blacksmith Testbox workflow for maintainer checks through Crabbox, with the existing Node, pnpm, and portable archive toolchain.
+- **Linux without `openat2`:** native opens now follow in-root relative symlinks exactly as `RESOLVE_BENEATH` does, rejecting absolute links, `..` escapes, procfs and `nosymfollow` links, and chains longer than 40. Denial and symlink policies report the same errors as the `openat2` path. Links inside sticky world-writable directories are refused. ([#717](https://github.com/openclaw/fs-safe/pull/717))
+- **Deny policies on case-insensitive filesystems:** `denyMutations` now denies creating a not-yet-existing case or Unicode-normalization alias of a denied path (for example `case.txt` when `Case.txt` is denied on APFS, NTFS or casefold ext4). Where a filesystem's sensitivity cannot be proven, Unicode-equivalent names are denied conservatively. ([#720](https://github.com/openclaw/fs-safe/pull/720))
+- **Directory listings:** `list()`, `entries()` and `walk()` reject names that are not valid UTF-8 with `invalid-path` instead of decoding them lossily, which could collide with a real `U+FFFD` name and report another entry's metadata. ([#715](https://github.com/openclaw/fs-safe/pull/715))
+- **ZIP admission:** entries that differ only by case or Unicode normalization are rejected during preflight and member reads, matching extraction's collision policy. ([#716](https://github.com/openclaw/fs-safe/pull/716))
+- **Atomic restore:** when a metadata call fails with `EIO` after the destination was truncated, restore-original writes the original bytes back through the retained, identity-verified descriptor instead of leaving the file empty. ([#718](https://github.com/openclaw/fs-safe/pull/718))
+- **Lock and prune cleanup:** cleanup decisions compare exact bigint file identities. Legacy numeric receipts with IDs above 2^53 are refused instead of risking removal of the wrong file. ([#719](https://github.com/openclaw/fs-safe/pull/719))
+- **Watch overflow:** subscriptions no longer publish spurious whole-scope overflow invalidations for excluded or unselected paths or for slow reconcile passes. macOS streams use OS-level exclusion paths and anchor-scoped streams, and Windows uses a 1 MiB change buffer on local volumes. Genuine OS event drops still invalidate. ([#724](https://github.com/openclaw/fs-safe/pull/724))
+- **Mutation authority:** reject synchronous and asynchronous generator callback results before mutation, so lazy authority checks cannot be skipped. ([#711](https://github.com/openclaw/fs-safe/pull/711))
+- **Synchronous atomic writes:** reject deferred `beforeRename` hooks before publication and clean up the owned stage. ([#728](https://github.com/openclaw/fs-safe/pull/728))
+- **Copy publication callbacks:** reject deferred generator observers in `Root.copyIn()` while preserving the completed destination and source bytes. ([#726](https://github.com/openclaw/fs-safe/pull/726))
+- **Native move diagnostics:** no-clobber `Root.move()` keeps the original native loader error as its cause, including missing libraries or incompatible glibc versions. ([#709](https://github.com/openclaw/fs-safe/pull/709))
+
+### Features
+
+- **Watch polling interval:** `pollIntervalMs` sets the scan interval whenever polling is the selected transport, including `mode: "auto"` falling back to polling, without changing the events reconcile interval. ([#723](https://github.com/openclaw/fs-safe/pull/723))
+
+### Performance
+
+- **Linux directory cloning:** reuse the admitted filesystem type when creating clone sources and cloning trees, avoiding a duplicate filesystem probe and allocation per operation. ([#732](https://github.com/openclaw/fs-safe/pull/732))
 
 ## 0.21.0 - 2026-09-26
 

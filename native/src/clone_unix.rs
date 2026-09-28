@@ -23,14 +23,13 @@ pub fn probe(parent_fd: i32) -> NativeResult<Option<String>> {
     Ok(supported.map(str::to_owned))
 }
 
-fn require_supported(parent_fd: i32) -> NativeResult<()> {
-    if probe(parent_fd)?.is_none() {
-        return Err(native_error(
+fn require_supported(parent_fd: i32) -> NativeResult<String> {
+    probe(parent_fd)?.ok_or_else(|| {
+        native_error(
             "CLONE_UNAVAILABLE",
             "directory cloning is unavailable on this filesystem",
-        ));
-    }
-    Ok(())
+        )
+    })
 }
 
 fn check_cancelled(cancelled: &AtomicBool) -> NativeResult<()> {
@@ -172,10 +171,10 @@ fn btrfs_mutation<const OPCODE: rustix::ioctl::Opcode>(
 
 pub fn create_source(parent_fd: i32, basename: &str) -> NativeResult<()> {
     validate_child_basename(basename)?;
-    require_supported(parent_fd)?;
+    let _filesystem = require_supported(parent_fd)?;
     #[cfg(target_os = "linux")]
     {
-        if matches!(probe(parent_fd)?.as_deref(), Some("xfs" | "zfs")) {
+        if matches!(_filesystem.as_str(), "xfs" | "zfs") {
             return rustix::fs::mkdirat(
                 borrowed(parent_fd),
                 basename,
@@ -207,7 +206,7 @@ pub fn clone_tree(
 ) -> NativeResult<()> {
     validate_child_basename(basename)?;
     check_cancelled(cancelled)?;
-    require_supported(parent_fd)?;
+    let _filesystem = require_supported(parent_fd)?;
     require_supported(source_fd)?;
     let source = rustix::fs::fstat(borrowed(source_fd))
         .map_err(|error| os_error(error, "inspect clone source"))?;
@@ -216,7 +215,7 @@ pub fn clone_tree(
     }
     #[cfg(target_os = "linux")]
     {
-        if matches!(probe(parent_fd)?.as_deref(), Some("xfs" | "zfs")) {
+        if matches!(_filesystem.as_str(), "xfs" | "zfs") {
             return crate::clone_linux::clone_tree(
                 source_fd,
                 parent_fd,

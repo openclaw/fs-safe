@@ -12,7 +12,7 @@ import type { DirEntry } from "./types.js";
 import type { WatchEntry, WatchOptions, WatchScope } from "./watch-types.js";
 
 export type DirectoryIdentity = Readonly<{ dev: bigint; ino: bigint }>;
-export type WatchSnapshot = { entries: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean };
+export type WatchSnapshot = { entries: Map<string, string>; excluded?: Map<string, WatchEntry["kind"]>; excludedDirectories?: Map<string, string>; directoryPaths?: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean };
 export function watchScopes(input: readonly WatchScope[]): readonly WatchScope[] {
   if (!Array.isArray(input) || input.length > 128) throw new RangeError("watch accepts at most 128 scopes");
   return Object.freeze(input.map(scope => {
@@ -57,12 +57,14 @@ export function isWatchPathError(error: unknown): boolean {
 export async function scanWatch(
   root: RootContext,
   scopes: readonly WatchScope[],
-  options: Pick<WatchOptions, "exclude"> & { maxEntries: number; maxDirectories: number; maxPendingPaths: number; admitting: boolean },
+  options: Pick<WatchOptions, "exclude"> & { maxEntries: number; maxDirectories: number; maxPendingPaths: number; admitting: boolean; previous?: WatchSnapshot },
   signal: AbortSignal,
   register: (name: string, identity: DirectoryIdentity, guard: RootDirectoryObservationGuard) => Promise<void>,
   onCleanupFailure?: (error: unknown) => void,
 ): Promise<WatchSnapshot> {
-  const result: WatchSnapshot = { entries: new Map(), directories: new Map(), targets: new Map(), scanned: 0 };
+  const exclusions = new Map<string, WatchEntry["kind"]>();
+  const excludedDirectories = new Map<string, string>(), directoryPaths = new Map<string, string>();
+  const result: WatchSnapshot = { entries: new Map(), excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0 };
   const attempts = new Map<string, number>();
   const guards = new Map<string, RootDirectoryObservationGuard>();
   const walked = new Map<string, number>();
@@ -72,7 +74,7 @@ export async function scanWatch(
     if (structural.size < options.maxPendingPaths) structural.add(relative); else result.overflow = true;
     // Discard partially observed names when their enclosing directory lost admission.
     const below = (name: string) => name === relative || !relative || name.startsWith(relative + path.sep);
-    for (const map of [result.entries, result.targets, result.directories, guards, walked]) {
+    for (const map of [result.entries, exclusions, excludedDirectories, directoryPaths, result.targets, result.directories, guards, walked]) {
       for (const name of map.keys()) if (below(name)) map.delete(name);
     }
   };
@@ -86,7 +88,7 @@ export async function scanWatch(
   const examined = () => {
     if (++result.scanned > options.maxEntries) throw new FsSafeError("too-large", "watch entry budget exceeded", { details: { operation: "scan" } });
   };
-  const excluded = (name: string, entry: DirEntry) => {
+  const excluded = async (name: string, entry: DirEntry) => {
     let value: boolean | undefined;
     try {
       value = options.exclude?.({ path: name, kind: kind(entry) });
@@ -95,6 +97,21 @@ export async function scanWatch(
       throw new FsSafeError("helper-failed", "watch exclusion callback failed", { cause, details: { operation: "callback" } });
     }
     signal.throwIfAborted();
+    if (value) {
+      exclusions.set(name, kind(entry));
+      if (process.platform === "darwin" && entry.isDirectory && !entry.isSymbolicLink) {
+        try {
+          const resolved = await resolvePathInRoot(root, "./" + name, { rejectSymlinks: true });
+          const guard = await createRootDirectoryObservationGuard(root, resolved.resolved);
+          await assertRootDirectoryObservationGuard(root, guard);
+          excludedDirectories.set(name, guard.realPath);
+        } catch (error) {
+          signal.throwIfAborted();
+          await assertRootIdentityCurrent(root);
+          if (!isWatchPathError(error)) throw error;
+        }
+      }
+    }
     return value;
   };
   const directory = async (relative: string): Promise<RootDirectoryObservationGuard> => {
@@ -115,6 +132,7 @@ export async function scanWatch(
         const guard = await createRootDirectoryObservationGuard(root, resolved.resolved);
         const identity = { dev: guard.stat.dev, ino: guard.stat.ino };
         result.directories.set(relative, identity);
+        directoryPaths.set(relative, guard.realPath);
         await register(relative, identity, guard);
         signal.throwIfAborted();
         await assertRootDirectoryObservationGuard(root, guard);
@@ -136,7 +154,7 @@ export async function scanWatch(
       try {
         guard = await directory(relative);
         listing = await openRootDirectoryListing(root, guard.realPath, {
-          order: "filesystem", snapshot: false, signal, exactIdentity: true, onCleanupFailure, admitEntry: () => { examined(); return true; },
+          order: "filesystem", snapshot: false, signal, exactIdentity: true, skipVanished: true, onCleanupFailure, admitEntry: () => { examined(); return true; },
         });
         // The listing has its own guard. Both identities must agree before reading names.
         await assertRootDirectoryObservationGuard(root, guard);
@@ -158,7 +176,7 @@ export async function scanWatch(
         if (!next.identity) throw new FsSafeError("path-mismatch", "watch listing lacks exact identity");
         const entry = next.entry;
         const name = relative ? path.join(relative, entry.name) : entry.name;
-        if (excluded(name, entry)) continue;
+        if (await excluded(name, entry)) continue;
         result.entries.set(name, fingerprint(entry, next.identity));
         if (entry.isDirectory && !entry.isSymbolicLink && depth > 1) await tree(name, depth - 1);
       }
@@ -195,7 +213,7 @@ export async function scanWatch(
         signal.throwIfAborted();
         if (!found) break;
         const name = relative ? path.join(relative, segments[i]!) : segments[i]!;
-        if (excluded(name, found.entry)) break;
+        if (await excluded(name, found.entry)) break;
         if (i === segments.length - 1) {
           result.entries.set(name, fingerprint(found.entry, found.identity));
           result.targets.set(name, found.identity);
@@ -220,5 +238,13 @@ export async function scanWatch(
   }
   await assertRootIdentityCurrent(root);
   signal.throwIfAborted();
+  // Native deletion hints can arrive after a later scan. Keep bounded tombstones
+  // until the name is admitted again; they never grant authority to publish it.
+  for (const [name, kind] of options.previous?.excluded ?? []) {
+    if (exclusions.size >= options.maxEntries) break;
+    if (!result.entries.has(name) && !result.directories.has(name) && !exclusions.has(name)) exclusions.set(name, kind);
+    const priorPath = options.previous?.excludedDirectories?.get(name);
+    if (kind === "directory" && exclusions.get(name) === "directory" && priorPath && !excludedDirectories.has(name)) excludedDirectories.set(name, priorPath);
+  }
   return result;
 }

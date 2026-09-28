@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/atomic.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -98,5 +98,67 @@ describe.each([false, true])("atomic operational failures, sync=%s", sync => {
     };
     await run(value, "refused");
     expect(reads).toBe(1);
+  });
+});
+
+describe("synchronous beforeRename results", () => {
+  type HookParams = { filePath: string; tempPath: string };
+
+  it.each([false, true].flatMap(overwrite =>
+    ["sync generator", "async generator", "rejected promise"].map(kind => ({ overwrite, kind })),
+  ))("rejects a $kind before publication (overwrite=$overwrite)", async ({ overwrite, kind }) => {
+    const directory = await tempRoot("fs-safe-atomic-sync-hook-");
+    const filePath = path.join(directory, "file");
+    if (overwrite) fsSync.writeFileSync(filePath, "old");
+    const body = vi.fn();
+    const refusal = new Error("deferred hook refusal");
+    const hook: (params: HookParams) => unknown = kind === "sync generator"
+      ? function* () { body(); throw refusal; }
+      : kind === "async generator"
+        ? async function* () { body(); throw refusal; }
+        : () => Promise.reject(refusal);
+    const beforeRename = vi.fn(hook);
+    let reads = 0;
+    const options = {
+      filePath, content: "new",
+      get beforeRename() { reads++; return beforeRename; },
+    };
+
+    expect(() => replaceFileAtomicSync(options))
+      .toThrow(new TypeError("beforeRename must be synchronous"));
+    expect(beforeRename).toHaveBeenCalledOnce();
+    expect(beforeRename.mock.contexts[0]).toBe(options);
+    expect(reads).toBe(2);
+    expect(body).not.toHaveBeenCalled();
+    const params = beforeRename.mock.calls[0]![0];
+    expect(params).toEqual({ filePath, tempPath: expect.any(String) });
+    expect(() => fsSync.lstatSync(params.tempPath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(fsSync.readdirSync(directory)).toEqual(overwrite ? ["file"] : []);
+    if (overwrite) expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
+    // Give an unconsumed rejected callback promise a turn to reach the test runner.
+    await new Promise<void>(resolve => setImmediate(resolve));
+  });
+
+  it.each([
+    { label: "undefined", value: undefined },
+    { label: "number", value: 17 },
+    { label: "object", value: { ignored: true } },
+  ])("retains an ordinary $label return and the options receiver", async ({ value }) => {
+    const directory = await tempRoot("fs-safe-atomic-sync-hook-value-");
+    const filePath = path.join(directory, "file");
+    fsSync.writeFileSync(filePath, "old");
+    const beforeRename = vi.fn((_params: HookParams) => value);
+    let reads = 0;
+    const options = {
+      filePath, content: "new",
+      get beforeRename() { reads++; return beforeRename; },
+    };
+
+    expect(replaceFileAtomicSync(options)).toEqual({ method: "rename" });
+    expect(beforeRename).toHaveBeenCalledOnce();
+    expect(beforeRename.mock.contexts[0]).toBe(options);
+    expect(reads).toBe(2);
+    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
+    expect(fsSync.readdirSync(directory)).toEqual(["file"]);
   });
 });

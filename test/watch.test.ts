@@ -124,17 +124,25 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     const states: string[] = [];
     let refresh = Promise.resolve();
     let refreshPending = false, refreshing = false;
+    let refreshAll = false;
+    const pendingNames = new Set<string>();
     const owner = own(watch(capability, { mode, scopes, intervalMs: mode === "poll" ? 20 : 60_000,
       onHealth: value => { states.push(value.state); },
-      onInvalidate: () => {
+      onInvalidate: event => {
+        if (!event.changes) { refreshAll = true; pendingNames.clear(); }
+        else if (!refreshAll) for (const change of event.changes) pendingNames.add(change.path);
         refreshPending = true;
         if (refreshing) return;
         refreshing = true;
         refresh = Promise.resolve().then(async () => {
           do {
             refreshPending = false;
-            const next = new Map<string, string>();
-            const names = await capability.list("");
+            const all = refreshAll, changed = [...pendingNames];
+            refreshAll = false; pendingNames.clear();
+            // A detailed invalidation refreshes only its files. Re-reading all
+            // 1,024 files made consumer latency look like missed Windows polls.
+            const next = all ? new Map<string, string>() : new Map(cache);
+            const names = all ? await capability.list("") : changed;
             for (let i = 0; i < names.length; i += 16) {
               await Promise.all(names.slice(i, i + 16).map(async name => { next.set(name, await capability.readText("./" + name)); }));
             }
@@ -304,7 +312,7 @@ it.skipIf(!eventsAvailable)("shares one hub, delivers real events under one seco
   await peer.close(); expect(native.watchThreadCount!()).toBe(0);
 });
 
-it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("turns overflow and unadmitted names into whole-scope invalidations (%s)", async kind => {
+it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("invalidates backend loss and only selected unadmitted names (%s)", async kind => {
   const native = getNativeBinding()!;
   const register = native.watchRegister!;
   // Exercise hint admission independently of OS coalescing and queue pressure.
@@ -318,7 +326,7 @@ it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("turns overflow and
   emit({ overflow: true, hints: [] }); await owner.reconcile();
   expect(changes).toEqual([{ reason: "overflow", changes: undefined }]); changes.length = 0;
   emit({ overflow: false, hints: [{ directory: "", name: "unadmitted-private-name", event: "rename" }] });
-  await owner.reconcile(); expect(changes).toEqual([{ reason: "overflow", changes: undefined }]);
+  await owner.reconcile(); expect(changes).toEqual(kind === "tree" ? [{ reason: "overflow", changes: undefined }] : []);
 });
 
 it("reconciles periodically without backend hints", async () => {

@@ -4,6 +4,7 @@ import type { FileIdentityStat } from "./file-identity.js";
 export type FsSafeTestHooks = {
   beforeWatchRegistration?: (path: string) => void | Promise<void>;
   afterWatchRegistration?: (path: string) => void | Promise<void>;
+  afterWatchBackendOverflow?: (root: string, phase: "received" | "reconciled") => void;
   afterWatchBackendCreated?: (root: string, emit: (batch: import("./watch-native.js").NativeWatchBatch) => void, nativeEvent?: (path: string, flags: number) => void) => void;
 
   afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
