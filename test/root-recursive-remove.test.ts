@@ -3,11 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { configureFsSafeNative({ mode: "auto" }); vi.restoreAllMocks(); });
 
 async function fixture() {
   const directory = await tempRoot("fs-safe-recursive-remove-");
@@ -94,6 +95,7 @@ itPosix("keeps POSIX admission spelling case-sensitive", async () => {
 });
 
 it.each([0, 1, 3])("counts the target and limits observed entries to %i", async maxEntries => {
+  configureFsSafeNative({ mode: "off" });
   const directory = await tempRoot("fs-safe-recursive-entry-budget-");
   const tree = path.join(directory, "tree");
   await fs.mkdir(tree);

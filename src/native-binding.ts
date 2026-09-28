@@ -73,6 +73,19 @@ export interface NativeOwnedTreeRemovalResult {
   errorMessage?: string;
 }
 
+export interface NativeRootRemovalEntry {
+  dev: bigint;
+  ino: bigint;
+  directory: boolean;
+  symlink: boolean;
+}
+
+export interface NativeRootRemovalDirectory {
+  readonly fd: number;
+  read(): string | null;
+  close(): void;
+}
+
 export interface NativeWindowsAccessControlEntry {
   sid: string;
   mask: number;
@@ -119,6 +132,9 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  rootRemovalStat?(parent: number, name: string): NativeRootRemovalEntry;
+  rootRemovalUnlink?(parent: number, name: string, dev: bigint, ino: bigint, directory: boolean): void;
+  openRootRemovalDirectory?(parent: number, name: string, dev: bigint, ino: bigint): NativeRootRemovalDirectory;
   /** Windows-only, private handle custody; no borrowed/runtime descriptors. */
   retainWindowsFile?(directory: string, basename: string, parentDev: bigint, parentIno: bigint,
     dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, ctimeNs: bigint, sha256: string, maxBytes: number): NativeRetainedFile;

@@ -1,13 +1,14 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); });
 
 it.each([undefined, "follow-parents-within-root"] as const)(

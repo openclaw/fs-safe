@@ -71,6 +71,7 @@ import type { DirEntry, PathStat } from "./types.js";
 import { walkRoot, type RootWalkEntry, type RootWalkOptions, type RootWalkSymlinkPolicy } from "./root-walk.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { removePathInRootFallback, validateRemoveOptions } from "./root-remove.js";
+import { tryRemovePathInRootNative } from "./root-remove-native.js";
 import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import {
@@ -981,6 +982,7 @@ async function removePathInRoot(
   params: RootRemoveOptions & { relativePath: string },
 ): Promise<void> {
   validatePinnedRelativePath(params.relativePath);
+  params = { ...params, ...snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) };
   const removalReceipts = params.recursive ? undefined : new RemovalPathReceipts();
   const resolved = await resolvePinnedPathInRoot(root, {
     relativePath: params.relativePath,
@@ -990,6 +992,7 @@ async function removePathInRoot(
     removalReceipts,
   });
   try {
+    if (await tryRemovePathInRootNative(root, resolved.resolved, params, removalReceipts)) return;
     await removePathInRootFallback(root, resolved.resolved, params, removalReceipts);
   } catch (error) {
     if (params.recursive) throw error;

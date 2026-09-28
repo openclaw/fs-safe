@@ -31,7 +31,7 @@ const DEFAULT_MAX_ENTRIES = 100_000;
 const DEFAULT_MAX_DEPTH = 64;
 
 export const nonrecursiveRemovalKind: unique symbol = Symbol("nonrecursive removal kind");
-type InternalRemoveOptions = RootRemoveOptions & {
+export type InternalRemoveOptions = RootRemoveOptions & {
   [nonrecursiveRemovalKind]?: "directory";
 };
 
@@ -115,7 +115,7 @@ async function assertMissingRemovalPrefixCurrent(
   }
 }
 
-async function captureNonrecursiveRemovalAdmission(
+export async function captureNonrecursiveRemovalAdmission(
   root: RootContext,
   targetPath: string,
   options: RootRemoveOptions,
