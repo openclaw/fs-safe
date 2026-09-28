@@ -2,7 +2,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import { isUnsafeDeviceReadPath } from "../src/device-path.js";
-import { sanitizeSafePathSegment } from "../src/safe-path-segment.js";
+import { normalizeSafePathSegment } from "../src/safe-path-segment.js";
 import { buildRandomTempFilePath } from "../src/temp-target.js";
 
 const ADVERSARIAL_RUN_LENGTH = 100_000;
@@ -39,9 +39,9 @@ describe("CodeQL ReDoS regressions", () => {
     const internalHyphens = `a${"-".repeat(ADVERSARIAL_RUN_LENGTH)}b`;
 
     expect(
-      expectBounded(() => sanitizeSafePathSegment(internalHyphens)),
+      expectBounded(() => normalizeSafePathSegment(internalHyphens)),
     ).toBe(internalHyphens);
-    expect(sanitizeSafePathSegment(`---${internalHyphens}---`)).toBe(
+    expect(normalizeSafePathSegment(`---${internalHyphens}---`)).toBe(
       internalHyphens,
     );
   });

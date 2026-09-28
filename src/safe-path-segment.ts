@@ -82,11 +82,6 @@ export function normalizeSafePathSegment(value: string): string {
   return trimHyphenEdges(sanitized);
 }
 
-export function sanitizeSafePathSegment(value: string): string | undefined {
-  const trimmed = normalizeSafePathSegment(value);
-  return isSafePathSegment(trimmed, { allowDotPrefix: true }) ? trimmed : undefined;
-}
-
 export function assertSafePathPrefix(
   prefix: string,
   options: SafePathSegmentOptions = {},

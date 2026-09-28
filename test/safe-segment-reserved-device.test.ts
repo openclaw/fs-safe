@@ -4,7 +4,8 @@ import { resolveJsonDurableQueueEntryPaths } from "../src/json-durable-queue.js"
 import {
   assertSafePathSegment,
   assertSafePathPrefix,
-  sanitizeSafePathSegment,
+  isSafePathSegment,
+  normalizeSafePathSegment,
 } from "../src/safe-path-segment.js";
 import { sanitizeTempFileName } from "../src/temp-target.js";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
@@ -26,8 +27,10 @@ describe("safe path segments reject Windows reserved device names", () => {
     );
   });
 
-  it("does not sanitize a reserved device name into a usable segment", () => {
-    expect(sanitizeSafePathSegment("CON")).toBeUndefined();
+  it("keeps normalized reserved device names inadmissible", () => {
+    const normalized = normalizeSafePathSegment("CON");
+    expect(normalized).toBe("CON");
+    expect(isSafePathSegment(normalized, { allowDotPrefix: true })).toBe(false);
   });
 
   it("rejects a reserved atomic temporary prefix", () => {
