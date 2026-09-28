@@ -10,7 +10,6 @@ import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
-import { getFsSafeNativeConfig } from "./native-config.js";
 import { openNativeRootAdmission } from "./native-parent-admission.js";
 import { capturePolicyAwareNativeParent } from "./native-policy-parent.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
@@ -69,9 +68,7 @@ type Creation = {
 };
 
 function unavailable(): undefined {
-  if (getFsSafeNativeConfig().mode === "require") {
-    throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
-  }
+  throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
 }
 
 async function withNativeDirectory<T>(
@@ -140,7 +137,7 @@ async function withNativeDirectory<T>(
         relativeParentPath, basename: directoryTarget ? "" : path.basename(params.target),
         mkdir: params.mkdir, mode: 0o600, input: { kind: "buffer", data: "" },
         mutationAdmission: prepared.mutationAdmission, assertBeforeMutation: params.assertBeforeMutation,
-      }, admitted, process.platform === "win32", flags);
+      }, admitted, process.platform === "win32", flags, true);
       descriptors.push(parent.fd);
       guards.push(parent.guard);
       assertCurrent();
@@ -158,8 +155,14 @@ async function withNativeDirectory<T>(
         if (params.private) assertDarwinCreationAcl(current, "directory");
         params.assertBeforeMutation?.();
         assertCurrent();
-        created = binding.mkdirChildBeneath(current, segment, params.private ? 0o700 : 0o777);
-        child = binding.openBeneath(current, segment, flags).fd;
+        if (binding.mkdirOpenChildBeneath) {
+          const opened = binding.mkdirOpenChildBeneath(current, segment, params.private ? 0o700 : 0o777, flags);
+          created = opened.created;
+          child = opened.fd;
+        } else {
+          created = binding.mkdirChildBeneath(current, segment, params.private ? 0o700 : 0o777);
+          child = binding.openBeneath(current, segment, flags).fd;
+        }
       }
       descriptors.push(child);
       const stat = inspectFileIdentitySync(() => fs.fstatSync(child, { bigint: true }));

@@ -190,6 +190,13 @@ pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, mode: u32) -> NativeR
     }
 }
 
+pub fn mkdir_open_child_beneath(parent_fd: i32, basename: &str, mode: u32, flags: i32) -> NativeResult<(i32, bool)> {
+    let created = mkdir_child_beneath(parent_fd, basename, mode)?;
+    let flags = flags | libc::O_DIRECTORY | libc::O_NOFOLLOW;
+    let child = open_owned_beneath(parent_fd, basename, flags)?;
+    Ok((child.into_raw_fd(), created))
+}
+
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()> {
     if rel_path.is_empty() || rel_path == "." {
         return Ok(());

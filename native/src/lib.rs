@@ -297,6 +297,20 @@ pub fn mkdir_child_beneath(
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[napi(object)]
+pub struct CreatedDirectory {
+    pub fd: i32,
+    pub created: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[napi(js_name = "mkdirOpenChildBeneath")]
+pub fn mkdir_open_child_beneath(env: Env, parent_fd: i32, basename: String, mode: u32, flags: i32) -> Result<CreatedDirectory> {
+    into_napi(env, platform::mkdir_open_child_beneath(parent_fd, &basename, mode, flags)
+        .map(|(fd, created)| CreatedDirectory { fd, created }))
+}
+
 macro_rules! native_path_pair_operation {
     ($name:ident, $js_name:literal) => {
         #[napi(js_name = $js_name)]

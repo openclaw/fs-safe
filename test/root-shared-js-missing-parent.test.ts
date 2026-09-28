@@ -6,7 +6,7 @@ import {
   configureFsSafeNative,
   __resetFsSafeNativeConfigForTest,
 } from "../src/native-config.js";
-import { __resetNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import * as context from "../src/root-context.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
@@ -24,6 +24,19 @@ afterEach(() => {
 });
 
 describeNode("shared JavaScript missing-parent admission", () => {
+  it.each(["mkdir", "append", "openWritable"] as const)("fails closed for %s without the required addon", async operation => {
+    __setNativeLoaderForTest(() => { throw new Error("addon unavailable"); });
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("fs-safe-missing-required-creation-");
+    const safe = await root(directory);
+    const pending = operation === "mkdir" ? safe.mkdir("parent/child")
+      : operation === "append" ? safe.append("parent/value", "inside")
+      : safe.openWritable("parent/value");
+    // A global configuration change cannot downgrade an in-flight requirement.
+    configureFsSafeNative({ mode: "auto" });
+    await expect(pending).rejects.toMatchObject({ code: "helper-unavailable" });
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
   it("keeps ineligible missing parents on depth-sensitive component admission", async () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-shared-policy-missing-parent-deopt-");
@@ -55,7 +68,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
     expect(observed[1]).toBeGreaterThan(observed[0]!);
   });
 
-  it.each(["off", "require"] as const)(
+  it.each(["off", "auto"] as const)(
     "keeps eligible ordinary missing-parent admission bounded in %s mode",
     async (mode) => {
       configureFsSafeNative({ mode });
@@ -121,18 +134,17 @@ describeNode("shared JavaScript missing-parent admission", () => {
 
       expect(new Set(authorizations).size).toBe(1);
       expect(new Set(resolutions).size).toBe(1);
-      // Required mode now uses the native parent walk, with its own receipts.
-      expect(sharedAuthorizations).toEqual(mode === "off" ? [1, 1, 1] : [0, 0, 0]);
-      expect(sharedProbes).toEqual(mode === "off" ? [1, 8, 32] : [0, 0, 0]);
-      expect(sharedReuses).toEqual(mode === "off" ? [0, 7, 31] : [0, 0, 0]);
-      expect(advances).toEqual(mode === "off" ? [1, 8, 32] : [0, 0, 0]);
+      expect(sharedAuthorizations).toEqual([1, 1, 1]);
+      expect(sharedProbes).toEqual([1, 8, 32]);
+      expect(sharedReuses).toEqual([0, 7, 31]);
+      expect(advances).toEqual([1, 8, 32]);
       expect(authorizations[0]).toBeGreaterThan(0);
       expect(resolutions[0]).toBeGreaterThan(0);
       expect(observations[2]!).toBeLessThan(observations[1]! * 6);
     },
   );
 
-  it.each(["off", "require"] as const)(
+  it.each(["off", "auto"] as const)(
     "keeps mixed existing/missing parent resolution bounded in %s mode",
     async (mode) => {
       configureFsSafeNative({ mode });
@@ -161,7 +173,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
     },
   );
 
-  it.each(["off", "require"] as const)(
+  it.each(["off", "auto"] as const)(
     "uses one guarded mkdir below an exact existing parent at every depth in %s mode",
     async (mode) => {
       configureFsSafeNative({ mode });
@@ -192,7 +204,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
       }
 
       expect(new Set(resolutions).size).toBe(1);
-      expect(mkdirs).toEqual(mode === "off" ? [1, 1, 1] : [0, 0, 0]);
+      expect(mkdirs).toEqual([1, 1, 1]);
     },
   );
 

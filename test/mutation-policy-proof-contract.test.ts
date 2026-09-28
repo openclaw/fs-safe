@@ -66,7 +66,7 @@ function pendingReceipt(overrides: Record<string, unknown> = {}) {
 
 function observationsForCase(name: string, backend: string) {
   const common = {
-    addonLoaded: backend === "pinned-native/require" || backend === "windows-js/require" || name === "native-config-drift",
+    addonLoaded: backend === "pinned-native/require" || backend === "windows-js/require",
     builtPublicImport: true,
     node24: true,
     privateFixture: true,

@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt};
-use crate::unix::{mkdir_child_beneath, open_create_beneath};
+use crate::unix::{mkdir_child_beneath, mkdir_open_child_beneath, open_create_beneath};
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -28,6 +28,21 @@ fn mkdir_pins_parent_and_reports_only_its_exclusive_creation() {
     assert!(!mkdir_child_beneath(parent.as_raw_fd(), "child", 0o700).unwrap());
     assert!(fixture.0.join("held/child").is_dir());
     assert!(!fixture.0.join("outside/child").exists());
+}
+
+#[test]
+fn fused_mkdir_open_retains_parent_and_rejects_a_link_collision() {
+    let fixture = Fixture::new();
+    let parent = fs::File::open(fixture.0.join("parent")).unwrap();
+    fixture.before_final();
+    let (raw, created) = mkdir_open_child_beneath(parent.as_raw_fd(), "child", 0o700, libc::O_RDONLY).unwrap();
+    // SAFETY: fused creation transfers one owned directory descriptor.
+    let child = unsafe { fs::File::from_raw_fd(raw) };
+    assert!(created);
+    assert_eq!(child.metadata().unwrap().ino(), fs::metadata(fixture.0.join("held/child")).unwrap().ino());
+    assert!(!fixture.0.join("outside/child").exists());
+    symlink("../outside", fixture.0.join("held/link")).unwrap();
+    assert!(mkdir_open_child_beneath(parent.as_raw_fd(), "link", 0o700, libc::O_RDONLY).is_err());
 }
 
 #[test]

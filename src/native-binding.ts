@@ -244,6 +244,7 @@ export interface NativeBinding {
   linkBeneath(...args: NativeTwoPathArgs): void;
   /** Direct-child mkdir; true is receipt provenance only, never cleanup ownership. */
   mkdirChildBeneath?(parentFd: number, basename: string, mode: number): boolean;
+  mkdirOpenChildBeneath?(parentFd: number, basename: string, mode: number, flags: number): { fd: number; created: boolean };
   mkdirBeneath(rootFd: number, relPath: string, mode: number): void;
   openBeneath(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
   readArchiveEntryNative(

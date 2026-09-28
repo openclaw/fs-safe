@@ -13,6 +13,22 @@ try { native = __loadBundledNativeForTest(); } catch { /* Native lanes build the
 const { tempRoot } = useRealTempDirs();
 afterEach(() => { vi.restoreAllMocks(); configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); });
 
+it("keeps auto mkdir and open-create on their existing paths with native creation available", async () => {
+  const nativeMutation = vi.fn(() => { throw new Error("require-only primitive"); });
+  __setNativeLoaderForTest(() => ({ ...native, mkdirChildBeneath: nativeMutation, mkdirOpenChildBeneath: nativeMutation,
+    openCreateBeneath: nativeMutation } as unknown as NativeBinding));
+  configureFsSafeNative({ mode: "auto" });
+  const directory = await tempRoot("fs-safe-auto-create-");
+  const scoped = await root(directory);
+  await scoped.mkdir("parent/nested");
+  await scoped.append("parent/append", "inside", { durable: false });
+  const opened = await scoped.openWritable("parent/open");
+  await opened.handle.close();
+  expect(await fs.readdir(path.join(directory, "parent"))).toEqual(["append", "nested", "open"]);
+  expect(await fs.readFile(path.join(directory, "parent/append"), "utf8")).toBe("inside");
+  expect(nativeMutation).not.toHaveBeenCalled();
+});
+
 describe.runIf(native?.removeStagedFile && native?.openCreateBeneath)("native Root creation", () => {
   it.skipIf(process.platform !== "linux").each([7, 4])("preserves kernel default-ACL creation restrictions (owner=%s)", async owner => {
     __setNativeLoaderForTest(() => native!);
@@ -96,9 +112,7 @@ describe.runIf(native?.removeStagedFile && native?.openCreateBeneath)("native Ro
     expect(pending.size).toBe(0);
     expect(await fs.readdir(path.dirname(target))).toEqual([]);
   });
-  it.each((["mkdir", "append"] as const).flatMap(operation =>
-    (["require", "auto"] as const).map(mode => ({ operation, mode })),
-  ))("confines $operation in $mode when its parent pathname becomes a symlink at dispatch", async ({ operation, mode }) => {
+  it.each(["mkdir", "append"] as const)("confines %s in require when its parent pathname becomes a symlink at dispatch", async operation => {
     const directory = await tempRoot("fs-safe-native-create-");
     const outside = await tempRoot("fs-safe-native-create-outside-");
     await fs.mkdir(path.join(directory, "parent"));
@@ -111,6 +125,10 @@ describe.runIf(native?.removeStagedFile && native?.openCreateBeneath)("native Ro
       swapped = true;
     };
     __setNativeLoaderForTest(() => ({ ...native!,
+      ...(native!.mkdirOpenChildBeneath ? { mkdirOpenChildBeneath(parent: number, name: string, mode: number, flags: number) {
+        if (operation === "mkdir") swap();
+        return native!.mkdirOpenChildBeneath!(parent, name, mode, flags);
+      } } : {}),
       mkdirChildBeneath(parent, name, mode) {
         if (operation === "mkdir") swap();
         return native!.mkdirChildBeneath!(parent, name, mode);
@@ -123,7 +141,7 @@ describe.runIf(native?.removeStagedFile && native?.openCreateBeneath)("native Ro
         return native!.openCreateBeneath!(parent, name, flags, mode);
       },
     }));
-    configureFsSafeNative({ mode });
+    configureFsSafeNative({ mode: "require" });
     const result = operation === "mkdir" ? scoped.mkdir("parent/created") : scoped.append("parent/created", "inside", { durable: false });
     await expect(result).rejects.toBeTruthy();
     expect(swapped).toBe(true);
