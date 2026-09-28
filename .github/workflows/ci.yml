@@ -1190,6 +1190,13 @@ jobs:
         if: ${{ !matrix.no-openat2 }}
         run: bun --jitless scripts/bun-native-proof.mjs
 
+      - name: Compare create-on-directory errors across implementations
+        run: node scripts/root-create-directory-proof.mjs
+
+      - name: Compare Bun create-on-directory errors across implementations
+        if: ${{ !matrix.no-openat2 }}
+        run: bun scripts/root-create-directory-proof.mjs
+
       - name: Require Bun native helper
         if: ${{ !matrix.no-openat2 }}
         run: bun scripts/native-mode-smoke.mjs require

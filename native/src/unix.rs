@@ -41,6 +41,8 @@ pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error
         rustix::io::Errno::INVAL => "EINVAL",
         rustix::io::Errno::ISDIR => "EISDIR",
         rustix::io::Errno::MLINK => "EMLINK",
+        rustix::io::Errno::MFILE => "EMFILE",
+        rustix::io::Errno::NFILE => "ENFILE",
         rustix::io::Errno::NAMETOOLONG => "ENAMETOOLONG",
         rustix::io::Errno::NOSPC => "ENOSPC",
         rustix::io::Errno::NOSYS => "ENOSYS",

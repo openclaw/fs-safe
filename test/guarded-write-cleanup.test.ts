@@ -46,10 +46,10 @@ describe("guarded fallback write cleanup", () => {
     const base = await tempRoot("fs-safe-pinned-post-guard-");
     const parentPath = path.join(base, "nested");
     const movedParentPath = path.join(base, "nested-real");
-    const targetPath = path.join(parentPath, "created.txt");
     const outside = await tempRoot("fs-safe-pinned-post-guard-outside-");
     const outsideFile = path.join(outside, "created.txt");
     await fs.mkdir(parentPath);
+    const targetPath = path.join(await fs.realpath(parentPath), "created.txt");
     await fs.writeFile(outsideFile, "outside");
     const assertClosed = await replaceParentAfterOpen({
       targetPath,

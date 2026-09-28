@@ -64,6 +64,35 @@ Failed-write cleanup compares exact parent and file identities, including large
 Windows file indexes. Replaced paths and paths whose ownership cannot be verified
 are preserved.
 
+### Windows link modes
+
+With `mutationSymlinks` omitted, Windows buffered replacement `write()` and
+`writeJson()` calls (`overwrite` omitted or `true`) currently differ by
+implementation. The native pinned path rejects a final file
+symlink with `path-alias`. The legacy JavaScript path can follow an unchanged
+contained final link and replace its admitted target, preserving the link itself.
+It reauthorizes the original link's target before staging and publication when
+mutation policy is present, and retains its file/parent identity checks.
+The legacy path is used by native mode `off`, by `auto` without a binding,
+and by the explicit `renameIdentity: "verify-content-with-lock"` policy.
+
+An omitted mutation policy also leaves parent-junction behavior implementation
+dependent: native Windows parent admission refuses reparse traversal and can
+report `invalid-path`, while the legacy writer can use the junction's admitted
+contained target. This does not authorize an escaping target or bypass deny
+policy. Set `mutationSymlinks: "reject"` explicitly for uniform link rejection
+across these implementations, either in Root defaults or per call:
+
+```ts
+import { root } from "@openclaw/fs-safe";
+
+const files = await root("C:/workspace", { mutationSymlinks: "reject" });
+await files.write("state.json", "{}");
+```
+
+These are existing compatibility differences; omitted policy does not currently
+provide uniform Windows link handling. See [write-side link policy](security-model.md#symlinks-write-side).
+
 ## Denying mutations
 
 All mutation verbs accept `denyMutations?: DenyMutationPolicy`, either as a root default or per-call option:
@@ -150,6 +179,10 @@ alone is never proof that the name still refers to the expected file.
 ### `fs.create(rel, data, options?)`
 
 Don't-clobber variant of `write()`. Throws `already-exists` if the target is there.
+An existing regular file or directory reports `already-exists` on every backend,
+including buffered, atomic and streamed creation. Rejected directories and their
+contents remain unchanged. Other non-regular types retain `not-file`; boundary,
+explicit symlink policy, deny and hardlink failures retain their precedence.
 Create-only preflight preserves boundary, alias, hardlink, and type checks without
 opening an existing target to inherit its mode; a fresh file uses the requested
 mode or the normal new-file default. When the native binding is in use

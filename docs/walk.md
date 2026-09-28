@@ -51,7 +51,7 @@ Each entry's `path` is absolute and retains the normalized spelling of the
 supplied root, including followed directory aliases. Paths do not switch to
 the canonical symlink target during descent.
 
-`walkDirectory()` and `walkDirectorySync()` always return `failedDirs`; the property remains optional on the exported `WalkDirectoryResult` type so existing callers that manually construct the legacy result shape remain source-compatible. It lists every directory whose `realpath`/`readdir` threw, so its contents are absent from `entries`. `error` is the thrown value (a `NodeJS.ErrnoException` at runtime), so callers can distinguish a benign missing-directory race (`ENOENT`) from a real read failure (`EACCES`, `EIO`, `ESTALE`, …). The walk-root failure has an empty `relativePath` and `depth: 0`. Failures resolving a symlink's target kind are not reported here.
+`walkDirectory()` and `walkDirectorySync()` always return `failedDirs`; the property remains optional on the exported `WalkDirectoryResult` type so existing callers that manually construct the legacy result shape remain source-compatible. It lists every directory whose directory resolution, opening, reading, or closing threw, so some or all of its contents may be absent from `entries`. `error` is the thrown value (a `NodeJS.ErrnoException` at runtime), so callers can distinguish a benign missing-directory race (`ENOENT`) from a real read failure (`EACCES`, `EIO`, `ESTALE`, …). The walk-root failure has an empty `relativePath` and `depth: 0`. Failures resolving a symlink's target kind are not reported here.
 
 ## Options
 
@@ -102,6 +102,14 @@ This prunes a directory after finding its marker without listing that directory'
 
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
+With `maxEntries`, both standalone walkers stream in filesystem order with a
+Node.js's default 32-entry directory buffer. They examine at most the remaining
+budget plus one lookahead per visited directory; Node may prefetch the rest of
+the current 32-entry batch without invoking filters for those names. Memory is
+bounded independently of directory width. Streams close on completion,
+truncation, and callback failure. Filtering consumes the budget. Without an entry
+budget, they retain eager directory snapshots for complete scans. Neither standalone API sorts its output.
+
 ## Root-bounded async iteration
 
 `Root.walk(rel, options)` is the root-bounded counterpart to these standalone
@@ -148,9 +156,13 @@ home-directory expansion, prefix it with `./`, as in
 
 The default `order: "sorted"` visits each directory's names in lexicographic
 order before descending depth first. It reads and sorts all names in each
-visited directory. With `maxEntries`, it prepares small metadata batches capped
-by the remaining global entry budget. Every batch stops at the first directory
-or symlink, so recursive descent cannot spend a budget already used by later
+visited directory, even with `maxEntries`, so truncated walks select the globally
+smallest names within each directory rather than a filesystem-order-dependent
+subset. For an unchanged tree this preserves deterministic results. The entry
+budget bounds metadata and filtering work, but does not bound sorted name
+enumeration memory or time. With `maxEntries`, it prepares small metadata batches
+capped by the remaining global entry budget. Every batch stops at the first
+directory or symlink, so recursive descent cannot spend a budget already used by later
 siblings. An early `break` may leave metadata from the current batch unused;
 the total still stays within `maxEntries`. Filtering requires metadata and
 consumes the entry budget, including entries skipped by the filter.
@@ -277,6 +289,20 @@ Unlike `walkDirectory()` and `walkDirectorySync()`, `Root.walk()` is
 root-bounded and reports failures inline because an async iterator has no final
 result summary. Its default remains to throw on unreadable or invalid
 directories.
+
+`Root.list()` always returns a complete sorted array and has no entry budget.
+`Root.entries()` defaults to streaming filesystem order; its sorted mode buffers
+names, and `maxEntries` caps that buffer with one lookahead before throwing
+`too-large`. Watch scans use the same guarded filesystem-order stream and enforce
+their examined-entry budget before metadata lookup. Every Root listing mode
+rejects invalid UTF-8 names before application metadata lookup, including the
+lookahead; unexamined suffixes are not validated.
+
+Bun 1.4.2 implements `Dir` with an internal eager `readdir`, including when
+`bufferSize` is one. On that runtime, these budgets bound fs-safe's admitted
+names, metadata, and results, but cannot bound Bun's internal enumeration memory.
+Async scans retain async directory reads there; use Node.js when the directory
+width itself must not determine enumeration allocation.
 
 ## See also
 
