@@ -153,7 +153,8 @@ as described below. Omitting `mutationSymlinks` preserves each implementation's
 existing mutation behavior; it does not currently provide uniform Windows link
 handling.
 
-For Windows buffered `write()` and `writeJson()`, the native pinned path rejects
+For Windows buffered replacement `write()` and `writeJson()` calls (`overwrite`
+omitted or `true`), the native pinned path rejects
 a final file symlink with `path-alias`. The legacy JavaScript path can follow an
 unchanged contained final link, keep the link itself, and replace the admitted
 target. Its configured mutation policy reauthorizes the original target before

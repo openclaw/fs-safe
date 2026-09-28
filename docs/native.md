@@ -304,7 +304,7 @@ denied-path decisions remain in TypeScript.
 Public policy does not change with the selected mechanism: traversal and link
 rejection, archive filters/limits/modes, exclusive target creation, source and
 target identity fencing, publication cleanup receipts, and secret/lock policy
-remain TypeScript-owned. Windows buffered writes with an omitted
+remain TypeScript-owned. Windows buffered replacement writes with an omitted
 `mutationSymlinks` policy retain the existing
 [final-link and parent-junction differences](writing.md#windows-link-modes)
 between native and legacy JavaScript paths; use explicit `"reject"` for uniform

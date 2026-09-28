@@ -66,8 +66,9 @@ are preserved.
 
 ### Windows link modes
 
-With `mutationSymlinks` omitted, Windows buffered `write()` and `writeJson()`
-currently differ by implementation. The native pinned path rejects a final file
+With `mutationSymlinks` omitted, Windows buffered replacement `write()` and
+`writeJson()` calls (`overwrite` omitted or `true`) currently differ by
+implementation. The native pinned path rejects a final file
 symlink with `path-alias`. The legacy JavaScript path can follow an unchanged
 contained final link and replace its admitted target, preserving the link itself.
 It reauthorizes the original link's target before staging and publication when
