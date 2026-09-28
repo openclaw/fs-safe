@@ -5,10 +5,17 @@ import { extractArchive, readArchiveEntry, resolveArchiveKind } from "../src/arc
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
-import { compressedTarFraming } from "./helpers/archive-tar-framing-compressed.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
+
+// One synthetic USTAR file (value="payload"), compressed with Node zstd/Python bz2.
+// Diagnostics need one publication; extra framing-fixture entries multiply the
+// Windows command fallback cost. Framing and long paths have their own suites.
+const compressedValue = {
+  "tar-zstd": "KLUv/WAAB1UCAPQCdmFsdWUAMDAwMDY0NDAwMDAwMDcAADAwNzAwMQAgMAB1c3RhcgAwcGF5bG9hZAAJAPWBnyFABfGG1ACQHIgABg1wrFxmJ1AE",
+  "tar-bzip2": "QlpoOTFBWSZTWaTpbTMAADHbgMmAQABlgAAIZgTfIAgYIABUUaAAANNAkkI0002oAA958jOQgpvXAtWk0DA2UBQYQ8AuaKm8XkBsDzeh6AkCiUXlyOf4u5IpwoSFJ0tpmA==",
+} as const;
 
 afterEach(() => {
   __resetFsSafeNativeConfigForTest();
@@ -25,7 +32,7 @@ for (const mode of ["off", "auto"] as const) {
       const archivePath = path.join(root, kind === "tar-zstd" ? "fixture.tar.zst" : "fixture.tar.bz2");
       const destDir = path.join(root, "destination");
       await fs.mkdir(destDir);
-      await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
+      await fs.writeFile(archivePath, Buffer.from(compressedValue[kind], "base64"));
       expect(resolveArchiveKind(archivePath)).toBe(kind);
       await extractArchive({ archivePath, destDir, timeoutMs: 10_000 });
       await expect(fs.readFile(path.join(destDir, "value"), "utf8")).resolves.toBe("payload");
@@ -43,7 +50,7 @@ it.each(["tar-zstd", "tar-bzip2"] as const)("retains the missing native cause fo
   const archivePath = path.join(root, kind === "tar-zstd" ? "fixture.tar.zst" : "fixture.tar.bz2");
   const destDir = path.join(root, "destination");
   await fs.mkdir(destDir);
-  await fs.writeFile(archivePath, Buffer.from(compressedTarFraming[0][kind], "base64"));
+  await fs.writeFile(archivePath, Buffer.from(compressedValue[kind], "base64"));
   const expected = { name: "FsSafeError", code: "helper-unavailable", cause };
   expect(() => resolveArchiveKind(archivePath)).toThrow(expect.objectContaining(expected));
   await expect(extractArchive({ archivePath, destDir, kind, timeoutMs: 10_000 })).rejects.toMatchObject(expected);
