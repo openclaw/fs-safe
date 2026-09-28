@@ -249,7 +249,9 @@ for await (const entry of capability.walk("", {
 ```
 
 Filters run serially outside metadata batches and retain the supplied options
-object as their `this` receiver. When an awaited filter resolves, the walk
+object as their `this` receiver. Cancellation is checked after every filter
+decision, including synchronous callbacks, before yielding or descending.
+When an awaited filter resolves, the walk
 checks cancellation and revalidates the current listing directory and Root
 identities before using the decision. These checks do not refresh the entry's
 captured metadata or pin a later operation.
