@@ -8,7 +8,7 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
-const modes = ["async", "sync", "sorted", "filesystem", "entries"] as const;
+const modes = ["async", "sync", "filesystem", "entries"] as const;
 
 it.each(modes)("bounds a 200,000-entry directory to eleven reads (%s)", async mode => {
   const directory = await tempRoot("fs-safe-wide-budget-");
@@ -23,9 +23,20 @@ it.each(modes)("bounds a 200,000-entry directory to eleven reads (%s)", async mo
   });
   let reads = 0;
   let closes = 0;
+  let prefetched = 0;
   const open = (_directory: unknown, options: { bufferSize?: number; encoding?: string } = {}) => {
-    expect(options.bufferSize).toBe(1);
-    const read = () => reads < count ? entry(reads++, options.encoding === "buffer") : null;
+    const standalone = mode === "async" || mode === "sync";
+    expect(options.bufferSize).toBe(standalone ? undefined : 1);
+    const bufferSize = options.bufferSize ?? 32;
+    let buffered: fsSync.Dirent[] = [];
+    const read = () => {
+      if (!buffered.length && prefetched < count) {
+        buffered = Array.from({ length: Math.min(bufferSize, count - prefetched) }, () =>
+          entry(prefetched++, options.encoding === "buffer"));
+      }
+      reads++;
+      return buffered.shift() ?? null;
+    };
     return { read: async () => read(), readSync: read,
       close: async () => { closes++; }, closeSync: () => { closes++; } } as unknown as fsSync.Dir;
   };
@@ -62,17 +73,13 @@ it.each(modes)("bounds a 200,000-entry directory to eleven reads (%s)", async mo
     }));
     expect(result.filter(entry => entry.kind === "file")).toHaveLength(10);
     expect(result.at(-1)?.kind).toBe("truncated");
-    if (mode === "sorted") {
-      expect(result.map(entry => entry.relativePath)).toEqual(
-        Array.from({ length: 11 }, (_, index) => name(index)).sort(),
-      );
-    }
   }
   sampleHeap();
   const elapsedMs = performance.now() - started;
   const heapDelta = Math.max(0, peak - before);
-  console.log(JSON.stringify({ mode, directoryEntries: count, maxEntries: 10, reads, heapDelta, elapsedMs }));
+  console.log(JSON.stringify({ mode, directoryEntries: count, maxEntries: 10, reads, prefetched, heapDelta, elapsedMs }));
   expect(reads).toBe(11);
+  expect(prefetched).toBe(mode === "async" || mode === "sync" ? 32 : 11);
   expect(closes).toBe(1);
   expect(asyncRead).not.toHaveBeenCalled();
   expect(syncRead).not.toHaveBeenCalled();
@@ -91,7 +98,7 @@ it("bounds real filesystem scans, including an exactly exhausted budget", async 
       expect(scan.truncated).toBe(maxEntries < 128);
       expect(scan.failedDirs).toEqual([]);
     }
-    const entries = await Array.fromAsync(capability.walk("", { symlinkPolicy: "skip", maxEntries }));
+    const entries = await Array.fromAsync(capability.walk("", { symlinkPolicy: "skip", order: "filesystem", maxEntries }));
     expect(entries.filter(entry => entry.kind === "file")).toHaveLength(maxEntries);
     expect(entries.some(entry => entry.kind === "truncated")).toBe(maxEntries < 128);
   }

@@ -163,7 +163,7 @@ export function walkDirectorySync(
       if (options.maxEntries === undefined) {
         entries = fsSync.readdirSync(operationPath, { withFileTypes: true });
       } else {
-        handle = fsSync.opendirSync(operationPath, { bufferSize: 1 });
+        handle = fsSync.opendirSync(operationPath);
       }
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);
@@ -248,7 +248,7 @@ export async function walkDirectory(
       if (options.maxEntries === undefined) {
         entries = await fs.readdir(operationPath, { withFileTypes: true });
       } else {
-        handle = await fs.opendir(operationPath, { bufferSize: 1 });
+        handle = await fs.opendir(operationPath);
       }
     } catch (error) {
       recordFailedDir(result, root, dir, depth, error);

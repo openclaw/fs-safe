@@ -103,10 +103,12 @@ This prunes a directory after finding its marker without listing that directory'
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
 With `maxEntries`, both standalone walkers stream in filesystem order with a
-one-entry buffer and at most one lookahead per visited directory on Node.js. They close
-streams on completion, truncation, and callback failure. Filtering consumes the
-budget. Without an entry budget, they retain eager directory snapshots for
-complete scans. Neither standalone API sorts its output.
+Node.js's default 32-entry directory buffer. They examine at most the remaining
+budget plus one lookahead per visited directory; Node may prefetch the rest of
+the current 32-entry batch without invoking filters for those names. Memory is
+bounded independently of directory width. Streams close on completion,
+truncation, and callback failure. Filtering consumes the budget. Without an entry
+budget, they retain eager directory snapshots for complete scans. Neither standalone API sorts its output.
 
 ## Root-bounded async iteration
 
@@ -153,13 +155,14 @@ home-directory expansion, prefix it with `./`, as in
 `capability.open("./" + entry.relativePath)`.
 
 The default `order: "sorted"` visits each directory's names in lexicographic
-order before descending depth first. With `maxEntries`, it streams at most the
-remaining budget plus one name from each directory, then sorts that bounded
-prefix. A truncated prefix is not necessarily the directory's globally smallest
-names; which names enter it depends on filesystem order. The extra name detects
-truncation without reading the rest of the directory. It prepares small metadata
-batches capped by the remaining global entry budget. Every batch stops at the first directory
-or symlink, so recursive descent cannot spend a budget already used by later
+order before descending depth first. It reads and sorts all names in each
+visited directory, even with `maxEntries`, so truncated walks select the globally
+smallest names within each directory rather than a filesystem-order-dependent
+subset. For an unchanged tree this preserves deterministic results. The entry
+budget bounds metadata and filtering work, but does not bound sorted name
+enumeration memory or time. With `maxEntries`, it prepares small metadata batches
+capped by the remaining global entry budget. Every batch stops at the first
+directory or symlink, so recursive descent cannot spend a budget already used by later
 siblings. An early `break` may leave metadata from the current batch unused;
 the total still stays within `maxEntries`. Filtering requires metadata and
 consumes the entry budget, including entries skipped by the filter.
@@ -171,7 +174,7 @@ do not alter its already-captured entries. Supply an entry budget or use
 filesystem order when metadata work must remain incremental. Sorted entries
 describe the observations captured in their directory snapshot or batch.
 
-Use `order: "filesystem"` to avoid buffering and sorting even the bounded prefix:
+Use `order: "filesystem"` when a wide directory must not be fully enumerated:
 
 ```ts
 for await (const entry of capability.walk("", {
@@ -192,7 +195,7 @@ types, Node may classify that one extra entry with a synchronous `lstat`.
 Handles close on completion, truncation, cancellation, errors, or an
 early `break`. Both orders keep the same depth-first traversal, entry filtering,
 and truncation rules. Cancellation is checked between entries, with event-loop
-handoffs between budgeted sorted name and metadata batches. Root and directory checks and admitted
+handoffs between budgeted sorted batches. Root and directory checks and admitted
 child metadata reads are synchronous; no mode can interrupt a filesystem
 syscall already in progress or the sorted mode's name sorting.
 

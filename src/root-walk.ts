@@ -210,8 +210,6 @@ export async function* walkRoot(
         order: options.order ?? "sorted",
         signal: options.signal,
         snapshot: maxEntries === Number.POSITIVE_INFINITY,
-        maxNames: Number.isFinite(maxEntries) ? maxEntries - examined : undefined,
-        truncateNames: true,
         admitEntry,
       }, receipt);
     } catch (error) {

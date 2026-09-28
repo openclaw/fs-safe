@@ -74,10 +74,11 @@ targets, including dangling and outside-root links. `size` describes the link,
 not its target. With an entry budget, sorted walks prepare small metadata
 batches within the remaining budget; unbounded sorted walks reuse the full
 directory snapshot.
-The default `order: "sorted"` sorts each directory's names. With `maxEntries`,
-it reads only the first remaining-budget-plus-one names in filesystem order
-and sorts that bounded prefix; a truncated subset need not contain the globally
-smallest names. `order: "filesystem"` streams without buffering that prefix. Budget exhaustion yields a `"truncated"` marker by
+The default `order: "sorted"` enumerates all names in each visited directory
+and sorts them lexicographically, even with `maxEntries`. This keeps truncated
+results deterministic for an unchanged tree, but the entry budget does not bound
+name enumeration memory or time. Use `order: "filesystem"` for bounded memory in
+wide directories. Budget exhaustion yields a `"truncated"` marker by
 default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
 Use `entryFilter(entry)` to return `"include"`, `"skip"`, or
 `"skip-subtree"`, directly or through a Promise. `"skip"` omits the current

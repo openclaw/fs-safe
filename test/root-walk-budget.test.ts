@@ -52,7 +52,7 @@ function observeDirectoryStream(): { reads: number; closed: number } {
   return calls;
 }
 
-it.each([0, 2, 5])("bounds metadata to %i examined entries with a sorted bounded name prefix", async (maxEntries) => {
+it.each([0, 2, 5])("bounds metadata to %i examined entries without changing sorted truncation", async (maxEntries) => {
   const directory = await tempRoot("fs-safe-walk-budget-");
   const names = ["e", "d", "c", "b", "a"];
   await Promise.all(names.map(name => fs.writeFile(path.join(directory, name), name)));
@@ -60,21 +60,33 @@ it.each([0, 2, 5])("bounds metadata to %i examined entries with a sorted bounded
   const observed = observeChildMetadata(directory);
   const entries = [];
   for await (const entry of capability.walk("", { symlinkPolicy: "skip", maxEntries })) entries.push(entry);
-  const stream = await fs.opendir(directory);
-  const prefix: string[] = [];
-  try {
-    while (prefix.length <= maxEntries) {
-      const entry = await stream.read();
-      if (!entry) break;
-      prefix.push(entry.name);
-    }
-  } finally { await stream.close(); }
-  const sorted = prefix.sort();
+  const sorted = names.toSorted();
   expect(entries).toEqual([
     ...sorted.slice(0, maxEntries).map(relativePath => ({ relativePath, kind: "file", size: 1 })),
     ...(maxEntries < names.length ? [{ relativePath: sorted[maxEntries], kind: "truncated", size: 0 }] : []),
   ]);
   expect(observed).toEqual(sorted.slice(0, maxEntries));
+});
+
+it("returns globally smallest names even when the directory stream starts with the largest", async () => {
+  const directory = await tempRoot("fs-safe-walk-global-order-");
+  const names = ["z", "y", "x", "b", "a"];
+  for (const name of names) await fs.writeFile(path.join(directory, name), name);
+  const capability = await root(directory);
+  // Both enumeration APIs expose the same reversed order. Sorting only the
+  // first budget+one names would incorrectly return x/y instead of a/b.
+  vi.spyOn(fs, "readdir").mockResolvedValue(names.map(name => Buffer.from(name)) as never);
+  let index = 0;
+  const read = () => index < names.length ? { name: Buffer.from(names[index++]!) } : null;
+  vi.spyOn(fs, "opendir").mockResolvedValue({
+    read: async () => read(), readSync: read, close: async () => {},
+  } as unknown as fsSync.Dir);
+  expect(await Array.fromAsync(capability.walk("", { order: "sorted", symlinkPolicy: "skip", maxEntries: 2 })))
+    .toEqual([
+      { relativePath: "a", kind: "file", size: 1 },
+      { relativePath: "b", kind: "file", size: 1 },
+      { relativePath: "x", kind: "truncated", size: 0 },
+    ]);
 });
 
 it.each([0, 2, 5])("reads only %i entries and one lookahead in filesystem order", async (maxEntries) => {

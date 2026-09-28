@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type { BigIntStats, Dir, Stats } from "node:fs";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -32,9 +33,27 @@ import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-obser
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 
-import { directoryEntryName, openDirectoryNames, readDirectoryEntryName, readDirectoryNamePrefix } from "./root-directory-names.js";
-
 const METADATA_BATCH_SIZE = 32;
+
+function directoryEntryName(bytes: Buffer): string {
+  if (!isUtf8(bytes)) {
+    throw new FsSafeError("invalid-path", "directory entry name is not valid UTF-8");
+  }
+  return bytes.toString("utf8");
+}
+
+async function readDirectoryEntryName(handle: Dir): Promise<string | undefined> {
+  const entry = await handle.read();
+  // Bun returns the raw Buffer directly; Node returns a Dirent whose name is a Buffer.
+  // Node's Dir types still declare only string names.
+  return entry === null ? undefined
+    : directoryEntryName(Buffer.isBuffer(entry) ? entry : entry.name as unknown as Buffer);
+}
+
+function openDirectoryNames(directory: string): Promise<Dir> {
+  return fs.opendir(directory, { bufferSize: 1, encoding: "buffer" as BufferEncoding });
+}
+
 export function pathStatFromStats(stat: Stats | BigIntStats): PathStat {
   const mtimeMs = typeof stat.mtimeMs === "bigint"
     ? "mtimeNs" in stat && typeof stat.mtimeNs === "bigint"
@@ -304,7 +323,6 @@ export type RootDirectoryListingOptions = {
   signal?: AbortSignal;
   snapshot: boolean;
   maxNames?: number;
-  truncateNames?: boolean;
   metadataBatchSize?: number;
   /** Internal exact metadata lane, supported by streaming filesystem order. */
   exactIdentity?: boolean;
@@ -365,10 +383,9 @@ export async function openRootDirectoryListing(
     } else if (options.snapshot) {
       snapshot = await listGuardedDirectoryPath(root, guard, true, receipt);
     } else if (options.maxNames !== undefined) {
-      names = []; handle = await openDirectoryNames(guard.realPath);
-      if (options.truncateNames) {
-        names = await readDirectoryNamePrefix(handle, options.maxNames, assertCurrent);
-      } else while (true) {
+      names = [];
+      handle = await openDirectoryNames(guard.realPath);
+      while (true) {
         await assertCurrent();
         const name = await readDirectoryEntryName(handle);
         await assertCurrent();
@@ -382,7 +399,8 @@ export async function openRootDirectoryListing(
     } else {
       names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName);
     }
-    await assertCurrent(); names?.sort();
+    await assertCurrent();
+    names?.sort();
   } catch (error) {
     const operationError = normalizeDirectoryError(error);
     try {
