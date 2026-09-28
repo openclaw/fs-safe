@@ -24,10 +24,13 @@ if (mode === undefined) {
   assert.ok(modes.includes(mode));
   process.env.FS_SAFE_NATIVE_MODE = mode;
   const loads = [];
+  let loadAttempts = 0;
   const dlopen = process.dlopen;
   process.dlopen = function(module, filename, ...rest) {
+    loadAttempts++;
+    const result = Reflect.apply(dlopen, this, [module, filename, ...rest]);
     loads.push(path.basename(filename));
-    return Reflect.apply(dlopen, this, [module, filename, ...rest]);
+    return result;
   };
   const { root } = await import("../dist/index.js");
   const { sha256File } = await import("../dist/durability.js");
@@ -38,6 +41,7 @@ if (mode === undefined) {
     fs.writeFileSync(source, "source");
     await sha256File(source);
     assert.equal(loads.length > 0, mode !== "off", "prove native loading instead of assuming auto loaded it");
+    if (mode === "off") assert.equal(loadAttempts, 0);
     const names = ["create", "atomic-create", "stream-create", "createJson", "atomic-createJson",
       "write-exclusive", "writeJson-exclusive", "copy-exclusive"];
     for (const name of names) {
