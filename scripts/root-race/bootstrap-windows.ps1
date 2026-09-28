@@ -17,22 +17,10 @@ if ($LASTEXITCODE) { throw 'pnpm install failed' }
 & pnpm.cmd --version
 & pnpm.cmd install --frozen-lockfile
 if ($LASTEXITCODE) { throw 'dependency install failed' }
-# This proof changes no Rust. Compile current-main JS and use the approved published binding.
-& pnpm.cmd exec tsc -p tsconfig.json
-if ($LASTEXITCODE) { throw 'TypeScript compile failed' }
-@'
-import { copyWindowsCommandAssets } from "../../scripts/windows-command-assets.mjs";
-copyWindowsCommandAssets();
-'@ | Set-Content -Encoding UTF8 scripts/root-race/copy-assets.mjs
-& node scripts/root-race/copy-assets.mjs
-if ($LASTEXITCODE) { throw 'Windows assets copy failed' }
-New-Item -ItemType Directory -Force '.artifacts/native' | Out-Null
-Push-Location '.artifacts/native'
-& npm.cmd pack @openclaw/fs-safe-win32-x64-msvc@0.21.0 --ignore-scripts
-if ($LASTEXITCODE) { throw 'binding fetch failed' }
-& tar -xzf openclaw-fs-safe-win32-x64-msvc-0.21.0.tgz
-Copy-Item -Force package/fs-safe-native.node (Join-Path $workspace 'packages/win32-x64-msvc/fs-safe-native.node')
-Pop-Location
+& pnpm.cmd build
+if ($LASTEXITCODE) { throw 'source build failed; install the documented Rust/WASM toolchain' }
+& pnpm.cmd native:build
+if ($LASTEXITCODE) { throw 'matching native source build failed; install the documented MSVC toolchain' }
 & node scripts/root-race/run.mjs --seeds=6 --seconds=2 --output=.artifacts/windows-smoke.jsonl
 if ($LASTEXITCODE) { throw 'smoke failed' }
 & node scripts/root-race/run.mjs --seeds=60 --seconds=20 --output=.artifacts/windows-races.jsonl
