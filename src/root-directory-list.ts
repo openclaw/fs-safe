@@ -34,7 +34,6 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 
 const METADATA_BATCH_SIZE = 32;
-
 function directoryEntryName(bytes: Buffer): string {
   if (!isUtf8(bytes)) {
     throw new FsSafeError("invalid-path", "directory entry name is not valid UTF-8");
@@ -323,6 +322,7 @@ export type RootDirectoryListingOptions = {
   signal?: AbortSignal;
   snapshot: boolean;
   maxNames?: number;
+  truncateNames?: boolean;
   metadataBatchSize?: number;
   /** Internal exact metadata lane, supported by streaming filesystem order. */
   exactIdentity?: boolean;
@@ -383,15 +383,16 @@ export async function openRootDirectoryListing(
     } else if (options.snapshot) {
       snapshot = await listGuardedDirectoryPath(root, guard, true, receipt);
     } else if (options.maxNames !== undefined) {
-      names = [];
-      handle = await openDirectoryNames(guard.realPath);
+      names = []; handle = await openDirectoryNames(guard.realPath);
       while (true) {
         await assertCurrent();
         const name = await readDirectoryEntryName(handle);
         await assertCurrent();
         if (name === undefined) break;
         if (names.length >= options.maxNames) {
-          throw new FsSafeError("too-large", "directory entry budget exceeded");
+          if (!options.truncateNames) throw new FsSafeError("too-large", "directory entry budget exceeded");
+          names.push(name);
+          break;
         }
         names.push(name);
       }
@@ -399,8 +400,7 @@ export async function openRootDirectoryListing(
     } else {
       names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName);
     }
-    await assertCurrent();
-    names?.sort();
+    await assertCurrent(); names?.sort();
   } catch (error) {
     const operationError = normalizeDirectoryError(error);
     try {

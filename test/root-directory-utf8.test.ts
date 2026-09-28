@@ -11,6 +11,7 @@ const scans: [string, (scoped: Root) => Promise<unknown>][] = [
   ...(["filesystem", "sorted"] as const).flatMap(order => [
     [`entries ${order}`, (scoped: Root) => Array.fromAsync(scoped.entries("", { order }))],
     [`bounded entries ${order}`, (scoped: Root) => Array.fromAsync(scoped.entries("", { order, maxEntries: 10 }))],
+    [`bounded walk ${order}`, (scoped: Root) => Array.fromAsync(scoped.walk("", { order, maxEntries: 10, symlinkPolicy: "skip" }))],
     [`walk ${order}`, (scoped: Root) => Array.fromAsync(scoped.walk("", { order, symlinkPolicy: "skip" }))],
   ] as [string, (scoped: Root) => Promise<unknown>][]),
 ];

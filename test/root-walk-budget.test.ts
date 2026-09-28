@@ -52,7 +52,7 @@ function observeDirectoryStream(): { reads: number; closed: number } {
   return calls;
 }
 
-it.each([0, 2, 5])("bounds metadata to %i examined entries without changing sorted truncation", async (maxEntries) => {
+it.each([0, 2, 5])("bounds metadata to %i examined entries with a sorted bounded name prefix", async (maxEntries) => {
   const directory = await tempRoot("fs-safe-walk-budget-");
   const names = ["e", "d", "c", "b", "a"];
   await Promise.all(names.map(name => fs.writeFile(path.join(directory, name), name)));
@@ -60,7 +60,16 @@ it.each([0, 2, 5])("bounds metadata to %i examined entries without changing sort
   const observed = observeChildMetadata(directory);
   const entries = [];
   for await (const entry of capability.walk("", { symlinkPolicy: "skip", maxEntries })) entries.push(entry);
-  const sorted = names.toSorted();
+  const stream = await fs.opendir(directory);
+  const prefix: string[] = [];
+  try {
+    while (prefix.length <= maxEntries) {
+      const entry = await stream.read();
+      if (!entry) break;
+      prefix.push(entry.name);
+    }
+  } finally { await stream.close(); }
+  const sorted = prefix.sort();
   expect(entries).toEqual([
     ...sorted.slice(0, maxEntries).map(relativePath => ({ relativePath, kind: "file", size: 1 })),
     ...(maxEntries < names.length ? [{ relativePath: sorted[maxEntries], kind: "truncated", size: 0 }] : []),
