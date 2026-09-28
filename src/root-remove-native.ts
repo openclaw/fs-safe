@@ -230,9 +230,7 @@ export async function tryRemovePathInRootNative(
       }
       if (options.assertBeforeMutation) {
         options.assertBeforeMutation();
-        // The native call repeats the exact entry identity/type check; refresh
-        // only pathname authority here, with no await before that call.
-        assertCurrent();
+        if (!observe(fd, name, entryPath, initial)) return;
       }
       // No await separates the final admission from native identity-checked unlink.
       try { unlink(fd, name, initial.dev, initial.ino, initial.directory); } catch (error) {
