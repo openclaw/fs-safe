@@ -13,6 +13,25 @@ afterEach(() => {
 });
 
 describe("sync file-store write validation", () => {
+  it.each([false, true])(
+    "preserves parent admission diagnostics without publishing (private=%s)",
+    async (privateMode) => {
+      const root = await tempRoot("fs-safe-sync-store-parent-error-");
+      const parent = path.join(root, "blocked");
+      await fs.writeFile(parent, "keep");
+      const store = fileStoreSync({ rootDir: root, private: privateMode, durable: false });
+
+      expect(() => store.writeText("blocked/value.txt", "replacement"))
+        .toThrow(expect.objectContaining({
+          code: "not-file",
+          message: `${privateMode ? "private store" : "store"} directory component must be a directory: ${parent}`,
+        }));
+
+      await expect(fs.readFile(parent, "utf8")).resolves.toBe("keep");
+      expect(await fs.readdir(root)).toEqual(["blocked"]);
+    },
+  );
+
   it("retains a write-capable temp descriptor through fsync", async () => {
     const root = await tempRoot("fs-safe-sync-store-write-handle-");
     const realOpenSync = fsSync.openSync;
