@@ -1,0 +1,91 @@
+name: watch ancestor scopes
+
+on:
+  pull_request:
+    paths:
+      - 'src/watch*'
+      - 'native/src/watch*'
+      - 'scripts/watch-ancestor*'
+      - 'test/watch*'
+      - '.github/workflows/watch-ancestor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ancestor:
+    name: Ancestor scopes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      FS_SAFE_NATIVE_MODE: require
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # main before entry transport splitting; a fixed negative control also works after landing.
+          ref: ff0bfa4f74f09a1bf08bd1ed9c1bce83d2fde45d
+          path: baseline
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.4.2
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: ./.github/actions/setup-archive-llvm
+      - name: Prepare toolchain
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build baseline
+        working-directory: baseline
+        run: |
+          git rev-parse HEAD
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm native:build
+      - name: Build candidate
+        run: |
+          git rev-parse HEAD
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm native:build
+          mkdir -p ancestor-results
+      - name: Baseline entry storm (macOS) or measurement (Windows)
+        env:
+          FS_SAFE_PROOF_DIST: baseline/dist
+          FS_SAFE_PROOF_EXPECT: ${{ runner.os == 'macOS' && 'storm' || 'measure' }}
+        run: node scripts/watch-ancestor-proof.mjs | tee ancestor-results/baseline-entry.json
+      - name: Candidate entry events
+        if: ${{ !cancelled() }}
+        env:
+          FS_SAFE_PROOF_EXPECT: ${{ runner.os == 'macOS' && 'zero' || 'measure' }}
+        run: node scripts/watch-ancestor-proof.mjs | tee ancestor-results/candidate-entry.json
+      - name: Poll control
+        if: ${{ !cancelled() }}
+        env:
+          FS_SAFE_PROOF_MODE: poll
+        run: node scripts/watch-ancestor-proof.mjs | tee ancestor-results/poll-entry.json
+      - name: Measure remaining depth-one tree traffic
+        if: ${{ !cancelled() }}
+        env:
+          FS_SAFE_PROOF_KIND: tree
+          FS_SAFE_PROOF_EXPECT: measure
+        run: node scripts/watch-ancestor-proof.mjs | tee ancestor-results/candidate-tree.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ancestor-scopes-${{ matrix.os }}
+          path: ancestor-results/*.json
+          if-no-files-found: error

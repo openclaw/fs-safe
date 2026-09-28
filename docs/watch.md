@@ -76,14 +76,14 @@ scope, including when an excluded subtree caused the underlying event pressure.
 | Platform/runtime | `auto` | Event transport / limitation |
 | --- | --- | --- |
 | Node.js on Linux with addon | `events` | One shared Rust thread and inotify instance; a nonrecursive watch per distinct directory inode. |
-| Node.js on macOS with addon | `events` | One FSEvents stream per subscription on a shared serial dispatch queue. Pathname activity after a swap remains advisory. |
+| Node.js on macOS with addon | `events` | Entry scopes use descriptor-bound kqueue watches; tree scopes share one FSEvents stream per subscription. Pathname activity after a swap remains advisory. |
 | Node.js on Windows with addon | `events` | One recursive ReadDirectoryChangesW Root handle per subscription on the shared IOCP hub; the open handle prevents ordinary renames of the Root's ancestors. |
 | Bun / other unsupported runtimes | `poll` | TSFN lifetime and shutdown have not been qualified; `events` rejects. |
 | Missing/disabled addon | `poll` | `events` rejects with `FsSafeError("helper-unavailable")`. |
 
 The shared hub sleeps until a filesystem event, command, or callback acknowledgement:
-Linux blocks on inotify plus eventfd, Windows on IOCP, and macOS on its command
-channel (FSEvents wakes it from the serial dispatch queue). There is no native
+Linux blocks on inotify plus eventfd, Windows on IOCP, and macOS on kqueue with a
+command wake (FSEvents wakes it from the serial dispatch queue). There is no native
 polling timer; the independent JS reconciliation interval remains authoritative.
 
 `mode` is required. `poll` never starts or loads the watch hub; guarded scans
@@ -104,15 +104,28 @@ Nonblocking TSFN batches cannot block the hub on JavaScript, and per-owner
 pending detail and queued batches are bounded. The last removal stops and joins
 the native thread. No Worker threads, eval programs, or JS `fs.watch` are used.
 
-macOS uses FileEvents, NoDefer and WatchRoot with a 30 ms FSEvents latency.
-After guarded admission, streams use selected tree anchors and entry parents,
+macOS entry scopes use nonrecursive `EVFILT_VNODE` watches on the admitted parent
+and, when present, the entry itself. Parent activity requests a guarded scan
+without supplying filenames. The entry descriptor covers content and attribute
+changes and is replaced when a guarded scan admits a new identity. Missing paths
+use their nearest admitted ancestor. Descriptors are opened without following
+symlinks; a symlink entry uses `O_SYMLINK` to observe the link itself. Every
+descriptor's device/inode must match the guarded observation. There are at most
+two retained descriptors per entry scope (128 scopes maximum), counted in health
+`directories`; descriptor exhaustion fails registration with `EMFILE`. Removal
+closes these descriptors on the hub before returning. Deep unselected traffic
+does not reach an entry-only subscription.
+
+Tree scopes of every depth retain FileEvents, NoDefer and WatchRoot with a 30 ms
+FSEvents latency. After guarded admission, streams use only selected tree anchors,
 falling back to the nearest admitted ancestor for missing paths. Nested anchors
 are deduplicated, with at most 128 paths. The eight shallowest non-overlapping
 excluded directories are also passed to `FSEventStreamSetExclusionPaths`.
 When the stream paths change, the old stream is stopped, invalidated and released
 on its dispatch queue, then its replacement starts before another guarded pass
 covers the handover. Native exclusions reduce traffic but cannot eliminate real
-FSEvents drops, including during recursive deletion.
+FSEvents drops, including during recursive deletion. A shallow tree anchored above
+a busy unselected subtree still receives recursive traffic and can overflow.
 Absolute hints are reduced lexically against the admitted canonical Root;
 outside paths never become detail. Dropped/wrapped streams, RootChanged and
 Unmount trigger guarded reconciliation. Pathname hints can reflect activity

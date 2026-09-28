@@ -17,6 +17,7 @@ function shallowest(paths: Iterable<string>, limit: number): string[] {
 export function watchStreamPaths(snapshot: WatchSnapshot, scopes: readonly WatchScope[]): WatchStreamPaths {
   const anchors: string[] = [];
   for (const scope of scopes) {
+    if (scope.kind === "entry") continue;
     let name = scope.kind === "tree" && scope.depth !== 0 ? scope.path : path.dirname(scope.path);
     if (name === ".") name = "";
     while (!snapshot.directoryPaths?.has(name)) {

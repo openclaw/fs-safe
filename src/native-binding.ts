@@ -124,6 +124,7 @@ export interface NativeBinding {
     dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, ctimeNs: bigint, sha256: string, maxBytes: number): NativeRetainedFile;
   watchRegister?(root: string, limit: number, callback: (batch: import("./watch-native.js").NativeWatchWireBatch) => void, persistent: boolean): number;
   watchConfigure?(id: number, anchors: string[], exclusions: string[]): void;
+  watchEntries?(id: number, entries: import("./watch-native.js").NativeWatchEntry[]): { directories: number; changed: boolean };
   watchAdd?(id: number, directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }): void;
   watchTestEvent?(id: number, path: string, flags: number): void;
   watchUnregister?(id: number): void;

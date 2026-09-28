@@ -26,6 +26,8 @@ it.each(["poll", "native-off", "registration-failure", "anchor-failure", "events
     vi.spyOn(transport, "watchBinding").mockReturnValue({
       watchRegister: scenario === "registration-failure" ? unavailable : () => 1,
       watchAdd: scenario === "anchor-failure" ? unavailable : () => {},
+      watchConfigure() {},
+      watchEntries: () => ({ changed: false, directories: 0 }),
       watchUnregister() {},
     } as unknown as NativeBinding);
   }

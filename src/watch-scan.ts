@@ -12,7 +12,8 @@ import type { DirEntry } from "./types.js";
 import type { WatchEntry, WatchOptions, WatchScope } from "./watch-types.js";
 
 export type DirectoryIdentity = Readonly<{ dev: bigint; ino: bigint }>;
-export type WatchSnapshot = { entries: Map<string, string>; excluded?: Map<string, WatchEntry["kind"]>; excludedDirectories?: Map<string, string>; directoryPaths?: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean };
+export type WatchEntryAnchor = { directory: string; name: string; target?: DirectoryIdentity & { kind: WatchEntry["kind"] } };
+export type WatchSnapshot = { entries: Map<string, string>; entryAnchors?: Map<string, WatchEntryAnchor>; excluded?: Map<string, WatchEntry["kind"]>; excludedDirectories?: Map<string, string>; directoryPaths?: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean };
 export function watchScopes(input: readonly WatchScope[]): readonly WatchScope[] {
   if (!Array.isArray(input) || input.length > 128) throw new RangeError("watch accepts at most 128 scopes");
   return Object.freeze(input.map(scope => {
@@ -64,7 +65,8 @@ export async function scanWatch(
 ): Promise<WatchSnapshot> {
   const exclusions = new Map<string, WatchEntry["kind"]>();
   const excludedDirectories = new Map<string, string>(), directoryPaths = new Map<string, string>();
-  const result: WatchSnapshot = { entries: new Map(), excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0 };
+  const entryAnchors = new Map<string, WatchEntryAnchor>();
+  const result: WatchSnapshot = { entries: new Map(), entryAnchors, excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0 };
   const attempts = new Map<string, number>();
   const guards = new Map<string, RootDirectoryObservationGuard>();
   const walked = new Map<string, number>();
@@ -74,6 +76,7 @@ export async function scanWatch(
     if (structural.size < options.maxPendingPaths) structural.add(relative); else result.overflow = true;
     // Discard partially observed names when their enclosing directory lost admission.
     const below = (name: string) => name === relative || !relative || name.startsWith(relative + path.sep);
+    for (const [scope, anchor] of entryAnchors) if (below(anchor.directory)) entryAnchors.delete(scope);
     for (const map of [result.entries, exclusions, excludedDirectories, directoryPaths, result.targets, result.directories, guards, walked]) {
       for (const name of map.keys()) if (below(name)) map.delete(name);
     }
@@ -197,6 +200,7 @@ export async function scanWatch(
     signal.throwIfAborted();
     if (!scope.path) {
       const guard = await directory("");
+      if (scope.kind === "entry") entryAnchors.set(scope.path, { directory: "", name: "" });
       result.entries.set("", fingerprint({ name: "", ...pathStatFromStats(guard.stat) }, guard.stat));
       if (scope.kind === "tree" && scope.depth! > 0) await tree("", scope.depth!);
       continue;
@@ -206,6 +210,8 @@ export async function scanWatch(
     try {
       for (let i = 0; i < segments.length; i++) {
         const guard = await directory(relative);
+        const anchor: WatchEntryAnchor = { directory: relative, name: segments[i]! };
+        if (scope.kind === "entry") entryAnchors.set(scope.path, anchor);
         examined();
         // Filesystem lookup, not lowercase/prefix matching, owns case, Unicode and
         // short-name aliases. It also preserves case-sensitive Windows directories.
@@ -214,6 +220,7 @@ export async function scanWatch(
         if (!found) break;
         const name = relative ? path.join(relative, segments[i]!) : segments[i]!;
         if (await excluded(name, found.entry)) break;
+        anchor.target = { ...found.identity, kind: kind(found.entry) };
         if (i === segments.length - 1) {
           result.entries.set(name, fingerprint(found.entry, found.identity));
           result.targets.set(name, found.identity);

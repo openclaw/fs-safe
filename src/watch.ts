@@ -228,25 +228,37 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       } catch (error) { if (!fallBack(error)) throw error; }
       check(g);
     }
-    const next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
-      async (name, identity, guard) => {
-        check(g);
-        const existing = registered.get(name);
-        const acquire = !existing || existing.dev !== identity.dev || existing.ino !== identity.ino;
-        await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
-        check(g);
-        if (acquire) {
-          try { backend?.add(name, identity); }
-          catch (error) {
-            if (snapshot || !fallBack(error)) throw error;
-            await retireBackend(); check(g);
+    let next: WatchSnapshot;
+    for (let attempt = 0; ; attempt++) {
+      next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
+        async (name, identity, guard) => {
+          check(g);
+          const existing = registered.get(name);
+          const acquire = !existing || existing.dev !== identity.dev || existing.ino !== identity.ino;
+          await getFsSafeTestHooks()?.beforeWatchRegistration?.(guard.realPath);
+          check(g);
+          if (acquire) {
+            try { backend?.add(name, identity); }
+            catch (error) {
+              if (snapshot || !fallBack(error)) throw error;
+              await retireBackend(); check(g);
+            }
           }
-        }
-        await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+          await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
+          check(g);
+          if (acquire) registered.set(name, identity);
+        }, retainRetirement);
+      check(g);
+      try {
+        if (backend?.entries(next)) pending = true;
+        break;
+      } catch (error) {
+        await assertRootIdentityCurrent(context);
         check(g);
-        if (acquire) registered.set(name, identity);
-      }, retainRetirement);
-    check(g);
+        if (attempt >= 2 || !isWatchPathError(error)) throw error;
+        // A replacement between scan and descriptor admission requires a fresh identity.
+      }
+    }
     if (backend?.configure(watchStreamPaths(next, g.scopes))) {
       // The replacement stream is live before the next guarded pass covers the handover.
       pending = true;
@@ -255,7 +267,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     if ([...registered.keys()].some(name => !next.directories.has(name))) {
       refreshBackend = true;
     }
-    observedDirectories = next.directories.size;
+    observedDirectories = backend?.directories === undefined ? next.directories.size
+      : backend.directories + (g.scopes.some(scope => scope.kind === "tree") ? next.directories.size : 0);
     const initial = !snapshot;
     let observed = next.overflow ? undefined : changedEntries(snapshot, next, maxPendingPaths);
     if (observed) {

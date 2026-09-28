@@ -1,4 +1,4 @@
-use super::{Directory, Notify, SharedPending};
+use super::{Directory, Notify, SharedPending, WatchEntriesResult, WatchEntryRegistration};
 use crate::{NativeResult, native_error};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -43,10 +43,13 @@ unsafe extern "C" {
     fn dispatch_sync_f(queue: Ref, context: Ref, work: unsafe extern "C" fn(Ref));
     fn dispatch_release(queue: Ref);
 }
-#[derive(Clone)]
-pub(super) struct Waker;
-impl Waker {
-    pub fn wake(&self) {} // The channel send itself wakes recv() on Darwin.
+#[path = "watch_kqueue.rs"]
+mod kqueue;
+pub(super) use kqueue::Waker;
+struct Owner {
+    root: String,
+    pending: SharedPending,
+    notify: Notify,
 }
 struct Events {
     prefix: String,
@@ -54,7 +57,6 @@ struct Events {
     notify: Option<Notify>,
 }
 struct Stream {
-    root: String,
     _paths: CfValue,
     _exclusions: CfValue,
     stream: Ref,
@@ -91,7 +93,7 @@ fn paths_array(paths: &[String]) -> NativeResult<CfValue> {
     Ok(CfValue(array))
 }
 fn validate_paths(root: &str, anchors: &[String], exclusions: &[String]) -> NativeResult<()> {
-    if anchors.is_empty() || anchors.len() > 128 || exclusions.len() > 8 {
+    if anchors.len() > 128 || exclusions.len() > 8 {
         return Err(native_error("EINVAL", "invalid FSEvents path count"));
     }
     let prefix = format!("{}/", root.trim_end_matches('/'));
@@ -107,6 +109,8 @@ fn validate_paths(root: &str, anchors: &[String], exclusions: &[String]) -> Nati
 }
 pub(super) struct Backend {
     queue: Ref,
+    vnodes: kqueue::Queue,
+    owners: HashMap<u32, Owner>,
     streams: HashMap<u32, Stream>,
 }
 unsafe extern "C" fn callback(_: Ref, info: Ref, count: usize, paths: Ref, flags: *const u32, _: *const u64) {
@@ -162,11 +166,12 @@ unsafe extern "C" fn retire(stream: Ref) {
 unsafe extern "C" fn barrier(_: Ref) {}
 impl Backend {
     pub fn new() -> NativeResult<Self> {
+        let vnodes = kqueue::Queue::new()?;
         let queue = unsafe { dispatch_queue_create(c"fs-safe-watch".as_ptr(), null_mut()) };
         if queue.is_null() {
             return Err(native_error("ENOMEM", "create watch dispatch queue"));
         }
-        Ok(Self { queue, streams: HashMap::new() })
+        Ok(Self { queue, vnodes, owners: HashMap::new(), streams: HashMap::new() })
     }
     pub fn register(
         &mut self,
@@ -175,7 +180,8 @@ impl Backend {
         pending: SharedPending,
         notify: Notify,
     ) -> NativeResult<()> {
-        self.register_paths(id, root, pending, notify, &[root.to_owned()], &[])
+        self.owners.insert(id, Owner { root: root.into(), pending, notify });
+        Ok(())
     }
     fn register_paths(
         &mut self,
@@ -219,24 +225,40 @@ impl Backend {
             }
             return Err(native_error("EIO", "configure/start FSEvents stream"));
         }
-        self.streams
-            .insert(id, Stream { root: root.into(), _paths: array, _exclusions: excluded, stream, events });
+        self.streams.insert(id, Stream { _paths: array, _exclusions: excluded, stream, events });
         Ok(())
     }
     pub fn configure(&mut self, id: u32, anchors: &[String], exclusions: &[String]) -> NativeResult<()> {
-        let old =
-            self.streams.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
+        let old = self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
         validate_paths(&old.root, anchors, exclusions)?;
         let root = old.root.clone();
-        let pending = old.events.pending.clone();
-        let notify = old.events.notify.clone().unwrap();
-        self.remove(id)?;
+        let pending = old.pending.clone();
+        let notify = old.notify.clone();
+        self.remove_stream(id);
+        if anchors.is_empty() {
+            return Ok(());
+        }
         self.register_paths(id, &root, pending, notify, anchors, exclusions)
+    }
+    pub fn entries(
+        &mut self,
+        id: u32,
+        entries: Vec<WatchEntryRegistration>,
+    ) -> NativeResult<WatchEntriesResult> {
+        let owner =
+            self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
+        self.vnodes.configure(id, &owner.root, entries, owner.pending.clone())
     }
     pub fn add(&mut self, _: u32, _: &Directory) -> NativeResult<()> {
         Ok(())
     }
     pub fn remove(&mut self, id: u32) -> NativeResult<()> {
+        self.vnodes.remove(id);
+        self.owners.remove(&id);
+        self.remove_stream(id);
+        Ok(())
+    }
+    fn remove_stream(&mut self, id: u32) {
         if let Some(stream) = self.streams.remove(&id) {
             unsafe {
                 dispatch_sync_f(self.queue, stream.stream, retire);
@@ -244,21 +266,28 @@ impl Backend {
             }
             drop(stream.events);
         }
-        Ok(())
     }
     pub fn test_event(&self, id: u32, path: &str, flags: u32) -> NativeResult<()> {
-        let stream =
-            self.streams.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
-        stream.events.record(Some(path), flags);
+        let owner =
+            self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
+        Events {
+            prefix: format!("{}/", owner.root.trim_end_matches('/')),
+            pending: owner.pending.clone(),
+            notify: None,
+        }
+        .record(Some(path), flags);
         Ok(())
     }
     pub fn waker(&self) -> Waker {
-        Waker
+        self.vnodes.waker()
+    }
+    pub fn wait(&mut self) {
+        self.vnodes.wait();
     }
 }
 impl Drop for Backend {
     fn drop(&mut self) {
-        for id in self.streams.keys().copied().collect::<Vec<_>>() {
+        for id in self.owners.keys().copied().collect::<Vec<_>>() {
             let _ = self.remove(id);
         }
         unsafe {
