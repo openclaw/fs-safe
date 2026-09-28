@@ -55,6 +55,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const maxEntries = budget(options.maxEntries, 100_000, "maxEntries");
   const maxPendingPaths = budget(options.maxPendingPaths, 256, "maxPendingPaths", 4096);
   if (typeof options.onInvalidate !== "function") throw new TypeError("watch requires onInvalidate");
+  const callerSignal = options.signal ? AbortSignal.any([options.signal]) : undefined;
   const makeGeneration = (scopes: readonly WatchScope[]) => ({
     scopes: watchScopes(scopes), abort: new AbortController(), waiter: deferred(),
   });
@@ -342,7 +343,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     pendingWaiter?.reject(retired()); runningWaiter?.reject(retired());
     pendingWaiter = undefined; runningWaiter = undefined;
     clearTimers();
-    options.signal?.removeEventListener("abort", abort);
+    if (callerSignal) callerSignal.onabort = null;
     // Start physical stop immediately, without waiting behind an in-flight scan.
     try { backend?.close(); } catch (error) { retainRetirement(error); }
     closing = Promise.resolve().then(async () => {
@@ -384,7 +385,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       return next.waiter.promise;
     },
   };
-  options.signal?.addEventListener("abort", abort, { once: true });
-  if (options.signal?.aborted) abort(); else pump();
+  if (callerSignal) callerSignal.onabort = abort;
+  if (callerSignal?.aborted) abort(); else pump();
   return subscription;
 }

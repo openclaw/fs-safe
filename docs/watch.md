@@ -202,7 +202,8 @@ including during startup or reconciliation. Invalidations still arrive while
 other work keeps the process alive. Persistent and non-persistent subscriptions
 have independent lifetimes; closing the last persistent one lets Node exit.
 Native environment cleanup retires any remaining event registrations and joins
-the hub at exit. `signal` triggers close;
+the hub at exit. `signal` triggers close, including when a caller's abort
+listener stops event propagation;
 await `close()` or `[Symbol.asyncDispose]()` to join owned work.
 
 `health()` returns `starting`, `ready`, `reconciling`, `unavailable`, or `closed`,
