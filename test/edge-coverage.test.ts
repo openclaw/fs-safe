@@ -7,7 +7,7 @@ import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import {
-  ensureStoreDirectorySync,
+  ensureParentSync,
   writeStreamToTempSource,
 } from "../src/file-store-boundary.js";
 import { assertSyncStoreDirectoryReceipt } from "../src/file-store-sync-directory.js";
@@ -139,33 +139,30 @@ describe("directory replacement and file store boundary helpers", () => {
 
   it("guards sync parents and rejects escapes or swapped directories", async () => {
     const root = await tempRoot("fs-safe-store-boundary-");
-    const guard = ensureStoreDirectorySync({
+    const guard = ensureParentSync({
       rootDir: root,
-      targetDir: path.join(root, "nested"),
+      filePath: path.join(root, "nested", "file.txt"),
       mode: 0o700,
-      messagePrefix: "store",
     });
     expect(path.basename(guard.dir)).toBe("nested");
     expect(() => assertSyncStoreDirectoryReceipt(guard)).not.toThrow();
     expect(() => assertSyncStoreDirectoryReceipt({ ...guard, realPath: path.join(root, "other") }))
       .toThrow("changed during write");
     expect(() =>
-      ensureStoreDirectorySync({
+      ensureParentSync({
         rootDir: root,
-        targetDir: path.dirname(root),
+        filePath: path.join(path.dirname(root), "outside.txt"),
         mode: 0o700,
-        messagePrefix: "store",
       }),
     ).toThrow("escapes store root");
 
     const badRoot = await tempRoot("fs-safe-store-boundary-bad-");
     await fs.writeFile(path.join(badRoot, "file-parent"), "not a dir", "utf8");
     expect(() =>
-      ensureStoreDirectorySync({
+      ensureParentSync({
         rootDir: badRoot,
-        targetDir: path.join(badRoot, "file-parent"),
+        filePath: path.join(badRoot, "file-parent", "child.txt"),
         mode: 0o700,
-        messagePrefix: "store",
       }),
     ).toThrow("must be a directory");
   });

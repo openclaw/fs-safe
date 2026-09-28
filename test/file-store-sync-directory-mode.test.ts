@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ensureStoreDirectorySync } from "../src/file-store-boundary.js";
+import { ensureParentSync } from "../src/file-store-boundary.js";
 import { assertSyncStoreDirectoryReceipt } from "../src/file-store-sync-directory.js";
 import { fileStoreSync } from "../src/file-store.js";
 import * as canonicalPath from "../src/realpath.js";
@@ -96,11 +96,10 @@ describe("sync file-store directory mode authority", () => {
       return realRealpath(input);
     });
 
-    ensureStoreDirectorySync({
+    ensureParentSync({
       rootDir: root,
-      targetDir: nested,
+      filePath: path.join(nested, "value"),
       mode: 0o700,
-      messagePrefix: "store",
     });
 
     expect(new Set(observed)).toEqual(new Set([root, nested]));
@@ -308,11 +307,10 @@ describe("sync file-store directory mode authority", () => {
     vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args) =>
       project(realLstatSync(...args), String(args[0]))) as typeof fsSync.lstatSync);
 
-    const guard = ensureStoreDirectorySync({
+    const guard = ensureParentSync({
       rootDir: root,
-      targetDir: nested,
+      filePath: path.join(nested, "value"),
       mode: 0o700,
-      messagePrefix: "store",
     });
     const original = guard.exactStat.ino;
     expect(typeof original).toBe("bigint");
