@@ -37,7 +37,36 @@ export function isAlreadyExistsError(error: unknown): boolean {
   return hasNodeErrorCode(error, "EEXIST") || /File exists|EEXIST/i.test(String(error));
 }
 
+function descriptorExhaustion(error: unknown): FsSafeError | undefined {
+  const pending: unknown[] = [error];
+  let details: FsSafeErrorDetails | undefined;
+  let code: "EMFILE" | "ENFILE" | undefined;
+  const seen = new Set<Error>();
+  while (pending.length) {
+    const current = pending.pop();
+    if (!(current instanceof Error) || seen.has(current)) continue;
+    seen.add(current);
+    // Keep boundary/policy failures primary, including combined failures.
+    if (current instanceof FsSafeError && current.code !== "helper-failed" && current.code !== "not-removable") return;
+    const diagnostic = current as Error & { code?: unknown; error?: unknown; suppressed?: unknown };
+    if (current instanceof FsSafeError && (!details || current.details?.cleanup)) details = current.details ?? details;
+    if (diagnostic.code === "EMFILE" || diagnostic.code === "ENFILE") code ??= diagnostic.code;
+    if (diagnostic.name === "SuppressedError") pending.push(diagnostic.suppressed, diagnostic.error);
+    if (current instanceof AggregateError) pending.push(...current.errors);
+    pending.push(current.cause);
+  }
+  if (!code) return;
+  const cleanup = details?.cleanup as { status?: unknown } | undefined;
+  const publication = details?.publication as { status?: unknown } | undefined;
+  const preserved = cleanup?.status === "preserved" && publication?.status === "indeterminate";
+  return new FsSafeError("helper-failed", `filesystem write failed: too many open files (${code})${
+    preserved ? "; publication outcome is indeterminate; staged file preserved" : ""
+  }`, { cause: error, details });
+}
+
 export function normalizePinnedWriteError(error: unknown): Error {
+  const exhausted = descriptorExhaustion(error);
+  if (exhausted) return exhausted;
   if (error instanceof FsSafeError) {
     return error;
   }
