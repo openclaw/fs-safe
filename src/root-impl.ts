@@ -20,7 +20,7 @@ import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-w
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
-import { getFsSafeNativeConfig, isFsSafeNativeRequired } from "./native-config.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import {
@@ -548,7 +548,7 @@ export class RootHandle implements Root {
       mutationOptions.denyMutations, mutationOptions.mutationSymlinks,
     ) ?? {};
     const overwrite = options.overwrite ?? false;
-    const requireNative = getFsSafeNativeConfig().mode === "require";
+    const requireNative = isFsSafeNativeRequired();
     await assertMoveMutationAllowed(this.context, {
       fromRelative,
       toRelative,
