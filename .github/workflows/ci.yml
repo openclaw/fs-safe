@@ -1314,7 +1314,7 @@ jobs:
       - name: Test guarded Root copying and mutation policies
         env:
           FS_SAFE_NATIVE_MODE: require
-        run: pnpm test test/root-copy-options.test.ts test/root-copy-read-identity.test.ts test/root-copy-symlink-policy.test.ts test/root-copy-windows-publication.test.ts test/root-parent-symlink-policy.test.ts test/root-mutation-authority.test.ts test/root-mutation-dispatch.test.ts test/native-mutation-policy-admission.test.ts test/native-mutation-policy-integration.test.ts test/pinned-mutation-receipt-walk.test.ts test/root-shared-js-mutation-policy.test.ts test/root-windows-legacy-policy-boundaries.test.ts
+        run: pnpm test test/root-copy-options.test.ts test/root-copy-read-identity.test.ts test/root-copy-symlink-policy.test.ts test/root-copy-windows-publication.test.ts test/root-parent-symlink-policy.test.ts test/root-mutation-authority.test.ts test/root-mutation-dispatch.test.ts test/native-mutation-policy-admission.test.ts test/native-mutation-policy-integration.test.ts test/native-parent-captured-identity.test.ts test/pinned-mutation-receipt-walk.test.ts test/root-shared-js-mutation-policy.test.ts test/root-windows-legacy-policy-boundaries.test.ts
 
       - name: Test Root sidecar admission with required native binding
         env:
