@@ -265,11 +265,14 @@ The public `OpenResult`, `ReadResult`, and `WritableOpenResult` expose `containm
 
 ### Native Root mutation capabilities
 
-`require` selects each operation's native capability or rejects with
+For removal, recursive removal, mkdir, overwrite move, and writable-open creation,
+`require` selects the hardened native capability or rejects with
 `helper-unavailable`; it does not silently perform the corresponding Node
-pathname mutation. `auto` uses the same native paths when their capabilities
-exist, and keeps its best-effort JavaScript fallback otherwise. No-clobber move
-continues to require native support in every mode.
+pathname mutation. Default `auto` keeps its previous best-effort paths for these
+operations, even with a native addon loaded. **`auto` does not confine these
+operations under hostile concurrency.** The matrix below describes `require`.
+The existing native publication paths for `write`, `create`, `writeJson`, and
+`copyIn` are unchanged, and no-clobber move still requires native support in every mode.
 
 | Root operation | Linux with `openat2` | Linux guarded fallback | macOS native | Windows native |
 |---|---|---|---|---|
@@ -279,6 +282,14 @@ continues to require native support in every mode.
 | `mkdir` | `mkdirat` and retained child identity checks | Same creation; best-effort admission | Same creation plus guarded admission | Handle-relative directory creation, including the existing protected private creator; best-effort admission |
 | `move` with overwrite | Retained parents, source identity check, `renameat` | Same rename; best-effort admission | Retained parents and rename; best-effort admission | Source handle identity check and handle-relative rename; best-effort admission |
 | `append` / `openWritable` creating a file | Beneath exclusive open, no-follow final component, identity-checked FileHandle handoff | Same creation through guarded native open; best-effort admission | Guarded native creation and identity-checked FileHandle handoff; best-effort admission | Handle-relative exclusive creation, identity-checked FileHandle handoff and handle-bound cleanup; best-effort admission |
+
+These guarantees have a per-call cost in `require`: removal pays for retained
+parent admission and entry checks, recursive removal additionally fences each
+visited directory, mkdir admits and verifies each created parent, overwrite move
+retains both parents, and open-create verifies the FileHandle handoff. Adjacent
+native steps are combined where no authorization callback must intervene, but
+the identity and policy fences remain. `auto` keeps its previous operation paths
+and avoids this added cost.
 
 On Linux, `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` admits the parent
 under the Root atomically. Later mutations use that retained parent, so replacing
@@ -298,8 +309,8 @@ same-privilege namespace or authorization guarantees.
 Writable-open creation retains a native descriptor while reopening the same
 inode as a Node `FileHandle`, without create or truncate flags. If the requested
 mode or umask cannot be preserved through initial creation and that handoff,
-`require` rejects rather than widening permissions; `auto` uses its JavaScript
-fallback when this limitation is known before native dispatch. The native
+`require` rejects rather than widening permissions. `auto` keeps its existing
+JavaScript creation path. The native
 creation syscall receives the requested mode, preserving inherited ACLs.
 If the resulting kernel permissions prevent handoff, the call fails closed and
 attempts identity-bound cleanup of its empty created file; it never broadens

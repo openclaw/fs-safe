@@ -403,11 +403,11 @@ paths are rechecked after the live mutation-authority callback and before
 dispatch. The Root and retained parents are fenced again after any such callback.
 These checks retain the documented final check-to-syscall race.
 
-For `{ overwrite: true }`, native mode retains both parents, checks the source
+For `{ overwrite: true }`, `require` mode retains both parents, checks the source
 identity relative to its parent, and renames through those descriptors (or the
 corresponding Windows handles). It then rechecks the parents and destination
 identity. `require` rejects with `helper-unavailable` if this operation's native
-entry point is absent. In `off`, or `auto` without that capability, the JavaScript path checks both parent directories
+entry point is absent. In `off` and default `auto`, the JavaScript path checks both parent directories
 before and after the rename. A failed post-operation check rejects even though
 the rename may already have completed; rejection does not imply rollback.
 
@@ -518,7 +518,7 @@ reasons, are propagated without adding or changing their details. Context is
 diagnostic; it is not permission to retry or mutate an entry.
 
 Removal is incremental, not atomic. A later budget, cancellation, identity, or
-filesystem failure does not restore already removed entries. Native POSIX
+filesystem failure does not restore already removed entries. Required-mode POSIX
 removal checks the entry without following links and uses `unlinkat` relative
 to a retained parent; empty directories use `AT_REMOVEDIR`. Recursive native
 removal enumerates through retained directory descriptors and retains its
@@ -528,8 +528,8 @@ requires `openat2` with `RESOLVE_NO_XDEV`; macOS checks mount identity.
 Windows nonrecursive removal checks the identity of the exact handle opened
 relative to the parent and deletes that object with `FileDispositionInfoEx`,
 without following a final reparse point. `require` rejects recursive removal
-on Windows and on Linux without that mount-bounded capability. `off`, and `auto` when an operation capability is
-absent, retain the JavaScript implementation: its pathname checks are best-effort
+on Windows and on Linux without that mount-bounded capability. `off` and default
+`auto` retain the JavaScript implementation even when the addon is loaded: its pathname checks are best-effort
 against a hostile concurrent process and cannot prevent every outside side
 effect. POSIX native deletion is also not an atomic expected-inode conditional
 unlink. See the [platform matrix](security-model.md#native-root-mutation-capabilities)
@@ -539,12 +539,13 @@ for the precise parent-pinning guarantee and remaining same-call limitations.
 
 `mkdir -p`. Creates missing parents.
 
-Native mode creates each missing component relative to a retained directory,
+`require` mode creates each missing component relative to a retained directory,
 opens the child without following a final symlink, and checks its identity before
 continuing. Windows private creation retains its protected native creator,
 which verifies the admitted parent identity and calls handle-relative
 `NtCreateFile` with a protected security descriptor. `require` refuses a missing
-native capability; `auto` retains the best-effort fallback.
+native capability; default `auto` retains its existing best-effort path and does
+not confine mkdir under hostile concurrency.
 
 ```ts
 await fs.mkdir("snapshots/2026/05");
@@ -594,12 +595,13 @@ destination — there is no atomic-rename step. For exclusive publication of a
 complete stream, use [`create()`](#streamed-creation). For streamed replacement,
 the [`atomic`](atomic.md) helpers provide a staged writer.
 
-When creating a missing file, native mode uses an exclusive no-follow open
+When creating a missing file, `require` mode uses an exclusive no-follow open
 beneath a retained parent and verifies the same inode during handoff to the
 returned Node `FileHandle`. `append()` uses this path too. Required creation
 fails with `helper-unavailable` with an incomplete addon, or when a
 restrictive mode or umask prevents that handoff without widening initial permissions.
-`auto` retains its JavaScript fallback for these cases. Creation confinement
+Default `auto` retains its existing JavaScript creation path even when the addon
+is loaded, and does not confine creation under hostile concurrency. Required creation confinement
 does not upgrade the returned `containment: "best-effort"` label or provide a
 transaction around later caller writes.
 

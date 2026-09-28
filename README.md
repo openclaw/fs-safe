@@ -80,7 +80,10 @@ replacement. The JavaScript path selected by `off`, or by `auto` when no
 binding can load, is explicitly best-effort: a same-privilege peer that can
 replace a writable parent between its identity check and Node's pathname
 mutation can redirect that mutation outside the root before the post-check
-reports the escape. `require` refuses this implicit pathname fallback for Root
+reports the escape. For Root removal, recursive removal, mkdir, overwrite move,
+and writable-open creation, `auto` keeps those best-effort paths even when the
+addon is loaded; it does not confine these operations under hostile concurrency.
+`require` selects the hardened native paths and refuses an implicit pathname fallback for Root
 removal, mkdir, overwrite move, and writable-open creation. It does not make
 every Root method or platform kernel-atomic. Consult the
 [operation/platform matrix](docs/security-model.md#native-root-mutation-capabilities)
@@ -90,8 +93,8 @@ Compatibility: these operations can now reject with `helper-unavailable` even
 when a binding loads. In particular, required recursive removal needs Linux
 `openat2` or the macOS native backend and is currently unavailable on Windows,
 and required writable-open creation needs the native creation/cleanup backend
-and permissions permitting its initial descriptor handoff. `auto` retains the documented best-effort
-fallback for missing operation capabilities.
+and permissions permitting its initial descriptor handoff. These changes apply
+only to `require`; default `auto` retains its existing behavior and cost.
 
 Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
 ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
