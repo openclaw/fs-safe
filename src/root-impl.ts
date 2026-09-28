@@ -72,7 +72,7 @@ import type { DirEntry, PathStat } from "./types.js";
 import { walkRoot, type RootWalkEntry, type RootWalkOptions, type RootWalkSymlinkPolicy } from "./root-walk.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { removePathInRootFallback, validateRemoveOptions } from "./root-remove.js";
-import { tryRemovePathInRootNative } from "./root-remove-native.js";
+import { removePathInRootNative } from "./root-remove-native.js";
 import { serializePathWrite } from "./write-queue.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
 import {
@@ -999,8 +999,8 @@ async function removePathInRoot(
     removalReceipts,
   });
   try {
-    if (requireNative && await tryRemovePathInRootNative(root, resolved.resolved, params, removalReceipts)) return;
-    await removePathInRootFallback(root, resolved.resolved, params, removalReceipts);
+    if (requireNative) await removePathInRootNative(root, resolved.resolved, params, removalReceipts);
+    else await removePathInRootFallback(root, resolved.resolved, params, removalReceipts);
   } catch (error) {
     if (params.recursive) throw error;
     throw normalizePinnedPathError(error);

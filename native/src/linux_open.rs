@@ -41,7 +41,7 @@ fn changed() -> napi::Error<String> {
     native_error("EXDEV", "beneath component changed during openat walk")
 }
 
-fn verify_entry(parent: i32, name: &CStr, child: i32) -> NativeResult<()> {
+fn verify_entry(parent: i32, name: &CStr, child: i32) -> NativeResult<FileType> {
     let named = rustix::fs::statat(borrowed(parent), name, AtFlags::SYMLINK_NOFOLLOW)
         .map_err(|_| changed())?;
     let opened = rustix::fs::fstat(borrowed(child))
@@ -49,7 +49,7 @@ fn verify_entry(parent: i32, name: &CStr, child: i32) -> NativeResult<()> {
     if !matches_identity(&named, &opened) {
         return Err(changed());
     }
-    Ok(())
+    Ok(FileType::from_raw_mode(opened.st_mode))
 }
 
 struct Directory {
@@ -228,10 +228,7 @@ fn open_fallback_with_hook(
             }
             Err(error) => return Err(os_error(error, "inspect beneath component")),
         };
-        verify_entry(parent, &name, child.as_raw_fd())?;
-        let stat = rustix::fs::fstat(child.as_fd())
-            .map_err(|error| os_error(error, "inspect beneath component"))?;
-        let kind = FileType::from_raw_mode(stat.st_mode);
+        let kind = verify_entry(parent, &name, child.as_raw_fd())?;
         if kind.is_symlink()
             && !(final_component && !trailing_slash && flags.contains(OFlags::NOFOLLOW))
         {
