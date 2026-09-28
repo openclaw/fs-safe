@@ -250,7 +250,14 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         }, retainRetirement);
       check(g);
       try {
-        if (backend?.entries(next)) pending = true;
+        const entriesChanged = backend?.entries(next);
+        const streamsChanged = backend?.configure(watchStreamPaths(next, g.scopes));
+        if (entriesChanged || streamsChanged) {
+          // Complete a guarded pass with the new transport before publishing readiness.
+          // Bound handovers under churn; later passes still reconcile ongoing changes.
+          if (attempt < 2) continue;
+          pending = true;
+        }
         break;
       } catch (error) {
         await assertRootIdentityCurrent(context);
@@ -258,10 +265,6 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         if (attempt >= 2 || !isWatchPathError(error)) throw error;
         // A replacement between scan and descriptor admission requires a fresh identity.
       }
-    }
-    if (backend?.configure(watchStreamPaths(next, g.scopes))) {
-      // The replacement stream is live before the next guarded pass covers the handover.
-      pending = true;
     }
     // Retire stale inventory before the next pass; that crawl installs fresh anchors first.
     if ([...registered.keys()].some(name => !next.directories.has(name))) {
