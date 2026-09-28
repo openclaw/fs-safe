@@ -270,6 +270,7 @@ export async function* walkRoot(
             return;
           }
         }
+        options.signal?.throwIfAborted();
         if (!(["include", "skip", "skip-subtree"] as const).includes(filterResult)) {
           throw new TypeError(`invalid root walk entryFilter result: ${String(filterResult)}`);
         }
