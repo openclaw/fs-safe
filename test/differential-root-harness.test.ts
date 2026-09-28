@@ -4,11 +4,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { decode, encode, firstDifference, generate, shrinkSpec, validateSpec } from "../scripts/differential-root-model.mjs";
-import { observeAddonLoads } from "../scripts/differential-root-worker.mjs";
+import { normalizeFixturePath, observeAddonLoads } from "../scripts/differential-root-worker.mjs";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const operation = { method: "readText", path: "file", options: {} };
+
+it("normalizes Windows pathname separators before replacing the fixture prefix", () => {
+  const directory = String.raw`C:\fixture\root`;
+  for (const returned of [String.raw`C:\fixture\root\file`, "C:/fixture/root/file"]) {
+    expect(normalizeFixturePath(returned, directory, "\\")).toBe("$ROOT/file");
+  }
+  expect(normalizeFixturePath("C:/fixture/root-other/file", directory, "\\")).toBe("C:/fixture/root-other/file");
+});
 
 it("does not count a failed addon load as a successful native execution", async () => {
   const directory = await tempRoot("fs-safe-differential-loader-");
@@ -95,6 +103,7 @@ it("runs public sync/async workers and preserves literal returned text", async (
   const payload = String.raw`a\b`;
   await fs.writeFile(replay, encode({ defaults: { durable: false }, ops: [
     { method: "write", path: "file", data: payload, options: {} }, operation,
+    { method: "resolve", path: "file", options: {} },
   ] }));
   const output = path.join(directory, "receipts");
   const child = spawnSync(process.execPath, [
@@ -108,5 +117,6 @@ it("runs public sync/async workers and preserves literal returned text", async (
   for (const report of receipt.reports) {
     expect(report.loads).toEqual([]);
     expect(report.results[1].value).toBe(payload);
+    expect(report.results[2].value).toBe("$ROOT/file");
   }
 }, 40_000);

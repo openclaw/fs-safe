@@ -4,6 +4,13 @@ import { errorValue } from "./differential-root-model.mjs";
 
 const portable = value => value.split(path.sep).join("/");
 
+export function normalizeFixturePath(value, directory, separator = path.sep) {
+  const normalized = value.split(separator).join("/");
+  const root = directory.split(separator).join("/");
+  if (normalized === root) return "$ROOT";
+  return normalized.startsWith(`${root}/`) ? `$ROOT${normalized.slice(root.length)}` : normalized;
+}
+
 export function observeAddonLoads() {
   const dlopen = process.dlopen;
   const observation = { loads: [], attempts: 0, restore: () => { process.dlopen = dlopen; } };
@@ -27,7 +34,7 @@ export async function worker(spec, dir, sync) {
     const is = key => typeof st[key] === 'function' ? st[key]() : st[key];
     return { kind: is('isSymbolicLink') ? 'symlink' : is('isDirectory') ? 'directory' : is('isFile') ? 'file' : 'other', ...(is('isFile') ? { size: Number(st.size), nlink: Number(st.nlink) } : {}), ...(process.platform !== 'win32' ? {mode: Number(st.mode) & 0o777} : {}) };
   };
-  const normalizePath = value => portable(value.replaceAll(dir, "$ROOT"));
+  const normalizePath = value => normalizeFixturePath(value, dir);
   const normalize = v => {
     if (v === undefined) return { type: "undefined" };
     if (Buffer.isBuffer(v) || v instanceof Uint8Array) return { bytes: Buffer.from(v).toString('hex') };
@@ -48,7 +55,7 @@ export async function worker(spec, dir, sync) {
     const p = path.join(dir, rel);
     const st = fs.lstatSync(p);
     const result = { path: portable(rel), ...metadata(st) };
-    if (st.isSymbolicLink()) result.target = portable(fs.readlinkSync(p)).replaceAll(portable(dir), '$ROOT');
+    if (st.isSymbolicLink()) result.target = normalizePath(fs.readlinkSync(p));
     else if (st.isFile()) {
       try { result.content = fs.readFileSync(p).toString('hex'); }
       catch(e) { result.contentError = errorValue(e); }
