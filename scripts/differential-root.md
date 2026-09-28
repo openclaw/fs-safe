@@ -65,6 +65,11 @@ are JSON operation specs produced by the harness; pathname validation confines
 standalone helpers to portable fixture-relative names and forbids filesystem
 adapter or destination overrides.
 
+The JSON codec represents positive Infinity as `"$Infinity"` and escapes a
+literal leading dollar sign by doubling it. Use the exported `encode`/`decode`
+helpers when constructing or inspecting replay files so literal text, including
+`"$Infinity"` itself, remains text.
+
 The final summary distinguishes `passed`, `diverged` and `incomplete`.
 An infrastructure failure never becomes a clean result just because no complete
 pair was available to compare.

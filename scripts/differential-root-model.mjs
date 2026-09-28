@@ -1,8 +1,10 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-export const encode = value => JSON.stringify(value, (_, v) => v === Infinity ? "$Infinity" : v);
-export const decode = value => JSON.parse(value, (_, v) => v === "$Infinity" ? Infinity : v);
+export const encode = value => JSON.stringify(value, (_, v) => v === Infinity ? "$Infinity"
+  : typeof v === "string" && v.startsWith("$") ? `$${v}` : v);
+export const decode = value => JSON.parse(value, (_, v) => v === "$Infinity" ? Infinity
+  : typeof v === "string" && v.startsWith("$$") ? v.slice(1) : v);
 export const errorValue = error => ({ name: error?.name ?? typeof error, code: error?.code ?? null, category: error?.category ?? null });
 
 function rng(seed) {

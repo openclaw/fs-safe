@@ -41,6 +41,8 @@ it("replays a fixed seed and preserves infinite budgets", () => {
   expect(encode(generate(9, 32))).toBe(encode(generate(9, 32)));
   expect(encode(generate(9, 32))).not.toBe(encode(generate(10, 32)));
   expect(decode(encode({ maxBytes: Infinity }))).toEqual({ maxBytes: Infinity });
+  const literals = { maxBytes: Infinity, data: "$Infinity", path: "$ROOT/file", nested: { value: "$$literal" } };
+  expect(decode(encode(literals))).toEqual(literals);
   for (const ci of [false, true]) expect(() => validateSpec(generate(9, 32, ci))).not.toThrow();
 });
 
