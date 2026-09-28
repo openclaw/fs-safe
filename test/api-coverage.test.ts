@@ -4,8 +4,9 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
 import * as tar from "tar";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
+import { skipDeviceFlushes } from "./helpers/device-flush.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { extractArchive } from "../src/archive.js";
 import { loadZipArchiveWithPreflight } from "../src/archive-zip-preflight.js";
@@ -523,6 +524,8 @@ describe("archive extraction", () => {
 });
 
 describe("JSON and regular-file helpers", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("covers JSON success, parse, read, and lock behavior", async () => {
     const root = await tempRoot("fs-safe-json-extra-");
     const file = path.join(root, "state", "value.json");
@@ -559,6 +562,8 @@ describe("JSON and regular-file helpers", () => {
   });
 
   it("covers json store fallback, unlocked writes, locked writes, and updates", async () => {
+    // Durability suites cover flush behavior; this case covers store semantics.
+    if (process.platform === "win32") await skipDeviceFlushes();
     const root = await tempRoot("fs-safe-json-store-extra-");
     const fallback = { count: 1 };
     const store = fileStore({ rootDir: root, private: true }).json<{ count: number }>("state.json", {
