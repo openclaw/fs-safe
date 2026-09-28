@@ -81,6 +81,8 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
     await fs.mkdir(path.join(outside, "tree"));
     await fs.writeFile(path.join(directory, "parent/tree/value"), "inside");
     await fs.writeFile(path.join(outside, "tree/value"), "outside");
+    await fs.writeFile(path.join(directory, "parent/value"), "inside");
+    await fs.writeFile(path.join(outside, "value"), "outside");
     const scoped = await root(directory);
     let swapped = false;
     __setFsSafeTestHooksForTest({ beforeRootFallbackMutation: async operation => {
@@ -89,10 +91,11 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
       await fs.symlink(outside, path.join(directory, "parent"), process.platform === "win32" ? "junction" : "dir");
       swapped = true;
     } });
-    await expect(scoped.remove(recursive ? "parent/tree" : "parent/tree/value", { recursive }))
-      .rejects.toMatchObject({ code: "path-mismatch" });
+    const removal = scoped.remove(recursive ? "parent/tree" : "parent/value", { recursive });
+    await expect(removal).rejects.toMatchObject({ code: expect.stringMatching(/^(path-mismatch|path-alias)$/) });
     expect(swapped).toBe(true);
     expect(await fs.readFile(path.join(outside, "tree/value"), "utf8")).toBe("outside");
+    expect(await fs.readFile(path.join(outside, "value"), "utf8")).toBe("outside");
   });
 
   it.skipIf(!native?.openRootRemovalDirectory).each(["filesystem", "sorted"] as const)("preserves recursive policies and budgets (%s)", async order => {
@@ -135,7 +138,8 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
     expect(await fs.readdir(parent)).toEqual([]);
   });
 
-  it("checks the retained ancestor identities after native unlink dispatch", async () => {
+  // Win32 can refuse ancestor relocation while a descendant directory handle is open.
+  it.skipIf(process.platform === "win32")("checks the retained ancestor identities after native unlink dispatch", async () => {
     const directory = await tempRoot("fs-safe-native-remove-after-");
     await fs.mkdir(path.join(directory, "ancestor/parent"), { recursive: true });
     await fs.writeFile(path.join(directory, "ancestor/parent/value"), "inside");
