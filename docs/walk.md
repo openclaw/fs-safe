@@ -103,7 +103,7 @@ This prunes a directory after finding its marker without listing that directory'
 Unreadable directories are skipped rather than throwing, but every skipped directory is recorded in `failedDirs`. This keeps the helper suitable for best-effort inventories while letting pruning jobs tell an incomplete scan from an empty one: a destructive reconcile that deletes state for paths missing from `entries` must first confirm `failedDirs` holds no real read failures, or a transient `EIO`/`EACCES` blip would be mistaken for mass deletion. Use a stricter root-bounded operation when every entry must be accounted for.
 
 With `maxEntries`, both standalone walkers stream in filesystem order with a
-one-entry buffer and at most one lookahead per visited directory. They close
+one-entry buffer and at most one lookahead per visited directory on Node.js. They close
 streams on completion, truncation, and callback failure. Filtering consumes the
 budget. Without an entry budget, they retain eager directory snapshots for
 complete scans. Neither standalone API sorts its output.
@@ -192,7 +192,7 @@ types, Node may classify that one extra entry with a synchronous `lstat`.
 Handles close on completion, truncation, cancellation, errors, or an
 early `break`. Both orders keep the same depth-first traversal, entry filtering,
 and truncation rules. Cancellation is checked between entries, with event-loop
-handoffs between budgeted sorted batches. Root and directory checks and admitted
+handoffs between budgeted sorted name and metadata batches. Root and directory checks and admitted
 child metadata reads are synchronous; no mode can interrupt a filesystem
 syscall already in progress or the sorted mode's name sorting.
 
@@ -292,6 +292,12 @@ names, and `maxEntries` caps that buffer with one lookahead before throwing
 their examined-entry budget before metadata lookup. Every Root listing mode
 rejects invalid UTF-8 names before application metadata lookup, including the
 lookahead; unexamined suffixes are not validated.
+
+Bun 1.4.2 implements `Dir` with an internal eager `readdir`, including when
+`bufferSize` is one. On that runtime, these budgets bound fs-safe's admitted
+names, metadata, and results, but cannot bound Bun's internal enumeration memory.
+Async scans retain async directory reads there; use Node.js when the directory
+width itself must not determine enumeration allocation.
 
 ## See also
 
