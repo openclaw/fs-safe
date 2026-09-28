@@ -4,6 +4,7 @@
 
 ### Performance
 
+- **Linux fallback resolution:** reuse the file type from each component's checked descriptor observation, avoiding a duplicate metadata read while retaining fresh identity, symlink-target, and mount-policy checks.
 - **Native parent validation:** reuse the retained descriptor's captured identity during ordinary POSIX policy checks, avoiding a duplicate metadata read while keeping the final pathname inspection fresh. ([#735](https://github.com/openclaw/fs-safe/pull/735))
 
 ## 0.21.2 - 2026-09-28
