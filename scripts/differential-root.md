@@ -28,8 +28,9 @@ clone/no-clobber move capabilities.
 Receipts retain normalized return values, error names/codes/categories, and
 per-call/final trees: file bytes, entry kinds, link counts, portable mode bits,
 and symlink targets. Descriptor identities and timestamps are excluded.
-Directory and link sizes are excluded from portable result comparison. Windows
-mode bits are omitted; unreadable file bytes are represented by their read error.
+Directory and link sizes are excluded from portable result comparison. POSIX
+permission and special bits (`0o7777`) are retained; Windows mode bits are omitted.
+Unreadable file bytes are represented by their read error.
 Returned text is preserved literally; only pathname fields are normalized.
 
 The CI profile uses one seed and 24 calls per lane, explicit

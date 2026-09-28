@@ -106,6 +106,8 @@ it("runs public sync/async workers and preserves literal returned text", async (
   await fs.writeFile(replay, encode({ defaults: { durable: false }, ops: [
     { method: "write", path: "file", data: payload, options: {} }, operation,
     { method: "resolve", path: "file", options: {} },
+    { method: "openWritable", path: "new-file", data: "new", options: {} },
+    { method: "openWritable", path: "new-file", data: "updated", options: {} },
   ] }));
   const output = path.join(directory, "receipts");
   const child = spawnSync(process.execPath, [
@@ -120,5 +122,7 @@ it("runs public sync/async workers and preserves literal returned text", async (
     expect(report.loads).toEqual([]);
     expect(report.results[1].value).toBe(payload);
     expect(report.results[2].value).toBe("$ROOT/file");
+    expect(report.results[3].value.createdForWrite).toBe(true);
+    expect(report.results[4].value.createdForWrite).toBe(false);
   }
 }, 40_000);

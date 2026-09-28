@@ -32,7 +32,7 @@ export async function worker(spec, dir, sync) {
   const durability = await import('../dist/durability.js');
   const metadata = st => {
     const is = key => typeof st[key] === 'function' ? st[key]() : st[key];
-    return { kind: is('isSymbolicLink') ? 'symlink' : is('isDirectory') ? 'directory' : is('isFile') ? 'file' : 'other', ...(is('isFile') ? { size: Number(st.size), nlink: Number(st.nlink) } : {}), ...(process.platform !== 'win32' ? {mode: Number(st.mode) & 0o777} : {}) };
+    return { kind: is('isSymbolicLink') ? 'symlink' : is('isDirectory') ? 'directory' : is('isFile') ? 'file' : 'other', ...(is('isFile') ? { size: Number(st.size), nlink: Number(st.nlink) } : {}), ...(process.platform !== 'win32' ? {mode: Number(st.mode) & 0o7777} : {}) };
   };
   const normalizePath = value => normalizeFixturePath(value, dir);
   const normalize = v => {
@@ -88,7 +88,7 @@ export async function worker(spec, dir, sync) {
         else if (['write', 'create', 'append', 'writeJson', 'createJson'].includes(op.method)) value = await safe[op.method](op.path, op.data, o);
         else if (op.method === 'open' || op.method === 'openWritable') {
           const opened = await safe[op.method](op.path, o);
-          try { value = {stat: opened.stat, realPath: opened.realPath, containment: opened.containment}; if(op.method === 'open') value.bytes = await opened.handle.readFile(); else await opened.handle.writeFile(op.data); }
+          try { value = { ...opened }; if(op.method === 'open') value.bytes = await opened.handle.readFile(); else await opened.handle.writeFile(op.data); }
           finally { await opened.handle.close(); }
         } else if (op.method === 'entries' || op.method === 'walk') {
           const partial = [];
