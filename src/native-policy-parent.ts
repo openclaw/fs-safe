@@ -83,10 +83,7 @@ function normalizePosixParentOpenError(error: unknown, params: PinnedWriteParams
 async function describePosixParent(fd: number, pathname: string): Promise<NativePolicyParent> {
   const parentPath = realpathSync.native(pathname);
   const stagedDirectory = describeStagedDirectory(fd, parentPath);
-  const stat = await inspectDirectoryIdentity(
-    parentPath,
-    inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true })),
-  );
+  const stat = await inspectDirectoryIdentity(parentPath, stagedDirectory.identity);
   return {
     fd,
     guard: { dir: parentPath, realPath: parentPath, stat },

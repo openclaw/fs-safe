@@ -252,7 +252,7 @@ The library does not modify or constrain the global Node.js `fs` namespace, and 
 | Mechanism | Reported containment | Boundary |
 |---|---|---|
 | Linux native with `openat2` | `kernel-atomic` | `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` resolves and opens under the root in one kernel operation. |
-| Linux native without `openat2` | `best-effort` | A no-follow `openat` component walk retains each parent and verifies exact identity associations before and after the final open; all symlink components are rejected. |
+| Linux native without `openat2` | `best-effort` | A no-follow `openat` component walk retains each parent, follows admitted in-root relative symlinks, and rechecks exact directory/link identities and link targets before and after the final open. |
 | macOS native | `best-effort` | macOS 15.4 and newer use `O_RESOLVE_BENEATH` first; older kernels use the guarded `openat(O_NOFOLLOW)` component walk. Both verify the opened descriptor with `F_GETPATH`. |
 | Windows native | `best-effort` | Handle-relative `NtCreateFile` rejects reparse points, but this package does not claim a Linux-style atomic beneath guarantee. |
 | JavaScript fallback | `best-effort` | Canonical checks, no-follow opens where Node exposes them, and post-open identity checks form a check-then-use sequence. |
