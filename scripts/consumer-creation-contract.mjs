@@ -36,7 +36,7 @@ export function creationScenarioNames({ omitted, mode, platform }) {
     return [...creationScenarios, ...darwinAclScenarios];
   }
   if (!missingRequired) return creationScenarios;
-  return [platform === "win32" ? "require-root-mkdir" : "root-private-directory",
+  return ["require-root-mkdir", "require-root-mkdir-ordinary", "require-root-append", "require-root-open-create",
     "require-root-create", "require-root-create-json", "require-root-stream",
     ...(platform === "win32"
       ? ["require-directory-async", "require-directory-sync", "require-file-sync"]

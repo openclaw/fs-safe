@@ -205,6 +205,7 @@ describe("shared JavaScript mutation-policy component admission", () => {
   });
 
   it("re-resolves a parent replaced after preflight before granting admission", async () => {
+    configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-shared-policy-redirect-");
     const allowed = path.join(directory, "allowed");
     const saved = path.join(directory, "saved");
