@@ -1166,6 +1166,22 @@ jobs:
         if: ${{ !matrix.no-openat2 }}
         run: pnpm test:bun:native
 
+      - name: Compare seeded public Root operations across Node and Bun
+        if: ${{ !matrix.no-openat2 }}
+        run: node scripts/differential-root.mjs --ci --out artifacts-differential-ci
+
+      - name: Compare seeded public Root operations with the Linux fallback
+        if: matrix.no-openat2
+        run: node scripts/differential-root.mjs --ci --runtimes node --out artifacts-differential-ci
+
+      - name: Upload differential replay receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: differential-root-${{ matrix.os }}
+          path: artifacts-differential-ci
+          if-no-files-found: ignore
+
       - name: Prove Bun watch polling and joined close
         if: ${{ !matrix.no-openat2 }}
         run: bun scripts/watch-runtime-proof.mjs
