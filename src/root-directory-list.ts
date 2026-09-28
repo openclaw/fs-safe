@@ -42,8 +42,8 @@ function directoryEntryName(bytes: Buffer): string {
   return bytes.toString("utf8");
 }
 
-async function readDirectoryEntryName(handle: Dir): Promise<string | undefined> {
-  const entry = await handle.read();
+async function readDirectoryEntryName(handle: Dir, synchronous = false): Promise<string | undefined> {
+  const entry = synchronous ? handle.readSync() : await handle.read();
   // Bun returns the raw Buffer directly; Node returns a Dirent whose name is a Buffer.
   // Node's Dir types still declare only string names.
   return entry === null ? undefined
@@ -324,7 +324,7 @@ export type RootDirectoryListingOptions = {
   snapshot: boolean;
   maxNames?: number;
   metadataBatchSize?: number;
-  /** Internal exact metadata lane, supported by streaming filesystem order. */
+  /** Internal watch lane: exact identities and bounded synchronous name reads on Node. */
   exactIdentity?: boolean;
   /** Advisory scans may omit vanished leaves after revalidating their parent. */
   skipVanished?: boolean;
@@ -363,9 +363,9 @@ export async function openRootDirectoryListing(
   let handle: Dir | undefined;
   let names: string[] | undefined;
   let snapshot: DirEntry[] | undefined;
-  let index = 0;
+  let index = 0, preparedIndex = 0;
   let prepared: DirEntry[] = [];
-  let preparedIndex = 0;
+  const synchronousNames = options.exactIdentity && !process.versions.bun && !process.versions.deno;
   let pendingFailure: { error: unknown } | undefined;
   let pendingLimit: string | undefined;
   let preparedBatch = false;
@@ -473,8 +473,9 @@ export async function openRootDirectoryListing(
           return;
         }
         for (;;) {
+          if (synchronousNames && index++ % METADATA_BATCH_SIZE === METADATA_BATCH_SIZE - 1) await yieldToEventLoop();
           await assertCurrent();
-          const name = await readDirectoryEntryName(handle!);
+          const name = await readDirectoryEntryName(handle!, synchronousNames);
           await assertCurrent();
           if (name === undefined) return;
           if (!options.admitEntry()) return { kind: "limit", name };
