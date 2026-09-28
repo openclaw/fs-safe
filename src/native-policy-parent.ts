@@ -356,10 +356,15 @@ export async function capturePolicyAwareNativeParent(
           };
           if (!windows) {
             Object.freeze(request);
-            childAuthorization ??= params.mutationAdmission?.tryAuthorizeAtParent?.(
-              request,
-              child.observation,
-            );
+            // Existing prefixes are not the epoch's nearest parent. Their
+            // admission uses the full epoch fence below; offering an unrelated
+            // parent receipt would discard otherwise-current target evidence.
+            if (createdByMkdir) {
+              childAuthorization ??= params.mutationAdmission?.tryAuthorizeAtParent?.(
+                request,
+                child.observation,
+              );
+            }
           }
           if (!childAuthorization) {
             await authorize(request);

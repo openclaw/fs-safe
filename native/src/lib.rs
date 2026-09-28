@@ -27,6 +27,10 @@ mod copy_linux;
 #[cfg(unix)]
 mod file_copy;
 mod owned_tree;
+#[cfg(all(test, unix))]
+mod root_creation_tests;
+#[cfg(windows)]
+mod root_create_windows;
 #[cfg(unix)]
 mod root_remove;
 #[cfg(windows)]
@@ -262,6 +266,12 @@ pub fn open_beneath(
             },
         });
     into_napi(env, result)
+}
+
+#[napi(js_name = "openCreateBeneath")]
+pub fn open_create_beneath(env: Env, parent_fd: i32, basename: String, flags: i32, mode: u32) -> Result<i32> {
+    into_napi(env, validate_child_basename(&basename)
+        .and_then(|()| platform::open_create_beneath(parent_fd, &basename, flags, mode & 0o7777)))
 }
 
 #[napi(js_name = "mkdirBeneath")]

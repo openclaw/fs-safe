@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { expectFsSafeError, expectFsSafeErrorSync } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
@@ -42,6 +43,7 @@ async function createFifo(filePath: string): Promise<void> {
 }
 
 afterEach(async () => {
+  __resetFsSafeNativeConfigForTest();
   __setFsSafeTestHooksForTest(undefined);
   vi.restoreAllMocks();
 });
@@ -208,6 +210,8 @@ describe("path stress regressions", () => {
   itPosix.each(["leaf", "parent"] as const)(
     "preserves a replacement %s when writable-open validation fails",
     async (swapKind) => {
+      // This injection targets the Node O_CREAT fallback dispatch.
+      configureFsSafeNative({ mode: "off" });
       const rootDir = await tempRoot("fs-safe-writable-leaf-swap-");
       const scoped = await openRoot(rootDir);
       const parentPath = path.join(scoped.rootReal, "nested");

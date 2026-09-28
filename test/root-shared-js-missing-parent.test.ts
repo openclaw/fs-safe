@@ -121,10 +121,11 @@ describeNode("shared JavaScript missing-parent admission", () => {
 
       expect(new Set(authorizations).size).toBe(1);
       expect(new Set(resolutions).size).toBe(1);
-      expect(sharedAuthorizations).toEqual([1, 1, 1]);
-      expect(sharedProbes).toEqual([1, 8, 32]);
-      expect(sharedReuses).toEqual([0, 7, 31]);
-      expect(advances).toEqual([1, 8, 32]);
+      // Required mode now uses the native parent walk, with its own receipts.
+      expect(sharedAuthorizations).toEqual(mode === "off" ? [1, 1, 1] : [0, 0, 0]);
+      expect(sharedProbes).toEqual(mode === "off" ? [1, 8, 32] : [0, 0, 0]);
+      expect(sharedReuses).toEqual(mode === "off" ? [0, 7, 31] : [0, 0, 0]);
+      expect(advances).toEqual(mode === "off" ? [1, 8, 32] : [0, 0, 0]);
       expect(authorizations[0]).toBeGreaterThan(0);
       expect(resolutions[0]).toBeGreaterThan(0);
       expect(observations[2]!).toBeLessThan(observations[1]! * 6);
@@ -191,7 +192,7 @@ describeNode("shared JavaScript missing-parent admission", () => {
       }
 
       expect(new Set(resolutions).size).toBe(1);
-      expect(mkdirs).toEqual([1, 1, 1]);
+      expect(mkdirs).toEqual(mode === "off" ? [1, 1, 1] : [0, 0, 0]);
     },
   );
 

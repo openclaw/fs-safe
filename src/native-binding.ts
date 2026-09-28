@@ -135,6 +135,7 @@ export interface NativeBinding {
   rootRemovalStat?(parent: number, name: string): NativeRootRemovalEntry;
   rootRemovalUnlink?(parent: number, name: string, dev: bigint, ino: bigint, directory: boolean): void;
   openRootRemovalDirectory?(parent: number, name: string, dev: bigint, ino: bigint): NativeRootRemovalDirectory;
+  openCreateBeneath?(parentFd: number, basename: string, flags: number, mode: number): number;
   /** Windows-only, private handle custody; no borrowed/runtime descriptors. */
   retainWindowsFile?(directory: string, basename: string, parentDev: bigint, parentIno: bigint,
     dev: bigint, ino: bigint, size: bigint, mtimeNs: bigint, ctimeNs: bigint, sha256: string, maxBytes: number): NativeRetainedFile;

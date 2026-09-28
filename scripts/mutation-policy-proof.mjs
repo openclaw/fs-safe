@@ -390,7 +390,7 @@ function exactObservationValues(observations, expected) {
 
 function validateSuccessfulObservations(caseName, backend, observations, platform) {
   const common = {
-    addonLoaded: backend === "pinned-native/require" || backend === "windows-js/require",
+    addonLoaded: backend === "pinned-native/require" || backend === "windows-js/require" || caseName === "native-config-drift",
     builtPublicImport: true,
     node24: true,
     privateFixture: true,
@@ -1560,7 +1560,7 @@ async function runWorker(argv) {
     const loadedAfter = await addonLoaded(addonPath);
     // Windows compatibility payload writes stay in JS; the retained sidecar
     // lock is published through Root.create and uses native mode when required.
-    const requiresAddon = backend === "pinned-native/require" || backend === "windows-js/require";
+    const requiresAddon = backend === "pinned-native/require" || backend === "windows-js/require" || caseName === "native-config-drift";
     invariant(loadedAfter === requiresAddon,
       requiresAddon ? "REQUIRED_ADDON_NOT_LOADED" : "UNEXPECTED_ADDON_LOADED");
     await new Promise((resolve) => setImmediate(resolve));

@@ -139,6 +139,25 @@ pub fn open_beneath(root_fd: i32, rel_path: &str, flags: i32) -> NativeResult<i3
     open_owned_beneath(root_fd, rel_path, flags).map(OwnedFd::into_raw_fd)
 }
 
+pub fn open_create_beneath(parent_fd: i32, name: &str, flags: i32, mode: u32) -> NativeResult<i32> {
+    nonnegative_fd(parent_fd, "create beneath parent")?;
+    crate::validate_child_basename(name)?;
+    let flags = OFlags::from_bits_retain(flags as u32) | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    #[cfg(target_os = "linux")]
+    let opened = {
+        if crate::linux_open::openat2_available() {
+            rustix::fs::openat2(borrowed(parent_fd), name, flags, Mode::from_bits_retain(mode as _),
+                rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_MAGICLINKS)
+                .map_err(|error| os_error(error, "create beneath parent"))
+        } else {
+            crate::linux_open::open_fallback(parent_fd, name, flags, Mode::from_bits_retain(mode as _))
+        }
+    };
+    #[cfg(target_os = "macos")]
+    let opened = macos::open_beneath_with_mode(parent_fd, name, flags.bits() as i32, mode);
+    opened.map(OwnedFd::into_raw_fd)
+}
+
 fn split_parent(path: &str) -> NativeResult<(&str, &str)> {
     match path.rsplit_once('/') {
         Some((parent, basename)) if !basename.is_empty() => Ok((parent, basename)),
@@ -1389,7 +1408,7 @@ mod macos {
         Ok(opened)
     }
 
-    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
+    fn open_with_resolve_beneath(root_fd: RawFd, rel_path: &str, flags: i32, mode: u32) -> NativeResult<OwnedFd> {
         let path = CString::new(rel_path.as_bytes())
             .map_err(|_| native_error("EINVAL", "path contains a NUL byte"))?;
         let root_fd = super::nonnegative_fd(root_fd, "open path with O_RESOLVE_BENEATH")?;
@@ -1399,7 +1418,7 @@ mod macos {
                 root_fd,
                 path.as_ptr(),
                 flags | libc::O_CLOEXEC | O_RESOLVE_BENEATH,
-                0o600,
+                mode,
             )
         };
         if opened < 0 {
@@ -1453,11 +1472,15 @@ mod macos {
     }
 
     pub fn open_beneath(root_fd: RawFd, rel_path: &str, flags: i32) -> NativeResult<OwnedFd> {
+        open_beneath_with_mode(root_fd, rel_path, flags, 0o600)
+    }
+
+    pub fn open_beneath_with_mode(root_fd: RawFd, rel_path: &str, flags: i32, mode: u32) -> NativeResult<OwnedFd> {
         if rel_path.is_empty() || rel_path == "." {
             return verify_opened_beneath(root_fd, super::duplicate_cloexec(root_fd)?);
         }
         if resolve_beneath_available() {
-            return open_with_resolve_beneath(root_fd, rel_path, flags);
+            return open_with_resolve_beneath(root_fd, rel_path, flags, mode);
         }
         let mut queue: VecDeque<String> = rel_path
             .split('/')
@@ -1479,7 +1502,7 @@ mod macos {
             };
             // SAFETY: current and name stay valid for the duration of openat.
             let opened =
-                unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), open_flags, 0o600) };
+                unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), open_flags, mode) };
             if opened >= 0 {
                 if is_final {
                     // SAFETY: openat returned a new descriptor owned by this call.
