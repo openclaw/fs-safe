@@ -7,6 +7,7 @@ let started = false;
 let cycles = 0;
 let failures = 0;
 let links = 0;
+let exchanges = 0;
 let state = cfg.seed >>> 0 || 1;
 const pauseWord = new Int32Array(new SharedArrayBuffer(4));
 const random = () => { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; return state >>> 0; };
@@ -25,6 +26,7 @@ function replenish(directory) {
     attempt(() => fs.writeFileSync(path.join(directory, 'tree', 'data'), 'IN_ROOT\n', { flag: 'wx' }));
     attempt(() => fs.writeFileSync(path.join(directory, 'data'), 'IN_ROOT\n', { flag: 'wx' }));
     attempt(() => fs.rmSync(path.join(directory, 'new'), { force: true }));
+    attempt(() => fs.rmSync(path.join(directory, 'append-created'), { force: true }));
     attempt(() => fs.rmSync(path.join(directory, 'moved'), { force: true }));
     attempt(() => fs.rmSync(path.join(directory, 'new-dir'), { recursive: true, force: true }));
   } catch {}
@@ -58,7 +60,7 @@ function step() {
     attempt(() => fs.writeFileSync(leaf, 'IN_ROOT\n', { flag: 'wx' }));
   } else if (kind === 'directory-replace') {
     if (attempt(() => fs.renameSync(slot, parked))) {
-      attempt(() => fs.renameSync(cfg.alternate, slot));
+      if (attempt(() => fs.renameSync(cfg.alternate, slot))) exchanges++;
       Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
       attempt(() => fs.renameSync(slot, cfg.alternate));
       attempt(() => fs.renameSync(parked, slot));
@@ -97,16 +99,21 @@ function batch() {
       attempt(() => fs.renameSync(parked, slot));
     }
     if (process.connected) {
-      process.send({ done: true, cycles, failures, links });
+      process.send({ done: true, cycles, failures, links, exchanges });
       process.disconnect();
     }
     return;
   }
+  const begin = String(process.hrtime.bigint());
+  const linksBefore = links;
+  const exchangesBefore = exchanges;
   for (let i = 0; i < 8; i++) step();
+  if (process.connected) process.send({ activity: true, begin, end: String(process.hrtime.bigint()),
+    links: links - linksBefore, exchanges: exchanges - exchangesBefore }, () => {});
   setImmediate(batch);
 }
 process.on('message', msg => {
-  if (msg === 'start' && !started) { started = true; running = true; batch(); }
+  if (msg === 'start' && !started) { started = true; running = true; process.send?.({ started: true }); batch(); }
   if (msg === 'stop') running = false;
 });
 function stop() {

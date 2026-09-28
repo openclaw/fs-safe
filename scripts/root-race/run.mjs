@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fork } from 'node:child_process';
-import { once } from 'node:events';
 import { root } from '../../dist/root.js';
 import { configureFsSafeNative } from '../../dist/config.js';
 import { fileStore } from '../../dist/store.js';
@@ -12,11 +11,17 @@ import { getNativeBinding } from '../../dist/native.js';
 
 const args = Object.fromEntries(process.argv.slice(2).map(a => a.replace(/^--/, '').split('=')));
 const mode = args.mode ?? 'require';
+const verdict = args.verdict ?? 'strict';
+if (!['strict', 'observe'].includes(verdict)) throw new Error('verdict must be strict or observe');
 configureFsSafeNative({ mode });
 const seeds = Number(args.seeds ?? 60);
 const seconds = Number(args.seconds ?? 20);
 const startSeed = Number(args.seed ?? 1);
 const kinds = ['parent-symlink', 'retarget', 'directory-replace', 'hardlink', 'type-flip', 'ancestor'];
+if (!Number.isSafeInteger(seeds) || seeds < 1 || !Number.isSafeInteger(startSeed) || startSeed < 1 ||
+    !Number.isFinite(seconds) || seconds < 0 || (!args.control && seconds === 0)) throw new Error('Invalid seed count, seed, or duration');
+if (args.kind && !kinds.includes(args.kind)) throw new Error('Unknown attacker kind');
+if (args.control && !['quiet', 'oracle'].includes(args.control)) throw new Error('Unknown control');
 const output = path.resolve(args.output ?? `race-${process.platform}-${mode}.jsonl`);
 fs.mkdirSync(path.dirname(output), { recursive: true });
 fs.writeFileSync(output, '', { flag: 'wx' });
@@ -83,6 +88,10 @@ async function runSeed(seed) {
   const count = 1 + (Math.floor((seed - 1) / 6) % 4);
   const kind = args.kind ?? kinds[(seed - 1) % kinds.length];
   const workers = [];
+  const workerExits = new Map();
+  const overlappingAttackers = new Set();
+  let victimStart;
+  let victimEnd;
   const attackerResults = [];
   const mutationSymlinks = [undefined, 'reject', 'follow-parents-within-root'][Math.floor((seed - 1) / 6) % 3];
   const rootHandle = await root(rootDir, { durable: false, hardlinks: 'reject', symlinks: 'reject',
@@ -106,6 +115,8 @@ async function runSeed(seed) {
   const observationCounts = { readEscape: 0, outsideChanges: 0, deniedChanges: 0 };
   const observationByOperation = {};
   const copyVerification = { inspected: 0, missed: 0, errors: {} };
+  const inconclusiveReads = new Set();
+  const contentReadOperations = new Set(['read', 'readBytes', 'open', 'readJson', 'copy']);
   let currentCall;
   function observe(call, category, details) {
     observationCounts[category]++;
@@ -144,19 +155,30 @@ async function runSeed(seed) {
   const payload = 'VICTIM_WRITE\n';
   let unsupported = 0;
   let stopped = false;
+  async function waitForWorker(child, field) {
+    let timer;
+    let listener;
+    try {
+      await Promise.race([
+        new Promise(resolve => { listener = msg => { if (msg[field]) resolve(); }; child.on('message', listener); }),
+        workerExits.get(child).then(() => { throw new Error('Attacker exited during startup'); }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Attacker startup timed out')), 15000); }),
+      ]);
+    } finally { clearTimeout(timer); child.off('message', listener); }
+  }
   const makeWorker = async config => {
     const child = fork(new URL('./attacker.mjs', import.meta.url), [JSON.stringify(config)], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
-    child.on('message', msg => { if (msg.done) attackerResults.push(msg); });
+    workerExits.set(child, new Promise(resolve => child.once('close', resolve)));
+    child.on('error', () => {}); // close settles startup and shutdown on spawn failure.
+    child.on('message', msg => {
+      if (msg.done) attackerResults.push(msg);
+      if (msg.activity && victimStart !== undefined && BigInt(msg.begin) >= victimStart &&
+          (victimEnd === undefined || BigInt(msg.end) <= victimEnd) &&
+          (kind === 'directory-replace' ? msg.exchanges > 0 : msg.links > 0)) overlappingAttackers.add(child);
+    });
     workers.push(child);
-    const [message] = await once(child, 'message');
-    if (!message.ready) throw new Error('Attacker startup failed');
+    await waitForWorker(child, 'ready');
   };
-  for (let lane = 0; lane < (args.control ? 0 : kind === 'ancestor' ? 1 : count); lane++) {
-    await makeWorker({ seed: seed * 31 + lane, kind, count,
-      slot: kind === 'ancestor' ? top : path.join(rootDir, `slot${lane}`),
-      parked: kind === 'ancestor' ? path.join(base, 'top-parked') : path.join(rootDir, `parked${lane}`),
-      alternate: path.join(rootDir, `alternate${lane}`), outside, denied });
-  }
   const methods = {
     read: async p => readable((await rootHandle.read(`${p}/data`)).buffer),
     readBytes: async p => readable(await rootHandle.readBytes(`${p}/data`)),
@@ -164,6 +186,7 @@ async function runSeed(seed) {
     write: p => rootHandle.write(`${p}/data`, payload, { mode: 0o600 }),
     create: p => rootHandle.create(`${p}/new`, payload, { mode: 0o600 }),
     append: p => rootHandle.append(`${p}/data`, payload),
+    appendCreate: p => rootHandle.append(`${p}/append-created`, payload),
     mkdir: p => rootHandle.mkdir(`${p}/new-dir/deep`),
     move: p => rootHandle.move(`${p}/data`, `${p}/moved`),
     rename: p => rootHandle.move(`${p}/data`, `${p}/target`, { overwrite: true }),
@@ -182,12 +205,25 @@ async function runSeed(seed) {
     temp: async p => { const workspace = await tempWorkspace({ rootDir: path.join(rootDir, p), prefix: 'race-', cleanupSafety: 'compatible' }); try { await workspace.write('data', payload); } finally { try { inspectTrees(currentCall); } finally { await workspace.cleanup(); } } },
     tempBounded: async p => { const workspace = await tempWorkspace({ rootDir: path.join(rootDir, p), prefix: 'bounded-', cleanupSafety: 'require-bounded' }); try { await workspace.write('data', payload); } finally { try { inspectTrees(currentCall); } finally { await workspace.cleanup(); } } },
   };
-  const selected = args.ops ? args.ops.split(',') : Object.keys(methods);
+  const requested = args.ops ? args.ops.split(',') : Object.keys(methods);
+  const selected = args.control === 'oracle' ? requested.slice(0, 1) : requested;
   for (const name of selected) if (!methods[name]) throw new Error(`Unknown operation ${name}`);
-  const started = Date.now();
-  const deadline = started + seconds * 1000;
+  let started;
   try {
-    for (const child of workers) child.send('start');
+    for (let lane = 0; lane < (args.control ? 0 : kind === 'ancestor' ? 1 : count); lane++) {
+      await makeWorker({ seed: seed * 31 + lane, kind, count,
+        slot: kind === 'ancestor' ? top : path.join(rootDir, `slot${lane}`),
+        parked: kind === 'ancestor' ? path.join(base, 'top-parked') : path.join(rootDir, `parked${lane}`),
+        alternate: path.join(rootDir, `alternate${lane}`), outside, denied });
+    }
+    await Promise.all(workers.map(async child => {
+      const started = waitForWorker(child, 'started');
+      child.send('start');
+      await started;
+    }));
+    victimStart = process.hrtime.bigint();
+    started = Date.now();
+    const deadline = started + seconds * 1000;
     while (Date.now() < deadline || (args.control && operations < selected.length)) {
       const method = args.control && operations < selected.length ? selected[operations] : selected[random() % selected.length];
       const lane = random() % count;
@@ -200,6 +236,9 @@ async function runSeed(seed) {
       entry.attempts++;
       const call = { operation: method, path: p, iteration: operations };
       currentCall = call;
+      // A prior escaping writer may have destroyed a marker used by a later
+      // reader. Keep that operation inconclusive even if its read finds no marker.
+      if ((observationCounts.outsideChanges || observationCounts.deniedChanges) && contentReadOperations.has(method)) inconclusiveReads.add(method);
       recent.push(call); if (recent.length > 8) recent.shift();
       try { await methods[method](p); entry.success++; } catch (error) {
         const code = error.code ?? error.name;
@@ -212,12 +251,13 @@ async function runSeed(seed) {
       if (args.control === 'oracle' && operations === 1) fs.writeFileSync(path.join(outside, 'data'), 'ORACLE_CONTROL');
       // Snapshot every operation for attribution; attackers never modify these trees.
       inspectTrees(call);
+      if (args.control === 'oracle') break;
     }
   } finally {
-    const exits = workers.map(child => once(child, 'exit'));
+    victimEnd = process.hrtime.bigint();
     for (const child of workers) if (child.connected) child.send('stop');
     const deadlineTimer = setTimeout(() => { for (const child of workers) if (child.exitCode === null) child.kill('SIGKILL'); }, 15000);
-    await Promise.all(exits);
+    await Promise.all(workerExits.values());
     clearTimeout(deadlineTimer);
     stopped = true;
   }
@@ -225,15 +265,26 @@ async function runSeed(seed) {
   const finalDenied = differences(initialDenied, snapshot(denied, 'denied'));
   const result = { event: 'seed', seed, kind, mutationSymlinks: mutationSymlinks ?? 'default', attackers: workers.length, elapsedMs: Date.now() - started,
     operations, metrics, unsupported, attackerResults, observations, observationCounts, observationByOperation, copyVerification,
-    finalOutside, finalDenied, stopped, allAttackersReported: attackerResults.length === workers.length };
+    finalOutside, finalDenied, stopped, allAttackersReported: attackerResults.length === workers.length,
+    inconclusiveReads: [...inconclusiveReads],
+    unexercisedOperations: selected.filter(name => !metrics[name]?.success),
+    unavailableOperations: selected.filter(name => metrics[name]?.errors['helper-unavailable'] > 0),
+    attackersExercised: Boolean(args.control) || overlappingAttackers.size === workers.length,
+    copyChecksComplete: copyVerification.missed === 0 && Object.keys(copyVerification.errors).length === 0 };
   record(result);
   // All attacker processes have exited. rm never traverses final symlinks/junctions.
   fs.rmSync(base, { recursive: true, force: true });
   return result;
 }
 let affectedSeeds = 0;
+let incompleteSeeds = 0;
 for (let i = 0; i < seeds; i++) {
   const result = await runSeed(startSeed + i);
   if (result.observations.length || result.finalOutside.length || result.finalDenied.length) affectedSeeds++;
+  if (!result.operations || !result.allAttackersReported || !result.attackersExercised || result.unexercisedOperations.length || result.unavailableOperations.length || result.inconclusiveReads.length || !result.copyChecksComplete) incompleteSeeds++;
 }
-record({ event: 'complete', seeds, affectedSeeds });
+record({ event: 'complete', seeds, affectedSeeds, incompleteSeeds, verdict });
+// Observe mode is for contract classification, never a clean security gate.
+// The oracle control must detect its intentional corruption to pass.
+if (args.control === 'oracle') process.exitCode = affectedSeeds > 0 && incompleteSeeds === 0 ? 0 : 1;
+else if (verdict === 'strict') process.exitCode = affectedSeeds > 0 ? 1 : incompleteSeeds > 0 ? 2 : 0;
