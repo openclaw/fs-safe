@@ -149,7 +149,24 @@ final component again after awaited staging and parent fences, immediately befor
 the rename or exclusive open. These are best-effort symlink checks, not an atomic
 expected-entry/CAS replacement: a concurrent process can still replace the final
 entry between its check and rename. Existing parent containment guarantees remain
-as described below. Omitting `mutationSymlinks` preserves existing mutation behavior.
+as described below. Omitting `mutationSymlinks` preserves each implementation's
+existing mutation behavior; it does not currently provide uniform Windows link
+handling.
+
+For Windows buffered replacement `write()` and `writeJson()` calls (`overwrite`
+omitted or `true`), the native pinned path rejects
+a final file symlink with `path-alias`. The legacy JavaScript path can follow an
+unchanged contained final link, keep the link itself, and replace the admitted
+target. Its configured mutation policy reauthorizes the original target before
+staging and publication, and its file/parent identity checks remain in force.
+Likewise, native Windows parent admission refuses junction/reparse traversal
+and can report `invalid-path`, while the legacy path can write through an
+admitted contained parent-junction target.
+
+The legacy writer is selected by native `off`, missing-binding `auto`, or
+`renameIdentity: "verify-content-with-lock"`. Callers requiring the same link
+rejection across implementations must set `mutationSymlinks: "reject"`
+explicitly. See [Windows link modes](writing.md#windows-link-modes).
 
 The JavaScript fallback used by `off`, by `auto` when no binding loads, and by
 the explicit `renameIdentity: "verify-content-with-lock"` compatibility policy
