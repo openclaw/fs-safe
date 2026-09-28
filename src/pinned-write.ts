@@ -5,7 +5,7 @@ import path from "node:path";
 import { createFileHandle } from "./create.js";
 import { creationAdmissionFromParent } from "./creation-boundary.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
-import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, createNearestExistingDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
+import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import type { FileIdentityStat } from "./file-identity.js";
@@ -225,7 +225,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       phase: "parent" as const,
     }));
   }
-  if (params.mkdir && !parentGuard) {
+  if (!parentGuard) {
     // mkdirPathComponentsWithGuards may resolve the final component through
     // an in-root symlink (e.g. a skill-bank layout). Use its returned real
     // path for the subsequent guard and target path so we don't re-check the
@@ -234,9 +234,10 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       rootReal: params.rootPath,
       targetPath: parentPath,
       rootIdentity: params.rootIdentity,
+      createMissing: params.mkdir,
       assertBeforeMutation: params.assertBeforeMutation,
       beforeComponent: async (componentPath: string) => {
-        await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath);
+        if (params.mkdir) await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("mkdir", componentPath);
       },
     };
     parentPath = await mkdirPathComponentsWithGuards(mutationAdmission ? {
@@ -275,9 +276,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       },
     } : mkdirParams);
   }
-  parentGuard ??= params.mkdir
-    ? await createAsyncDirectoryGuard(parentPath, { bigint: true })
-    : await createNearestExistingDirectoryGuard(params.rootPath, parentPath, { bigint: true });
+  parentGuard ??= await createAsyncDirectoryGuard(parentPath, { bigint: true });
   const targetPath = path.join(parentPath, params.basename);
   if (mutationAdmission && !parentAdmitted) {
     await mutationAdmission.authorize(Object.freeze({
