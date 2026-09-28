@@ -1,5 +1,14 @@
 # Adversarial Root race fuzzer
 
+The optional `--dwell-scale=N` multiplier changes both hostile-state and
+restored-directory dwell intervals. The default `1` preserves the original
+0–0.4 ms intervals; `20` exercises 0–8 ms intervals so longer guarded operations
+can reach publication instead of only failing admission. Configuration records
+include the scale. Keep fast and longer-dwell observations separate, retain
+incomplete attempts, and require the same strict effect, success, and attacker
+overlap checks for each campaign; changing timing is not evidence that an
+incomplete campaign passed.
+
 Build JavaScript and the host native addon before running. Each seed creates
 isolated disposable fixtures, races selected Root operations against separate
 attacker processes, joins those processes, and records exact sentinel snapshots.

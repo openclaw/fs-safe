@@ -17,6 +17,8 @@ configureFsSafeNative({ mode });
 const seeds = Number(args.seeds ?? 60);
 const seconds = Number(args.seconds ?? 20);
 const startSeed = Number(args.seed ?? 1);
+const dwellScale = Number(args['dwell-scale'] ?? 1);
+if (!Number.isFinite(dwellScale) || dwellScale <= 0 || dwellScale > 100) throw new Error('Invalid attacker dwell scale');
 const kinds = ['parent-symlink', 'retarget', 'directory-replace', 'hardlink', 'type-flip', 'ancestor'];
 if (!Number.isSafeInteger(seeds) || seeds < 1 || !Number.isSafeInteger(startSeed) || startSeed < 1 ||
     !Number.isFinite(seconds) || seconds < 0 || (!args.control && seconds === 0)) throw new Error('Invalid seed count, seed, or duration');
@@ -38,7 +40,7 @@ if (native && process.platform !== 'win32') {
   } finally { fs.closeSync(fd); }
 }
 record({ event: 'configuration', platform: process.platform, arch: process.arch, node: process.version,
-  mode, nativeLoaded: Boolean(native), nativeContainment, noOpenat2: process.env.FS_SAFE_TEST_NO_OPENAT2 ?? null, seeds, seconds, startSeed });
+  mode, nativeLoaded: Boolean(native), nativeContainment, noOpenat2: process.env.FS_SAFE_TEST_NO_OPENAT2 ?? null, seeds, seconds, startSeed, dwellScale });
 
 function snapshot(dir, prefix = '') {
   const entries = {};
@@ -211,7 +213,7 @@ async function runSeed(seed) {
   let started;
   try {
     for (let lane = 0; lane < (args.control ? 0 : kind === 'ancestor' ? 1 : count); lane++) {
-      await makeWorker({ seed: seed * 31 + lane, kind, count,
+      await makeWorker({ seed: seed * 31 + lane, kind, count, dwellScale,
         slot: kind === 'ancestor' ? top : path.join(rootDir, `slot${lane}`),
         parked: kind === 'ancestor' ? path.join(base, 'top-parked') : path.join(rootDir, `parked${lane}`),
         alternate: path.join(rootDir, `alternate${lane}`), outside, denied });

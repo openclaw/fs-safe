@@ -10,7 +10,10 @@ let links = 0;
 let exchanges = 0;
 let state = cfg.seed >>> 0 || 1;
 const pauseWord = new Int32Array(new SharedArrayBuffer(4));
+const dwellScale = cfg.dwellScale ?? 1;
+if (!Number.isFinite(dwellScale) || dwellScale <= 0 || dwellScale > 100) throw new Error('Invalid attacker dwell scale');
 const random = () => { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; return state >>> 0; };
+const dwell = () => Atomics.wait(pauseWord, 0, 0, ((random() % 5) / 10) * dwellScale);
 const attempt = fn => { try { fn(); return true; } catch { failures++; return false; } };
 const link = (to, at, directory = true) => {
   if (attempt(() => fs.symlinkSync(to, at, directory ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file'))) links++;
@@ -41,7 +44,7 @@ function step() {
   if (kind === 'ancestor') {
     if (attempt(() => fs.renameSync(slot, parked))) {
       link(outside, slot);
-      Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
+      dwell();
       unlinkAlias(slot);
       attempt(() => fs.renameSync(parked, slot));
     }
@@ -55,24 +58,24 @@ function step() {
     } else {
       attempt(() => fs.mkdirSync(leaf));
     }
-    Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
+    dwell();
     attempt(() => fs.rmSync(leaf, { recursive: true, force: true }));
     attempt(() => fs.writeFileSync(leaf, 'IN_ROOT\n', { flag: 'wx' }));
   } else if (kind === 'directory-replace') {
     if (attempt(() => fs.renameSync(slot, parked))) {
       if (attempt(() => fs.renameSync(cfg.alternate, slot))) exchanges++;
-      Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
+      dwell();
       attempt(() => fs.renameSync(slot, cfg.alternate));
       attempt(() => fs.renameSync(parked, slot));
     }
   } else {
     if (attempt(() => fs.renameSync(slot, parked))) {
       link(random() % 2 ? outside : denied, slot);
-      Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
+      dwell();
       if (kind === 'retarget') {
         unlinkAlias(slot);
         link(random() % 2 ? denied : outside, slot);
-        Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
+        dwell();
       }
       unlinkAlias(slot);
       attempt(() => fs.renameSync(parked, slot));
@@ -88,7 +91,7 @@ function step() {
   cycles++;
   // Leave a real-directory interval, so both admission and post-admission
   // races are exercised instead of almost exclusively rejecting stable links.
-  Atomics.wait(pauseWord, 0, 0, (random() % 5) / 10);
+  dwell();
 }
 function batch() {
   if (!running) {
