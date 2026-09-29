@@ -9,7 +9,6 @@ import {
   type DirectoryObservationGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
 import {
   assertNoNulPathInput,
   assertNoUnsafeDeviceReadPath,
@@ -33,16 +32,10 @@ import {
 export type RootContext = {
   rootDir: string;
   rootGuard?: AsyncDirectoryGuard<BigIntStats>;
-  rootIdentity: { dev: number; ino: number } | { dev: bigint; ino: bigint };
+  rootIdentity: { dev: bigint; ino: bigint };
   rootReal: string;
   rootWithSep: string;
 };
-
-function hasExactRootIdentity(
-  identity: RootContext["rootIdentity"],
-): identity is { dev: bigint; ino: bigint } {
-  return typeof identity.dev === "bigint" && typeof identity.ino === "bigint";
-}
 
 export const ensureTrailingSep = (value: string) =>
   value.endsWith(path.sep) ? value : value + path.sep;
@@ -161,23 +154,11 @@ export function assertRootIdentityCurrentSync(
   root: RootContext,
   observe?: (stat: fs.BigIntStats) => void,
 ): void {
-  let current: fs.Stats;
   try {
-    if (typeof root.rootIdentity.dev === "bigint" && typeof root.rootIdentity.ino === "bigint") {
-      const stat = inspectDirectoryIdentitySync(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
-      observe?.(stat);
-      return;
-    }
-    current = fs.lstatSync(root.rootReal);
+    const stat = inspectDirectoryIdentitySync(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
+    observe?.(stat);
   } catch (error) {
     throw rootPathChangedError(error instanceof Error ? error : undefined);
-  }
-  if (
-    current.isSymbolicLink() ||
-    !current.isDirectory() ||
-    !sameFileIdentity(current, root.rootIdentity)
-  ) {
-    throw rootPathChangedError();
   }
 }
 
@@ -196,11 +177,10 @@ export async function assertRootIdentityCurrent(
  */
 export async function createRootObservationGuard(
   root: RootContext,
-): Promise<DirectoryObservationGuard | undefined> {
+): Promise<DirectoryObservationGuard> {
   const rootIdentity = root.rootIdentity;
-  if (!hasExactRootIdentity(rootIdentity)) {
-    await assertRootIdentityCurrent(root);
-    return undefined;
+  if (typeof rootIdentity?.dev !== "bigint" || typeof rootIdentity.ino !== "bigint") {
+    throw rootPathChangedError();
   }
   try {
     const observed = await inspectDirectoryObservationSync(root.rootReal, rootIdentity);

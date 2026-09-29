@@ -65,7 +65,7 @@ function filterEntry(options: AnyRootWalkOptions, entry: RootWalkDataEntry<RootW
 
 type RootWalkCapability = {
   rootReal: string;
-  observeRoot(): Promise<DirectoryObservationGuard | undefined>;
+  observeRoot(): Promise<DirectoryObservationGuard>;
   stat(relativePath: string): Promise<PathStat>;
   list(
     relativePath: string,
@@ -167,9 +167,6 @@ export async function* walkRoot(
       let resolvedDirectory;
       if (includeChild) {
         const rootGuard = await root.observeRoot();
-        if (!rootGuard) {
-          throw new FsSafeError("helper-unavailable", "root walk requires an exact directory observation");
-        }
         const observed = await resolveRootPathWithObservation({
           ...resolution,
           rootIdentity: rootGuard.identity,

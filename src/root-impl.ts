@@ -1340,11 +1340,9 @@ async function resolvePinnedRootPathInRoot(
 
 async function statPathFallback(root: RootContext, relativePath: string): Promise<PathStat> {
   const initialObservationHook = getFsSafeTestHooks()?.beforeRootStatInitialObservation;
-  const observed = initialObservationHook
-    ? undefined
+  const resolved: PinnedObservedPath = initialObservationHook
+    ? await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true })
     : await resolvePinnedObservedPathInRoot(root, relativePath, "stat");
-  const resolved: PinnedObservedPath = observed ??
-    await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
   return await statResolvedPathInRoot(root, resolved.resolved, resolved.receipt);
 }
 
@@ -1353,9 +1351,7 @@ async function listPathFallback(
   relativePath: string,
   withFileTypes: boolean,
 ): Promise<string[] | DirEntry[]> {
-  const observed = await resolvePinnedObservedPathInRoot(root, relativePath, "directory");
-  const resolved: PinnedObservedPath = observed ??
-    await resolvePinnedPathInRoot(root, { relativePath, allowRoot: true });
+  const resolved = await resolvePinnedObservedPathInRoot(root, relativePath, "directory");
   return await listDirectoryPath(root, resolved.resolved, withFileTypes, resolved.receipt);
 }
 

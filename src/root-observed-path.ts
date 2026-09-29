@@ -29,9 +29,8 @@ export async function resolvePinnedObservedPathInRoot(
   root: RootContext,
   relativePath: string,
   kind: RootPathObservationKind,
-): Promise<PinnedObservedPath | undefined> {
+): Promise<PinnedObservedPath> {
   const rootGuard = await createRootObservationGuard(root);
-  if (!rootGuard) return undefined;
   // Race hooks exercise the established JavaScript observation points. Do not
   // silently move those points into the native helper in test configurations.
   const directoryObserver = getNativeDirectoryObservationBackend(
