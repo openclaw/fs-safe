@@ -4,6 +4,7 @@ import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
 import { applyDirectoryMode } from "./replace-file-descriptor.js";
+import { AtomicIo, runAsync } from "./atomic-io.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { root } from "./root.js";
@@ -65,12 +66,11 @@ export async function writeSiblingTempFile<T>(
   const syncParentDir = options.syncParentDir === true;
   await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: dirMode });
   if (chmodDir) {
-    await applyDirectoryMode({
-      fsModule: fs,
+    await runAsync(applyDirectoryMode(AtomicIo.async(fs), {
       dirPath: dir,
       mode: dirMode,
       ignoreChmodError: true,
-    });
+    }));
   }
   return await writeCallbackSibling({
     tempDir: dir,

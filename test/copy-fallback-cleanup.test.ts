@@ -3,11 +3,9 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
 import { useTempDirs } from "./helpers/vitest.js";
-import {
-  copyFallbackReplace,
-  copyFallbackReplaceSync,
-} from "../src/replace-file-copy-fallback.js";
+import { copyFallbackReplace } from "../src/replace-file-copy-fallback.js";
 
 const { tempRoot } = useTempDirs();
 
@@ -39,13 +37,12 @@ describe("copy fallback cleanup failures", () => {
         });
       },
     };
-    await expect(copyFallbackReplace({
-      fsModule: asyncFs,
+    await expect(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
       src: asyncSource,
       dest: asyncDest,
       restore: "none",
       sync: true,
-    })).resolves.toBeUndefined();
+    }))).resolves.toBeUndefined();
     await expect(fs.readFile(asyncDest, "utf8")).resolves.toBe("async");
 
     const syncSource = path.join(root, "sync-source");
@@ -58,13 +55,12 @@ describe("copy fallback cleanup failures", () => {
         throw new Error("close receipt lost");
       },
     };
-    expect(copyFallbackReplaceSync({
-      fsModule: syncModule,
+    expect(runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
       src: syncSource,
       dest: syncDest,
       restore: "none",
       sync: true,
-    })).toBeUndefined();
+    }))).toBeUndefined();
     expect(fsSync.readFileSync(syncDest, "utf8")).toBe("sync");
   });
 
@@ -83,13 +79,12 @@ describe("copy fallback cleanup failures", () => {
         return await fs.lstat(candidate, options);
       },
     };
-    await expect(copyFallbackReplace({
-      fsModule: asyncFs,
+    await expect(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
       src: asyncSource,
       dest,
       restore: "none",
       sync: false,
-    })).rejects.toBe(denied);
+    }))).rejects.toBe(denied);
     await expect(fs.readFile(asyncSource, "utf8")).resolves.toBe("async");
 
     const syncModule = {
@@ -99,13 +94,12 @@ describe("copy fallback cleanup failures", () => {
         return fsSync.lstatSync(candidate, options);
       },
     };
-    expect(() => copyFallbackReplaceSync({
-      fsModule: syncModule,
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
       src: syncSource,
       dest,
       restore: "none",
       sync: false,
-    })).toThrow(denied);
+    }))).toThrow(denied);
     await expect(fs.readFile(syncSource, "utf8")).resolves.toBe("sync");
   });
 });

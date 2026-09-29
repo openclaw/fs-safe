@@ -1,41 +1,21 @@
-import type syncFs from "node:fs";
-import type { FileHandle } from "node:fs/promises";
+import type { AtomicFile, Procedure } from "./atomic-io.js";
+import type { AtomicDestination } from "./replace-file-destination.js";
 
-export async function writeAtomicDestination(
-  handle: FileHandle,
+export function* writeAtomicDestination(
+  file: AtomicFile,
   data: Buffer,
-  beforeWrite?: () => Promise<void>,
-  assertBeforeMutation?: () => void,
-  onWriting?: () => void,
-): Promise<void> {
-  if (beforeWrite) await beforeWrite();
-  assertBeforeMutation?.();
-  await handle.truncate(0);
-  onWriting?.();
+  destination?: AtomicDestination,
+  restore = false,
+): Procedure<void> {
+  if (destination) yield* destination.beforeWrite(restore);
+  yield* file.truncate(0);
+  destination?.writing();
   let written = 0;
   while (written < data.length) {
-    if (beforeWrite) await beforeWrite();
-    assertBeforeMutation?.();
-    const result = await handle.write(data, written, data.length - written, written);
-    if (result.bytesWritten === 0) throw new Error("Copy fallback write made no progress");
-    written += result.bytesWritten;
-  }
-  if (beforeWrite) await beforeWrite();
-  assertBeforeMutation?.();
-  await handle.truncate(data.length);
-}
-
-export function writeAtomicDestinationSync(fsModule: Pick<typeof syncFs, "ftruncateSync" | "writeSync">, fd: number, data: Buffer, beforeWrite?: () => void, onWriting?: () => void): void {
-  beforeWrite?.();
-  fsModule.ftruncateSync(fd, 0);
-  onWriting?.();
-  let written = 0;
-  while (written < data.length) {
-    beforeWrite?.();
-    const bytesWritten = fsModule.writeSync(fd, data, written, data.length - written, written);
-    if (bytesWritten === 0) throw new Error("Copy fallback write made no progress");
+    if (destination) yield* destination.beforeWrite(restore);
+    const bytesWritten = yield* file.write(data, written, data.length - written, written);
     written += bytesWritten;
   }
-  beforeWrite?.();
-  fsModule.ftruncateSync(fd, data.length);
+  if (destination) yield* destination.beforeWrite(restore);
+  yield* file.truncate(data.length);
 }
