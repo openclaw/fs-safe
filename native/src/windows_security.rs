@@ -2537,7 +2537,7 @@ mod windows {
             assert!(
                 error
                     .reason
-                    .contains("private directory cleanup failed (EIO):")
+                    .contains("private directory cleanup failed (ENOTEMPTY):")
             );
             assert_eq!(fs::read(target.join("blocker")).unwrap(), b"keep");
 
