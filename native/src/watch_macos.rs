@@ -3,6 +3,7 @@ use crate::{NativeResult, native_error};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr::null_mut;
+use std::sync::Arc;
 type Ref = *mut c_void;
 #[repr(C)]
 struct Context {
@@ -13,6 +14,7 @@ struct Context {
     description: Ref,
 }
 type EventCallback = unsafe extern "C" fn(Ref, Ref, usize, Ref, *const u32, *const u64);
+#[cfg(not(test))]
 #[link(name = "CoreServices", kind = "framework")]
 unsafe extern "C" {
     fn FSEventStreamCreate(
@@ -38,21 +40,23 @@ unsafe extern "C" {
     fn CFArrayCreate(allocator: Ref, values: *const Ref, count: isize, callbacks: Ref) -> Ref;
     fn CFRelease(value: Ref);
 }
+#[cfg(not(test))]
 unsafe extern "C" {
     fn dispatch_queue_create(label: *const c_char, attr: Ref) -> Ref;
     fn dispatch_sync_f(queue: Ref, context: Ref, work: unsafe extern "C" fn(Ref));
     fn dispatch_release(queue: Ref);
 }
+#[cfg(test)]
+use tests::{
+    FSEventStreamCreate, FSEventStreamInvalidate, FSEventStreamRelease, FSEventStreamSetDispatchQueue,
+    FSEventStreamSetExclusionPaths, FSEventStreamStart, FSEventStreamStop, dispatch_queue_create,
+    dispatch_release, dispatch_sync_f,
+};
 #[path = "watch_kqueue.rs"]
 mod kqueue;
 pub(super) use kqueue::Waker;
 struct Owner {
     root: String,
-    pending: SharedPending,
-    notify: Notify,
-}
-struct Events {
-    prefix: String,
     pending: SharedPending,
     notify: Option<Notify>,
 }
@@ -60,7 +64,6 @@ struct Stream {
     _paths: CfValue,
     _exclusions: CfValue,
     stream: Ref,
-    events: Box<Events>,
 }
 struct CfValue(Ref);
 impl Drop for CfValue {
@@ -110,22 +113,22 @@ fn validate_paths(root: &str, anchors: &[String], exclusions: &[String]) -> Nati
 pub(super) struct Backend {
     queue: Ref,
     vnodes: kqueue::Queue,
-    owners: HashMap<u32, Owner>,
+    owners: HashMap<u32, Arc<Owner>>,
     streams: HashMap<u32, Stream>,
 }
 unsafe extern "C" fn callback(_: Ref, info: Ref, count: usize, paths: Ref, flags: *const u32, _: *const u64) {
-    // SAFETY: the boxed context survives until stop/invalidate plus queue barrier.
-    let events = unsafe { &*(info.cast::<Events>()) };
+    // SAFETY: the registry retains this owner through stream retirement and the queue barrier.
+    let owner = unsafe { &*(info.cast::<Owner>()) };
     for index in 0..count {
         let flag = unsafe { *flags.add(index) };
         let path = unsafe { CStr::from_ptr(*(paths.cast::<*const c_char>()).add(index)) }.to_str();
-        events.record(path.ok(), flag);
+        owner.record(path.ok(), flag);
     }
-    if let Some(notify) = &events.notify {
+    if let Some(notify) = &owner.notify {
         notify.wake();
     }
 }
-impl Events {
+impl Owner {
     fn record(&self, path: Option<&str>, flags: u32) {
         let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Dropped/wrapped streams, RootChanged and Unmount require guarded reconciliation.
@@ -140,7 +143,11 @@ impl Events {
             pending.overflow();
             return;
         }
-        let Some(relative) = path.and_then(|p| p.strip_prefix(&self.prefix)).filter(|p| !p.is_empty()) else {
+        let relative = path
+            .and_then(|p| p.strip_prefix(self.root.trim_end_matches('/')))
+            .and_then(|p| p.strip_prefix('/'))
+            .filter(|p| !p.is_empty());
+        let Some(relative) = relative else {
             return; // Activity only: never retain an outside pathname.
         };
         if relative.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
@@ -156,11 +163,16 @@ impl Events {
     }
 }
 
+unsafe extern "C" fn invalidate_and_release(stream: Ref) {
+    unsafe {
+        FSEventStreamInvalidate(stream);
+        FSEventStreamRelease(stream);
+    }
+}
 unsafe extern "C" fn retire(stream: Ref) {
     unsafe {
         FSEventStreamStop(stream);
-        FSEventStreamInvalidate(stream);
-        FSEventStreamRelease(stream);
+        invalidate_and_release(stream);
     }
 }
 unsafe extern "C" fn barrier(_: Ref) {}
@@ -180,29 +192,24 @@ impl Backend {
         pending: SharedPending,
         notify: Notify,
     ) -> NativeResult<()> {
-        self.owners.insert(id, Owner { root: root.into(), pending, notify });
+        // The hub issues checked, never-reused IDs: replacing a live owner would invalidate its context.
+        self.owners.insert(id, Arc::new(Owner { root: root.into(), pending, notify: Some(notify) }));
         Ok(())
     }
-    fn register_paths(
-        &mut self,
-        id: u32,
-        root: &str,
-        pending: SharedPending,
-        notify: Notify,
-        anchors: &[String],
-        exclusions: &[String],
-    ) -> NativeResult<()> {
-        validate_paths(root, anchors, exclusions)?;
+    pub fn configure(&mut self, id: u32, anchors: &[String], exclusions: &[String]) -> NativeResult<()> {
+        let owner =
+            self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
+        validate_paths(&owner.root, anchors, exclusions)?;
+        self.remove_stream(id);
+        if anchors.is_empty() {
+            return Ok(());
+        }
+        let owner = self.owners.get(&id).unwrap();
         let array = paths_array(anchors)?;
         let excluded = paths_array(exclusions)?;
-        let mut events = Box::new(Events {
-            prefix: format!("{}/", root.trim_end_matches('/')),
-            pending,
-            notify: Some(notify),
-        });
         let mut context = Context {
             version: 0,
-            info: (&mut *events as *mut Events).cast(),
+            info: Arc::as_ptr(owner).cast_mut().cast(),
             retain: null_mut(),
             release: null_mut(),
             description: null_mut(),
@@ -220,25 +227,14 @@ impl Backend {
             || unsafe { FSEventStreamStart(stream) } == 0
         {
             unsafe {
-                dispatch_sync_f(self.queue, stream, retire);
+                // No successful start occurred; Stop requires a started stream.
+                dispatch_sync_f(self.queue, stream, invalidate_and_release);
                 dispatch_sync_f(self.queue, null_mut(), barrier);
             }
             return Err(native_error("EIO", "configure/start FSEvents stream"));
         }
-        self.streams.insert(id, Stream { _paths: array, _exclusions: excluded, stream, events });
+        self.streams.insert(id, Stream { _paths: array, _exclusions: excluded, stream });
         Ok(())
-    }
-    pub fn configure(&mut self, id: u32, anchors: &[String], exclusions: &[String]) -> NativeResult<()> {
-        let old = self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
-        validate_paths(&old.root, anchors, exclusions)?;
-        let root = old.root.clone();
-        let pending = old.pending.clone();
-        let notify = old.notify.clone();
-        self.remove_stream(id);
-        if anchors.is_empty() {
-            return Ok(());
-        }
-        self.register_paths(id, &root, pending, notify, anchors, exclusions)
     }
     pub fn entries(
         &mut self,
@@ -254,8 +250,8 @@ impl Backend {
     }
     pub fn remove(&mut self, id: u32) -> NativeResult<()> {
         self.vnodes.remove(id);
-        self.owners.remove(&id);
         self.remove_stream(id);
+        self.owners.remove(&id);
         Ok(())
     }
     fn remove_stream(&mut self, id: u32) {
@@ -264,18 +260,12 @@ impl Backend {
                 dispatch_sync_f(self.queue, stream.stream, retire);
                 dispatch_sync_f(self.queue, null_mut(), barrier);
             }
-            drop(stream.events);
         }
     }
     pub fn test_event(&self, id: u32, path: &str, flags: u32) -> NativeResult<()> {
         let owner =
             self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
-        Events {
-            prefix: format!("{}/", owner.root.trim_end_matches('/')),
-            pending: owner.pending.clone(),
-            notify: None,
-        }
-        .record(Some(path), flags);
+        owner.record(Some(path), flags);
         Ok(())
     }
     pub fn waker(&self) -> Waker {
@@ -297,22 +287,5 @@ impl Drop for Backend {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::watch::Pending;
-    use std::sync::{Arc, Mutex};
-    #[test]
-    fn decoder_preserves_inside_names_and_discards_outside_paths() {
-        let pending = Arc::new(Mutex::new(Pending { limit: 2, ..Pending::default() }));
-        let events = Events { prefix: "/admitted/".into(), pending: pending.clone(), notify: None };
-        events.record(Some("/admitted/kept"), 0x1000);
-        let batch = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap();
-        assert!(!batch.overflow);
-        assert_eq!(batch.hints.len(), 1);
-        assert_eq!(batch.hints[0].name, "kept");
-        for path in ["/admitted-other/private", "/admitted/../private", "/outside/private"] {
-            events.record(Some(path), 0x1000);
-            assert!(pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().is_none());
-        }
-    }
-}
+#[path = "watch_macos_tests.rs"]
+mod tests;

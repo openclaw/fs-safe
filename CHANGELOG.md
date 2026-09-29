@@ -6,6 +6,10 @@
 
 - **One-way publication:** `retainEntryForPublication` now admits direct POSIX symlink entries, retaining the link inode and exact target bytes without following external payloads. Relative and dangling targets keep their original spelling; disposal remains close-only.
 
+### Fixes
+
+- **macOS watch startup:** clean up rejected FSEvents configuration and failed stream startup with the correct lifecycle calls, keeping the registration available for retry. ([#769](https://github.com/openclaw/fs-safe/pull/769))
+
 ## 0.22.0 - 2026-09-30
 
 - **One-way publication:** `retainEntryForPublication` on `advanced` retains directory or regular-file source/parent identities for native no-replace export, with truthful commit/indeterminate results and close-only disposal. Requires caller-exclusive source namespaces on supported local POSIX filesystems; no source-CAS or automatic rollback guarantee.
