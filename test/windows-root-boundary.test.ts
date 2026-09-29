@@ -102,6 +102,117 @@ describe("Windows Root prefix admission", () => {
     expect(nativeLstat).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: "extended drive candidate",
+      rootPath: "C:\\Trusted\\Root", candidatePath: "\\\\?\\c:\\trusted\\root\\Child.txt",
+      inspectedRoot: "\\\\?\\c:\\trusted\\root", expectedPath: "C:\\Trusted\\Root\\Child.txt", relativePath: "Child.txt",
+    },
+    {
+      name: "ordinary candidate under an extended drive root",
+      rootPath: "\\\\?\\C:\\Trusted\\Root", candidatePath: "c:\\trusted\\root\\Child.txt",
+      inspectedRoot: "c:\\trusted\\root", expectedPath: "\\\\?\\C:\\Trusted\\Root\\Child.txt", relativePath: "Child.txt",
+    },
+    {
+      name: "extended UNC candidate with mixed marker casing",
+      rootPath: "\\\\Server\\Share\\Root", candidatePath: "\\\\?\\uNc\\server\\share\\root\\Child.txt",
+      inspectedRoot: "\\\\?\\uNc\\server\\share\\root", expectedPath: "\\\\Server\\Share\\Root\\Child.txt", relativePath: "Child.txt",
+    },
+    {
+      name: "ordinary candidate under an extended UNC root",
+      rootPath: "\\\\?\\UNC\\Server\\Share\\Root", candidatePath: "\\\\server\\share\\root\\Child.txt",
+      inspectedRoot: "\\\\server\\share\\root", expectedPath: "\\\\?\\UNC\\Server\\Share\\Root\\Child.txt", relativePath: "Child.txt",
+    },
+    {
+      name: "forward slashes and repeated boundary separators",
+      rootPath: "C:/Trusted/Root///", candidatePath: "//?/c:/trusted/root///Child.txt",
+      inspectedRoot: "\\\\?\\c:\\trusted\\root", expectedPath: "C:\\Trusted\\Root\\Child.txt", relativePath: "Child.txt",
+    },
+    {
+      name: "root-only extended UNC candidate",
+      rootPath: "\\\\Server\\Share\\Root", candidatePath: "\\\\?\\unc\\server\\share\\root",
+      inspectedRoot: "\\\\?\\unc\\server\\share\\root", expectedPath: "\\\\Server\\Share\\Root", relativePath: "",
+    },
+    {
+      name: "Unicode root with lowercase expansion and a surrogate pair",
+      rootPath: "C:\\Rİ😀", candidatePath: "\\\\?\\c:\\rİ😀\\Child.txt",
+      inspectedRoot: "\\\\?\\c:\\rİ😀", expectedPath: "C:\\Rİ😀\\Child.txt", relativePath: "Child.txt",
+    },
+    {
+      name: "root-only case fold with different code-unit lengths",
+      rootPath: "C:\\İ", candidatePath: "\\\\?\\c:\\i\u0307",
+      inspectedRoot: "\\\\?\\c:\\i\u0307", expectedPath: "C:\\İ", relativePath: "",
+    },
+  ])("preserves the scoped inspector spelling for $name", ({ rootPath, candidatePath, inspectedRoot, expectedPath, relativePath }) => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(() => {
+      throw new Error("scoped inspection must not use the default filesystem adapter");
+    });
+    const realpath = vi.spyOn(realpathSync, "native").mockImplementation(() => {
+      throw new Error("unrequested canonicalization must not change the supplied root spelling");
+    });
+    const inspectCandidateRoot = vi.fn();
+
+    expect(admitPathInsideRoot({
+      rootPath, candidatePath, rootIdentity: { dev: 11n, ino: 22n }, inspectCandidateRoot,
+    })).toEqual({ admission: "identity", path: expectedPath, relativePath });
+    expect(inspectCandidateRoot).toHaveBeenCalledExactlyOnceWith(inspectedRoot, { dev: 11n, ino: 22n });
+    expect(lstat).not.toHaveBeenCalled();
+    expect(realpath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["C:\\Trusted\\Root", "\\\\?\\c:\\trusted\\root-adjacent\\child"],
+    ["\\\\Server\\Share\\Root", "\\\\?\\UNC\\server\\share\\root-adjacent\\child"],
+    ["C:\\Trusted\\Root", "\\\\?\\c:\\trusted\\\\root\\child"],
+  ])("rejects a nonmatching supplied prefix without identity admission: %s → %s", (rootPath, candidatePath) => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const inspectCandidateRoot = vi.fn();
+    expect(admitPathInsideRoot({
+      rootPath, candidatePath, rootIdentity: { dev: 11n, ino: 22n }, inspectCandidateRoot,
+    })).toBeUndefined();
+    expect(inspectCandidateRoot).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("keeps the supplied namespaced root as the identity-cache key (same directory: %s)", sameDirectory => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const identityCache = new Map<string, boolean>();
+    const inspectCandidateRoot = vi.fn(() => {
+      if (!sameDirectory) throw new FsSafeError("path-mismatch", "different directory object");
+    });
+    const params = {
+      rootPath: "\\\\Server\\Share\\Root", rootIdentity: { dev: 11n, ino: 22n }, identityCache, inspectCandidateRoot,
+    };
+    const first = admitPathInsideRoot({ ...params, candidatePath: "\\\\?\\uNc\\server\\share\\root\\First.txt" });
+    expect(first).toEqual(sameDirectory
+      ? { admission: "identity", path: "\\\\Server\\Share\\Root\\First.txt", relativePath: "First.txt" }
+      : undefined);
+    expect(inspectCandidateRoot).toHaveBeenCalledExactlyOnceWith(
+      "\\\\?\\uNc\\server\\share\\root", { dev: 11n, ino: 22n },
+    );
+    expect([...identityCache]).toEqual([["\\\\?\\uNc\\server\\share\\root", sameDirectory]]);
+
+    const second = admitPathInsideRoot({ ...params, candidatePath: "\\\\?\\uNc\\server\\share\\root\\Second.txt" });
+    expect(second).toEqual(sameDirectory
+      ? { admission: "identity", path: "\\\\Server\\Share\\Root\\Second.txt", relativePath: "Second.txt" }
+      : undefined);
+    expect(inspectCandidateRoot).toHaveBeenCalledTimes(1);
+    expect([...identityCache]).toEqual([["\\\\?\\uNc\\server\\share\\root", sameDirectory]]);
+  });
+
+  it("canonicalizes the whole namespaced folded root before delegated identity inspection", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const realpath = vi.spyOn(realpathSync, "native").mockReturnValue("C:\\Canonical\\Root");
+    const inspectCandidateRoot = vi.fn();
+
+    expect(admitPathInsideRoot({
+      rootPath: "C:\\Configured\\Alias", candidatePath: "\\\\?\\c:\\configured\\alias\\Child.txt",
+      rootIdentity: { dev: 11n, ino: 22n }, resolveCandidateRoot: true, inspectCandidateRoot,
+    })).toEqual({ admission: "identity", path: "C:\\Configured\\Alias\\Child.txt", relativePath: "Child.txt" });
+    expect(realpath).toHaveBeenCalledExactlyOnceWith("\\\\?\\c:\\configured\\alias");
+    expect(inspectCandidateRoot).toHaveBeenCalledExactlyOnceWith("C:\\Canonical\\Root", { dev: 11n, ino: 22n });
+  });
+
   it.each(["different", "missing", "unknown"] as const)(
     "rejects a %s case-fold-only prefix with bounded observations",
     (scenario) => {

@@ -23,31 +23,14 @@ type WindowsRootPrefix = AdmittedRootPath & Readonly<{
   candidateRootPath: string;
 }>;
 
-type WindowsComparablePath = Readonly<{
-  comparison: string;
-  original: string;
-  originalIndex(comparisonIndex: number): number;
-}>;
-
-function windowsComparablePath(value: string, normalize: boolean): WindowsComparablePath {
-  const original = normalize
-    ? path.win32.normalize(value.replaceAll("/", "\\"))
-    : value.replaceAll("/", "\\");
+function windowsComparisonSpelling(original: string): string {
   if (/^\\\\\?\\UNC\\/i.test(original)) {
-    return {
-      original,
-      comparison: `\\\\${original.slice(8)}`,
-      originalIndex: (comparisonIndex) => comparisonIndex + 6,
-    };
+    return `\\\\${original.slice(8)}`;
   }
   if (original.startsWith("\\\\?\\")) {
-    return {
-      original,
-      comparison: original.slice(4),
-      originalIndex: (comparisonIndex) => comparisonIndex + 4,
-    };
+    return original.slice(4);
   }
-  return { original, comparison: original, originalIndex: (comparisonIndex) => comparisonIndex };
+  return original;
 }
 
 function trimWindowsTrailingSeparators(value: string): string {
@@ -85,23 +68,24 @@ function exactWindowsRootPrefix(rootPath: string, candidatePath: string): Window
 function windowsRootPrefix(rootPath: string, candidatePath: string): WindowsRootPrefix | undefined {
   const exact = exactWindowsRootPrefix(rootPath, candidatePath);
   if (exact) return exact;
-  const trusted = windowsComparablePath(rootPath, true);
-  const supplied = windowsComparablePath(candidatePath, false);
-  const root = trimWindowsTrailingSeparators(trusted.original);
-  const rootComparison = trimWindowsTrailingSeparators(trusted.comparison);
-  const candidate = supplied.comparison;
-  if (!path.win32.isAbsolute(supplied.original)) return undefined;
+  const trusted = path.win32.normalize(rootPath.replaceAll("/", "\\"));
+  const trustedComparison = windowsComparisonSpelling(trusted);
+  const supplied = candidatePath.replaceAll("/", "\\");
+  const candidate = windowsComparisonSpelling(supplied);
+  const root = trimWindowsTrailingSeparators(trusted);
+  const rootComparison = trimWindowsTrailingSeparators(trustedComparison);
+  if (!path.win32.isAbsolute(supplied)) return undefined;
 
   let relativePath: string;
   let candidateRootPath: string;
   let admission: "exact" | "identity";
   if (candidate === rootComparison) {
     relativePath = "";
-    candidateRootPath = supplied.original;
+    candidateRootPath = supplied;
     admission = "exact";
   } else if (candidate.toLowerCase() === rootComparison.toLowerCase()) {
     relativePath = "";
-    candidateRootPath = supplied.original;
+    candidateRootPath = supplied;
     admission = "identity";
   } else {
     const rootWithSep = rootComparison.endsWith("\\") ? rootComparison : `${rootComparison}\\`;
@@ -114,7 +98,7 @@ function windowsRootPrefix(rootPath: string, candidatePath: string): WindowsRoot
       return undefined;
     }
     relativePath = trimWindowsLeadingSeparators(candidate.slice(rootWithSep.length));
-    candidateRootPath = supplied.original.slice(0, supplied.originalIndex(rootComparison.length));
+    candidateRootPath = supplied.slice(0, rootComparison.length + (supplied.length - candidate.length));
   }
 
   const rebasedPath = relativePath === ""
