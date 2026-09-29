@@ -160,10 +160,9 @@ export function assertRootWritePathSelectionSync(
 export function assertRootWriteSelectionSync(
   root: RootContext,
   selection: RetainedRootWriteSelection,
-  verifyBinding: boolean,
   fd?: number,
 ): void {
-  if (verifyBinding) inspectSelectionBindingSync(root, selection, fd);
+  inspectSelectionBindingSync(root, selection, fd);
   assertSyncDirectoryGuard(selection.parentGuard);
 }
 
@@ -256,24 +255,22 @@ export async function refreshRootWritePathSelection(
 export async function refreshRootWriteSelection(
   root: RootContext,
   selection: RetainedRootWriteSelection,
-  verifyBinding: boolean,
   fd?: number,
 ): Promise<void> {
   await authorizeRootWritePathSelection(selection);
-  if (verifyBinding) inspectSelectionBindingSync(root, selection, fd);
+  inspectSelectionBindingSync(root, selection, fd);
   await assertAsyncDirectoryGuard(selection.parentGuard);
 }
 
 export async function refreshRetainedRootWriteAdmission(
   root: RootContext,
   selection: RetainedRootWriteSelection,
-  verifyBinding: boolean,
   fd?: number,
 ): Promise<void> {
   await getFsSafeTestHooks()?.beforePinnedWriteParentAdmission?.(
     selection.operationTargetPath,
   );
-  await refreshRootWriteSelection(root, selection, verifyBinding, fd);
+  await refreshRootWriteSelection(root, selection, fd);
 }
 
 type GuardedWritePathOptions = {

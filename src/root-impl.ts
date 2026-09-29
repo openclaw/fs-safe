@@ -880,15 +880,15 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
     // Truncate only after boundary and identity checks complete. This avoids
     // irreversible side effects if a symlink target changes before validation.
     if (params.append !== true && params.truncateExisting !== false && !createdForWrite) {
-      if (writeSelection) await refreshRetainedRootWriteAdmission(root, writeSelection, true, handle.fd);
+      if (writeSelection) await refreshRetainedRootWriteAdmission(root, writeSelection, handle.fd);
       assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
       params.assertBeforeMutation?.();
-      if (writeSelection) assertRootWriteSelectionSync(root, writeSelection, true, handle.fd);
+      if (writeSelection) assertRootWriteSelectionSync(root, writeSelection, handle.fd);
       await handle.truncate(0);
     }
     if (writeSelection) {
-      await refreshRetainedRootWriteAdmission(root, writeSelection, true, handle.fd);
-      assertRootWriteSelectionSync(root, writeSelection, true, handle.fd);
+      await refreshRetainedRootWriteAdmission(root, writeSelection, handle.fd);
+      assertRootWriteSelectionSync(root, writeSelection, handle.fd);
     }
     const result: WritableOpenResult = {
       handle,
@@ -1549,13 +1549,13 @@ async function writeFileFallbackUnlocked(
   try {
     tempPath = buildAtomicWriteTempPath(destinationPath);
     if (retainedSelection) {
-      await refreshRetainedRootWriteAdmission(root, retainedSelection, true, target?.handle.fd);
+      await refreshRetainedRootWriteAdmission(root, retainedSelection, target?.handle.fd);
     } else if (missingSelection) {
       await refreshRootWritePathSelection(missingSelection);
     }
     params.assertBeforeMutation?.();
     if (retainedSelection) {
-      assertRootWriteSelectionSync(root, retainedSelection, true, target?.handle.fd);
+      assertRootWriteSelectionSync(root, retainedSelection, target?.handle.fd);
     } else if (missingSelection) {
       assertRootWritePathSelectionSync(root, missingSelection);
     }
@@ -1593,14 +1593,14 @@ async function writeFileFallbackUnlocked(
       // Windows cannot replace a destination while its old handle remains open.
       await target?.handle.close();
       if (retainedSelection) {
-        await refreshRetainedRootWriteAdmission(root, retainedSelection, true);
+        await refreshRetainedRootWriteAdmission(root, retainedSelection);
       } else if (missingSelection) {
         await refreshRootWritePathSelection(missingSelection);
       }
       assertFinalSymlinkRejected(destinationPath, params.mutationSymlinks !== undefined);
       params.assertBeforeMutation?.();
       if (retainedSelection) {
-        assertRootWriteSelectionSync(root, retainedSelection, true);
+        assertRootWriteSelectionSync(root, retainedSelection);
       } else if (missingSelection) {
         assertRootWritePathSelectionSync(root, missingSelection);
       }

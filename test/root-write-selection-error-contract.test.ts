@@ -50,7 +50,7 @@ it.skipIf(Boolean(process.versions.bun)).each([
     }) as typeof fsSync.lstatSync);
     for (const assertCurrent of [
       () => assertPreparedRootWriteParentCurrent(prepared.preparedParent!, true),
-      () => assertRootWriteSelectionSync(root, retained, true, handle.fd),
+      () => assertRootWriteSelectionSync(root, retained, handle.fd),
     ]) {
       observations.length = 0;
       let failure: unknown;
