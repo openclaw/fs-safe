@@ -28,10 +28,10 @@ impl Drop for Fixture { fn drop(&mut self) { fs::remove_dir_all(&self.0).unwrap(
 fn replacement_rename_stays_in_retained_parent_after_symlink_swap() {
     let fixture = Fixture::new();
     let parent = fs::File::open(fixture.0.join("parent")).unwrap();
-    rename_replace_with_identity_and_hook(parent.as_raw_fd(), "source", parent.as_raw_fd(), "target", fixture.identity(), || {
-        fs::rename(fixture.0.join("parent"), fixture.0.join("held")).unwrap();
-        symlink("outside", fixture.0.join("parent")).unwrap();
-    }).unwrap();
+    let expected = fixture.identity();
+    fs::rename(fixture.0.join("parent"), fixture.0.join("held")).unwrap();
+    symlink("outside", fixture.0.join("parent")).unwrap();
+    rename_replace_with_identity(parent.as_raw_fd(), "source", parent.as_raw_fd(), "target", expected).unwrap();
     assert_eq!(fs::read(fixture.0.join("outside/target")).unwrap(), b"outside");
     assert_eq!(fs::read(fixture.0.join("held/target")).unwrap(), b"inside");
 }
@@ -41,10 +41,10 @@ fn replaced_source_is_rejected_before_overwriting_destination() {
     let fixture = Fixture::new();
     let parent = fs::File::open(fixture.0.join("parent")).unwrap();
     fs::write(fixture.0.join("parent/target"), b"preserve").unwrap();
-    let error = rename_replace_with_identity_and_hook(parent.as_raw_fd(), "source", parent.as_raw_fd(), "target", fixture.identity(), || {
-        fs::rename(fixture.0.join("parent/source"), fixture.0.join("held-source")).unwrap();
-        fs::write(fixture.0.join("parent/source"), b"replacement").unwrap();
-    }).unwrap_err();
+    let expected = fixture.identity();
+    fs::rename(fixture.0.join("parent/source"), fixture.0.join("held-source")).unwrap();
+    fs::write(fixture.0.join("parent/source"), b"replacement").unwrap();
+    let error = rename_replace_with_identity(parent.as_raw_fd(), "source", parent.as_raw_fd(), "target", expected).unwrap_err();
     assert_eq!(error.status, "path-mismatch");
     assert_eq!(fs::read(fixture.0.join("parent/target")).unwrap(), b"preserve");
 }

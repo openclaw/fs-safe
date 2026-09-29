@@ -8,7 +8,11 @@ import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
-try { native = __loadBundledNativeForTest(); } catch { /* Native lanes build the binding. */ }
+try { native = __loadBundledNativeForTest(); }
+catch (error) { if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error; }
+if (process.env.FS_SAFE_NATIVE_MODE === "require" && typeof native?.renameReplaceWithIdentity !== "function") {
+  throw new Error("Native overwrite Root move tests require the host replacement binding");
+}
 const { tempRoot } = useRealTempDirs();
 afterEach(() => { configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); });
 

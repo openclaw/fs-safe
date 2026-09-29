@@ -23,13 +23,11 @@ fn verify(stat: &Stat, expected: ExactFileIdentity) -> NativeResult<()> {
     Ok(())
 }
 
-fn unlink_with_hook(
+fn unlink_entry(
     parent: i32, name: &str, expected: ExactFileIdentity, directory: bool,
-    before_final: impl FnOnce(),
 ) -> NativeResult<()> {
     nonnegative_fd(parent, "remove child")?;
     validate_child_basename(name)?;
-    before_final();
     let stat = inspect(parent, name)?;
     verify(&stat, expected)?;
     if FileType::from_raw_mode(stat.st_mode).is_dir() != directory {
@@ -65,7 +63,7 @@ pub fn root_removal_unlink(
     env: Env, parent: i32, name: String, dev: BigInt, ino: BigInt, directory: bool,
 ) -> Result<()> {
     into_napi(env, crate::exact_file_identity(&dev, &ino).and_then(|identity| {
-        unlink_with_hook(parent, &name, identity, directory, || {})
+        unlink_entry(parent, &name, identity, directory)
     }))
 }
 
@@ -75,12 +73,11 @@ pub struct RootRemovalDirectory {
     stream: Option<Dir>,
 }
 
-fn open_directory_with_hook(
-    parent: i32, name: &str, expected: ExactFileIdentity, before_final: impl FnOnce(),
+fn open_directory(
+    parent: i32, name: &str, expected: ExactFileIdentity,
 ) -> NativeResult<RootRemovalDirectory> {
     nonnegative_fd(parent, "open removal directory")?;
     validate_child_basename(name)?;
-    before_final();
     let name = std::ffi::CString::new(name)
         .map_err(|_| native_error("EINVAL", "removal name contains NUL"))?;
     let descriptor = open_cleanup_directory(parent, &name)?;
@@ -97,7 +94,7 @@ pub fn open_root_removal_directory(
     env: Env, parent: i32, name: String, dev: BigInt, ino: BigInt,
 ) -> Result<RootRemovalDirectory> {
     into_napi(env, crate::exact_file_identity(&dev, &ino).and_then(|expected| {
-        open_directory_with_hook(parent, &name, expected, || {})
+        open_directory(parent, &name, expected)
     }))
 }
 
