@@ -572,21 +572,6 @@ fn file_path_matches_receipt(
     }
 }
 
-fn directory_entry_matches_fd(
-    parent_fd: i32,
-    name: &CStr,
-    directory_fd: i32,
-) -> NativeResult<bool> {
-    let opened = rustix::fs::fstat(borrowed(directory_fd))
-        .map_err(|error| os_error(error, "inspect opened cleanup child"))?;
-    let Some(current) = inspect_child(parent_fd, name, "inspect cleanup child name")? else {
-        return Ok(false);
-    };
-    Ok(FileType::from_raw_mode(opened.st_mode).is_dir()
-        && FileType::from_raw_mode(current.st_mode).is_dir()
-        && same_identity(&opened, &current))
-}
-
 #[cfg(any(target_os = "linux", test))]
 fn owned_tree_removal_available_with_probe(
     parent_fd: i32,
@@ -734,7 +719,13 @@ fn remove_directory_contents_with_hook(
                 root_device,
                 before_entry_stat,
             )?;
-            if !directory_entry_matches_fd(directory_fd, name.as_c_str(), child.as_raw_fd())? {
+            // The owned child stays open; only its name needs a fresh observation.
+            let named = inspect_child(directory_fd, name.as_c_str(), "inspect cleanup child name")?;
+            if !named.is_some_and(|current| {
+                FileType::from_raw_mode(opened.st_mode).is_dir()
+                    && FileType::from_raw_mode(current.st_mode).is_dir()
+                    && same_identity(&opened, &current)
+            }) {
                 return Err(native_error(
                     "path-mismatch",
                     "owned tree child changed before removal",
@@ -1833,6 +1824,62 @@ mod tests {
     }
 
     #[test]
+    fn owned_tree_cleanup_rechecks_child_names_after_descent() {
+        for replacement in ["absent", "directory", "symlink"] {
+            let root = temp_root("owned-child-after-descent");
+            let workspace = root.join("workspace");
+            let nested = workspace.join("nested");
+            let original = workspace.join("original");
+            let outside = root.join("outside");
+            fs::create_dir_all(nested.join("grandchild")).unwrap();
+            fs::write(nested.join("grandchild/owned"), b"owned").unwrap();
+            fs::create_dir(&outside).unwrap();
+            fs::write(outside.join("keep"), b"outside").unwrap();
+            let directory = fs::File::open(&workspace).unwrap();
+            let stat = rustix::fs::fstat(directory.as_fd()).unwrap();
+            let mut swapped = false;
+
+            let error = remove_directory_contents_with_hook(
+                directory.as_raw_fd(),
+                stat.st_dev as u64,
+                &mut |name| {
+                    if name.to_bytes() == b"owned" && !swapped {
+                        swapped = true;
+                        fs::rename(&nested, &original).unwrap();
+                        match replacement {
+                            "directory" => {
+                                fs::create_dir(&nested).unwrap();
+                                fs::write(nested.join("keep"), b"replacement").unwrap();
+                            }
+                            "symlink" => std::os::unix::fs::symlink(&outside, &nested).unwrap(),
+                            _ => {}
+                        }
+                    }
+                },
+            )
+            .unwrap_err();
+
+            assert!(swapped);
+            assert_eq!(error.status, "path-mismatch");
+            assert_eq!(error.reason, "owned tree child changed before removal");
+            assert_eq!(fs::read_dir(&original).unwrap().count(), 0);
+            assert_eq!(fs::read(outside.join("keep")).unwrap(), b"outside");
+            match replacement {
+                "directory" => {
+                    assert_eq!(fs::read(nested.join("keep")).unwrap(), b"replacement");
+                }
+                "symlink" => assert_eq!(fs::read_link(&nested).unwrap(), outside),
+                _ => assert_eq!(
+                    fs::symlink_metadata(&nested).unwrap_err().kind(),
+                    std::io::ErrorKind::NotFound,
+                ),
+            }
+            drop(directory);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn owned_tree_file_unlink_preserves_a_final_directory_replacement() {
         for injected in [
             None,
@@ -1969,8 +2016,8 @@ mod tests {
         let root = temp_root("owned-tree");
         let workspace = root.join("workspace");
         fs::create_dir(&workspace).unwrap();
-        fs::create_dir(workspace.join("nested")).unwrap();
-        fs::write(workspace.join("nested/owned"), b"owned").unwrap();
+        fs::create_dir_all(workspace.join("nested/grandchild")).unwrap();
+        fs::write(workspace.join("nested/grandchild/owned"), b"owned").unwrap();
         let parent = OpenOptions::new().read(true).open(&root).unwrap();
         let directory = OpenOptions::new().read(true).open(&workspace).unwrap();
 
