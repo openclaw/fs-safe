@@ -1107,6 +1107,10 @@ jobs:
       - name: Measure idle native watch cost
         run: node scripts/watch-idle-proof.mjs
 
+      - name: Prove Windows hub attribution with unrelated workers
+        if: runner.os == 'Windows'
+        run: node scripts/watch-idle-census-proof.mjs .
+
       - name: Prove bounded watch shutdown and process exit
         run: node scripts/watch-lifecycle-proof.mjs
 
