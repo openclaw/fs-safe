@@ -58,7 +58,7 @@ pub(super) use kqueue::Waker;
 struct Owner {
     root: String,
     pending: SharedPending,
-    notify: Option<Notify>,
+    notify: Notify,
 }
 struct Stream {
     _paths: CfValue,
@@ -124,9 +124,7 @@ unsafe extern "C" fn callback(_: Ref, info: Ref, count: usize, paths: Ref, flags
         let path = unsafe { CStr::from_ptr(*(paths.cast::<*const c_char>()).add(index)) }.to_str();
         owner.record(path.ok(), flag);
     }
-    if let Some(notify) = &owner.notify {
-        notify.wake();
-    }
+    owner.notify.wake();
 }
 impl Owner {
     fn record(&self, path: Option<&str>, flags: u32) {
@@ -193,7 +191,7 @@ impl Backend {
         notify: Notify,
     ) -> NativeResult<()> {
         // The hub issues checked, never-reused IDs: replacing a live owner would invalidate its context.
-        self.owners.insert(id, Arc::new(Owner { root: root.into(), pending, notify: Some(notify) }));
+        self.owners.insert(id, Arc::new(Owner { root: root.into(), pending, notify }));
         Ok(())
     }
     pub fn configure(&mut self, id: u32, anchors: &[String], exclusions: &[String]) -> NativeResult<()> {

@@ -362,7 +362,7 @@ fn synthetic_callback(backend: &Backend, registration: &Registration) {
         matches!(registration.receiver.try_recv(), Ok(Command::Drain(id)) if id == registration.id)
     );
     assert!(registration.receiver.try_recv().is_err());
-    backend.owners[&registration.id].notify.as_ref().unwrap().queued.store(false, Ordering::Release);
+    backend.owners[&registration.id].notify.queued.store(false, Ordering::Release);
 }
 
 const RETIRE: &[&str] = &["dispatch(retire)", "Stop", "Invalidate", "Release", "dispatch(barrier)"];
@@ -587,8 +587,15 @@ fn map_growth_and_backend_drop_keep_all_contexts_through_retirement() {
 
 #[test]
 fn decoder_preserves_inside_names_and_discards_outside_paths() {
+    reset();
+    let mut backend = Backend::new().unwrap();
+    let registration = register(&mut backend, 1);
     let pending = Arc::new(Mutex::new(Pending { limit: 2, ..Pending::default() }));
-    let events = Owner { root: "/admitted/".into(), pending: pending.clone(), notify: None };
+    let events = Owner {
+        root: "/admitted/".into(),
+        pending: pending.clone(),
+        notify: backend.owners[&registration.id].notify.clone(),
+    };
     events.record(Some("/admitted/kept"), 0x1000);
     let batch = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap();
     assert!(!batch.overflow);
@@ -598,4 +605,8 @@ fn decoder_preserves_inside_names_and_discards_outside_paths() {
         events.record(Some(path), 0x1000);
         assert!(pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().is_none());
     }
+    drop(events);
+    backend.remove(registration.id).unwrap();
+    drop(backend);
+    assert_calls(&["dispatch_release"]);
 }
