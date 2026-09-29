@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -20,9 +20,30 @@ it.each(["async", "sync"].flatMap(flavor => actions.map(action => ({ flavor, act
     const directory = await tempRoot("fs-safe-atomic-process-");
     const target = path.join(directory, "target");
     await fs.writeFile(target, "original");
-    const { stdout, stderr } = await exec(process.execPath, [fixture, directory, flavor, action], {
-      timeout: 15_000, maxBuffer: 64 * 1024, killSignal: "SIGKILL",
-    });
+    const inheritedZero = process.platform === "win32" && action.startsWith("fd-zero-");
+    let inheritedIdentity: { dev: string; ino: string } | undefined;
+    const args = [fixture, directory, flavor, action];
+    const options = { timeout: 15_000, maxBuffer: 64 * 1024, killSignal: "SIGKILL" as const };
+    let output: { stdout: string; stderr: string };
+    if (inheritedZero) {
+      const seed = await fs.open(path.join(directory, "stdin-stage"), "wx+", 0o600);
+      try {
+        const identity = await seed.stat({ bigint: true });
+        inheritedIdentity = { dev: String(identity.dev), ino: String(identity.ino) };
+        const child = spawnSync(process.execPath, args, {
+          ...options, encoding: "utf8", stdio: [seed.fd, "pipe", "pipe"],
+        });
+        expect(child.error, child.stderr).toBeUndefined();
+        expect(child.signal, child.stderr).toBeNull();
+        expect(child.status, child.stderr).toBe(0);
+        output = child;
+      } finally {
+        await seed.close();
+      }
+    } else {
+      output = await exec(process.execPath, args, options);
+    }
+    const { stdout, stderr } = output;
     expect(stderr).toBe("");
     const receipt = JSON.parse(stdout);
     expect(receipt).toMatchObject({ flavor, action });
@@ -36,8 +57,23 @@ it.each(["async", "sync"].flatMap(flavor => actions.map(action => ({ flavor, act
     else expect(currentIdentity).toEqual(receipt.originalIdentity);
 
     if (action.startsWith("fd-zero-")) {
-      expect(receipt).toMatchObject({ stageFd: 0, stageCloses: 1, descriptorClosed: true });
+      expect(receipt).toMatchObject({ stageFd: 0, stageCloses: 1 });
       expect(receipt.outcome).toBe(published ? "published" : "refused");
+      if (inheritedZero) {
+        expect(receipt).toMatchObject({
+          descriptorSetup: "inherited-regular-file-adapter",
+          descriptorState: "stdio-retained-until-process-exit",
+          inheritedIdentity,
+        });
+        expect(receipt).not.toHaveProperty("descriptorClosed");
+        expect(receipt.intermediateEntries).toEqual(receipt.setupSeedVisible
+          ? ["stdin-stage", "target"] : ["target"]);
+        if (published) expect(currentIdentity).toEqual(inheritedIdentity);
+      } else {
+        expect(receipt).toMatchObject({
+          descriptorSetup: "builtin-open-after-stdin-close", descriptorClosed: true,
+        });
+      }
     }
     if (action === "exit-after-cleanup-failure") {
       expect(receipt).toMatchObject({ outcome: "refused", unlinkAttempts: 1, stageCloses: 1, descriptorClosed: true });
