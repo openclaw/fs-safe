@@ -7,7 +7,7 @@ import fs, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import { assertSynchronousCallbackResult, MutationAuthorityError } from "./mutation-authority.js";
+import { assertSynchronousCallbackResult, isMutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { writePinnedInput } from "./pinned-write-input.js";
@@ -24,7 +24,7 @@ import type {
   StagedFileReceipt,
 } from "./staged-file-types.js";
 import { classifyNativeRenameFailure } from "./native-rename-outcome.js";
-import { createStagedFileReceipt, stagedFileFailure as failure } from "./staged-file-settlement.js";
+import { createStagedFileReceipt, stagedFailure } from "./staged-file-settlement.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
@@ -55,7 +55,7 @@ function assertBasename(name: string, portable: boolean): void {
 
 const NOT_PUBLISHED = Object.freeze({ status: "not-published" as const });
 type State =
-  | { status: "open"; fileFd?: number; publication: StagedFilePublication }
+  | { status: "open" | "closing"; fileFd?: number; publication: StagedFilePublication }
   | { status: "closed"; receipt: StagedFileCleanupReceipt; error?: FsSafeError };
 type StagedPermissionPolicy = "private-creation" | "mode-only";
 
@@ -148,7 +148,7 @@ class NativeStagedFile implements StagedFile {
       await params.verifyPublished?.(staged.#file(), identity, parentGuard);
     } catch (error) {
       if (params.overwrite === false && params.input.kind !== "file" && params.input.stageBeforePublish === true) {
-        throw failure(error, { phase: "publish", publication: published });
+        throw stagedFailure("file", error, { phase: "publish", publication: published });
       }
       throw error;
     }
@@ -162,8 +162,8 @@ class NativeStagedFile implements StagedFile {
     return this.#receipt;
   }
 
-  #open(): Extract<State, { status: "open" }> {
-    if (this.#state.status === "closed") {
+  #open(): Exclude<State, { status: "closed" }> {
+    if (this.#state.status !== "open") {
       throw new FsSafeError("helper-failed", "staged file is closed");
     }
     return this.#state;
@@ -265,13 +265,14 @@ class NativeStagedFile implements StagedFile {
     } catch (error) {
       const { receipt: cleanup, error: cleanupError } = this.#finalize();
       if (cleanupError) {
-        throw failure(
+        throw stagedFailure(
+          "file",
           new AggregateError([error, cleanupError], "preparation and cleanup failed"),
           { phase: "prepare", publication: cleanup.publication, cleanup },
         );
       }
       if (cleanup.status === "preserved") {
-        throw failure(error, { phase: "prepare", publication: cleanup.publication, cleanup });
+        throw stagedFailure("file", error, { phase: "prepare", publication: cleanup.publication, cleanup });
       }
       throw error;
     }
@@ -309,20 +310,22 @@ class NativeStagedFile implements StagedFile {
           this.#owner.binding.renameNoReplace(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
         }
       } catch (error) {
+        // Record before inspecting metadata, whose getters can reenter cleanup.
+        state.publication = Object.freeze({ status: "indeterminate", basename, overwrite });
         // Only explicit pre-dispatch provenance can rule out a committed rename.
-        if (classifyNativeRenameFailure(error) === "indeterminate") {
-          state.publication = Object.freeze({ status: "indeterminate", basename, overwrite });
+        if (classifyNativeRenameFailure(error) === "uncommitted") {
+          state.publication = NOT_PUBLISHED;
         }
         throw error;
       }
       return this.#completePublication(basename, overwrite, onPublished);
     } catch (error) {
-      if (error instanceof MutationAuthorityError) throw error;
+      if (isMutationAuthorityError(error)) throw error;
       // Closure rejects further use, not the recorded outcome of an earlier publication.
       const publication = this.#state.status === "closed"
         ? this.#state.receipt.publication
         : this.#state.publication;
-      throw failure(error, { phase: "publish", publication });
+      throw stagedFailure("file", error, { phase: "publish", publication });
     }
   }
 
@@ -353,7 +356,9 @@ class NativeStagedFile implements StagedFile {
     if (this.#state.status === "closed") {
       return this.#state;
     }
-    const state = this.#state;
+    const state = this.#open();
+    // Consume descriptor authority before native calls or diagnostic getters can reenter.
+    state.status = "closing";
     let outcome: StagedFileCleanupReceipt["status"] = "not-needed";
     const errors: unknown[] = [];
     if (state.publication.status === "indeterminate") {
@@ -387,7 +392,8 @@ class NativeStagedFile implements StagedFile {
       status: outcome,
       resources,
     });
-    const error = errors.length ? failure(
+    const error = errors.length ? stagedFailure(
+      "file",
       errors.length === 1 ? errors[0] : new AggregateError(errors, "staged cleanup failed"),
       { phase: "cleanup", publication: state.publication, cleanup: receipt },
     ) : undefined;

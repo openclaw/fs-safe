@@ -1,5 +1,6 @@
 import type { BigIntStats } from "node:fs";
 import { FsSafeError } from "./errors.js";
+import type { StagedSymlinkFailureDetails } from "./staged-symlink-types.js";
 import type {
   StagedFileCleanupReceipt,
   StagedFileFailureDetails,
@@ -23,11 +24,19 @@ export function createStagedFileReceipt(
   });
 }
 
-export function stagedFileFailure(error: unknown, details: StagedFileFailureDetails): FsSafeError {
-  const code = error instanceof FsSafeError
-    ? error.code
-    : (error as NodeJS.ErrnoException)?.code === "EEXIST" ? "already-exists" : "helper-failed";
-  return new FsSafeError(code, `staged file ${details.phase} failed`, { cause: error, details });
+export function stagedFailure(
+  kind: "file" | "symlink",
+  error: unknown,
+  details: StagedFileFailureDetails | StagedSymlinkFailureDetails,
+): FsSafeError {
+  let code: FsSafeError["code"] = "helper-failed";
+  try {
+    code = error instanceof FsSafeError ? error.code
+      : (error as NodeJS.ErrnoException)?.code === "EEXIST" ? "already-exists" : "helper-failed";
+  } catch {
+    // Uninspectable error metadata must not interrupt terminal settlement.
+  }
+  return new FsSafeError(code, `staged ${kind} ${details.phase} failed`, { cause: error, details });
 }
 
 /** Finish owned cleanup and every close before surfacing publication evidence. */
@@ -67,7 +76,7 @@ export async function settleStagedFile(params: {
     status,
     resources,
   });
-  throw stagedFileFailure(error, {
+  throw stagedFailure("file", error, {
     phase: params.failure ? params.phase : "cleanup",
     publication: params.publication,
     cleanup,

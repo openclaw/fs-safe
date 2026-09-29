@@ -7,6 +7,14 @@ export class MutationAuthorityError extends FsSafeError {
   }
 }
 
+export function isMutationAuthorityError(error: unknown): error is MutationAuthorityError {
+  try {
+    return error instanceof MutationAuthorityError;
+  } catch {
+    return false;
+  }
+}
+
 export function assertSynchronousCallbackResult(returned: unknown, name: string): void {
   if (
     returned !== null &&
@@ -39,7 +47,7 @@ export function composeMutationAssertions(
 }
 
 export function rethrowMutationAuthorityError(error: unknown): never {
-  if (error instanceof MutationAuthorityError) throw error.rejection;
+  if (isMutationAuthorityError(error)) throw error.rejection;
   // Cleanup failures and indeterminate publication receipts must retain their context.
   throw error;
 }

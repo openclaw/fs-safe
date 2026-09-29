@@ -270,7 +270,8 @@ occurred, later cancellation or verification failure preserves the destination.
 The synchronous optional `onDestinationPublished` callback receives a frozen
 `RootCopyPublicationReceipt` containing `{ path, dev, ino }`, with exact bigint identity immediately after
 publication, before later checks can fail. Callback errors also preserve the
-published file. Promise, thenable, and synchronous or asynchronous generator
+published file and retain their original thrown value when cleanup succeeds,
+including errors whose metadata cannot be inspected. Promise, thenable, and synchronous or asynchronous generator
 results reject with `TypeError`; returned generators are never advanced. Other
 synchronous return values are ignored. This receipt records an outcome; it does
 not authorize removing a file that another actor may have edited. Application recovery and cooperative

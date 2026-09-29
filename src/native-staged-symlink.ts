@@ -6,7 +6,7 @@ import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { requireNativeBinding } from "./native.js";
 import { classifyNativeRenameFailure } from "./native-rename-outcome.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
-import { createStagedFileReceipt } from "./staged-file-settlement.js";
+import { createStagedFileReceipt, stagedFailure } from "./staged-file-settlement.js";
 import type {
   PublishedSymlinkReceipt, StagedSymlink, StagedSymlinkCleanupReceipt,
   StagedSymlinkExpected, StagedSymlinkFailureDetails, StagedSymlinkPublication,
@@ -24,17 +24,6 @@ function basename(name: string): void {
     /[/\\:\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(name)) {
     throw new FsSafeError("invalid-path", "staged symlinks require a direct-child basename");
   }
-}
-
-function failure(error: unknown, details: StagedSymlinkFailureDetails): FsSafeError {
-  let code: FsSafeError["code"] = "helper-failed";
-  try {
-    code = error instanceof FsSafeError ? error.code
-      : (error as NodeJS.ErrnoException)?.code === "EEXIST" ? "already-exists" : "helper-failed";
-  } catch {
-    // Uninspectable error metadata must not interrupt terminal settlement.
-  }
-  return new FsSafeError(code, `staged symlink ${details.phase} failed`, { cause: error, details });
 }
 
 function assertAuthority(assertion: () => void): void {
@@ -122,11 +111,7 @@ class NativeStagedSymlink implements StagedSymlink {
       try {
         this.#binding.publishStagedSymlink(this.#parentFd, this.#receipt.temporaryBasename, this.#linkFd, name);
       } catch (error) {
-        let outcome = "indeterminate";
-        try { outcome = classifyNativeRenameFailure(error); } catch {
-          // Unreadable diagnostics cannot prove that the rename was uncommitted.
-        }
-        if (outcome === "indeterminate") {
+        if (classifyNativeRenameFailure(error) === "indeterminate") {
           this.#publication = Object.freeze({ status: "indeterminate", basename: name, overwrite: false });
         }
         throw error;
@@ -140,7 +125,7 @@ class NativeStagedSymlink implements StagedSymlink {
       assertStagedDirectoryCurrent(this.#receipt.directory);
       return published;
     } catch (error) {
-      throw failure(error, { phase: "publish", publication: this.#publication });
+      throw stagedFailure("symlink", error, { phase: "publish", publication: this.#publication });
     } finally { this.#busy = false; }
   }
 
@@ -190,7 +175,7 @@ class NativeStagedSymlink implements StagedSymlink {
       this.#removal = { receipt };
       return receipt;
     } catch (error) {
-      const wrapped = failure(error, { phase: "remove-published", publication: this.#publication });
+      const wrapped = stagedFailure("symlink", error, { phase: "remove-published", publication: this.#publication });
       // A failed unlink is not safe to retry automatically.
       this.#removal = { error: wrapped };
       throw wrapped;
@@ -219,7 +204,8 @@ class NativeStagedSymlink implements StagedSymlink {
       temporaryBasename: this.#receipt.temporaryBasename,
       publication: this.#publication, status, resources,
     });
-    const error = errors.length ? failure(
+    const error = errors.length ? stagedFailure(
+      "symlink",
       errors.length === 1 ? errors[0] : new AggregateError(errors, "symlink settlement failed"),
       { phase: "cleanup", publication: this.#publication, cleanup: receipt },
     ) : undefined;
@@ -294,7 +280,7 @@ export async function retainSymlinkInDirectory(options: {
       try { close(); } catch (closeError) { errors.push(closeError); }
     }
     // Until admission succeeds, the caller retains every namespace cleanup duty.
-    throw failure(errors.length === 1 ? error : new AggregateError(errors, "symlink admission and close failed"),
+    throw stagedFailure("symlink", errors.length === 1 ? error : new AggregateError(errors, "symlink admission and close failed"),
       { phase: "prepare", publication: NOT_PUBLISHED });
   }
 }

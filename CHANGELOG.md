@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Copy and staging failures:** preserve publication callback errors with unreadable metadata, retain uncertain native rename outcomes, and prevent repeated or reentrant cleanup from reusing consumed descriptors.
+
 ### Performance
 
 - **Linux fallback resolution:** reuse the file type from each component's checked descriptor observation, avoiding a duplicate metadata read while retaining fresh identity, symlink-target, and mount-policy checks.

@@ -4,9 +4,13 @@ export const NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH =
 export type NativeRenameFailureOutcome = "uncommitted" | "indeterminate";
 
 export function classifyNativeRenameFailure(error: unknown): NativeRenameFailureOutcome {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code ?? "";
+  try {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH) {
+      return "uncommitted";
+    }
+  } catch {
+    // Unreadable diagnostics cannot prove that the rename was uncommitted.
+  }
   // Ordinary errno can follow a committed remote rename whose reply was lost.
-  return code === NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH
-    ? "uncommitted"
-    : "indeterminate";
+  return "indeterminate";
 }
