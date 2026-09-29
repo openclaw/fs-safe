@@ -33,7 +33,7 @@ export const GUEST_FILESYSTEM_DISPATCH_PYTHON = [
   "                sys.exit(SANDBOX_CREATE_EXISTS_EXIT_CODE)",
   "        elif operation == 'read':",
   "            if len(sys.argv) > 5:",
-  "                read_file_bounded(parent_fd, sys.argv[4], int(sys.argv[5]))",
+  "                read_file(parent_fd, sys.argv[4], int(sys.argv[5]))",
   "            else:",
   "                read_file(parent_fd, sys.argv[4])",
   "        elif operation == 'readdir':",

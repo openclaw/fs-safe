@@ -330,6 +330,15 @@ describe.skipIf(process.platform === "win32")("guest filesystem protocol", () =>
     expect(result.status).toBe(GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE);
     expect(result.stdout).toHaveLength(0);
   });
+
+  it.each(["", "missing-parent"])("checks negative read limits after parent admission and before leaf opening (%j)", async (parent) => {
+    const root = await tempRoot("fs-safe-guest-read-limit-order-");
+    const result = runGuest(["read", root, parent, "missing", "-1"]);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(parent ? GUEST_FILESYSTEM_READ_NOT_FOUND_EXIT_CODE : 1);
+    expect(result.stdout).toHaveLength(0);
+    if (!parent) expect(result.stderr.toString()).toContain("read limit must be non-negative");
+  });
 });
 
 describe.skipIf(process.platform === "win32")("guest basename admission", () => {
