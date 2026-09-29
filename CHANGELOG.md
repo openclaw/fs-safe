@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Windows removal:** nonrecursive `Root.remove()` reports `not-empty` for a nonempty directory in required native mode, including with `force: true`, instead of `not-removable`.
 - **Copy and staging failures:** preserve publication callback errors with unreadable metadata, retain uncertain native rename outcomes, and prevent repeated or reentrant cleanup from reusing consumed descriptors.
 
 ### Performance

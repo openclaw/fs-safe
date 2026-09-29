@@ -1083,6 +1083,12 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/linux-openat2-fallback.test.ts test/root-move-noreplace.test.ts test/root-move-native-integration.test.ts
 
+      - name: Test native Windows Root removal
+        if: runner.os == 'Windows'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/root-remove-native-integration.test.ts
+
       - name: Test retained Windows file identity and resource settlement
         if: runner.os == 'Windows'
         env:

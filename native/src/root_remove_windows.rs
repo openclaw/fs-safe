@@ -87,4 +87,35 @@ mod tests {
         drop(parent);
         fs::remove_dir_all(base).unwrap();
     }
+
+    #[test]
+    fn preserves_nonempty_directory_with_typed_error() {
+        let base = std::env::temp_dir().join(format!("fs-safe-root-remove-nonempty-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir(&base).unwrap();
+        let parent = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).open(&base).unwrap();
+        let handle = parent.as_raw_handle() as HANDLE;
+        let directory = base.join("full");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("value"), b"preserve\0payload").unwrap();
+        let before = { let child = open(handle, "full", 0).unwrap(); inspect(child.0).unwrap() };
+        assert!(before.1);
+        assert!(!before.2);
+
+        let error = unlink_with_hook(handle, "full", before.0, true, || {}).unwrap_err();
+        assert_eq!(error.status, "ENOTEMPTY");
+        assert_eq!(error.reason, "remove owned tree handle failed with Windows error 145");
+        let after = { let child = open(handle, "full", 0).unwrap(); inspect(child.0).unwrap() };
+        assert_eq!(after, before);
+        let names = fs::read_dir(&directory).unwrap()
+            .map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
+        assert_eq!(names, [std::ffi::OsString::from("value")]);
+        assert_eq!(fs::read(directory.join("value")).unwrap(), b"preserve\0payload");
+        fs::remove_file(directory.join("value")).unwrap();
+        unlink_with_hook(handle, "full", before.0, true, || {}).unwrap();
+        assert!(!directory.exists());
+        drop(parent);
+        fs::remove_dir_all(base).unwrap();
+    }
 }

@@ -9,7 +9,13 @@ import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
-try { native = __loadBundledNativeForTest(); } catch { /* Dedicated native lanes build the addon. */ }
+try { native = __loadBundledNativeForTest(); }
+catch (error) { if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error; }
+if (process.env.FS_SAFE_NATIVE_MODE === "require" && (
+  typeof native?.rootRemovalStat !== "function" ||
+  typeof native?.rootRemovalUnlink !== "function" ||
+  (process.platform !== "win32" && typeof native?.openRootRemovalDirectory !== "function")
+)) throw new Error("Native Root removal tests require the complete host removal binding");
 const { tempRoot } = useRealTempDirs();
 afterEach(() => {
   vi.restoreAllMocks();
@@ -57,6 +63,35 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
     const scoped = await root(directory);
     await expect(scoped.remove("tree", { recursive: true })).rejects.toMatchObject({ code: "helper-unavailable" });
     expect(await fs.readFile(path.join(directory, "tree/value"), "utf8")).toBe("preserve");
+  });
+
+  it.skipIf(process.platform !== "win32").each([false, true])("preserves a nonempty Windows directory with not-empty (force=%s)", async force => {
+    requireNative();
+    const directory = await tempRoot("fs-safe-native-remove-windows-nonempty-");
+    const full = path.join(directory, "full");
+    const payload = Buffer.from("preserve\0payload");
+    await fs.mkdir(full);
+    await fs.writeFile(path.join(full, "value"), payload);
+    const before = await fs.lstat(full, { bigint: true });
+    expect(before.dev).not.toBe(0n);
+    expect(before.ino).not.toBe(0n);
+    const scoped = await root(directory);
+
+    await expect(scoped.remove("full", { force })).rejects.toMatchObject({
+      code: "not-empty",
+      category: "operational",
+      cause: { code: "ENOTEMPTY", message: "remove owned tree handle failed with Windows error 145" },
+      details: { operation: "remove", phase: "remove", relativePath: "" },
+    });
+    const after = await fs.lstat(full, { bigint: true });
+    expect(after.isDirectory()).toBe(true);
+    expect({ dev: after.dev, ino: after.ino }).toEqual({ dev: before.dev, ino: before.ino });
+    expect(await fs.readdir(directory)).toEqual(["full"]);
+    expect(await fs.readdir(full)).toEqual(["value"]);
+    expect(await fs.readFile(path.join(full, "value"))).toEqual(payload);
+    await scoped.remove("full/value");
+    await scoped.remove("full");
+    expect(await fs.readdir(directory)).toEqual([]);
   });
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("does not require directory read permission to unlink a direct child", async () => {
