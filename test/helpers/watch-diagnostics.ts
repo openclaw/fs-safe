@@ -40,14 +40,15 @@ export function watchDiagnostics(selected: string) {
   return {
     phase(value: string) { phase = value; add({ ...stamp(), kind: "phase" }); },
     invalidation(value: WatchInvalidation) { activity++; add({ ...stamp(), kind: "invalidation", value, ...latest }); },
-    async quiet(owner: WatchSubscription) {
+    async quiet(owner: WatchSubscription, observationMs = 200) {
       const deadline = performance.now() + 5000;
       do {
         await owner.reconcile();
+        if (performance.now() + observationMs > deadline) break;
         const observed = activity;
-        await delay(200);
+        await delay(observationMs);
         await owner.reconcile();
-        if (activity === observed) return;
+        if (activity === observed && performance.now() <= deadline) return;
       } while (performance.now() < deadline);
       throw new Error("watch fixture did not become quiet before measurement");
     },
