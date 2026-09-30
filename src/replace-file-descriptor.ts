@@ -103,11 +103,11 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
   }
   if (process.platform === "win32") return;
   const admit = (stat: BigIntStats) => assertDirectory(stat, params.dirPath);
-  const expected = yield* inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
-    undefined, false, admit);
+  const expected = inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
+    undefined, false, admit) as BigIntStats;
   const file = yield* io.open(params.dirPath, directoryOpenFlags());
   try {
-    yield* inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
+    inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
     params.mutation?.assert();
     file.chmod(params.mode & 0o7777);
   } finally {
@@ -126,7 +126,8 @@ export function* writeTempFile(io: AtomicIo, params: {
   params.mutation?.assert();
   const file = yield* io.open(params.tempPath, "wx", params.mode);
   try {
-    const identity = yield* inspectAtomicIdentity(io, () => file.statExact());
+    const openedInspection = inspectAtomicIdentity(io, () => file.statExact());
+    const identity = (io.asynchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
     params.onIdentity?.(identity);
     params.mutation?.assert();
     const writing = file.writeFile(params.content, true);
@@ -134,7 +135,8 @@ export function* writeTempFile(io: AtomicIo, params: {
     const chmod = file.chmod(params.mode);
     if (io.asynchronous) yield chmod;
     if (params.sync) yield* file.syncBestEffort();
-    yield* inspectAtomicIdentity(io, () => file.statExact(), identity);
+    const currentInspection = inspectAtomicIdentity(io, () => file.statExact(), identity);
+    if (io.asynchronous) yield currentInspection;
     return { file, identity };
   } catch (error) {
     try {

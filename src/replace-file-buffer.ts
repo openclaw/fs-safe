@@ -13,8 +13,13 @@ export function* writeAtomicDestination(
   let written = 0;
   while (written < data.length) {
     if (destination) yield* destination.beforeWrite(restore);
-    const bytesWritten = yield* file.write(data, written, data.length - written, written);
-    written += bytesWritten;
+    let result = file.write(data, written, data.length - written, written);
+    if (file.io.asynchronous) {
+      const completed = (yield result) as { bytesWritten: number };
+      if (completed.bytesWritten === 0) throw new Error("Copy fallback write made no progress");
+      result = completed.bytesWritten;
+    }
+    written += result as number;
   }
   if (destination) yield* destination.beforeWrite(restore);
   yield* file.truncate(data.length);

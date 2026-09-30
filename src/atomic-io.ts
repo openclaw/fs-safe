@@ -45,20 +45,20 @@ export function runSync<T>(procedure: Procedure<T>): T {
   return step.value;
 }
 
-export function* inspectAtomicIdentity<T extends Pick<BigIntStats, "dev" | "ino">>(
+export function inspectAtomicIdentity<T extends Pick<BigIntStats, "dev" | "ino">>(
   io: AtomicIo,
   read: () => T | Promise<T>,
   expected?: Pick<BigIntStats, "dev" | "ino">,
   synchronous = false,
   admit?: (stat: T) => void,
-): Procedure<T> {
+): T | Promise<T> {
   if (io.asynchronous && !synchronous) {
     const inspect = admit ? async () => {
       const stat = await read();
       admit(stat);
       return stat;
     } : read;
-    return yield* wait(inspectFileIdentity(inspect, expected));
+    return inspectFileIdentity(inspect, expected);
   }
   // Sync metadata is an ordinary value, including objects with a then getter.
   const inspect = admit ? () => {
@@ -216,23 +216,20 @@ export class AtomicFile {
     }, { initialSize: Number.isSafeInteger(sizeHint) && sizeHint >= 0 ? sizeHint : undefined });
   }
 
-  *read(buffer: Buffer, offset: number, length: number, position: number | null): Procedure<number> {
+  read(buffer: Buffer, offset: number, length: number, position: number | null): number | Promise<{ bytesRead: number }> {
     if (typeof this.resource === "number") {
       return this.io.syncFs!.readSync!(this.resource, buffer, offset, length, position);
     }
-    const result = yield* wait(this.resource.read(buffer, offset, length, position));
-    return result.bytesRead;
+    return this.resource.read(buffer, offset, length, position);
   }
 
-  *write(buffer: Buffer, offset: number, length: number, position: number | null): Procedure<number> {
+  write(buffer: Buffer, offset: number, length: number, position: number | null): number | Promise<{ bytesWritten: number }> {
     if (typeof this.resource === "number") {
       const written = this.io.syncFs!.writeSync!(this.resource, buffer, offset, length, position);
       if (written === 0) throw new Error("Copy fallback write made no progress");
       return written;
     }
-    const result = yield* wait(this.resource.write(buffer, offset, length, position));
-    if (result.bytesWritten === 0) throw new Error("Copy fallback write made no progress");
-    return result.bytesWritten;
+    return this.resource.write(buffer, offset, length, position);
   }
 
   *truncate(length: number): Procedure<void> {

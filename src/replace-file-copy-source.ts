@@ -34,8 +34,10 @@ export function* readOwnedCopySource(io: AtomicIo, params: {
   assertSourcePreview(yield* io.lstat(params.src), params.src);
   const handle = yield* openSource(io, params.src);
   try {
-    const opened = yield* inspectAtomicIdentity(io, () => handle.statExact(), params.expectedIdentity);
-    const current = yield* inspectAtomicIdentity(io, () => io.lstatExact(params.src), opened);
+    const openedInspection = inspectAtomicIdentity(io, () => handle.statExact(), params.expectedIdentity);
+    const opened = (io.asynchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
+    const currentInspection = inspectAtomicIdentity(io, () => io.lstatExact(params.src), opened);
+    const current = (io.asynchronous ? (yield currentInspection) : currentInspection) as BigIntStats;
     assertOpenedSource(opened, current, params.src);
     const replacement = yield* handle.readFile(io.asynchronous ? undefined : Number(opened.size));
     return { replacement, mode: Number(opened.mode) };

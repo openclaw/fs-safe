@@ -133,15 +133,17 @@ export class AtomicTempOwner {
     pathname: string,
     pathnameEntry: boolean,
     expected?: BigIntStats,
-  ): Procedure<BigIntStats> {
+  ): BigIntStats | Promise<BigIntStats> {
     return inspectAtomicIdentity(this.io, read, expected, false,
       stat => assertOwnedFile(stat, pathname, pathnameEntry));
   }
 
   *assertCurrent(pathname = this.pathname): Procedure<void> {
-    const opened = yield* this.inspectOwned(() => this.resource!.statExact(), pathname, false, this.identity);
+    const openedInspection = this.inspectOwned(() => this.resource!.statExact(), pathname, false, this.identity);
+    const opened = (this.io.asynchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
     try {
-      yield* this.inspectOwned(() => this.io.lstatExact(pathname), pathname, true, opened);
+      const currentInspection = this.inspectOwned(() => this.io.lstatExact(pathname), pathname, true, opened);
+      if (this.io.asynchronous) yield currentInspection;
     } catch (error) {
       if (hasErrorCode(error, "ENOENT")) {
         throw missingOwnedFile(pathname, error);
@@ -181,8 +183,10 @@ export class AtomicTempOwner {
         }
         throw error;
       }
-      const identity = yield* this.inspectOwned(() => published!.statExact(), pathname, false);
-      yield* this.inspectOwned(() => this.io.lstatExact(pathname), pathname, true, identity);
+      const openedInspection = this.inspectOwned(() => published!.statExact(), pathname, false);
+      const identity = (this.io.asynchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
+      const currentInspection = this.inspectOwned(() => this.io.lstatExact(pathname), pathname, true, identity);
+      if (this.io.asynchronous) yield currentInspection;
       if (sha256Hex(yield* published.readFile()) !== expectedHash) {
         throw new FsSafeError("path-mismatch", `Atomic replace published content changed: ${pathname}`);
       }

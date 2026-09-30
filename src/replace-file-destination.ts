@@ -47,9 +47,11 @@ export class AtomicDestination {
     }
     const admit = (stat: BigIntStats) => regular(stat, owner.pathname, owner.rejectHardlinks);
     try {
-      yield* inspectAtomicIdentity(this.io, () => read(false), this.identity, false, admit);
+      const descriptorInspection = inspectAtomicIdentity(this.io, () => read(false), this.identity, false, admit);
+      if (this.io.asynchronous) yield descriptorInspection;
       if (!descriptorOnly) {
-        yield* inspectAtomicIdentity(this.io, () => read(true), this.identity, false, admit);
+        const pathnameInspection = inspectAtomicIdentity(this.io, () => read(true), this.identity, false, admit);
+        if (this.io.asynchronous) yield pathnameInspection;
       }
     } catch (error) {
       if (!descriptorOnly && this.#writing && metadataFailure) {
@@ -85,7 +87,8 @@ export function* captureAtomicDestination(
   mutation: AtomicMutation,
   rejectHardlinks: boolean,
 ): Procedure<AtomicDestination> {
-  const identity = yield* inspectAtomicIdentity(io, () => file.statExact());
+  const inspection = inspectAtomicIdentity(io, () => file.statExact());
+  const identity = (io.asynchronous ? (yield inspection) : inspection) as BigIntStats;
   regular(identity, pathname, rejectHardlinks);
   return new AtomicDestination(io, file, pathname, mutation, rejectHardlinks, identity);
 }

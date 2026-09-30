@@ -68,9 +68,11 @@ function* openPinnedDestination(
   const file = yield* io.open(dest, admission === "restore" ? OPEN_READ_WRITE_FLAGS : OPEN_READ_FLAGS);
   try {
     const synchronous = io.asyncFs === fs;
-    const opened = yield* inspectAtomicIdentity(io, () => file.statExact(), undefined, synchronous);
-    yield* inspectAtomicIdentity(io, () => io.lstatExact(dest), opened, synchronous,
+    const openedInspection = inspectAtomicIdentity(io, () => file.statExact(), undefined, synchronous);
+    const opened = (io.asynchronous && !synchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
+    const currentInspection = inspectAtomicIdentity(io, () => io.lstatExact(dest), opened, synchronous,
       stat => admitDestinationKind(stat, opened, dest, admission));
+    if (io.asynchronous && !synchronous) yield currentInspection;
     if ((admission === "hardlinks" || hardlinks === "reject") && opened.nlink > 1n) {
       throw new FsSafeError("hardlink", `Hardlinked ${admission === "hardlinks" ? "atomic replace" : "copy fallback"} destination not allowed: ${dest}`);
     }
@@ -111,7 +113,10 @@ function* readRestoreSnapshot(
 ): Procedure<Buffer> {
   let position = 0;
   function* read(buffer: Buffer, length: number): Procedure<number> {
-    const bytesRead = yield* file.read(buffer, 0, length, position);
+    const result = file.read(buffer, 0, length, position);
+    const bytesRead = io.asynchronous
+      ? ((yield result) as { bytesRead: number }).bytesRead
+      : result as number;
     position += bytesRead;
     return bytesRead;
   }
