@@ -172,6 +172,16 @@ handles and delivery queues, and closing one does not retire another's observati
 
 Periodic guarded reconciliation runs without needing an event. It catches
 missed events and works on filesystems where native hints are incomplete.
+Detailed native batches first pass guarded scope and spelling-alias admission;
+proven unrelated activity does not schedule a scan. Relevant entry hints refresh
+the entry scopes, while tree hints refresh the affected directory and its identity
+chain, retaining unchanged sibling subtrees. Namespace changes, coarse directory
+hints, vanished or hard-linked leaves, changed topology, uncertain identities,
+backend loss, and batches without filenames still receive a full guarded pass.
+`reconcile()`, initial admission, and scope replacement always reconcile every scope.
+The periodic timer is independent of event traffic, so frequent hints cannot defer
+the full missed-event check. Repeated passes reuse bounded pathname strings, never
+cached metadata or filesystem authority.
 When polling is selected, the interval is `pollIntervalMs`, then `intervalMs`,
 then 1000 ms, in that order. This applies to explicit `mode: "poll"`, `auto`
 selecting polling, and `auto` falling back after an unsupported event backend.

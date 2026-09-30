@@ -6,6 +6,7 @@ import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { admittedNativeChanges } from "./watch-alias.js";
+import { mergeWatchRescan, watchRescanScopes } from "./watch-rescan.js";
 import { watchStreamPaths } from "./watch-stream.js";
 import { changedEntries, excludedWatchPath, guardedHintChanges, scopedChanges } from "./watch-hints.js";
 import path from "node:path";
@@ -76,6 +77,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let resetRequested = false;
   let refreshBackend = false;
   let pending = false;
+  let fullRequested = false;
+  let pendingUncertain = false;
   let pendingWaiter: ReturnType<typeof deferred> | undefined;
   let runningWaiter: ReturnType<typeof deferred> | undefined;
   let pendingHint = false;
@@ -112,6 +115,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     clearTimeout(timer); clearTimeout(hintTimer);
     timer = undefined; hintTimer = undefined; pending = false; pendingHint = false; pendingChanges = new Map();
     pendingBackendOverflow = false;
+    pendingUncertain = false;
   };
   const notifyHealth = () => {
     try {
@@ -158,7 +162,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     try { notifyHealth(); } catch (callbackError) { retain(callbackError); }
   };
   const scheduleInterval = () => {
-    if (terminal || failure !== undefined) return;
+    if (timer || fullRequested || terminal || failure !== undefined) return;
     timer = setTimeout(() => { timer = undefined; void request().catch(() => {}); }, intervalMs);
     if (!persistent) timer.unref();
   };
@@ -173,12 +177,17 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     else if (batch.error) { lose(new FsSafeError("helper-failed", "native watch failed", { details: { operation: "watch", code: batch.error } })); return; }
     if (batch.overflow) pendingChanges = undefined;
     else if (pendingChanges) for (const hint of batch.hints) {
-      if (typeof hint.name === "string" && excludedWatchPath(snapshot, hint.directory ? path.join(hint.directory, hint.name) : hint.name)) continue;
+      if (hint.event === "rename") pendingUncertain = true;
+      if (typeof hint.name === "string" && excludedWatchPath(snapshot, hint.directory ? path.join(hint.directory, hint.name) : hint.name)) {
+        pendingUncertain = true;
+        continue;
+      }
       const key = JSON.stringify([hint.directory, hint.name]);
       if (!pendingChanges.has(key) && pendingChanges.size >= maxPendingPaths) { pendingChanges = undefined; break; }
       const previous = pendingChanges.get(key);
       pendingChanges.set(key, previous?.event === "rename" ? previous : hint);
     }
+    if (!batch.hints.length) pendingUncertain = true;
     pendingHint = true;
     pending = true;
     if (hintTimer) return;
@@ -186,7 +195,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       hintTimer = undefined;
       if (terminal || current !== g || failure !== undefined) return;
       // Raw backend filenames stay private. Reconcile before publishing detail.
-      void request().catch(() => {});
+      void request(false).catch(() => {});
     }, coalesceMs);
     if (!persistent) hintTimer.unref();
   };
@@ -200,20 +209,38 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const observe = async (g: Generation) => {
     check(g);
     if (selectionFailure !== undefined) throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { cause: selectionFailure, details: { operation: "watch" } });
-    if (refreshBackend) { await retireBackend(); check(g); refreshBackend = false; }
+    if (refreshBackend) { await retireBackend(); check(g); refreshBackend = false; fullRequested = true; }
     if (resetRequested) {
       await retireBackend(); check(g);
       snapshot = undefined; resetRequested = false;
     }
-    state = snapshot ? "reconciling" : "starting";
-    notifyHealth();
-    check(g);
     const hadHints = pendingHint;
     const hadBackendOverflow = pendingBackendOverflow;
     const hints = pendingChanges;
+    const full = fullRequested || pendingUncertain;
+    fullRequested = false; pendingUncertain = false;
     pendingHint = false; pendingChanges = new Map();
     pendingBackendOverflow = false;
     clearTimeout(hintTimer); hintTimer = undefined;
+    let scanScopes = g.scopes;
+    if (snapshot && hadHints && hints && !full) {
+      try {
+        const admitted = await admittedNativeChanges(context, g.scopes, snapshot, snapshot, {
+          hints: [...hints.values()], overflow: false,
+        }, g.abort.signal, maxPendingPaths, true);
+        check(g);
+        if (admitted?.length === 0) return;
+        if (admitted) scanScopes = watchRescanScopes(g.scopes, snapshot, admitted) ?? g.scopes;
+      } catch (error) {
+        check(g);
+        await assertRootIdentityCurrent(context);
+        if (!isWatchPathError(error)) throw error;
+        // An uncertain alias or stale identity never suppresses reconciliation.
+      }
+    }
+    state = snapshot ? "reconciling" : "starting";
+    notifyHealth();
+    check(g);
     if (mode === "events" && !backend && g.scopes.length) {
       try {
         const candidate = new NativeWatchBackend(binding!, context, batch => {
@@ -230,7 +257,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     }
     let next: WatchSnapshot;
     for (let attempt = 0; ; attempt++) {
-      next = await scanWatch(context, g.scopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
+      if (scanScopes === g.scopes) { clearTimeout(timer); timer = undefined; }
+      try { next = await scanWatch(context, scanScopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
         async (name, identity, guard) => {
           check(g);
           const existing = registered.get(name);
@@ -247,22 +275,42 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
           await getFsSafeTestHooks()?.afterWatchRegistration?.(guard.realPath);
           check(g);
           if (acquire) registered.set(name, identity);
-        }, retainRetirement);
+        }, retainRetirement); }
+      catch (error) {
+        // A slice can repeat ancestor lookups that a full traversal shares.
+        // Let the authoritative full pass decide whether the configured limit is exceeded.
+        if (scanScopes !== g.scopes && error instanceof FsSafeError && error.code === "too-large") {
+          scanScopes = g.scopes;
+          continue;
+        }
+        throw error;
+      }
       check(g);
+      if (scanScopes !== g.scopes) {
+        const merged = mergeWatchRescan(g.scopes, snapshot!, next, scanScopes);
+        if (!merged || merged.scanned > maxEntries || merged.directories.size > maxDirectories || (merged.excluded?.size ?? 0) > maxEntries) {
+          scanScopes = g.scopes;
+          continue;
+        }
+        next = merged;
+      }
       try {
         const entriesChanged = backend?.entries(next);
         const streamsChanged = backend?.configure(watchStreamPaths(next, g.scopes));
         if (entriesChanged || streamsChanged) {
           // Complete a guarded pass with the new transport before publishing readiness.
           // Bound handovers under churn; later passes still reconcile ongoing changes.
+          scanScopes = g.scopes;
           if (attempt < 2) continue;
           pending = true;
+          fullRequested = true;
         }
         break;
       } catch (error) {
         await assertRootIdentityCurrent(context);
         check(g);
         if (attempt >= 2 || !isWatchPathError(error)) throw error;
+        scanScopes = g.scopes;
         // A replacement between scan and descriptor admission requires a fresh identity.
       }
     }
@@ -306,6 +354,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     state = "ready";
     notifyHealth();
     check(g);
+    // Rearm even when sustained hints keep the pump's coalesced request occupied.
+    scheduleInterval();
   };
   const pump = () => {
     if (active || terminal || failure !== undefined) return;
@@ -341,10 +391,10 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       }
     });
   };
-  const request = (): Promise<void> => {
+  const request = (full = true): Promise<void> => {
     if (terminal) return Promise.reject(retired());
     if (failure !== undefined) return Promise.reject(failure);
-    clearTimeout(timer); timer = undefined;
+    if (full) { clearTimeout(timer); timer = undefined; fullRequested = true; }
     pending = true;
     pendingWaiter ??= deferred();
     const result = pendingWaiter.promise;
@@ -374,7 +424,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const abort = () => { void close(); };
   const subscription: WatchSubscription = {
     ready, health, close, [Symbol.asyncDispose]: close,
-    reconcile: request,
+    reconcile: () => request(),
     setScopes(scopes) {
       if (terminal) return Promise.reject(retired());
       if (failure !== undefined) return Promise.reject(failure);

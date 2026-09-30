@@ -6,6 +6,7 @@ import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { assertRootIdentityCurrent, assertValidRootRelativePath, resolvePathInRoot, type RootContext } from "./root-context.js";
 import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, openRootDirectoryListing, pathStatFromStats, type RootDirectoryObservationGuard } from "./root-directory-list.js";
+import type { RootDirectoryListingPaths } from "./root-directory-list-types.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
 import type { DirEntry } from "./types.js";
@@ -13,7 +14,8 @@ import type { WatchEntry, WatchOptions, WatchScope } from "./watch-types.js";
 
 export type DirectoryIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 export type WatchEntryAnchor = { directory: string; name: string; target?: DirectoryIdentity & { kind: WatchEntry["kind"] } };
-export type WatchSnapshot = { entries: Map<string, string>; entryAnchors?: Map<string, WatchEntryAnchor>; excluded?: Map<string, WatchEntry["kind"]>; excludedDirectories?: Map<string, string>; directoryPaths?: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean };
+export type WatchSnapshot = { entries: Map<string, string>; entryAnchors?: Map<string, WatchEntryAnchor>; excluded?: Map<string, WatchEntry["kind"]>; excludedDirectories?: Map<string, string>; directoryPaths?: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean;
+  scopeAnchors?: Map<string, WatchEntryAnchor>; listed?: Map<string, number>; childPaths?: Map<string, Map<string, string>>; listingPaths?: Map<string, RootDirectoryListingPaths> };
 export function watchScopes(input: readonly WatchScope[]): readonly WatchScope[] {
   if (!Array.isArray(input) || input.length > 128) throw new RangeError("watch accepts at most 128 scopes");
   return Object.freeze(input.map(scope => {
@@ -66,7 +68,9 @@ export async function scanWatch(
   const exclusions = new Map<string, WatchEntry["kind"]>();
   const excludedDirectories = new Map<string, string>(), directoryPaths = new Map<string, string>();
   const entryAnchors = new Map<string, WatchEntryAnchor>();
-  const result: WatchSnapshot = { entries: new Map(), entryAnchors, excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0 };
+  const scopeAnchors = new Map<string, WatchEntryAnchor>();
+  const listed = new Map<string, number>(), childPaths = new Map<string, Map<string, string>>(), listingPaths = new Map<string, RootDirectoryListingPaths>();
+  const result: WatchSnapshot = { entries: new Map(), entryAnchors, scopeAnchors, excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0, listed, childPaths, listingPaths };
   const attempts = new Map<string, number>();
   const guards = new Map<string, RootDirectoryObservationGuard>();
   const walked = new Map<string, number>();
@@ -76,8 +80,8 @@ export async function scanWatch(
     if (structural.size < options.maxPendingPaths) structural.add(relative); else result.overflow = true;
     // Discard partially observed names when their enclosing directory lost admission.
     const below = (name: string) => name === relative || !relative || name.startsWith(relative + path.sep);
-    for (const [scope, anchor] of entryAnchors) if (below(anchor.directory)) entryAnchors.delete(scope);
-    for (const map of [result.entries, exclusions, excludedDirectories, directoryPaths, result.targets, result.directories, guards, walked]) {
+    for (const anchors of [entryAnchors, scopeAnchors]) for (const [scope, anchor] of anchors) if (below(anchor.directory)) anchors.delete(scope);
+    for (const map of [result.entries, exclusions, excludedDirectories, directoryPaths, result.targets, result.directories, guards, walked, listed, childPaths, listingPaths]) {
       for (const name of map.keys()) if (below(name)) map.delete(name);
     }
   };
@@ -156,8 +160,11 @@ export async function scanWatch(
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         guard = await directory(relative);
+        listed.set(relative, 0);
         listing = await openRootDirectoryListing(root, guard.realPath, {
-          order: "filesystem", snapshot: false, signal, exactIdentity: true, skipVanished: true, onCleanupFailure, admitEntry: () => { examined(); return true; },
+          order: "filesystem", snapshot: false, signal, exactIdentity: true, skipVanished: true, onCleanupFailure,
+          previousPaths: options.previous?.listingPaths?.get(relative),
+          admitEntry: () => { examined(); listed.set(relative, (listed.get(relative) ?? 0) + 1); return true; },
         });
         // The listing has its own guard. Both identities must agree before reading names.
         await assertRootDirectoryObservationGuard(root, guard);
@@ -168,6 +175,10 @@ export async function scanWatch(
       }
     }
     if (!listing) return;
+    listingPaths.set(relative, listing.paths);
+    const names = new Map<string, string>();
+    childPaths.set(relative, names);
+    const previousNames = options.previous?.childPaths?.get(relative);
     let failed = false;
     let operationError: unknown;
     try {
@@ -178,7 +189,8 @@ export async function scanWatch(
         if (next.kind === "limit") throw new FsSafeError("too-large", "watch entry budget exceeded");
         if (!next.identity) throw new FsSafeError("path-mismatch", "watch listing lacks exact identity");
         const entry = next.entry;
-        const name = relative ? path.join(relative, entry.name) : entry.name;
+        const name = previousNames?.get(entry.name) ?? (relative ? path.join(relative, entry.name) : entry.name);
+        names.set(entry.name, name);
         if (await excluded(name, entry)) continue;
         result.entries.set(name, fingerprint(entry, next.identity));
         if (entry.isDirectory && !entry.isSymbolicLink && depth > 1) await tree(name, depth - 1);
@@ -200,6 +212,7 @@ export async function scanWatch(
     signal.throwIfAborted();
     if (!scope.path) {
       const guard = await directory("");
+      scopeAnchors.set(scope.path, { directory: "", name: "" });
       if (scope.kind === "entry") entryAnchors.set(scope.path, { directory: "", name: "" });
       result.entries.set("", fingerprint({ name: "", ...pathStatFromStats(guard.stat) }, guard.stat));
       if (scope.kind === "tree" && scope.depth! > 0) await tree("", scope.depth!);
@@ -211,6 +224,7 @@ export async function scanWatch(
       for (let i = 0; i < segments.length; i++) {
         const guard = await directory(relative);
         const anchor: WatchEntryAnchor = { directory: relative, name: segments[i]! };
+        scopeAnchors.set(scope.path, anchor);
         if (scope.kind === "entry") entryAnchors.set(scope.path, anchor);
         examined();
         // Filesystem lookup, not lowercase/prefix matching, owns case, Unicode and

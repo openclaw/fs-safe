@@ -9,7 +9,7 @@ import {
   RootPathObservationError,
   type RootPathObservationReceipt,
 } from "./root-path.js";
-import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-directory-list.js";
+import type { RootDirectoryListing, RootDirectoryListingOptions } from "./root-directory-list-types.js";
 import type { DirEntry, PathStat } from "./types.js";
 import { createSuppressedError } from "./suppressed-error.js";
 

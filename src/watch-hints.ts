@@ -54,15 +54,18 @@ export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnap
 export function changedEntries(before: WatchSnapshot | undefined, after: WatchSnapshot, limit: number): WatchChange[] | undefined {
   if (!before) return undefined;
   const changes: WatchChange[] = [];
-  for (const name of new Set([...before.entries.keys(), ...after.entries.keys()])) {
+  const compare = (name: string): boolean => {
     const left = before.entries.get(name);
     const right = after.entries.get(name);
-    if (left === right) continue;
-    if (changes.length >= limit) return undefined;
+    if (left === right) return true;
+    if (changes.length >= limit) return false;
     const sameFile = left?.startsWith("file:") && right?.startsWith("file:") &&
       left.split(":").slice(0, 3).join(":") === right.split(":").slice(0, 3).join(":");
     changes.push(Object.freeze({ path: name, type: sameFile ? "content" : "structural" }));
-  }
+    return true;
+  };
+  for (const name of before.entries.keys()) if (!compare(name)) return undefined;
+  for (const name of after.entries.keys()) if (!before.entries.has(name) && !compare(name)) return undefined;
   return changes;
 }
 

@@ -32,6 +32,7 @@ import { realpathSync } from "./realpath.js";
 import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
+import type { RootDirectoryListing, RootDirectoryListingOptions, RootDirectoryListingPaths } from "./root-directory-list-types.js";
 
 const METADATA_BATCH_SIZE = 32;
 
@@ -312,27 +313,6 @@ async function listGuardedDirectoryPath(
   return entries;
 }
 
-export type RootDirectoryListing = {
-  assertCurrent(): Promise<void>;
-  next(): Promise<{ kind: "entry"; entry: DirEntry; identity?: ExactStatIdentity } | { kind: "limit"; name: string } | undefined>;
-  [Symbol.asyncDispose](): Promise<void>;
-};
-
-export type RootDirectoryListingOptions = {
-  order: "sorted" | "filesystem";
-  signal?: AbortSignal;
-  snapshot: boolean;
-  maxNames?: number;
-  metadataBatchSize?: number;
-  /** Internal watch lane: exact identities and bounded synchronous name reads on Node. */
-  exactIdentity?: boolean;
-  /** Advisory scans may omit vanished leaves after revalidating their parent. */
-  skipVanished?: boolean;
-  /** Internal owner receives cleanup failures, including acquisition rollback. */
-  onCleanupFailure?: (error: unknown) => void;
-  admitEntry(): boolean;
-};
-
 export async function openRootDirectoryListing(
   root: RootContext,
   directory: string,
@@ -360,6 +340,8 @@ export async function openRootDirectoryListing(
     else await assertRootDirectoryObservationGuard(root, guard);
     options.signal?.throwIfAborted();
   };
+  const paths: RootDirectoryListingPaths = { directory: guard.realPath, names: new Map() };
+  const previousPaths = options.previousPaths?.directory === guard.realPath ? options.previousPaths.names : undefined;
   let handle: Dir | undefined;
   let names: string[] | undefined;
   let snapshot: DirEntry[] | undefined;
@@ -454,6 +436,7 @@ export async function openRootDirectoryListing(
   };
 
   return {
+    paths,
     assertCurrent,
     async next() { try {
         options.signal?.throwIfAborted();
@@ -480,7 +463,8 @@ export async function openRootDirectoryListing(
           if (name === undefined) return;
           if (!options.admitEntry()) return { kind: "limit", name };
           // The stream's post-read fence is also the pre-stat fence in this owned operation.
-          const pathname = path.join(guard.realPath, name);
+          const pathname = previousPaths?.get(name) ?? path.join(guard.realPath, name);
+          if (options.exactIdentity) paths.names.set(name, pathname);
           let observed: { stat: Stats | BigIntStats; identity?: ExactStatIdentity };
           try {
             observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint

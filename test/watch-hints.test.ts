@@ -28,6 +28,13 @@ describe("bounded advisory hints", () => {
     expect(changedEntries(before, after, 1)).toBeUndefined();
     expect(changedEntries(undefined, after, 2)).toBeUndefined();
   });
+  it("keeps prior snapshot order before appending newly observed names", () => {
+    const before = snapshot([["second", "file:1:2:3:4:5"], ["first", "file:1:3:3:4:5"]]);
+    const after = snapshot([["first", "file:1:3:4:5:5"], ["created", "file:1:4:3:4:5"]]);
+    expect(changedEntries(before, after, 3)).toEqual([
+      { path: "second", type: "structural" }, { path: "first", type: "content" }, { path: "created", type: "structural" },
+    ]);
+  });
 });
 
 

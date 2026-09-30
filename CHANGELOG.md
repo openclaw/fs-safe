@@ -10,6 +10,7 @@
 
 ### Performance
 
+- **Watch:** skip guarded unrelated native hints and reconcile affected directories, reducing a 502-file memory-watch fixture from 513 to 55 visits and 8.16 MB to 1.38 MB sampled allocation per relevant event pass; unrelated detailed hints at two edits/second no longer trigger 120 full scans/minute, while periodic and uncertain-event reconciliation remain full.
 - **Linux fallback resolution:** reuse the file type from each component's checked descriptor observation, avoiding a duplicate metadata read while retaining fresh identity, symlink-target, and mount-policy checks.
 - **Native parent validation:** reuse the retained descriptor's captured identity during ordinary POSIX policy checks, avoiding a duplicate metadata read while keeping the final pathname inspection fresh. ([#735](https://github.com/openclaw/fs-safe/pull/735))
 
