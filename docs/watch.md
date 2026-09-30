@@ -64,8 +64,10 @@ This does not promise delivery for a differently spelled alias that appears and
 disappears entirely between scans: without an observed identity, it cannot be
 admitted as the selected path. Observation is not a complete transient history.
 Raw event names remain private: detail comes from guarded scans, prior guarded
-snapshots, or explicitly configured targets. Unclassifiable hints inside selected,
-non-excluded territory lose detail. Hints for excluded or unselected paths are
+snapshots, or explicitly configured targets. A non-target name absent from both
+snapshots is ignored only when its parent directory has the same device/inode in
+both guarded passes. Otherwise the unclassifiable selected hint loses detail.
+Hints for excluded or unselected paths are
 ignored. Exclusion callbacks are synchronous; excluded directories are recorded
 without descent. Bounded exclusion records recognize late deletion hints.
 Genuine backend event loss and detail-budget exhaustion still invalidate every

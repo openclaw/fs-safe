@@ -75,10 +75,15 @@ export function guardedHintChanges(
   if (!hints || !observed) return undefined;
   const result = new Map(observed.map(change => [change.path, change]));
   for (const hint of hints) {
-    // Only publish an independently observed name (including a deletion from
-    // the previous guarded snapshot), or a target explicitly supplied by caller.
-    // A stale/misdirected inode watch may report outside names: erase its detail.
-    if (!before?.entries.has(hint.path) && !after.entries.has(hint.path) && !scopes.some(scope => scope.path === hint.path)) return undefined;
+    // Drop unobserved non-target names only under a parent with the same guarded
+    // identity in both passes; otherwise a stale/misdirected watch erases detail.
+    if (!before?.entries.has(hint.path) && !after.entries.has(hint.path) && !scopes.some(scope => scope.path === hint.path)) {
+      const parent = path.dirname(hint.path);
+      const directory = parent === "." ? "" : parent;
+      const left = before?.directories.get(directory), right = after.directories.get(directory);
+      if (left && right && left.dev === right.dev && left.ino === right.ino) continue;
+      return undefined;
+    }
     // Equal snapshots cannot exclude an intermediate change and restoration (ABA).
     // Preserve admitted hints, including setup activity delivered after ready.
     if (!result.has(hint.path) && result.size >= limit) return undefined;

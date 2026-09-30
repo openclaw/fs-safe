@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -34,6 +35,67 @@ function detailed(values: WatchInvalidation[], name: string) {
 
 describe.each(["events", "poll"] as const)("selected observation (%s)", mode => {
   const test = it.skipIf(mode === "events" && !events);
+  test.each(["excluded transient", "atomic replacement"])("keeps detail without overflow for an %s file between passes", async operation => {
+    const selected = path.join("src", "selected.ts");
+    const temporary = path.join("src", "selected.ts.tmp");
+    await fs.mkdir(path.join(directory, "src"));
+    await fs.writeFile(path.join(directory, selected), "before");
+    const diagnostics = watchDiagnostics(selected);
+    const values: WatchInvalidation[] = [];
+    owner = watch(await root(directory), {
+      mode, scopes: [{ path: "src", kind: "tree" }], intervalMs: 60_000,
+      exclude: entry => operation === "excluded transient" && entry.path.endsWith(".tmp"),
+      onInvalidate: value => { diagnostics.invalidation(value); values.push(value); },
+    });
+    await owner.ready;
+    await fs.writeFile(path.join(directory, selected), "fixture sentinel edit");
+    if (mode === "events") await expect.poll(() => values.some(value => value.reason === "event" && value.changes?.some(change => change.path === selected)), { timeout: 5000 }).toBe(true);
+    await diagnostics.quiet(owner); values.length = 0;
+    expect(owner.health().mode).toBe(mode);
+    for (let round = 0; round < 3; round++) {
+      // Synchronous mutations leave no JS scan between creation and removal/rename.
+      fsSync.writeFileSync(path.join(directory, temporary), `replacement ${round}`);
+      if (operation === "excluded transient") fsSync.unlinkSync(path.join(directory, temporary));
+      else fsSync.renameSync(path.join(directory, temporary), path.join(directory, selected));
+      await owner.reconcile();
+      if (operation === "atomic replacement" && mode === "events") await expect.poll(() => values.some(value => value.reason === "event" && value.changes?.some(change => change.path === selected)), { timeout: 5000 }).toBe(true);
+      await diagnostics.quiet(owner);
+      expect(values.every(value => value.reason !== "overflow")).toBe(true);
+      expect(values.flatMap(value => value.changes ?? []).some(change => change.path === temporary)).toBe(false);
+      if (operation === "atomic replacement") expect(values.some(value => value.changes?.some(change => change.path === selected))).toBe(true);
+      else if (mode === "poll") expect(values).toEqual([]);
+      if (mode === "poll") expect(values.every(value => value.reason === "reconcile")).toBe(true);
+      values.length = 0;
+    }
+  }, 30_000);
+
+  test("reconciles a watched subdirectory renamed away and recreated", async () => {
+    const selected = path.join("src", "selected.ts");
+    await fs.mkdir(path.join(directory, "src"));
+    await fs.writeFile(path.join(directory, selected), "before");
+    const diagnostics = watchDiagnostics(selected);
+    const values: WatchInvalidation[] = [];
+    const authority = await root(directory);
+    owner = watch(authority, { mode, scopes: [{ path: "src", kind: "tree" }], intervalMs: 60_000,
+      onInvalidate: value => { diagnostics.invalidation(value); values.push(value); },
+    });
+    await owner.ready; await diagnostics.quiet(owner); values.length = 0;
+    fsSync.renameSync(path.join(directory, "src"), path.join(directory, "old"));
+    fsSync.mkdirSync(path.join(directory, "src"));
+    fsSync.writeFileSync(path.join(directory, selected), "replacement");
+    fsSync.writeFileSync(path.join(directory, "old", "unobserved.tmp"), "stale watch");
+    fsSync.unlinkSync(path.join(directory, "old", "unobserved.tmp"));
+    await owner.reconcile(); await diagnostics.quiet(owner);
+    expect(values.some(value => value.reason === "overflow" || value.changes?.some(change => change.path === "src" && change.type === "structural"))).toBe(true);
+    expect(values.flatMap(value => value.changes ?? []).some(change => change.path.endsWith("unobserved.tmp"))).toBe(false);
+    expect(await authority.readText(selected)).toBe("replacement");
+    values.length = 0;
+    await fs.writeFile(path.join(directory, selected), "replacement edit");
+    if (mode === "events") await expect.poll(() => values.some(value => value.reason === "event" && value.changes?.some(change => change.path === selected)), { timeout: 5000 }).toBe(true);
+    await diagnostics.quiet(owner); detailed(values, selected);
+    expect(owner.health().failure).toBeUndefined();
+  }, 30_000);
+
   test("ignores creation, deletion and recreation of an excluded build tree with thousands of files", async () => {
     await fs.mkdir(path.join(directory, "dist"));
     await fs.writeFile(path.join(directory, "selected.ts"), "before");

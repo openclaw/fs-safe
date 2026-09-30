@@ -313,7 +313,7 @@ it.skipIf(!eventsAvailable)("shares one hub, delivers real events under one seco
   await peer.close(); expect(native.watchThreadCount!()).toBe(0);
 });
 
-it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("invalidates backend loss and only selected unadmitted names (%s)", async kind => {
+it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("invalidates backend loss but drops unobserved names under a stable parent (%s)", async kind => {
   const native = getNativeBinding()!;
   const register = native.watchRegister!;
   // Exercise hint admission independently of OS coalescing and queue pressure.
@@ -327,7 +327,7 @@ it.skipIf(!eventsAvailable).each(["entry", "tree"] as const)("invalidates backen
   emit({ overflow: true, hints: [] }); await owner.reconcile();
   expect(changes).toEqual([{ reason: "overflow", changes: undefined }]); changes.length = 0;
   emit({ overflow: false, hints: [{ directory: "", name: "unadmitted-private-name", event: "rename" }] });
-  await owner.reconcile(); expect(changes).toEqual(kind === "tree" ? [{ reason: "overflow", changes: undefined }] : []);
+  await owner.reconcile(); expect(changes).toEqual([]);
 });
 
 it("reconciles periodically without backend hints", async () => {

@@ -39,3 +39,32 @@ it("retains admitted namespace activity despite equal before/after fingerprints"
   const hints = nativeChanges(scopes, before, { overflow: false, hints: [{ directory: "", name: "config.json", event: "rename" }] });
   expect(guardedHintChanges(scopes, before, after, hints, observed, 256)).toEqual([{ path: "config.json", type: "structural" }]);
 });
+
+describe("unobserved transient hints", () => {
+  const identity = { dev: 1n, ino: 2n };
+  const hint = { path: path.join("skills", "save.tmp"), type: "structural" as const };
+  it.each(["", "skills"])("drops a name under the same parent identity at %j without spending detail budget", parent => {
+    const before = snapshot([]), after = snapshot([]);
+    before.directories.set(parent, identity);
+    after.directories.set(parent, { ...identity });
+    const transient = { ...hint, path: parent ? path.join(parent, "save.tmp") : "save.tmp" };
+    const observed = [{ path: "config.json", type: "content" as const }];
+    expect(guardedHintChanges(watchScopes([{ path: "", kind: "tree" }]), before, after, [transient], [], 1)).toEqual([]);
+    expect(guardedHintChanges(scopes, before, after, [transient], observed, 1)).toEqual(observed);
+  });
+  it.each([{ dev: 2n, ino: 2n }, { dev: 1n, ino: 3n }])("erases detail when the parent identity changes ($dev, $ino)", changed => {
+    const before = snapshot([]), after = snapshot([]);
+    before.directories.set("skills", identity);
+    after.directories.set("skills", changed);
+    expect(guardedHintChanges(scopes, before, after, [hint], [], 256)).toBeUndefined();
+  });
+  it.each(["before", "after"] as const)("erases detail when the parent is missing in %s", missing => {
+    const before = snapshot([]), after = snapshot([]);
+    (missing === "before" ? after : before).directories.set("skills", identity);
+    expect(guardedHintChanges(scopes, before, after, [hint], [], 256)).toBeUndefined();
+  });
+  it("still admits an explicit scope target absent from both snapshots", () => {
+    const target = { path: "config.json", type: "structural" as const };
+    expect(guardedHintChanges(scopes, snapshot([]), snapshot([]), [target], [], 1)).toEqual([target]);
+  });
+});
