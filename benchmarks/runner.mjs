@@ -1,3 +1,4 @@
+import { registerEntryPublication } from "./entry-publication.mjs";
 import { registerRetainedFile } from "./retained-file.mjs";
 import { registerWatch } from "./watch.mjs";
 import assert from "node:assert/strict";
@@ -154,6 +155,7 @@ try {
   await registerPaths(context);
   await registerLifecycle(context);
   registerRetainedFile(context);
+  registerEntryPublication(context);
   await registerDarwinClone(context);
   await registerArchives(context);
   await registerBroad(context);
