@@ -7,7 +7,7 @@ import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
-import { inspectAtomicIdentity, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
+import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 
 const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
@@ -128,17 +128,14 @@ export class AtomicTempOwner {
     this.onIdentity(temp.identity);
   }
 
-  private *inspectOwned(
-    read: () => Procedure<BigIntStats>,
+  private inspectOwned(
+    read: () => BigIntStats | Promise<BigIntStats>,
     pathname: string,
     pathnameEntry: boolean,
     expected?: BigIntStats,
   ): Procedure<BigIntStats> {
-    return yield* inspectAtomicIdentity(this.io, function* () {
-      const stat = yield* read();
-      assertOwnedFile(stat, pathname, pathnameEntry);
-      return stat;
-    }, expected);
+    return inspectAtomicIdentity(this.io, read, expected, false,
+      stat => assertOwnedFile(stat, pathname, pathnameEntry));
   }
 
   *assertCurrent(pathname = this.pathname): Procedure<void> {
@@ -211,7 +208,9 @@ export class AtomicTempOwner {
     const identity = this.recordedIdentity;
     if (!identity) return true;
     try {
-      const current = yield* this.io.lstatExact(this.pathname);
+      const observation = this.io.lstatExact(this.pathname);
+      const current = this.io.asyncFs && this.io.asyncFs !== fs
+        ? yield* wait(observation) : observation as BigIntStats;
       if (!current.isSymbolicLink() && current.isFile() && current.nlink === 1n &&
           sameFileIdentityForCleanup(current, identity)) {
         yield* this.io.unlink(this.pathname);

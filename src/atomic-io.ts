@@ -47,14 +47,26 @@ export function runSync<T>(procedure: Procedure<T>): T {
 
 export function* inspectAtomicIdentity<T extends Pick<BigIntStats, "dev" | "ino">>(
   io: AtomicIo,
-  read: () => Procedure<T>,
+  read: () => T | Promise<T>,
   expected?: Pick<BigIntStats, "dev" | "ino">,
   synchronous = false,
+  admit?: (stat: T) => void,
 ): Procedure<T> {
   if (io.asynchronous && !synchronous) {
-    return yield* wait(inspectFileIdentity(() => runAsync(read()), expected));
+    const inspect = admit ? async () => {
+      const stat = await read();
+      admit(stat);
+      return stat;
+    } : read;
+    return yield* wait(inspectFileIdentity(inspect, expected));
   }
-  return inspectFileIdentitySync(() => runSync(read()), expected);
+  // Sync metadata is an ordinary value, including objects with a then getter.
+  const inspect = admit ? () => {
+    const stat = read() as T;
+    admit(stat);
+    return stat;
+  } : read as () => T;
+  return inspectFileIdentitySync(inspect, expected);
 }
 
 /** One adapter per operation; each admitted descriptor receives one AtomicFile. */
@@ -99,10 +111,10 @@ export class AtomicIo {
     return yield* wait(this.asyncFs.lstat!(pathname));
   }
 
-  *lstatExact(pathname: string, synchronousBuiltin = true): Procedure<BigIntStats> {
+  lstatExact(pathname: string, synchronousBuiltin = true): BigIntStats | Promise<BigIntStats> {
     if (!this.asyncFs) return this.syncFs!.lstatSync!(pathname, { bigint: true });
     if (synchronousBuiltin && this.asyncFs === fs) return syncFs.lstatSync(pathname, { bigint: true });
-    return yield* wait(this.asyncFs.lstat!(pathname, { bigint: true }));
+    return this.asyncFs.lstat!(pathname, { bigint: true });
   }
 
   *mkdir(directory: string, mode: number): Procedure<void> {
@@ -149,10 +161,10 @@ export class AtomicFile {
     return yield* wait(this.resource.stat());
   }
 
-  *statExact(synchronousBuiltin = true): Procedure<BigIntStats> {
+  statExact(synchronousBuiltin = true): BigIntStats | Promise<BigIntStats> {
     if (typeof this.resource === "number") return this.io.syncFs!.fstatSync!(this.resource, { bigint: true });
     if (synchronousBuiltin && this.io.asyncFs === fs) return syncFs.fstatSync(this.resource.fd, { bigint: true });
-    return yield* wait(this.resource.stat({ bigint: true }));
+    return this.resource.stat({ bigint: true });
   }
 
   *close(): Procedure<void> {

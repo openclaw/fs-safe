@@ -101,14 +101,12 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
     return;
   }
   if (process.platform === "win32") return;
-  const expected = yield* inspectAtomicIdentity(io, function* () {
-    return assertDirectory(yield* io.lstatExact(params.dirPath), params.dirPath);
-  });
+  const admit = (stat: BigIntStats) => assertDirectory(stat, params.dirPath);
+  const expected = yield* inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
+    undefined, false, admit);
   const file = yield* io.open(params.dirPath, directoryOpenFlags());
   try {
-    yield* inspectAtomicIdentity(io, function* () {
-      return assertDirectory(yield* file.statExact(), params.dirPath);
-    }, expected);
+    yield* inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
     params.mutation?.assert();
     yield* file.chmod(params.mode & 0o7777);
   } finally {

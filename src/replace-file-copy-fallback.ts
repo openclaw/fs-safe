@@ -69,9 +69,8 @@ function* openPinnedDestination(
   try {
     const synchronous = io.asyncFs === fs;
     const opened = yield* inspectAtomicIdentity(io, () => file.statExact(), undefined, synchronous);
-    yield* inspectAtomicIdentity(io, function* () {
-      return admitDestinationKind(yield* io.lstatExact(dest), opened, dest, admission);
-    }, opened, synchronous);
+    yield* inspectAtomicIdentity(io, () => io.lstatExact(dest), opened, synchronous,
+      stat => admitDestinationKind(stat, opened, dest, admission));
     if ((admission === "hardlinks" || hardlinks === "reject") && opened.nlink > 1n) {
       throw new FsSafeError("hardlink", `Hardlinked ${admission === "hardlinks" ? "atomic replace" : "copy fallback"} destination not allowed: ${dest}`);
     }

@@ -32,21 +32,24 @@ export class AtomicDestination {
     let metadataFailure = false;
     const descriptorOnly = restore && this.#restoreDescriptorOnly;
     const owner = this;
-    function* read(pathname: boolean): Procedure<BigIntStats> {
-      let stat: BigIntStats;
-      try {
-        stat = yield* (pathname
-          ? owner.io.lstatExact(owner.pathname, false) : owner.file.statExact());
-      } catch (error) {
-        metadataFailure = hasErrorCode(error, "EIO");
-        throw error;
-      }
-      return regular(stat, owner.pathname, owner.rejectHardlinks);
+    function readFailure(error: unknown): never {
+      metadataFailure = hasErrorCode(error, "EIO");
+      throw error;
     }
+    function read(pathname: boolean): BigIntStats | Promise<BigIntStats> {
+      try {
+        const stat = pathname
+          ? owner.io.lstatExact(owner.pathname, false) : owner.file.statExact();
+        return owner.io.asynchronous ? Promise.resolve(stat).catch(readFailure) : stat;
+      } catch (error) {
+        return readFailure(error);
+      }
+    }
+    const admit = (stat: BigIntStats) => regular(stat, owner.pathname, owner.rejectHardlinks);
     try {
-      yield* inspectAtomicIdentity(this.io, () => read(false), this.identity);
+      yield* inspectAtomicIdentity(this.io, () => read(false), this.identity, false, admit);
       if (!descriptorOnly) {
-        yield* inspectAtomicIdentity(this.io, () => read(true), this.identity);
+        yield* inspectAtomicIdentity(this.io, () => read(true), this.identity, false, admit);
       }
     } catch (error) {
       if (!descriptorOnly && this.#writing && metadataFailure) {
