@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchOptions, type WatchScope, type WatchSubscription } from "../src/watch.js";
 import { watchBinding } from "../src/watch-native.js";
+import { createRenameWriter } from "../scripts/watch-stress/rename-writer.mjs";
 
 const windows = process.platform === "win32";
 const binding = windows ? watchBinding("auto") : undefined;
@@ -78,7 +79,7 @@ describe.skipIf(!windows || !binding)("Windows watch boundary cases", () => {
     const { owner, invalidations } = await observe(directory, scopes);
     // A second owner must neither pin descendants nor lose delivery when its peer closes.
     const peer = await observe(directory, scopes);
-    await fs.rename(path.join(directory, "parent"), path.join(directory, "moved"));
+    await createRenameWriter().rename(path.join(directory, "parent"), path.join(directory, "moved"));
     await owner.reconcile();
     expect(owner.health()).toMatchObject({ state: "ready", directories: 1 });
     expect(invalidations.length).toBeGreaterThan(0);

@@ -228,7 +228,7 @@ it("retains filesystem spelling aliases when deciding relevance", async context 
   expect(values).toEqual([{ reason: "event", changes: [{ path: "MEMORY.md", type: "structural" }] }]);
 });
 
-it.each(["creation", "deletion", "replacement"])("reconciles selected alias %s without a surviving baseline hint identity", async (operation, context) => {
+it.for(["creation", "deletion", "replacement"])("reconciles selected alias %s without a surviving baseline hint identity", async (operation, context) => {
   if (!await fs.lstat(path.join(directory, "memory.md")).catch(() => undefined)) { context.skip("case-sensitive fixture"); return; }
   if (operation === "creation") await fs.unlink(path.join(directory, "MEMORY.md"));
   await start();
