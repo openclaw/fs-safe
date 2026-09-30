@@ -465,6 +465,41 @@ fn failed_reconfiguration_retires_old_coverage_and_preserves_owner() {
 }
 
 #[test]
+fn duplicate_registration_preserves_owner_and_active_stream() {
+    reset();
+    let mut backend = Backend::new().unwrap();
+    let registration = register(&mut backend, 9);
+    backend.configure(9, &["/admitted".into()], &[]).unwrap();
+    assert_calls(&["Create", "SetDispatchQueue", "Start"]);
+    let stream = backend.streams[&9].stream;
+    let pending = Arc::new(Mutex::new(Pending::default()));
+    let rejected_pending = Arc::downgrade(&pending);
+    let (sender, receiver) = mpsc::channel();
+    let notify = Notify {
+        id: 9,
+        commands: Commands { sender, waker: backend.waker() },
+        queued: Arc::new(AtomicBool::new(false)),
+    };
+
+    assert_error(
+        backend.register(9, "/replacement", pending, notify),
+        "EINVAL",
+        "duplicate watch registration",
+    );
+    assert_calls(&[]);
+    assert!(rejected_pending.upgrade().is_none());
+    assert_eq!(backend.streams[&9].stream, stream);
+    synthetic_callback(&backend, &registration);
+    assert!(matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Disconnected)));
+
+    backend.remove(9).unwrap();
+    assert_calls(RETIRE);
+    assert_removed(&backend, &registration);
+    drop(backend);
+    assert_calls(&["dispatch_release"]);
+}
+
+#[test]
 fn invalid_paths_preserve_the_active_stream() {
     reset();
     let mut backend = Backend::new().unwrap();

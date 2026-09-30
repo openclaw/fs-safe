@@ -190,7 +190,10 @@ impl Backend {
         pending: SharedPending,
         notify: Notify,
     ) -> NativeResult<()> {
-        // The hub issues checked, never-reused IDs: replacing a live owner would invalidate its context.
+        // A live stream borrows its owner's callback context.
+        if self.owners.contains_key(&id) {
+            return Err(native_error("EINVAL", "duplicate watch registration"));
+        }
         self.owners.insert(id, Arc::new(Owner { root: root.into(), pending, notify }));
         Ok(())
     }
