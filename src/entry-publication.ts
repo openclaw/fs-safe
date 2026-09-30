@@ -53,18 +53,23 @@ function retainParent(expected: PublicationParent, closes: (() => void)[]): Dire
   return { fd, receipt };
 }
 
-function assertKind(stat: BigIntStats, kind: "file" | "directory"): void {
-  if (kind === "file" ? !stat.isFile() : !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "publication source must be the expected regular file or directory");
+function assertKind(stat: BigIntStats, kind: EntryPublicationReceipt["source"]["expected"]["kind"]): void {
+  if (kind === "file" ? !stat.isFile() : kind === "symlink" ? !stat.isSymbolicLink() : !stat.isDirectory()) {
+    throw new FsSafeError("not-file", "publication source must be the expected file, directory or symlink");
   }
-  if (kind === "file" && stat.nlink !== 1n) {
-    throw new FsSafeError("hardlink", "publication does not admit hardlinked files");
+  if (kind !== "directory" && stat.nlink !== 1n) {
+    throw new FsSafeError("hardlink", "publication does not admit hardlinked files or symlinks");
   }
 }
 function inspectEntry(name: string, expected: EntryPublicationReceipt["source"]["expected"]): void {
   const stat = inspectFileIdentitySync(() => fs.lstatSync(name, { bigint: true }), expected);
   assertKind(stat, expected.kind);
-  if (realpathSync.native(name) !== name) {
+  // A symlink target is opaque: it may be dangling, relative or inaccessible.
+  // Check the directory entry spelling without resolving or opening the target.
+  const canonical = expected.kind === "symlink"
+    ? fs.readdirSync(path.dirname(name)).includes(path.basename(name))
+    : realpathSync.native(name) === name;
+  if (!canonical) {
     throw new FsSafeError("path-alias", "publication source must use its canonical physical spelling");
   }
 }
@@ -171,7 +176,7 @@ class Publication implements RetainedEntryPublication {
 }
 
 /**
- * Retain an existing directory or single-link regular file for ONE-WAY export.
+ * Retain an existing directory, single-link regular file or symlink for ONE-WAY export.
  * Requires caller-exclusive source namespace and stable admitted topology.
  * Native destination absence is atomic; POSIX source identity is NOT CAS.
  * All operation results settle descriptors, never delete or reverse names.
@@ -192,7 +197,10 @@ export function retainEntryForPublication(options: RetainEntryForPublicationOpti
     const assertion = options.assertBeforeMutation;
     if (typeof assertion !== "function") throw new FsSafeError("invalid-path", "synchronous publication authority is required");
     const kind = options.source.expected.kind;
-    if (kind !== "directory" && kind !== "file") throw new FsSafeError("not-file", "unsupported publication entry kind");
+    if (kind !== "directory" && kind !== "file" && kind !== "symlink") throw new FsSafeError("not-file", "unsupported publication entry kind");
+    if (kind === "symlink" && typeof binding.openStagedSymlink !== "function") {
+      throw new FsSafeError("helper-unavailable", "native symlink retention is unavailable");
+    }
     const source = Object.freeze({ parent: parent(options.source.parent), basename: basename(options.source.basename),
       expected: Object.freeze({ ...identity(options.source.expected), kind }) });
     const destination = Object.freeze({ parent: parent(options.destination.parent), basename: basename(options.destination.basename) });
@@ -209,14 +217,16 @@ export function retainEntryForPublication(options: RetainEntryForPublicationOpti
       throw Object.assign(new Error("entry publication cannot cross devices"), { code: "EXDEV" });
     }
     inspectEntry(sourcePath, source.expected);
-    const opened = binding.openBeneath(sourceParent.fd, source.basename,
+    const sourceFd = kind === "symlink"
+      ? binding.openStagedSymlink!(sourceParent.fd, source.basename)
+      : binding.openBeneath(sourceParent.fd, source.basename,
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK |
-      (kind === "directory" ? fs.constants.O_DIRECTORY : 0));
-    if (!opened || !Number.isInteger(opened.fd) || opened.fd < 0) {
+      (kind === "directory" ? fs.constants.O_DIRECTORY : 0))?.fd;
+    if (!Number.isInteger(sourceFd) || sourceFd < 0) {
       throw new FsSafeError("helper-unavailable", "publication source descriptor is unavailable");
     }
-    closes.push(() => closeSource(opened.fd));
-    assertKind(inspectFileIdentitySync(() => fs.fstatSync(opened.fd, { bigint: true }), source.expected), kind);
+    closes.push(() => closeSource(sourceFd));
+    assertKind(inspectFileIdentitySync(() => fs.fstatSync(sourceFd, { bigint: true }), source.expected), kind);
     inspectEntry(sourcePath, source.expected);
     assertStagedDirectoryCurrent(sourceParent.receipt);
     assertStagedDirectoryCurrent(destinationParent.receipt);
@@ -224,7 +234,7 @@ export function retainEntryForPublication(options: RetainEntryForPublicationOpti
       destinationAbsence: "atomic", sourceIdentity: "observed-under-caller-exclusive-namespace",
       parentBinding: "retained-object", sourceFilesystem, destinationFilesystem,
     }) });
-    return new Publication(receipt, binding, sourceParent, destinationParent, opened.fd, closes, assertion);
+    return new Publication(receipt, binding, sourceParent, destinationParent, sourceFd, closes, assertion);
   } catch (cause) {
     const issues: EntryPublicationIssue[] = [Object.freeze({ phase: "admission", cause })];
     const resources = settle(closes, issues);

@@ -5,7 +5,7 @@ export type RetainEntryForPublicationOptions = Readonly<{
   source: Readonly<{
     parent: PublicationParent;
     basename: string;
-    expected: PublicationIdentity & Readonly<{ kind: "directory" | "file" }>;
+    expected: PublicationIdentity & Readonly<{ kind: "directory" | "file" | "symlink" }>;
   }>;
   destination: Readonly<{ parent: PublicationParent; basename: string }>;
   /** Must synchronously throw on loss of caller authority. Does not provide isolation. */

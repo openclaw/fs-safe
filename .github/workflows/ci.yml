@@ -1301,6 +1301,12 @@ jobs:
       - name: Test native mode off
         run: node scripts/native-mode-smoke.mjs off
 
+      - name: Prove public retained entry publication
+        env:
+          FS_SAFE_TEST_PUBLIC_ARTIFACT: "1"
+          FS_SAFE_TEST_PUBLICATION_NATIVE: "1"
+        run: pnpm test test/entry-publication.test.ts test/entry-publication-symlink.test.ts
+
       - name: Test bounded hashing with required native binding
         env:
           FS_SAFE_NATIVE_MODE: require

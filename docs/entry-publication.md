@@ -1,12 +1,12 @@
 ---
 title: One-way entry publication
-description: Retained directory and regular-file publication with atomic destination absence, under caller-owned namespace stability.
+description: Retained directory, regular-file and symlink publication with atomic destination absence, under caller-owned namespace stability.
 ---
 
 # One-way retained entry publication
 
 `retainEntryForPublication` from `@openclaw/fs-safe/advanced` admits an existing
-directory or single-link regular file for a **one-way, native no-replace rename**.
+directory, single-link regular file or single-link symlink for a **one-way, native no-replace rename**.
 It retains both parent directories and the source object. It never reverses a
 move, unlinks a name, removes a tree, or copies across filesystems.
 
@@ -43,11 +43,11 @@ function publishManagedEntry(options: RetainEntryForPublicationOptions): EntryPu
   substitute a new observation merely to make a stale admission succeed.
 - `source.basename` and `destination.basename`: nonempty direct-child names.
   Dot entries, separators, colons, NUL and control characters are refused.
-- `source.expected`: `{ dev, ino, kind: "directory" | "file" }`. Identities must
+- `source.expected`: `{ dev, ino, kind: "directory" | "file" | "symlink" }`. Identities must
   be exact unsigned bigint observations with a known nonzero inode. File contents
-  are not hashed, frozen or made read-only. Regular files must have one link;
+  are not hashed, frozen or made read-only. Regular files and symlinks must have one link;
   directories are not recursively inspected. Source and destination must not
-  overlap. Symlinks and special entries are not supported.
+  overlap. Special entries are not supported.
 - `assertBeforeMutation`: required synchronous authority callback. Throw to refuse.
   Promises and generators refuse. The callback runs once in `publish()`, followed
   by fresh source and parent checks. It cannot dispose or reenter the resource.
@@ -57,6 +57,15 @@ Admission can throw `FsSafeError`. `cause` retains the original admission error;
 `details.result` reports `not-published`, descriptor settlement and ordered issues.
 Admission never changes either namespace. Caller cleanup responsibilities do not
 transfer to this resource.
+
+Symlink publication moves the link inode, never its payload. Link target bytes are
+not decoded, resolved or rewritten; relative, dangling and non-UTF-8 targets are
+preserved. Relative targets resolve from the final parent after publication, so
+the caller must prepare the correct final layout. External payloads remain owned
+by their existing owner, and the caller must hold any target/ancestor stability
+needed by subsequent consumers. Source symlink basenames must match the physical
+directory entry spelling; parent aliases remain refused. No recursive symlink
+policy is imposed on the contents of a published directory.
 
 ## Results and lifetime
 

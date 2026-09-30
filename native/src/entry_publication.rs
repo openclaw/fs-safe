@@ -69,7 +69,8 @@ fn admit(source_parent: i32, name: &str, source_fd: i32, target_parent: i32, tar
         return Err(native_error("EXDEV", "publication cannot cross devices"));
     }
     let kind = FileType::from_raw_mode(held.st_mode);
-    if !(kind.is_dir() || kind.is_file()) || (kind.is_file() && held.st_nlink != 1) ||
+    if !(kind.is_dir() || kind.is_file() || kind.is_symlink()) ||
+        (!kind.is_dir() && held.st_nlink != 1) ||
         named.st_dev != held.st_dev || named.st_ino != held.st_ino ||
         FileType::from_raw_mode(named.st_mode) != kind {
         return Err(native_error("path-mismatch", "publication source no longer names the retained entry"));
