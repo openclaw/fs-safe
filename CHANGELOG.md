@@ -2,16 +2,23 @@
 
 ## Unreleased
 
+## 0.21.3 - 2026-09-30
+
+### Highlights
+
+- **Watch transient files:** excluded files and atomic-save temp files no longer cause spurious overflow when they disappear between guarded passes. ([#773](https://github.com/openclaw/fs-safe/pull/773))
+- **Faster watch rescans:** unrelated native hints skip rescans, and relevant hints reconcile affected directories, reducing scan work and allocation. ([#774](https://github.com/openclaw/fs-safe/pull/774))
+
 ### Fixes
 
-- **Watch:** no longer reports overflow when an excluded or atomic-save temp file appears and disappears between guarded passes under the same observed parent directory.
-- **Windows removal:** nonrecursive `Root.remove()` reports `not-empty` for a nonempty directory in required native mode, including with `force: true`, instead of `not-removable`.
-- **Copy and staging failures:** preserve publication callback errors with unreadable metadata, retain uncertain native rename outcomes, and prevent repeated or reentrant cleanup from reusing consumed descriptors.
+- **Watch:** no longer reports overflow when an excluded or atomic-save temp file appears and disappears between guarded passes under the same observed parent directory. ([#773](https://github.com/openclaw/fs-safe/pull/773))
+- **Windows removal:** nonrecursive `Root.remove()` reports `not-empty` for a nonempty directory in required native mode, including with `force: true`, instead of `not-removable`. ([#771](https://github.com/openclaw/fs-safe/pull/771))
+- **Copy and staging failures:** preserve publication callback errors with unreadable metadata, retain uncertain native rename outcomes, and prevent repeated or reentrant cleanup from reusing consumed descriptors. ([#763](https://github.com/openclaw/fs-safe/pull/763))
 
 ### Performance
 
 - **Watch:** skip guarded unrelated native hints and reconcile affected directories, reducing a 502-file memory-watch fixture from 513 to 55 visits and 8.16 MB to 1.33 MB sampled allocation per relevant event pass; unrelated detailed hints at two edits/second no longer trigger 120 full scans/minute, while periodic and uncertain-event reconciliation remain full. ([#774](https://github.com/openclaw/fs-safe/pull/774))
-- **Linux fallback resolution:** reuse the file type from each component's checked descriptor observation, avoiding a duplicate metadata read while retaining fresh identity, symlink-target, and mount-policy checks.
+- **Linux fallback resolution:** reuse the file type from each component's checked descriptor observation, avoiding a duplicate metadata read while retaining fresh identity, symlink-target, and mount-policy checks. ([#757](https://github.com/openclaw/fs-safe/pull/757))
 - **Native parent validation:** reuse the retained descriptor's captured identity during ordinary POSIX policy checks, avoiding a duplicate metadata read while keeping the final pathname inspection fresh. ([#735](https://github.com/openclaw/fs-safe/pull/735))
 
 ## 0.21.2 - 2026-09-28
