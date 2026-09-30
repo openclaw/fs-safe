@@ -50,9 +50,10 @@ fn native_source_swap_refuses_and_dispose_never_removes_staging() {
 fn every_close_is_consumed_after_a_real_invalid_handle_error() {
     let f = Fixture::new(); let mut owner = f.retain("file"); admitted(&owner);
     // Replace our owned source slot with the permanently invalid sentinel after
-    // settling the real handle. Never retry a closed, potentially recycled value.
+    // settling the real handle. NULL cannot alias a live or pseudo handle; -1 is
+    // the current-process pseudo handle on Windows. Never retry a recycled value.
     owner.owner.as_mut().unwrap().file.take().unwrap().close().unwrap();
-    owner.owner.as_mut().unwrap().file = Some(OwnedHandle(INVALID_HANDLE_VALUE));
+    owner.owner.as_mut().unwrap().file = Some(OwnedHandle(null_mut()));
     let errors = owner.close(); assert_eq!(errors.len(), 1); assert_eq!(owner.close().len(), 1);
     assert!(owner.owner.is_none());
     for directory in [&f.source, &f.target] {
@@ -151,9 +152,9 @@ fn all_link_kinds_preserve_the_complete_opaque_reparse_buffer() {
 #[test]
 fn in_place_reparse_target_change_is_observed_before_dispatch() {
     let f = Fixture::new(); let source = f.source.join("entry"); fs::write(&source, b"").unwrap();
-    install_reparse(&source, 0xa000000c, &"first-missing".encode_utf16().collect::<Vec<_>>(), &[], true);
+    install_reparse(&source, 0xa000000c, &"first-missing".encode_utf16().collect::<Vec<_>>(), &"first-missing".encode_utf16().collect::<Vec<_>>(), true);
     let original = facts(&source); let mut owner = f.retain("symlink"); admitted(&owner);
-    let newer = install_reparse(&source, 0xa000000c, &"second-missing".encode_utf16().collect::<Vec<_>>(), &[], true);
+    let newer = install_reparse(&source, 0xa000000c, &"second-missing".encode_utf16().collect::<Vec<_>>(), &"second-missing".encode_utf16().collect::<Vec<_>>(), true);
     assert_eq!(facts(&source), original); let result = owner.publish(); assert_eq!(result.outcome, "not-published");
     assert_eq!(result.error_code.as_deref(), Some("path-mismatch")); assert!(owner.close().is_empty());
     let h = handle(&source, FILE_READ_ATTRIBUTES); assert_eq!(reparse_bytes(h.0).unwrap(), newer); h.close().unwrap();
