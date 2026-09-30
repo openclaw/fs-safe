@@ -18,7 +18,8 @@ export function* syncDirectoryBestEffort(io: AtomicIo, dirPath: string): Procedu
     // Directory synchronization and close remain best-effort.
   } finally {
     try {
-      if (file) yield* file.close();
+      const closing = file?.close();
+      if (file && io.asynchronous) yield closing;
     } catch {
       // Preserve the operation's best-effort contract.
     }
@@ -108,9 +109,9 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
   try {
     yield* inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
     params.mutation?.assert();
-    yield* file.chmod(params.mode & 0o7777);
+    file.chmod(params.mode & 0o7777);
   } finally {
-    yield* file.close();
+    file.close();
   }
 }
 
@@ -128,14 +129,17 @@ export function* writeTempFile(io: AtomicIo, params: {
     const identity = yield* inspectAtomicIdentity(io, () => file.statExact());
     params.onIdentity?.(identity);
     params.mutation?.assert();
-    yield* file.writeFile(params.content, true);
-    yield* file.chmod(params.mode);
+    const writing = file.writeFile(params.content, true);
+    if (io.asynchronous) yield writing;
+    const chmod = file.chmod(params.mode);
+    if (io.asynchronous) yield chmod;
     if (params.sync) yield* file.syncBestEffort();
     yield* inspectAtomicIdentity(io, () => file.statExact(), identity);
     return { file, identity };
   } catch (error) {
     try {
-      yield* file.close();
+      const closing = file.close();
+      if (io.asynchronous) yield closing;
     } catch (closeError) {
       throw new AggregateError([error, closeError], "Atomic temp write and close failed");
     }

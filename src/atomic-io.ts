@@ -167,9 +167,9 @@ export class AtomicFile {
     return this.resource.stat({ bigint: true });
   }
 
-  *close(): Procedure<void> {
+  close(): void | Promise<void> {
     if (typeof this.resource === "number") this.io.syncFs!.closeSync!(this.resource);
-    else yield* wait(this.resource.close());
+    else return this.resource.close();
   }
 
   *sync(): Procedure<void> {
@@ -185,22 +185,22 @@ export class AtomicFile {
     }
   }
 
-  *chmod(mode: number): Procedure<void> {
+  chmod(mode: number): void | Promise<void> {
     if (typeof this.resource === "number") {
       const chmod = this.io.fchmodSync;
       chmod?.(this.resource, mode);
     } else {
-      yield* wait(this.resource.chmod(mode));
+      return this.resource.chmod(mode);
     }
   }
 
-  *writeFile(data: string | Uint8Array, throughModule = false): Procedure<void> {
+  writeFile(data: string | Uint8Array, throughModule = false): void | Promise<void> {
     if (typeof this.resource === "number") {
       this.io.syncFs!.writeFileSync!(this.resource, data);
     } else if (throughModule) {
-      yield* wait(this.io.asyncFs!.writeFile!(this.resource, data));
+      return this.io.asyncFs!.writeFile!(this.resource, data);
     } else {
-      yield* wait(this.resource.writeFile(data));
+      return this.resource.writeFile(data);
     }
   }
 

@@ -188,13 +188,15 @@ export class AtomicTempOwner {
       }
       onVerified?.(identity);
       const previous = this.takeResource();
-      if (previous) yield* previous.close();
+      const closing = previous?.close();
+      if (previous && this.io.asynchronous) yield closing;
       this.resource = published;
       this.recordedIdentity = identity;
       published = undefined;
     } finally {
       try {
-        if (published) yield* published.close();
+        const closing = published?.close();
+        if (published && this.io.asynchronous) yield closing;
       } catch {
         // Preserve the selected verification or previous-resource close failure.
       }
@@ -241,7 +243,8 @@ export class AtomicTempOwner {
     if (cleanupComplete) this.unregister();
     const file = this.takeResource();
     try {
-      if (file) yield* file.close();
+      const closing = file?.close();
+      if (file && this.io.asynchronous) yield closing;
     } catch (closeError) {
       deferredFailure = closeFailure(closeError, params, deferredFailure);
     }

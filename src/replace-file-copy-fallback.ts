@@ -77,7 +77,8 @@ function* openPinnedDestination(
     return file;
   } catch (error) {
     try {
-      yield* file.close();
+      const closing = file.close();
+      if (io.asynchronous) yield closing;
     } catch {
       // Preserve the already-selected admission failure.
     }
@@ -94,7 +95,8 @@ export function* assertDestinationHardlinkPolicy(
   const file = yield* openPinnedDestination(io, dest, "hardlinks");
   if (!file) return;
   try {
-    yield* file.close();
+    const closing = file.close();
+    if (io.asynchronous) yield closing;
   } catch (error) {
     // Only asynchronous admission pins have best-effort successful close.
     if (!io.asynchronous) throw error;
@@ -156,14 +158,16 @@ function* replacePinnedWithRestore(
   try {
     yield* writeAtomicDestination(file, replacement, destination);
     if (destination) yield* destination.verify();
-    yield* file.chmod(replacementMode);
+    const chmod = file.chmod(replacementMode);
+    if (io.asynchronous) yield chmod;
     yield* file.sync();
   } catch (writeError) {
     mutation.rethrowRefusal();
     try {
       yield* writeAtomicDestination(file, original, destination, true);
       if (destination) yield* destination.verify(true);
-      yield* file.chmod(originalMode);
+      const chmod = file.chmod(originalMode);
+      if (io.asynchronous) yield chmod;
       yield* file.sync();
       throw restoreFailure(writeError, "restored");
     } catch (restoreError) {
@@ -233,9 +237,10 @@ export function* copyFallbackReplace(io: AtomicIo, params: {
         yield* writeAtomicDestination(file, replacement, destination);
         if (destination) yield* destination.verify();
       } else {
-        yield* file.writeFile(replacement);
+        yield file.writeFile(replacement);
       }
-      yield* file.chmod(source.mode);
+      const chmod = file.chmod(source.mode);
+      if (io.asynchronous) yield chmod;
       if (params.sync) yield* file.sync();
       closeRequiredForSuccess = !params.sync;
     }
@@ -245,7 +250,8 @@ export function* copyFallbackReplace(io: AtomicIo, params: {
   } finally {
     if (file) {
       try {
-        yield* file.close();
+        const closing = file.close();
+        if (io.asynchronous) yield closing;
       } catch (closeError) {
         if (closeRequiredForSuccess && completed) throw closeError;
       }

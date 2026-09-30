@@ -41,7 +41,8 @@ export function* readOwnedCopySource(io: AtomicIo, params: {
     return { replacement, mode: Number(opened.mode) };
   } finally {
     try {
-      yield* handle.close();
+      const closing = handle.close();
+      if (io.asynchronous) yield closing;
     } catch {
       // Source close never replaces the selected read or admission result.
     }
