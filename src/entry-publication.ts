@@ -3,7 +3,7 @@ import path from "node:path";
 import { assertDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
-import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
+import { captureNativeFdClose, type NativeBinding, type NativeWindowsEntryPublication, type NativePublicationTransition } from "./native-binding.js";
 import { requireNativeBinding } from "./native.js";
 import { realpathSync } from "./realpath.js";
 import { describeStagedDirectory, assertStagedDirectoryCurrent } from "./staged-directory.js";
@@ -15,6 +15,8 @@ import type {
 
 type Binding = NativeBinding & Required<Pick<NativeBinding,
   "entryPublicationFilesystem" | "publishRetainedEntryNoReplace">>;
+type Close = () => void | readonly unknown[];
+type Backend = { current(published: boolean): void; publish(): NativePublicationTransition };
 type Directory = { fd: number; receipt: ReturnType<typeof describeStagedDirectory> };
 
 function basename(name: string): string {
@@ -42,7 +44,7 @@ function parent(value: PublicationParent): PublicationParent {
   assertDirectoryIdentitySync(pathname, { ...expected, realPath: pathname });
   return Object.freeze({ path: pathname, identity: expected });
 }
-function retainParent(expected: PublicationParent, closes: (() => void)[]): Directory {
+function retainParent(expected: PublicationParent, closes: Close[]): Directory {
   const fd = fs.openSync(expected.path,
     fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   // Register immediately: outer admission owns *all* close outcomes, including
@@ -73,11 +75,13 @@ function inspectEntry(name: string, expected: EntryPublicationReceipt["source"][
     throw new FsSafeError("path-alias", "publication source must use its canonical physical spelling");
   }
 }
-function settle(closes: (() => void)[], issues: EntryPublicationIssue[]): EntryPublicationResult["resources"] {
+function settle(closes: Close[], issues: EntryPublicationIssue[]): EntryPublicationResult["resources"] {
   let resources: EntryPublicationResult["resources"] = "closed";
   // Consume ownership before each close; a failed close must never be retried.
   for (const close of closes.splice(0).reverse()) {
-    try { close(); }
+    try {
+      for (const cause of close() ?? []) { resources = "close-failed"; issues.push(Object.freeze({ phase: "close", cause })); }
+    }
     catch (cause) { resources = "close-failed"; issues.push(Object.freeze({ phase: "close", cause })); }
   }
   return resources;
@@ -87,19 +91,12 @@ class Publication implements RetainedEntryPublication {
   #result?: EntryPublicationResult;
   #busy = false;
   readonly #receipt: EntryPublicationReceipt;
-  readonly #binding: Binding;
-  readonly #sourceParent: Directory;
-  readonly #destinationParent: Directory;
-  readonly #sourceFd: number;
-  readonly #closes: (() => void)[];
+  readonly #backend: Backend;
+  readonly #closes: Close[];
   readonly #assertion: () => void;
-  constructor(receipt: EntryPublicationReceipt, binding: Binding, sourceParent: Directory,
-    destinationParent: Directory, sourceFd: number, closes: (() => void)[], assertion: () => void) {
+  constructor(receipt: EntryPublicationReceipt, backend: Backend, closes: Close[], assertion: () => void) {
     this.#receipt = receipt;
-    this.#binding = binding;
-    this.#sourceParent = sourceParent;
-    this.#destinationParent = destinationParent;
-    this.#sourceFd = sourceFd;
+    this.#backend = backend;
     this.#closes = closes;
     this.#assertion = assertion;
   }
@@ -107,14 +104,6 @@ class Publication implements RetainedEntryPublication {
 
   #idle(): void {
     if (this.#busy) throw new FsSafeError("helper-failed", "reentrant entry publication");
-  }
-  #current(published = false): void {
-    assertStagedDirectoryCurrent(this.#sourceParent.receipt);
-    assertStagedDirectoryCurrent(this.#destinationParent.receipt);
-    const expected = this.receipt.source.expected;
-    assertKind(inspectFileIdentitySync(() => fs.fstatSync(this.#sourceFd, { bigint: true }), expected), expected.kind);
-    const location = published ? this.receipt.destination : this.receipt.source;
-    inspectEntry(path.join(location.parent.path, location.basename), expected);
   }
   publish(): EntryPublicationResult {
     this.#idle();
@@ -127,15 +116,12 @@ class Publication implements RetainedEntryPublication {
     try {
       assertSynchronousCallbackResult(this.#assertion(), "assertBeforeMutation");
       phase = "precheck";
-      this.#current();
+      this.#backend.current(false);
       phase = "native";
       // Any thrown/lost/malformed native reply is unknown, even if a later path
       // observation happens to resemble success or failure.
       transition = "indeterminate";
-      const native = this.#binding.publishRetainedEntryNoReplace(
-        this.#sourceParent.fd, this.receipt.source.basename, this.#sourceFd,
-        this.#destinationParent.fd, this.receipt.destination.basename,
-      );
+      const native = this.#backend.publish();
       if (native?.outcome !== "committed" && native?.outcome !== "not-published" && native?.outcome !== "indeterminate") {
         throw new FsSafeError("helper-failed", "native publication returned an unknown outcome");
       }
@@ -146,7 +132,7 @@ class Publication implements RetainedEntryPublication {
       }
       phase = "postcheck";
       verification = "failed";
-      this.#current(true);
+      this.#backend.current(true);
       verification = "verified";
     } catch (cause) { issues.push(Object.freeze({ phase, cause })); }
     const resources = settle(this.#closes, issues);
@@ -175,6 +161,12 @@ class Publication implements RetainedEntryPublication {
   }
 }
 
+function publicationReceipt(source: EntryPublicationReceipt["source"], destination: EntryPublicationReceipt["destination"],
+  sourceFilesystem: string, destinationFilesystem: string): EntryPublicationReceipt {
+  return Object.freeze({ source, destination, capability: Object.freeze({ destinationAbsence: "atomic",
+    sourceIdentity: "observed-under-caller-exclusive-namespace", parentBinding: "retained-object", sourceFilesystem, destinationFilesystem }) });
+}
+
 /**
  * Retain an existing directory, single-link regular file or symlink for ONE-WAY export.
  * Requires caller-exclusive source namespace and stable admitted topology.
@@ -182,25 +174,16 @@ class Publication implements RetainedEntryPublication {
  * All operation results settle descriptors, never delete or reverse names.
  */
 export function retainEntryForPublication(options: RetainEntryForPublicationOptions): RetainedEntryPublication {
-  const closes: (() => void)[] = [];
+  const closes: Close[] = [];
   try {
-    if (process.platform !== "darwin" && process.platform !== "linux") {
-      throw new FsSafeError("unsupported-platform", "entry publication requires macOS or Linux");
+    if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32") {
+      throw new FsSafeError("unsupported-platform", "entry publication requires macOS, Linux or Windows");
     }
     const native = requireNativeBinding();
-    if (typeof native.entryPublicationFilesystem !== "function" ||
-        typeof native.publishRetainedEntryNoReplace !== "function" || typeof native.openBeneath !== "function") {
-      throw new FsSafeError("helper-unavailable", "native entry publication is unavailable");
-    }
-    const binding = native as Binding;
-    const closeSource = captureNativeFdClose(binding);
     const assertion = options.assertBeforeMutation;
     if (typeof assertion !== "function") throw new FsSafeError("invalid-path", "synchronous publication authority is required");
     const kind = options.source.expected.kind;
     if (kind !== "directory" && kind !== "file" && kind !== "symlink") throw new FsSafeError("not-file", "unsupported publication entry kind");
-    if (kind === "symlink" && typeof binding.openStagedSymlink !== "function") {
-      throw new FsSafeError("helper-unavailable", "native symlink retention is unavailable");
-    }
     const source = Object.freeze({ parent: parent(options.source.parent), basename: basename(options.source.basename),
       expected: Object.freeze({ ...identity(options.source.expected), kind }) });
     const destination = Object.freeze({ parent: parent(options.destination.parent), basename: basename(options.destination.basename) });
@@ -208,6 +191,38 @@ export function retainEntryForPublication(options: RetainEntryForPublicationOpti
     const targetPath = path.join(destination.parent.path, destination.basename);
     if (targetPath === sourcePath || (kind === "directory" && targetPath.startsWith(`${sourcePath}${path.sep}`))) {
       throw new FsSafeError("invalid-path", "publication source and destination overlap");
+    }
+    if (process.platform === "win32") {
+      if (typeof native.retainWindowsEntryPublication !== "function") {
+        throw new FsSafeError("helper-unavailable", "native Windows entry retention is unavailable");
+      }
+      inspectEntry(sourcePath, source.expected);
+      let owner: NativeWindowsEntryPublication | undefined;
+      // A lost admission reply cannot prove resource settlement. The native GC
+      // backstop closes only; an explicit unknown close must remain visible.
+      closes.push(() => {
+        if (!owner) throw new FsSafeError("helper-failed", "native retention reply lost; closure unknown");
+        return owner.close().map(error => Object.assign(new Error(error.message), { code: error.code }));
+      });
+      owner = native.retainWindowsEntryPublication(source.parent.path, source.basename, source.parent.identity.dev, source.parent.identity.ino,
+        destination.parent.path, destination.basename, destination.parent.identity.dev, destination.parent.identity.ino,
+        source.expected.dev, source.expected.ino, kind);
+      const admitted = owner.admission;
+      if (admitted.outcome !== "retained" || admitted.errorCode) {
+        throw Object.assign(new Error(admitted.errorMessage ?? "native Windows publication admission failed"), { code: admitted.errorCode ?? "helper-failed" });
+      }
+      const retained = owner;
+      const receipt = publicationReceipt(source, destination, "ntfs", "ntfs");
+      return new Publication(receipt, { current: published => retained.current(published), publish: () => retained.publish() }, closes, assertion);
+    }
+    if (typeof native.entryPublicationFilesystem !== "function" ||
+        typeof native.publishRetainedEntryNoReplace !== "function" || typeof native.openBeneath !== "function") {
+      throw new FsSafeError("helper-unavailable", "native entry publication is unavailable");
+    }
+    const binding = native as Binding;
+    const closeSource = captureNativeFdClose(binding);
+    if (kind === "symlink" && typeof binding.openStagedSymlink !== "function") {
+      throw new FsSafeError("helper-unavailable", "native symlink retention is unavailable");
     }
     const sourceParent = retainParent(source.parent, closes);
     const destinationParent = retainParent(destination.parent, closes);
@@ -230,11 +245,17 @@ export function retainEntryForPublication(options: RetainEntryForPublicationOpti
     inspectEntry(sourcePath, source.expected);
     assertStagedDirectoryCurrent(sourceParent.receipt);
     assertStagedDirectoryCurrent(destinationParent.receipt);
-    const receipt: EntryPublicationReceipt = Object.freeze({ source, destination, capability: Object.freeze({
-      destinationAbsence: "atomic", sourceIdentity: "observed-under-caller-exclusive-namespace",
-      parentBinding: "retained-object", sourceFilesystem, destinationFilesystem,
-    }) });
-    return new Publication(receipt, binding, sourceParent, destinationParent, sourceFd, closes, assertion);
+    const receipt = publicationReceipt(source, destination, sourceFilesystem, destinationFilesystem);
+    return new Publication(receipt, {
+      current(published) {
+        assertStagedDirectoryCurrent(sourceParent.receipt);
+        assertStagedDirectoryCurrent(destinationParent.receipt);
+        assertKind(inspectFileIdentitySync(() => fs.fstatSync(sourceFd, { bigint: true }), source.expected), kind);
+        const location = published ? destination : source;
+        inspectEntry(path.join(location.parent.path, location.basename), source.expected);
+      },
+      publish: () => binding.publishRetainedEntryNoReplace(sourceParent.fd, source.basename, sourceFd, destinationParent.fd, destination.basename),
+    }, closes, assertion);
   } catch (cause) {
     const issues: EntryPublicationIssue[] = [Object.freeze({ phase: "admission", cause })];
     const resources = settle(closes, issues);

@@ -172,6 +172,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
     }
     const rootArtifact = artifacts.find((artifact) => artifact.pkg.name === rootPkg.name);
     assert.ok(rootArtifact?.integrity);
+    const publicationProbeSource = readFileSync(new URL("./consumer-publication-probe.mjs", import.meta.url));
     const retainedProbeSource = readFileSync(new URL("./consumer-retained-file-probe.mjs", import.meta.url));
     const suffixProbeSource = readFileSync(new URL("./consumer-suffix-probe.mjs", import.meta.url));
     const metadataHelperSource = readFileSync(new URL("./consumer-proof-metadata.mjs", import.meta.url));
@@ -240,6 +241,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
             .digest("hex"),
           manager: { name: manager, version },
           windowsSecurity: windowsSecurityExpected,
+          publicationProbeSha256: createHash("sha256").update(publicationProbeSource).digest("hex"),
           retainedProbeSha256: createHash("sha256").update(retainedProbeSource).digest("hex"),
           creation: creationExpected,
           ...suffixExpected,
@@ -298,6 +300,15 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           }
         }
         if (!omitted && process.platform === "win32") {
+          const publicationProbe = join(directory, "consumer-publication-probe.mjs");
+          writeFileSync(publicationProbe, publicationProbeSource);
+          cases.entryPublication = JSON.parse(await run([process.execPath, publicationProbe], [], directory, env));
+          assert.deepEqual(cases.entryPublication.source, source);
+          assert.equal(cases.entryPublication.rootIntegrity, rootArtifact.integrity);
+          assert.equal(cases.entryPublication.hostBinarySha256, suffixExpected.hostBinarySha256);
+          assert.deepEqual(cases.entryPublication.compiledFiles, creationExpected.compiledFiles);
+          assert.equal(cases.entryPublication.nativeLoaded, true);
+          assert.deepEqual(cases.entryPublication.rows, ["file", "directory", "file-relative", "file-absolute", "dir-relative", "dir-absolute", "junction", "sibling-store-collision", "close-only"]);
           const probe = join(directory, "consumer-retained-file-probe.mjs");
           writeFileSync(probe, retainedProbeSource);
           cases.retainedFile = JSON.parse(await run([process.execPath, probe], [], directory, env));

@@ -54,13 +54,13 @@ afterEach(() => {
 it("refuses unavailable native support before moving either entry", () => {
   const f = fixture(); configureFsSafeNative({ mode: "off" });
   expect(() => retain(f.options)).toThrow(expect.objectContaining({
-    code: posix ? "helper-unavailable" : "unsupported-platform",
+    code: posix || process.platform === "win32" ? "helper-unavailable" : "unsupported-platform",
     details: { result: expect.objectContaining({ transition: "not-published", resources: "closed" }) },
   }));
   expect(content(f.source)).toBe("original"); expect(fs.existsSync(f.destination)).toBe(false);
 });
 
-// Native CI builds this addon. JS-only and Windows lanes exercise refusal above.
+// Native CI builds this addon. Windows has its own retained-handle suite.
 describe.runIf(posix && Boolean(native))("public retained entry publication / real native objects", () => {
   it.each(["directory", "file"] as const)("publishes an absent %s once; later dispose preserves newer bytes", kind => {
     const f = fixture(kind); const inode = stat(f.source).ino;

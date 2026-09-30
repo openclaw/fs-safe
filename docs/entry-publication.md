@@ -69,7 +69,7 @@ policy is imposed on the contents of a published directory.
 
 ## Results and lifetime
 
-`publish()` is synchronous, one-shot, and closes all three retained descriptors
+`publish()` is synchronous, one-shot, and closes every retained descriptor/handle
 before returning an immutable `EntryPublicationResult`. Inspect **all** fields:
 
 | Field | Meaning |
@@ -107,15 +107,40 @@ rename or copy fallback. This API supports local APFS/HFS on macOS and
 ext-family/XFS/Btrfs/tmpfs on Linux, subject to the kernel/filesystem's native
 no-replace operation (`renameatx_np(RENAME_EXCL)` or `renameat2(RENAME_NOREPLACE)`).
 Network, FUSE, overlay and unknown filesystem types refuse before dispatch;
-Windows and other platforms are unsupported here. Do not infer Windows parity
-from other fs-safe handle APIs. Cross-device moves refuse without copying.
+On Windows, fixed local NTFS volumes support handle-relative
+`FileRenameInformationEx` without replacement. Other Windows filesystems, remote
+paths and namespace aliases refuse; cross-device moves refuse without copying.
+Other platforms are unsupported.
 Unsupported syscall/flag errors do not trigger another rename implementation.
 
 A preexisting **or raced** empty directory, file or symlink at the destination is
 never overwritten by a successful no-replace call. Admission also rejects a
 destination alias of the source, including Darwin case-only rename exceptions.
 For distinct destination entries this is the syscall guarantee;
-source selection still occurs by basename. Moving admitted A away and installing
+POSIX source selection still occurs by basename. Moving admitted A away and installing
 B after the native source check can cause POSIX to move B. Postchecks may detect
 that only after commitment. Applications needing protection from that schedule
 must use a stronger namespace owner, not treat this API as source CAS.
+
+### Windows entries and resources
+
+`kind: "symlink"` includes Windows file/directory symbolic links
+(`IO_REPARSE_TAG_SYMLINK`) and directory junctions (`IO_REPARSE_TAG_MOUNT_POINT`).
+The original entry handle is renamed relative to the retained destination parent;
+the source is not reopened to select the object for mutation. The complete opaque
+reparse buffer is checked before and after publication, never decoded or rebuilt.
+Other reparse tags fail closed. Relative symbolic-link targets and absolute
+junction targets keep their original bytes. Reparse ancestors are not admitted.
+The caller's existing-empty destination directory and distinct sibling runtime
+stores need not be replaced or removed.
+
+All ancestors and both parents are opened component-by-component without following
+reparse points, checked against physical spellings, and retained until close.
+Original exact same-volume source/parent identities are required. Named source
+observations are checked against the retained handle, including native file ID.
+Windows handle selection does not upgrade the cross-platform receipt into a
+namespace lock, current-path confinement or a durable transaction. Keep the same
+caller-exclusive namespace and stable-topology contract through later consumers.
+Every handle, including partial admission and temporary observation handles, is
+consumed once by explicit close; a lost native reply leaves the transition or
+resource settlement unknown rather than inferring success from pathnames.

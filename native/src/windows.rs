@@ -696,7 +696,7 @@ fn aligned_name_buffer(byte_len: usize) -> Vec<usize> {
     vec![0_usize; word_len]
 }
 
-fn set_rename_information(
+pub(crate) fn set_rename_information(
     source: HANDLE,
     target_root: HANDLE,
     target_path: &str,

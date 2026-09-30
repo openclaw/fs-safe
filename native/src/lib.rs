@@ -45,6 +45,8 @@ mod staged_file;
 mod staged_symlink;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod entry_publication;
+#[cfg(windows)]
+mod entry_publication_windows;
 use fs_safe_archive_core::tar_meter;
 #[cfg(unix)]
 mod unix;

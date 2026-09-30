@@ -362,7 +362,8 @@ original directory on Linux/macOS and requires native support for this operation
 It offers atomic replace/no-replace publication, not expected-inode replacement
 or a crash-durability promise; application checks and coordination remain yours.
 
-For caller-owned directory, regular-file or symlink-entry export,
+For caller-owned directory, regular-file or symlink-entry export (including
+Windows junctions on local NTFS),
 [`retainEntryForPublication()`](docs/entry-publication.md) retains original source
 and parent observations, atomically refuses occupied destinations, and returns
 explicit commit/indeterminate results. It only closes on disposal: no automatic

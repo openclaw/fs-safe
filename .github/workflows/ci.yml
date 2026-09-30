@@ -1072,6 +1072,18 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Prove Windows retained entry publication
+        if: runner.os == 'Windows'
+        env:
+          FS_SAFE_TEST_PUBLIC_ARTIFACT: "1"
+          FS_SAFE_TEST_PUBLICATION_NATIVE: "1"
+        run: pnpm test test/entry-publication-windows.test.ts
+
+      - name: Refuse publication on an owned FAT volume
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/windows-publication-volume-proof.ps1
+
       - name: Force the Linux descriptor-walk fallback
         if: matrix.no-openat2
         shell: bash

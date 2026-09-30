@@ -1,5 +1,12 @@
 import type { RetainedFileResult } from "./retained-file-types.js";
 
+export type NativePublicationTransition = { outcome: "committed" | "not-published" | "indeterminate"; errorCode?: string; errorMessage?: string };
+export interface NativeWindowsEntryPublication {
+  readonly admission: { outcome: string; errorCode?: string; errorMessage?: string };
+  current(published: boolean): void;
+  publish(): NativePublicationTransition;
+  close(): { code: string; message: string }[];
+}
 export interface NativeRetainedFile {
   readonly admission: RetainedFileResult | { status: "retained"; identity: string };
   settle(remove: boolean): RetainedFileResult;
@@ -271,11 +278,16 @@ export interface NativeBinding {
     directoryFd: number,
   ): NativeOwnedTreeRemovalResult;
   /** Local filesystem admission for one-way cooperative entry publication. */
+  retainWindowsEntryPublication?(
+    sourcePath: string, name: string, sourceDev: bigint, sourceIno: bigint,
+    targetPath: string, targetName: string, targetDev: bigint, targetIno: bigint,
+    dev: bigint, ino: bigint, kind: "file" | "directory" | "symlink",
+  ): NativeWindowsEntryPublication;
   entryPublicationFilesystem?(parentFd: number): string;
   publishRetainedEntryNoReplace?(
     sourceParentFd: number, sourceBasename: string, sourceFd: number,
     targetParentFd: number, targetBasename: string,
-  ): { outcome: "committed" | "not-published" | "indeterminate"; errorCode?: string; errorMessage?: string };
+  ): NativePublicationTransition;
   renameNoReplace(...args: NativeTwoPathArgs): void;
   /** Identity-fenced retained-directory rename capability. */
   renameNoReplaceWithIdentity?(

@@ -5,6 +5,7 @@ export type RetainEntryForPublicationOptions = Readonly<{
   source: Readonly<{
     parent: PublicationParent;
     basename: string;
+    /** Windows symlink includes file/directory symbolic links and junctions; targets stay opaque. */
     expected: PublicationIdentity & Readonly<{ kind: "directory" | "file" | "symlink" }>;
   }>;
   destination: Readonly<{ parent: PublicationParent; basename: string }>;

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Windows publication:** `retainEntryForPublication` now retains regular files, directories, symbolic links and junctions on local NTFS for atomic no-replace export. Link targets stay opaque; commit, indeterminate and close failures remain distinct, and disposal never deletes either location.
+
 - **One-way publication:** `retainEntryForPublication` now admits direct POSIX symlink entries, retaining the link inode and exact target bytes without following external payloads. Relative and dangling targets keep their original spelling; disposal remains close-only.
 
 ## 0.22.0 - 2026-09-30
