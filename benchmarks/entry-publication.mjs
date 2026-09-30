@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 export function registerEntryPublication({ api, workspace, binding, register, contract, onCleanup }) {
-  const supported = ["darwin", "linux"].includes(process.platform) &&
-    typeof binding?.publishRetainedEntryNoReplace === "function";
+  const supportedPlatform = ["darwin", "linux", "win32"].includes(process.platform);
+  const supported = supportedPlatform && (process.platform === "win32"
+    ? typeof binding?.retainWindowsEntryPublication === "function"
+    : typeof binding?.publishRetainedEntryNoReplace === "function");
   const directory = path.join(workspace, "entry-publication");
   fs.mkdirSync(directory);
   const source = path.join(directory, "stage"), destination = path.join(directory, "published");
@@ -53,7 +55,7 @@ export function registerEntryPublication({ api, workspace, binding, register, co
             assert.equal(owner.receipt.source.expected.ino, input.source.expected.ino);
             assert.equal(owner.dispose().transition, "not-published");
           } else {
-            assert.equal(output.code, ["darwin", "linux"].includes(process.platform) ? "helper-unavailable" : "unsupported-platform");
+            assert.equal(output.code, supportedPlatform ? "helper-unavailable" : "unsupported-platform");
             assert.equal(output.details.result.transition, "not-published");
             assert.equal(output.details.result.resources, "closed");
           }
@@ -66,7 +68,7 @@ export function registerEntryPublication({ api, workspace, binding, register, co
       const label = typeof method === "symbol" ? "[Symbol.dispose]" : method;
       register(`RetainedEntryPublication.${label}/${kind}`, owner => owner[method](), {
         sync: true, before: () => track(api.retainEntryForPublication(prepare(kind))),
-        skip: supported ? undefined : "One-way entry publication requires a supported local POSIX native filesystem.",
+        skip: supported ? undefined : "One-way entry publication requires a supported local native filesystem (NTFS on Windows).",
         after: (output, owner) => {
           try {
             const result = output ?? owner.dispose();
