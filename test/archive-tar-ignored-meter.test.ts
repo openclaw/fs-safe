@@ -12,6 +12,10 @@ const visible = [0, ...Buffer.from("01234567D")];
 const metadata = [...Buffer.from("g x K L N X".replaceAll(" ", ""))];
 const ignoredFlags = Array.from({ length: 256 }, (_, i) => i).filter((byte) => !visible.includes(byte) && !metadata.includes(byte));
 
+// Vitest's toEqual walks Buffers byte by byte, which was most of the property's
+// time on slow macOS runners. Byte comparison gives Buffer pairs the same verdict.
+expect.addEqualityTesters([(a: unknown, b: unknown) => Buffer.isBuffer(a) && Buffer.isBuffer(b) ? a.equals(b) : undefined]);
+
 it("rejects raw linkname/type contradictions for all 256 flags before metadata or member emission", async () => {
   for (let type = 0; type < 256; type++) {
     const isLink = type === 0x31 || type === 0x32;

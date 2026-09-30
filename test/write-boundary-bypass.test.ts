@@ -2,11 +2,13 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itPosix } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, itPosix } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, getNativeBinding } from "../src/native.js";
 import { ESCAPING_DIRECTORY_PAYLOADS, ESCAPING_WRITE_PAYLOADS, expectFsSafeCode, expectNoOutsideWrite, LITERAL_SUSPICIOUS_DIRECTORY_PAYLOADS, LITERAL_SUSPICIOUS_WRITE_PAYLOADS, makeTempLayout as makeSecurityTempLayout, POSIX_LITERAL_SUSPICIOUS_WRITE_PAYLOADS, SAFE_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, WINDOWS_REJECTED_SUSPICIOUS_DIRECTORY_PAYLOADS, expectFsSafeError } from "./helpers/security.js";
+
+allowWindowsFilesystemStalls();
 
 const tempDirs: string[] = [];
 

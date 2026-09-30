@@ -13,6 +13,9 @@ import {
   makeTempLayout as makeSecurityTempLayout,
   TRAVERSAL_PAYLOADS,
 } from "./helpers/security.js";
+import { allowWindowsFilesystemStalls } from "./helpers/vitest.js";
+
+allowWindowsFilesystemStalls();
 
 const tempDirs: string[] = [];
 

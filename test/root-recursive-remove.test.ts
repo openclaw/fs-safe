@@ -4,8 +4,9 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { configureFsSafeNative } from "../src/native-config.js";
-import { itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, itPosix, itWin32, useRealTempDirs } from "./helpers/vitest.js";
 
+allowWindowsFilesystemStalls();
 const { tempRoot } = useRealTempDirs();
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
 afterEach(() => { configureFsSafeNative({ mode: "auto" }); vi.restoreAllMocks(); });

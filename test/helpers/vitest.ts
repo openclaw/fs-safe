@@ -1,11 +1,18 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, it } from "vitest";
+import { afterEach, it, vi } from "vitest";
 
 export const itPosix = it.runIf(process.platform !== "win32");
 export const itWin32 = it.runIf(process.platform === "win32");
 export const itDarwin = it.runIf(process.platform === "darwin");
+
+// Hosted Windows runners stall ordinary filesystem calls for seconds. Across 108
+// CI jobs, the slowest run of any sub-second test was 7.1 s. Call at file scope
+// in real-I/O suites whose tests are fast; other platforms keep the 5 s default.
+export function allowWindowsFilesystemStalls(): void {
+  if (process.platform === "win32") vi.setConfig({ testTimeout: 15_000 });
+}
 
 export type TempDirsFixture = {
   tempDirs: string[];
