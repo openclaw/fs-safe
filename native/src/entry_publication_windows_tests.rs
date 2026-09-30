@@ -86,6 +86,30 @@ fn rejects_network_device_alias_and_unknown_original_identities_without_ownershi
 }
 
 
+// Thread-local impersonation keeps privilege changes out of other test threads.
+// Closing this duplicate token and reverting restores the original process token.
+fn with_link_privilege<T>(action: impl FnOnce() -> T) -> T {
+    use windows_sys::Win32::{Foundation::ERROR_NO_TOKEN, Security::*, System::Threading::{GetCurrentThread, OpenThreadToken}};
+    struct Impersonation;
+    impl Drop for Impersonation { fn drop(&mut self) { assert_ne!(unsafe { RevertToSelf() }, 0, "restore test thread identity"); } }
+    let mut prior = null_mut();
+    let existing = unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut prior) };
+    if existing != 0 { OwnedHandle(prior).close().unwrap(); panic!("fixture must not replace a preexisting impersonation token"); }
+    assert_eq!(unsafe { GetLastError() }, ERROR_NO_TOKEN);
+    assert_ne!(unsafe { ImpersonateSelf(SecurityImpersonation) }, 0);
+    let guard = Impersonation;
+    let mut raw = null_mut();
+    assert_ne!(unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, 1, &mut raw) }, 0);
+    let token = OwnedHandle(raw);
+    let name: Vec<u16> = "SeCreateSymbolicLinkPrivilege".encode_utf16().chain(Some(0)).collect();
+    let mut luid = unsafe { zeroed() };
+    assert_ne!(unsafe { LookupPrivilegeValueW(null(), name.as_ptr(), &mut luid) }, 0);
+    let privileges = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }] };
+    assert_ne!(unsafe { AdjustTokenPrivileges(token.0, 0, &privileges, 0, null_mut(), null_mut()) }, 0);
+    assert_eq!(unsafe { GetLastError() }, 0, "symbolic-link privilege must actually be assigned");
+    let result = action(); token.close().unwrap(); drop(guard); result
+}
+
 fn install_reparse(path: &Path, tag: u32, substitute: &[u16], print: &[u16], relative: bool) -> Vec<u8> {
     let prefix = if tag == 0xa000000c { 12 } else { 8 };
     let data_length = prefix + (substitute.len() + print.len() + 2) * 2;
@@ -100,8 +124,11 @@ fn install_reparse(path: &Path, tag: u32, substitute: &[u16], print: &[u16], rel
         bytes[cursor..cursor+2].copy_from_slice(&word.to_le_bytes()); cursor += 2;
     }
     let h = handle(path, GENERIC_WRITE_FOR_TEST); let mut written = 0;
-    assert_ne!(unsafe { DeviceIoControl(h.0, FSCTL_SET_REPARSE_POINT, bytes.as_ptr().cast(), bytes.len() as u32, null_mut(), 0, &mut written, null_mut()) }, 0,
-        "set qualified reparse: {}", unsafe { GetLastError() });
+    let (ok, error) = with_link_privilege(|| {
+        let ok = unsafe { DeviceIoControl(h.0, FSCTL_SET_REPARSE_POINT, bytes.as_ptr().cast(), bytes.len() as u32, null_mut(), 0, &mut written, null_mut()) };
+        (ok, unsafe { GetLastError() })
+    });
+    assert_ne!(ok, 0, "set qualified reparse: {error}");
     let stored = reparse_bytes(h.0).unwrap(); h.close().unwrap(); assert_eq!(stored, bytes); stored
 }
 #[test]
