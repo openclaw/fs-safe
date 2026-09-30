@@ -362,6 +362,13 @@ original directory on Linux/macOS and requires native support for this operation
 It offers atomic replace/no-replace publication, not expected-inode replacement
 or a crash-durability promise; application checks and coordination remain yours.
 
+For caller-owned directory or regular-file export,
+[`retainEntryForPublication()`](docs/entry-publication.md) retains original source
+and parent observations, atomically refuses occupied destinations, and returns
+explicit commit/indeterminate results. It only closes on disposal: no automatic
+rollback or deletion. The source namespace must remain caller-exclusive; this is
+not source-identity CAS or current-path confinement.
+
 For an already staged POSIX symlink, [`retainSymlinkInDirectory()`](docs/staged-symlink.md)
 admits caller-captured identity and retains that exact inode through no-replace
 publication or explicit recovery. Same-target foreign replacements are not adopted.

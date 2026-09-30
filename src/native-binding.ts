@@ -270,6 +270,12 @@ export interface NativeBinding {
     basename: string,
     directoryFd: number,
   ): NativeOwnedTreeRemovalResult;
+  /** Local filesystem admission for one-way cooperative entry publication. */
+  entryPublicationFilesystem?(parentFd: number): string;
+  publishRetainedEntryNoReplace?(
+    sourceParentFd: number, sourceBasename: string, sourceFd: number,
+    targetParentFd: number, targetBasename: string,
+  ): { outcome: "committed" | "not-published" | "indeterminate"; errorCode?: string; errorMessage?: string };
   renameNoReplace(...args: NativeTwoPathArgs): void;
   /** Identity-fenced retained-directory rename capability. */
   renameNoReplaceWithIdentity?(

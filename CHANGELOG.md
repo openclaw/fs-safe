@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **One-way publication:** `retainEntryForPublication` on `advanced` retains directory or regular-file source/parent identities for native no-replace export, with truthful commit/indeterminate results and close-only disposal. Requires caller-exclusive source namespaces on supported local POSIX filesystems; no source-CAS or automatic rollback guarantee.
+
 ## 0.21.3 - 2026-09-30
 
 ### Highlights

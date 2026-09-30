@@ -43,6 +43,8 @@ mod darwin_security;
 mod staged_file;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod staged_symlink;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod entry_publication;
 use fs_safe_archive_core::tar_meter;
 #[cfg(unix)]
 mod unix;

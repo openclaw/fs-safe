@@ -189,3 +189,9 @@ export type {
   RetainedFile, RetainedFileAdmission, RetainedFileExpected, RetainedFileIssue,
   RetainedFileReceipt, RetainedFileResult, RetainFileInDirectoryOptions,
 } from "./retained-file-types.js";
+
+export { retainEntryForPublication } from "./entry-publication.js";
+export type {
+  PublicationIdentity, PublicationParent, RetainEntryForPublicationOptions,
+  EntryPublicationReceipt, EntryPublicationIssue, EntryPublicationResult, RetainedEntryPublication,
+} from "./entry-publication-types.js";
