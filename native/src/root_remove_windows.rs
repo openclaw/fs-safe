@@ -101,7 +101,7 @@ mod tests {
         assert!(before.1);
         assert!(!before.2);
 
-        let error = unlink_with_hook(handle, "full", before.0, true, || {}).unwrap_err();
+        let error = unlink_entry(handle, "full", before.0, true).unwrap_err();
         assert_eq!(error.status, "ENOTEMPTY");
         assert_eq!(error.reason, "remove owned tree handle failed with Windows error 145");
         let after = { let child = open(handle, "full", 0).unwrap(); inspect(child.0).unwrap() };
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(names, [std::ffi::OsString::from("value")]);
         assert_eq!(fs::read(directory.join("value")).unwrap(), b"preserve\0payload");
         fs::remove_file(directory.join("value")).unwrap();
-        unlink_with_hook(handle, "full", before.0, true, || {}).unwrap();
+        unlink_entry(handle, "full", before.0, true).unwrap();
         assert!(!directory.exists());
         drop(parent);
         fs::remove_dir_all(base).unwrap();
