@@ -1,15 +1,13 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest } from "../src/native.js";
+import { describe, expect, it, vi } from "vitest";
 import { tempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { TempWorkspaceCleanupCapability } from "../src/temp-workspace-owner.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useWorkspaceFixture, observeSyncOpen, tempWorkspaceSyncWithUmask022 } from "./helpers/temp-workspace.js";
 
-const { tempRoot } = useRealTempDirs();
+const { tempRoot } = useWorkspaceFixture();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 
 function isDirectChild(rootDir: string, name: unknown): name is string {
@@ -20,23 +18,6 @@ function isDirectChild(rootDir: string, name: unknown): name is string {
 function collision(): NodeJS.ErrnoException {
   return Object.assign(new Error("temp workspace name collision"), { code: "EEXIST" });
 }
-
-function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
-  const previous = process.umask(0o022);
-  try {
-    return tempWorkspaceSync(options);
-  } finally {
-    process.umask(previous);
-  }
-}
-
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
-afterEach(() => {
-  vi.restoreAllMocks();
-  cleanup.__cleanupRegisteredTempPathsForTest();
-  __resetNativeLoaderForTest();
-  __resetFsSafeNativeConfigForTest();
-});
 
 describe.runIf(supportsDirectRequestedMode)("sync requested-mode direct creation", () => {
   it("retries an exclusive collision without inspecting, adopting, or cleaning its winner", async () => {
@@ -84,11 +65,8 @@ describe.runIf(supportsDirectRequestedMode)("sync requested-mode direct creation
   it("bounds collisions and releases every provisional descriptor without adoption", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-direct-exhausted-");
     const retainedRootFds = new Set<number>();
-    const open = fsSync.openSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (args[0] === rootDir) retainedRootFds.add(fd);
-      return fd;
     });
     const close = fsSync.closeSync.bind(fsSync);
     vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
@@ -118,11 +96,8 @@ describe.runIf(supportsDirectRequestedMode)("sync requested-mode direct creation
   it("preserves a direct-create failure and releases provisional descriptor ownership", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-direct-failure-");
     const retainedRootFds = new Set<number>();
-    const open = fsSync.openSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (args[0] === rootDir) retainedRootFds.add(fd);
-      return fd;
     });
     const close = fsSync.closeSync.bind(fsSync);
     vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
@@ -220,12 +195,9 @@ describe.runIf(supportsDirectRequestedMode)("sync requested-mode direct creation
     ["descriptor", "path-mismatch"],
   ] as const)("rejects a replayed parent %s mismatch", async (kind, code) => {
     const rootDir = await tempRoot("fs-safe-workspace-direct-retry-security-");
-    const open = fsSync.openSync.bind(fsSync);
     let parentFd: number | undefined;
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (args[0] === rootDir) parentFd = fd;
-      return fd;
     });
     let replay = false;
     const lstat = fsSync.lstatSync.bind(fsSync);

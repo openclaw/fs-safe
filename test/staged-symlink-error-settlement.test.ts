@@ -8,6 +8,7 @@ import {
   __loadBundledNativeForTest, __resetNativeLoaderForTest, type NativeBinding,
 } from "../src/native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { rejection, assertWrapped, hostileErrors } from "./helpers/staged-errors.js";
 
 const supported = process.platform === "linux" || process.platform === "darwin";
 let binding: NativeBinding | undefined;
@@ -58,46 +59,6 @@ async function fixture(assertBeforeMutation: () => void) {
   return { directory, expected, owner, assertClosedOnce };
 }
 
-async function rejection(operation: Promise<unknown>): Promise<{ error: unknown }> {
-  return operation.then(
-    () => { throw new Error("expected staged symlink operation to reject"); },
-    (error: unknown) => ({ error }),
-  );
-}
-
-function assertWrapped(error: unknown, cause: unknown, code: FsSafeErrorCode): FsSafeError {
-  let wrapped = false;
-  try { wrapped = error instanceof FsSafeError; } catch { /* A raw hostile value is not a wrapper. */ }
-  expect(wrapped).toBe(true);
-  const result = error as FsSafeError;
-  expect(result.code).toBe(code);
-  // Do not let an assertion formatter inspect the hostile cause, even on failure.
-  expect(result.cause === cause).toBe(true);
-  return result;
-}
-
-const hostileErrors = [
-  {
-    label: "throwing code getter",
-    create: () => Object.defineProperty(new Error("caller failure"), "code", {
-      get() { throw new Error("code must not escape classification"); },
-    }),
-  },
-  {
-    label: "revoked proxy",
-    create: () => {
-      const { proxy, revoke } = Proxy.revocable(new Error("caller failure"), {});
-      revoke();
-      return proxy;
-    },
-  },
-  {
-    label: "throwing prototype lookup",
-    create: () => new Proxy(new Error("caller failure"), {
-      getPrototypeOf() { throw new Error("prototype must not escape classification"); },
-    }),
-  },
-];
 type FailureSite = "authority" | "match" | "unlink";
 const cases: { label: string; create(): unknown; site: FailureSite; code: FsSafeErrorCode }[] = [
   ...hostileErrors.flatMap((error) => (["authority", "match", "unlink"] as const).map((site) => ({

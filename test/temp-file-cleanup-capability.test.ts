@@ -11,6 +11,7 @@ import {
 import * as cleanup from "../src/temp-cleanup.js";
 import { tempFile, withTempFile } from "../src/temp-target.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { mockCleanupBinding } from "./helpers/cleanup-binding.js";
 
 const { tempRoot } = useRealTempDirs();
 
@@ -118,13 +119,7 @@ describe("temp file cleanup capability", () => {
     async (variant) => {
       const rootDir = await tempRoot("fs-safe-temp-file-unavailable-");
       configureFsSafeNative({ mode: "auto" });
-      const binding = {
-        closeOwnedFd: vi.fn(),
-        renameNoReplace: vi.fn(),
-        removeOwnedTree: vi.fn(),
-        removeOwnedTreeSync: vi.fn(),
-        ownedTreeRemovalAvailable: vi.fn(() => false),
-      };
+      const binding = mockCleanupBinding(vi.fn(() => false));
       __setNativeLoaderForTest(() => binding as unknown as NativeBinding);
       const mkdtemp = vi.spyOn(fs, "mkdtemp");
       const run = vi.fn();

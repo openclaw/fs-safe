@@ -1,37 +1,18 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest } from "../src/native.js";
+import { describe, expect, it, vi } from "vitest";
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useWorkspaceFixture, observeSyncOpen, withUmask } from "./helpers/temp-workspace.js";
 
-const { tempRoot } = useRealTempDirs();
+const { tempRoot } = useWorkspaceFixture();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 
 function isDirectChild(rootDir: string, name: unknown): name is string {
   return typeof name === "string" && path.dirname(name) === rootDir &&
     /^workspace-[A-Za-z0-9]{6}$/.test(path.basename(name));
 }
-
-function withUmask<T>(mode: number, run: () => T): T {
-  const previous = process.umask(mode);
-  try {
-    return run();
-  } finally {
-    process.umask(previous);
-  }
-}
-
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
-afterEach(() => {
-  vi.restoreAllMocks();
-  cleanup.__cleanupRegisteredTempPathsForTest();
-  __resetNativeLoaderForTest();
-  __resetFsSafeNativeConfigForTest();
-});
 
 describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admission", () => {
   it.each([0o700, 0o500, 0o1700])(
@@ -126,14 +107,11 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
       }
       return result;
     });
-    const open = fsSync.openSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (isDirectChild(rootDir, args[0])) {
         childFds.add(fd);
         if (typeof args[1] === "number") childOpenFlags = args[1];
       }
-      return fd;
     });
     const fstat = fsSync.fstatSync.bind(fsSync);
     vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
@@ -201,14 +179,11 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
     let child = "";
     let childFd: number | undefined;
     let swapped = false;
-    const open = fsSync.openSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (isDirectChild(rootDir, args[0])) {
         child = args[0];
         childFd = fd;
       }
-      return fd;
     });
     const fstat = fsSync.fstatSync.bind(fsSync);
     vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
@@ -239,11 +214,8 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
     const rootDir = await tempRoot("fs-safe-workspace-direct-special-observation-");
     let childFd: number | undefined;
     let injected = false;
-    const open = fsSync.openSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (isDirectChild(rootDir, args[0])) childFd = fd;
-      return fd;
     });
     const fstat = fsSync.fstatSync.bind(fsSync);
     vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
@@ -276,14 +248,11 @@ describe.runIf(supportsDirectRequestedMode)("sync direct child descriptor admiss
       const failure = Object.assign(new Error("child fstat rejected"), { code: "EIO" });
       let child = "";
       let childFd: number | undefined;
-      const open = fsSync.openSync.bind(fsSync);
-      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-        const fd = open(...args);
+      observeSyncOpen((args, fd) => {
         if (isDirectChild(rootDir, args[0])) {
           child = args[0];
           childFd = fd;
         }
-        return fd;
       });
       const fstat = fsSync.fstatSync.bind(fsSync);
       const fstatSpy = vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {

@@ -7,6 +7,7 @@ import { realpathSync } from "../src/realpath.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { observeSyncOpen } from "./helpers/temp-workspace.js";
 
 const { tempRoot } = useRealTempDirs();
 const supportsNumericIdentityReplay =
@@ -107,11 +108,8 @@ for (const variant of ["async", "sync"] as const) {
         let exact = 0;
         let numeric = 0;
         let parentFd: number | undefined;
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (args[0] === admittedRoot) parentFd = fd;
-          return fd;
         });
         const lstat = fsSync.lstatSync.bind(fsSync);
         vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
@@ -191,11 +189,8 @@ for (const variant of ["async", "sync"] as const) {
         let exact = 0;
         let numeric = 0;
         let parentFd: number | undefined;
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (args[0] === admittedRoot) parentFd = fd;
-          return fd;
         });
         const lstat = fsSync.lstatSync.bind(fsSync);
         vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
@@ -261,12 +256,9 @@ for (const variant of ["async", "sync"] as const) {
         let childFd: number | undefined;
         const isChild = (name: unknown): name is string => typeof name === "string" &&
           path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
-        const openSync = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = openSync(...args);
+        observeSyncOpen((args, fd) => {
           if (args[0] === rootDir) cleanupParentFd = fd;
           if (isChild(args[0])) childFd = fd;
-          return fd;
         });
         if (variant === "async") {
           const fchmod = fsSync.fchmod.bind(fsSync);
@@ -348,14 +340,11 @@ for (const variant of ["async", "sync"] as const) {
           if (change === "grandparent-mode") fsSync.chmodSync(grandparent, 0o770);
         };
         let childFd: number | undefined;
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (isChild(args[0])) {
             child = args[0];
             childFd = fd;
           }
-          return fd;
         });
         if (variant === "async") {
           const fchmod = fsSync.fchmod.bind(fsSync);
@@ -432,11 +421,8 @@ for (const variant of ["async", "sync"] as const) {
         let finalAncestryStarted = false;
         const isChild = (name: unknown): name is string => typeof name === "string" &&
           path.dirname(name) === rootDir && path.basename(name).startsWith("workspace-");
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (isChild(args[0])) childFd = fd;
-          return fd;
         });
         const lstat = fsSync.lstatSync.bind(fsSync);
         vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {

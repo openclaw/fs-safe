@@ -17,7 +17,6 @@ import { FsSafeError } from "../src/errors.js";
 
 const { tempDirs, tempRoot } = useRealTempDirs();
 
-
 function isDirectoryOpen(flags: string | number | undefined): boolean {
   return (
     flags === "r" ||
@@ -81,7 +80,9 @@ describe("directory durability", () => {
     const root = await tempRoot("fs-safe-directory-kind-");
     const filePath = path.join(root, "file");
     await fs.writeFile(filePath, "file");
-    await expect(pinDirectory(filePath)).rejects.toMatchObject({ code: "not-file" });
+    const invalidFile = pinDirectory(filePath);
+    await expect(invalidFile).rejects.toMatchObject({ code: "not-file" });
+    await expect(invalidFile).rejects.toBeInstanceOf(FsSafeError);
 
     if (process.platform !== "win32") {
       const linkPath = path.join(root, "link");
@@ -313,77 +314,48 @@ describe("directory durability", () => {
     expect(swapped).toBe(true);
   });
 
-  it.each(["EINVAL", "ENOSYS", "ENOTSUP"] as const)(
-    "propagates %s directory sync failures outside Windows",
-    async (code) => {
-      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-      const directoryPath = await tempRoot("fs-safe-posix-sync-");
-      spyOnDirectoryOpen(async ({ filePath, flags, handle }) => {
-        vi.spyOn(handle, "sync").mockRejectedValue(Object.assign(new Error(code), { code }));
-      });
+  type FailureRoute = {
+    platform: "linux" | "win32";
+    variant: "async" | "sync";
+    site: "open" | "sync";
+    code: string;
+  };
 
-      await expect(syncDirectory(directoryPath)).rejects.toMatchObject({ code });
-    },
-  );
+  function injectFailure({ variant, site, code }: FailureRoute) {
+    const failure = Object.assign(new Error(code), { code });
+    if (site === "sync") {
+      spyOnDirectoryOpen(({ handle }) => { vi.spyOn(handle, "sync").mockRejectedValue(failure); });
+    } else if (variant === "async") {
+      vi.spyOn(fs, "open").mockRejectedValue(failure);
+    } else {
+      vi.spyOn(fsSync, "openSync").mockImplementation(() => { throw failure; });
+    }
+  }
 
-  it.each(["EACCES", "EINVAL", "EISDIR", "ENOSYS", "ENOTSUP", "EPERM"] as const)(
-    "reports %s directory sync failures as unsupported on Windows",
-    async (code) => {
-      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-      const directoryPath = await tempRoot("fs-safe-windows-sync-");
-      spyOnDirectoryOpen(async ({ filePath, flags, handle }) => {
-        vi.spyOn(handle, "sync").mockRejectedValue(Object.assign(new Error(code), { code }));
-      });
-
-      await expect(syncDirectory(directoryPath)).resolves.toEqual({
-        status: "unsupported",
-        code,
-      });
-    },
-  );
-
-  it("reports an unsupported Windows directory open after revalidating the path", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    const directoryPath = await tempRoot("fs-safe-windows-open-");
-    vi.spyOn(fs, "open").mockRejectedValue(Object.assign(new Error("unsupported"), { code: "EISDIR" }));
-
-    await expect(syncDirectory(directoryPath)).resolves.toEqual({
-      status: "unsupported",
-      code: "EISDIR",
-    });
+  it.each<FailureRoute>([
+    ...["EINVAL", "ENOSYS", "ENOTSUP"].map(code => ({ platform: "linux", variant: "async", site: "sync", code } as const)),
+    ...["EACCES", "EPERM", "EIO"].map(code => ({ platform: "win32", variant: "async", site: "open", code } as const)),
+    { platform: "win32", variant: "sync", site: "open", code: "EACCES" },
+  ])("propagates $platform $variant directory $site failure $code", async row => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(row.platform);
+    const directoryPath = await tempRoot("fs-safe-directory-strict-failure-");
+    injectFailure(row);
+    if (row.variant === "async") {
+      await expect(syncDirectory(directoryPath)).rejects.toMatchObject({ code: row.code });
+    } else {
+      expect(() => syncDirectorySync(directoryPath)).toThrow(expect.objectContaining({ code: row.code }));
+    }
   });
 
-  it.each(["EACCES", "EPERM", "EIO"] as const)(
-    "propagates Windows %s directory open failures",
-    async (code) => {
-      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-      const directoryPath = await tempRoot("fs-safe-windows-open-failure-");
-      vi.spyOn(fs, "open").mockRejectedValue(Object.assign(new Error(code), { code }));
-
-      await expect(syncDirectory(directoryPath)).rejects.toMatchObject({ code });
-    },
-  );
-
-  it("keeps synchronous Windows open access failures strict", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    const directoryPath = await tempRoot("fs-safe-windows-sync-open-access-");
-    vi.spyOn(fsSync, "openSync").mockImplementation(() => {
-      throw Object.assign(new Error("access denied"), { code: "EACCES" });
-    });
-
-    expect(() => syncDirectorySync(directoryPath)).toThrow(
-      expect.objectContaining({ code: "EACCES" }),
-    );
-  });
-
-  it("reports synchronous Windows directory-open incompatibility", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-    const directoryPath = await tempRoot("fs-safe-windows-sync-open-unsupported-");
-    vi.spyOn(fsSync, "openSync").mockImplementation(() => {
-      throw Object.assign(new Error("is directory"), { code: "EISDIR" });
-    });
-
-    expect(syncDirectorySync(directoryPath)).toEqual({ status: "unsupported", code: "EISDIR" });
+  it.each<FailureRoute>([
+    ...["EACCES", "EINVAL", "EISDIR", "ENOSYS", "ENOTSUP", "EPERM"].map(code => ({ platform: "win32", variant: "async", site: "sync", code } as const)),
+    ...(["async", "sync"] as const).map(variant => ({ platform: "win32", variant, site: "open", code: "EISDIR" } as const)),
+  ])("reports $variant Windows directory $site failure $code as unsupported", async row => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(row.platform);
+    const directoryPath = await tempRoot("fs-safe-directory-unsupported-failure-");
+    injectFailure(row);
+    const result = row.variant === "async" ? await syncDirectory(directoryPath) : syncDirectorySync(directoryPath);
+    expect(result).toEqual({ status: "unsupported", code: row.code });
   });
 
   itPosix("detects a directory replaced during one-shot synchronization", async () => {
@@ -422,13 +394,5 @@ describe("directory durability", () => {
     await expect(syncDirectoryBestEffort(directoryPath)).resolves.toBeUndefined();
     await expect(syncDirectoryBestEffort(path.join(directoryPath, "missing"))).resolves.toBeUndefined();
     expect(() => syncDirectoryBestEffortSync(path.join(directoryPath, "missing"))).not.toThrow();
-  });
-
-  it("uses FsSafeError for directory policy and identity failures", async () => {
-    const root = await tempRoot("fs-safe-directory-error-");
-    const filePath = path.join(root, "file");
-    await fs.writeFile(filePath, "file");
-
-    await expect(pinDirectory(filePath)).rejects.toBeInstanceOf(FsSafeError);
   });
 });

@@ -6,18 +6,10 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { observeSyncOpen, tempWorkspaceSyncWithUmask022 } from "./helpers/temp-workspace.js";
 
 const { tempRoot } = useRealTempDirs();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
-
-function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
-  const previous = process.umask(0o022);
-  try {
-    return tempWorkspaceSync(options);
-  } finally {
-    process.umask(previous);
-  }
-}
 
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
@@ -132,14 +124,11 @@ for (const variant of ["async", "sync"] as const) {
           if (isChild(args[0])) initialMode = fsSync.statSync(args[0]).mode & 0o7777;
           return result;
         });
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (isChild(args[0])) {
             child = args[0];
             childFd = fd;
           }
-          return fd;
         });
         const lstat = fsSync.lstatSync.bind(fsSync);
         const lstatSpy = vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
