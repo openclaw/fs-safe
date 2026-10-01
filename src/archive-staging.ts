@@ -35,7 +35,7 @@ function checkExtractionDeadline(deadline?: ExtractionDeadline): void {
   deadline?.check();
 }
 
-function symlinkTraversalError(originalPath: string): ArchiveSecurityError {
+export function createArchiveSymlinkTraversalError(originalPath: string): ArchiveSecurityError {
   return new ArchiveSecurityError(
     "destination-symlink-traversal",
     `${ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK}: ${formatErrorDetail(originalPath)}`,
@@ -138,7 +138,7 @@ async function assertNoSymlinkTraversal(params: {
       throw err;
     }
     if (stat.isSymbolicLink()) {
-      throw symlinkTraversalError(params.originalPath);
+      throw createArchiveSymlinkTraversalError(params.originalPath);
     }
   }
 }
@@ -164,7 +164,7 @@ export async function assertResolvedInsideDestination(params: {
   }
   assertNoWindowsPathAlias(resolved);
   if (!isPathInside(destinationRealDir, resolved)) {
-    throw symlinkTraversalError(originalPath);
+    throw createArchiveSymlinkTraversalError(originalPath);
   }
 }
 
@@ -179,7 +179,7 @@ async function mkdirArchiveOutput(params: {
     await params.targetRoot.mkdir(relativePath === "~" || relativePath.startsWith("~/") ? `./${relativePath}` : relativePath);
   } catch (error) {
     if (error instanceof FsSafeError) {
-      throw symlinkTraversalError(params.originalPath);
+      throw createArchiveSymlinkTraversalError(params.originalPath);
     }
     throw error;
   }
@@ -232,7 +232,7 @@ async function prepareOutputPath(
   existingDestinationGuard?: ArchiveDirectoryGuard,
 ): Promise<void> {
   if (isForeignWindowsShareOrDevicePath(params.outPath, [params.destinationDir, params.destinationRealDir])) {
-    throw symlinkTraversalError(params.originalPath);
+    throw createArchiveSymlinkTraversalError(params.originalPath);
   }
   const targetRoot = privateWorkingMode ? {
     async mkdir(relativePath: string) {
@@ -375,12 +375,7 @@ export async function withStagedArchiveDestination<T>(params: {
       await assertDirectoryIdentityGuard(stagingGuard);
       await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     } catch {
-      // The staging path identity changed; deleting by name could target data
-      // outside the private temp tree, so fail closed and leave it for OS cleanup.
+      // Preserve staging when its identity cannot be verified; pathname cleanup is unsafe.
     }
   }
-}
-
-export function createArchiveSymlinkTraversalError(originalPath: string): ArchiveSecurityError {
-  return symlinkTraversalError(originalPath);
 }

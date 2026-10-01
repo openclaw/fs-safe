@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { configureFsSafeNative, FsSafeError, root, type Root } from "../src/index.js";
 import {

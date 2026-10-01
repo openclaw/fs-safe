@@ -175,11 +175,7 @@ export function assertNoWindowsPathAlias(
   message = "path uses a Windows filesystem namespace alias",
   platform: NodeJS.Platform | string = process.platform,
 ): void {
-  if (hasWindowsPathAlias(value, kind, platform)) {
-    throw new FsSafeError("invalid-path", message, {
-      details: { reason: "windows-path-alias" },
-    });
-  }
+  assertNoWindowsPathAliasForPlatform(value, kind, message, platform);
 }
 
 export function isWindowsPathAliasError(error: unknown): error is FsSafeError {

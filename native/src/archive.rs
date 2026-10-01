@@ -663,65 +663,6 @@ pub fn extract_archive_native(
     ))
 }
 
-fn read_tar_entry(
-    path: &str,
-    format: ArchiveFormat,
-    requested: &str,
-    max_bytes: u64,
-    cancelled: Arc<AtomicBool>,
-    limits: TarMeterLimits,
-) -> Result<Vec<u8>> {
-    let manifest = inspect_tar(path, format, limits, Arc::clone(&cancelled))?;
-    let member = manifest.iter().find(|entry| entry.path == requested)
-        .ok_or_else(|| Error::new(Status::InvalidArg, format!("archive entry not found: {requested}")))?;
-    if member.kind != "file" {
-        return Err(Error::new(Status::InvalidArg, format!("archive entry is not a file: {requested}")));
-    }
-    if member.size > max_bytes { return Err(Error::from_reason("archive-entry-extracted-size-exceeds-limit")); }
-    let mut reader = open_tar_reader(path, format, Arc::clone(&cancelled), limits)?;
-    skip_tar_to(&mut reader, &mut 0, member.offset)?;
-    let output = read_bounded(&mut (&mut reader).take(member.size), max_bytes, member.size, cancelled)?;
-    if output.len() as u64 != member.size {
-        return Err(Error::new(Status::InvalidArg, "archive-header-invalid: truncated TAR payload"));
-    }
-    drain_tar_metadata(&mut reader).map_err(|error| io_error("finish tar", error))?;
-    Ok(output)
-}
-
-fn read_zip_entry(
-    path: &str,
-    requested: &str,
-    max_bytes: u64,
-    max_entries: usize,
-    cancelled: Arc<AtomicBool>,
-) -> Result<Vec<u8>> {
-    zip_entry_count(path, max_entries)?;
-    let file = File::open(path).map_err(|error| io_error("open zip archive", error))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|error| io_error("read zip archive", error))?;
-    let mut entry = archive.by_name(requested).map_err(|_| {
-        Error::new(
-            Status::InvalidArg,
-            format!("archive entry not found: {requested}"),
-        )
-    })?;
-    if zip_kind(&entry) != "file" {
-        return Err(Error::new(
-            Status::InvalidArg,
-            format!("archive entry is not a file: {requested}"),
-        ));
-    }
-    let expected_size = entry.size();
-    let output = read_bounded(&mut entry, max_bytes, expected_size, cancelled)?;
-    if output.len() as u64 != expected_size {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "archive-header-invalid: ZIP entry size does not match declared uncompressed size",
-        ));
-    }
-    Ok(output)
-}
-
 fn read_bounded(
     reader: &mut impl Read,
     max_bytes: u64,
@@ -967,77 +908,6 @@ impl Task for ReadTarBufferTask {
     }
 }
 
-pub struct ReadEntryTask {
-    path: String,
-    format: ArchiveFormat,
-    requested: String,
-    max_bytes: u64,
-    limits: TarMeterLimits,
-    cancelled: Arc<AtomicBool>,
-}
-
-impl Task for ReadEntryTask {
-    type Output = Vec<u8>;
-    type JsValue = Buffer;
-    fn compute(&mut self) -> Result<Self::Output> {
-        check_cancelled(&self.cancelled)?;
-        match self.format {
-            ArchiveFormat::Zip => read_zip_entry(
-                &self.path,
-                &self.requested,
-                self.max_bytes,
-                self.limits.max_entries,
-                Arc::clone(&self.cancelled),
-            ),
-            _ => read_tar_entry(
-                &self.path,
-                self.format,
-                &self.requested,
-                self.max_bytes,
-                Arc::clone(&self.cancelled),
-                self.limits,
-            ),
-        }
-    }
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output.into())
-    }
-}
-
-#[napi(js_name = "readArchiveEntryNative")]
-pub fn read_archive_entry_native(
-    path: String,
-    kind: String,
-    requested: String,
-    max_bytes: f64,
-    limits: NativeTarLimits,
-    signal: AbortSignal,
-) -> Result<AsyncTask<ReadEntryTask>> {
-    if !max_bytes.is_finite() || max_bytes < 0.0 || max_bytes > u64::MAX as f64 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "maxBytes must be a non-negative finite number",
-        ));
-    }
-    let format =
-        parse_format(&kind).map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
-    let cancelled = cancellation(Some(&signal));
-    let limits = limits.checked()?;
-    validate_windows_filesystem_path(&path)
-        .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
-    Ok(AsyncTask::with_signal(
-        ReadEntryTask {
-            path,
-            format,
-            requested,
-            max_bytes: max_bytes as u64,
-            limits,
-            cancelled,
-        },
-        signal,
-    ))
-}
-
 #[cfg(test)]
 #[path = "archive_tar_buffer_tests.rs"]
 mod tar_buffer_tests;
@@ -1050,6 +920,16 @@ mod tests {
     use super::*;
 
     static TEMP_PATH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    fn read_tar_buffer(
+        bytes: Vec<u8>, format: ArchiveFormat, index: usize, max_bytes: u64,
+        cancelled: Arc<AtomicBool>, limits: TarMeterLimits,
+    ) -> Result<Vec<u8>> {
+        let reader = OpenTarBufferTask {
+            buffer: Some(Buffer::from(bytes)), format, limits, cancelled: Arc::clone(&cancelled),
+        }.compute()?;
+        ReadTarBufferTask { data: reader.data, index, max_bytes, cancelled }.compute()
+    }
 
     #[test]
     fn buffered_zip_retains_the_input_allocation_across_reader_and_tasks() {
@@ -1273,10 +1153,10 @@ mod tests {
         .unwrap_err();
         assert!(error.reason.contains("archive-manifest-size-exceeds-limit"));
 
-        let error = read_tar_entry(
-            path.to_str().unwrap(),
+        let error = read_tar_buffer(
+            fixture_tar(),
             ArchiveFormat::Tar,
-            "missing",
+            99,
             1024,
             Arc::new(AtomicBool::new(false)),
             limits(1),
@@ -1555,7 +1435,7 @@ mod tests {
                 // must still propagate rather than disappear with the plan.
                 let error = extract_tar(path.to_str().unwrap(), format, -1, HashMap::new(), Arc::clone(&cancelled), limits).unwrap_err();
                 assert!(error.reason.contains(code), "{error}");
-                let error = read_tar_entry(path.to_str().unwrap(), format, "absent", 1, cancelled, limits).unwrap_err();
+                let error = read_tar_buffer(std::fs::read(&path).unwrap(), format, 99, 1, cancelled, limits).unwrap_err();
                 assert!(error.reason.contains(code), "{error}");
                 std::fs::remove_file(path).unwrap();
             }
@@ -1582,7 +1462,7 @@ mod tests {
                 assert!(error.reason.contains(crate::tar_meter::DECODED_LIMIT), "{error}");
                 let error = extract_tar(path.to_str().unwrap(), format, -1, HashMap::new(), Arc::clone(&cancelled), limits).unwrap_err();
                 assert!(error.reason.contains(crate::tar_meter::DECODED_LIMIT), "{error}");
-                let error = read_tar_entry(path.to_str().unwrap(), format, "absent", 1, cancelled, limits).unwrap_err();
+                let error = read_tar_buffer(std::fs::read(&path).unwrap(), format, 99, 1, cancelled, limits).unwrap_err();
                 assert!(error.reason.contains(crate::tar_meter::DECODED_LIMIT), "{error}");
             }
             std::fs::remove_file(path).unwrap();
@@ -1616,7 +1496,7 @@ mod tests {
                 let results = [
                     ("inspect", inspect_tar(path.to_str().unwrap(), format, limits, Arc::clone(&cancelled)).map(|_| ())),
                     ("extract", extract_tar(path.to_str().unwrap(), format, -1, HashMap::new(), Arc::clone(&cancelled), limits)),
-                    ("read", read_tar_entry(path.to_str().unwrap(), format, "one.txt", 3, Arc::clone(&cancelled), limits).map(|_| ())),
+                    ("read", read_tar_buffer(std::fs::read(&path).unwrap(), format, 0, 3, Arc::clone(&cancelled), limits).map(|_| ())),
                 ];
                 std::fs::remove_file(path).unwrap();
                 for (pass, result) in results {
@@ -1635,21 +1515,21 @@ mod tests {
         let cancelled = Arc::new(AtomicBool::new(false));
         let mut limits = limits(10);
         limits.max_decoded_bytes = canonical.len() as u64;
-        let read = |name, max_bytes, budget| read_tar_entry(
-            path.to_str().unwrap(), ArchiveFormat::Tar, name, max_bytes,
+        let read = |index, max_bytes, budget| read_tar_buffer(
+            std::fs::read(&path).unwrap(), ArchiveFormat::Tar, index, max_bytes,
             Arc::clone(&cancelled), budget,
         );
-        assert_eq!(read("one.txt", 3, limits).unwrap(), b"one");
-        assert!(read("absent", 3, limits).unwrap_err().reason.contains("archive entry not found: absent"));
+        assert_eq!(read(0, 3, limits).unwrap(), b"one");
+        assert!(read(99, 3, limits).unwrap_err().reason.contains("archive entry not found"));
         let mut one_entry = limits;
         one_entry.max_entries = 1;
-        assert!(read("one.txt", 3, one_entry).unwrap_err().reason.contains("archive-entry-count-exceeds-limit"));
+        assert!(read(0, 3, one_entry).unwrap_err().reason.contains("archive-entry-count-exceeds-limit"));
 
-        assert!(read("one.txt", 2, limits).unwrap_err().reason.contains("archive-entry-extracted-size-exceeds-limit"));
+        assert!(read(0, 2, limits).unwrap_err().reason.contains("archive-entry-extracted-size-exceeds-limit"));
         std::fs::write(&path, [canonical.as_slice(), &[1]].concat()).unwrap();
         // Complete admission now precedes selected-member policy, as in the public API.
-        assert!(read("one.txt", 2, limits).unwrap_err().reason.contains("archive-header-invalid"));
-        assert!(read("absent", 3, limits).unwrap_err().reason.contains("archive-header-invalid"));
+        assert!(read(0, 2, limits).unwrap_err().reason.contains("archive-header-invalid"));
+        assert!(read(99, 3, limits).unwrap_err().reason.contains("archive-header-invalid"));
         let plan = HashMap::from([(99, NativeArchivePlanEntry {
             index: 99, path: "absent".to_owned(), kind: "file".to_owned(), size: 0.0, mode: 0o600,
         })]);
@@ -1657,7 +1537,7 @@ mod tests {
         assert!(error.reason.contains("archive-header-invalid"), "{error}");
 
         cancelled.store(true, Ordering::Relaxed);
-        assert!(read("one.txt", 3, limits).unwrap_err().reason.contains("archive operation aborted"));
+        assert!(read(0, 3, limits).unwrap_err().reason.contains("archive operation aborted"));
         let error = extract_tar(path.to_str().unwrap(), ArchiveFormat::Tar, -1, HashMap::new(), cancelled, limits).unwrap_err();
         assert!(error.reason.contains("archive operation aborted"), "{error}");
         std::fs::remove_file(path).unwrap();

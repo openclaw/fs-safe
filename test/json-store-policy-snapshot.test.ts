@@ -2,14 +2,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStoreAdapter } from "../src/json-document-store.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(done => { resolve = done; });
-  return { promise, resolve };
-}
 
 describe("JsonStore per-mutation policy snapshots", () => {
   it.each(["write", "update", "updateOr"] as const)("captures %s before queueing and refreshes for later operations", async method => {

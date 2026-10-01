@@ -3,7 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 

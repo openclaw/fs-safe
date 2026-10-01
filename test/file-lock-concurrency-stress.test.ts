@@ -13,18 +13,11 @@ import {
   createFileLockManager,
 } from "../src/file-lock.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
+import { deferred } from "./helpers/deferred.js";
 
 const childTarget = process.env.FS_SAFE_STRESS_LOCK_TARGET;
 const childLog = process.env.FS_SAFE_STRESS_LOCK_LOG;
 const { tempRoot } = useTempDirs();
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 describe("file-lock concurrency stress", () => {
   it.runIf(!childTarget)("bounds attacker-controlled sidecar payload reads", async () => {

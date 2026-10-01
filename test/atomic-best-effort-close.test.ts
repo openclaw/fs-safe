@@ -7,6 +7,7 @@ import {
   type ReplaceFileAtomicFileSystem,
 } from "../src/atomic.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
+import { bindHandle } from "./helpers/file-handle-proxy.js";
 
 const { tempRoot } = useRealTempDirs();
 const FAILURES = [
@@ -25,16 +26,6 @@ const CLOSE_CASES = FAILURES.flatMap((failure, index) =>
     ...failure, delivery, primary: FAILURES[(index + 1) % FAILURES.length]!.value,
   })));
 type Route = "hardlinks-rename" | "hardlinks-fallback" | "parent-sync" | "replacement-pin" | "replacement-content";
-
-function bindHandle(handle: FileHandle, overrides: Partial<FileHandle>): FileHandle {
-  return new Proxy(handle, {
-    get(target, property) {
-      if (property in overrides) return overrides[property as keyof FileHandle];
-      const value = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
 
 async function runAdapter(params: {
   directory: string;

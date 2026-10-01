@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/index.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";

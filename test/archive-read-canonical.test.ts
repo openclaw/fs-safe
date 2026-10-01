@@ -33,11 +33,11 @@ for (const { mode, format } of routes) {
       if (mode === "require") {
         const native = paxNative!;
         inspectNative = vi.fn(format === "zip" ? native.openZipBufferNative.bind(native) : native.openTarBufferNative.bind(native));
-        readNative = vi.fn(native.readArchiveEntryNative.bind(native));
+        readNative = vi.fn();
         extractNative = vi.fn(native.extractArchiveNative.bind(native));
         __setNativeLoaderForTest(() => ({ ...native,
           inspectArchiveNative: native.inspectArchiveNative.bind(native),
-          readArchiveEntryNative: readNative, extractArchiveNative: extractNative,
+          extractArchiveNative: extractNative,
           openZipBufferNative: async (...args) => {
             const reader = await inspectNative(...args);
             readNative = vi.fn(reader.readEntry.bind(reader));

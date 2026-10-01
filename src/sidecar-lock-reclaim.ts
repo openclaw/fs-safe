@@ -103,21 +103,9 @@ export function parseSidecarLockPayload(
   }
 }
 
-function missingSnapshotPath(error: unknown): null {
-  if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-  throw error;
-}
-
-export async function readSidecarLockSnapshot(
-  lockPath: string,
-  options: Parameters<typeof readSidecarLockRawSnapshot>[1] & { parsePayload?: (raw: string) => unknown } = {},
-): Promise<SidecarLockSnapshot | null> {
-  return parseSidecarLockSnapshot(await readSidecarLockRawSnapshot(lockPath, options), options.parsePayload);
-}
-
 async function readSidecarLockComparisonSnapshot(
   lockPath: string,
-  options: Parameters<typeof readSidecarLockSnapshot>[1],
+  options: (Parameters<typeof readSidecarLockRawSnapshot>[1] & { parsePayload?: (raw: string) => unknown }) | undefined,
 ): Promise<SidecarLockRawSnapshot | SidecarLockSnapshot | null> {
   const snapshot = await readSidecarLockRawSnapshot(lockPath, options);
   const parsePayload = options?.parsePayload;
@@ -153,9 +141,7 @@ export async function readSidecarLockRawSnapshot(
         await opened.handle.close().catch(() => undefined);
       }
     }
-    let before: BigIntStats | null;
-    try { before = fsSync.lstatSync(lockPath, { bigint: true }); }
-    catch (error) { before = missingSnapshotPath(error); }
+    const before = lstatSidecarLockSync(lockPath);
     if (!before) return null;
     if (!before.isFile() || before.isSymbolicLink()) {
       if (options.rejectNonFile) {
@@ -194,9 +180,7 @@ export async function readSidecarLockRawSnapshot(
     }
     if (!options.allowDescriptorIdentityDrift && !sameFileIdentity(before, opened)) return null;
     const raw = (await readFileHandleBounded(handle, MAX_LOCK_PAYLOAD_BYTES)).toString("utf8");
-    let after: BigIntStats | null;
-    try { after = fsSync.lstatSync(lockPath, { bigint: true }); }
-    catch (error) { after = missingSnapshotPath(error); }
+    const after = lstatSidecarLockSync(lockPath);
     if (!after || !after.isFile() || !sameFileIdentity(before, after)) return null;
     return { raw, stat: after };
   } finally {
@@ -208,7 +192,8 @@ function lstatSidecarLockSync(lockPath: string): BigIntStats | null {
   try {
     return fsSync.lstatSync(lockPath, { bigint: true });
   } catch (error) {
-    return missingSnapshotPath(error);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }
 

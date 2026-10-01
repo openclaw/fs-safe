@@ -3,6 +3,7 @@ import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutatio
 import { createMutationDenyMatcher } from "./deny-mutation-match.js";
 import { FsSafeError } from "./errors.js";
 import { isPathInside } from "./path.js";
+import { sameAbsolutePath } from "./path-segment-route.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 import type {
   PinnedCreatedDirectoryReceipt,
@@ -70,10 +71,6 @@ export function snapshotPinnedMutationPolicy(
 async function canonicalMutationEntryPath(targetPath: string): Promise<string> {
   const canonicalParent = await resolvePathViaExistingAncestor(path.dirname(targetPath));
   return path.join(canonicalParent, path.basename(targetPath));
-}
-
-function sameAbsolutePath(left: string, right: string): boolean {
-  return path.relative(path.resolve(left), path.resolve(right)) === "";
 }
 
 function simplePinnedRoute(rootReal: string, originalPath: string | undefined): string | undefined {

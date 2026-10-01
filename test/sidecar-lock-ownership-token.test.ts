@@ -2,12 +2,12 @@ import fsSync from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import {
   readSidecarLockOwnershipToken,
-  readSidecarLockSnapshot,
   serializeSidecarLockPayload,
   sidecarLockSnapshotMatches,
 } from "../src/sidecar-lock-reclaim.js";

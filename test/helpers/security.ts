@@ -138,10 +138,6 @@ export function expectFsSafeErrorSync(
   expect(error).toMatchObject({ code });
 }
 
-export function expectedFsSafeCode(code: string): string {
-  return code;
-}
-
 export async function expectNoOutsideWrite(
   layout: TempLayout,
   expected = "outside secret",

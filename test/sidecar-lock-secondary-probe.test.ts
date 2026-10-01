@@ -4,8 +4,8 @@ import { afterEach, expect, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
-import { readSidecarLockSnapshot } from "../src/sidecar-lock-reclaim.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();
