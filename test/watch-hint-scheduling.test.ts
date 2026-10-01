@@ -395,3 +395,46 @@ it("does not turn a periodic request during a slow partial scan into continuous 
     expect(starts).toBe(3);
   } finally { releasePartial.resolve(); releaseFull.resolve(); }
 });
+
+const folded = (directory: string): native.NativeWatchBatch => ({
+  hints: [{ directory, name: "", event: "subtree" }], overflow: false,
+});
+it("drops an unrelated folded directory without a crawl or invalidation", async () => {
+  await fs.mkdir(path.join(directory, "noise"));
+  await start();
+  await unrelated(folded("noise"));
+  expect(visits).toEqual([]); expect(passes).toBe(0); expect(values).toEqual([]);
+});
+it("reconciles a folded ancestor of a missing TREE with only observed diff detail", async () => {
+  await start({ scopes: [{ path: path.join("memory", "missing"), kind: "tree" }] });
+  await fs.mkdir(path.join(directory, "memory", "missing"));
+  await fs.writeFile(path.join(directory, "memory", "missing", "created"), "selected");
+  await scanned(folded("memory"));
+  expect(values.flatMap(value => value.changes ?? [])).toContainEqual({ path: path.join("memory", "missing", "created"), type: "structural" });
+  expect(values.every(value => value.reason !== "overflow")).toBe(true);
+  expect(values.flatMap(value => value.changes ?? []).some(change => change.path === "memory")).toBe(false);
+});
+it("fully reconciles folded tree territory without publishing the hint directory", async () => {
+  await start();
+  const selected = path.join("memory", "a", "f0");
+  await fs.writeFile(path.join(directory, selected), "changed");
+  await scanned(folded(path.join("memory", "a")));
+  expect(visits).toContain(path.join("memory", "b", "f0"));
+  expect(values).toEqual([{ reason: "event", changes: [{ path: selected, type: "content" }] }]);
+});
+it("admits a folded directory spelling alias by guarded identity", async context => {
+  if (!await fs.lstat(path.join(directory, "MEMORY")).catch(() => undefined)) { context.skip("case-sensitive fixture"); return; }
+  await start();
+  const selected = path.join("memory", "a", "f0");
+  await fs.writeFile(path.join(directory, selected), "changed");
+  await scanned(folded("MEMORY"));
+  expect(values).toEqual([{ reason: "event", changes: [{ path: selected, type: "content" }] }]);
+});
+it("degrades coalesced JS hint pressure to a full diff without overflow", async () => {
+  await start({ maxPendingPaths: 2 });
+  await fs.writeFile(path.join(directory, "MEMORY.md"), "changed");
+  // Separate native batches each fit; the JS coalescing window does not.
+  emit(hint("", "unrelated-a")); emit(hint("", "unrelated-b"));
+  await scanned(hint("", "unrelated-c"));
+  expect(values).toEqual([{ reason: "event", changes: [{ path: "MEMORY.md", type: "content" }] }]);
+});

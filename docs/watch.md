@@ -70,8 +70,12 @@ both guarded passes. Otherwise the unclassifiable selected hint loses detail.
 Hints for excluded or unselected paths are
 ignored. Exclusion callbacks are synchronous; excluded directories are recorded
 without descent. Bounded exclusion records recognize late deletion hints.
-Genuine backend event loss and detail-budget exhaustion still invalidate every
-scope, including when an excluded subtree caused the underlying event pressure.
+Pending hint pressure folds filenames into directory-level subtree hints, coarsening
+toward the Root as needed. Unrelated folds are ignored after guarded alias admission;
+relevant or uncertain folds trigger a full guarded pass and publish its snapshot
+diff. The hint directory itself is never published without observation. Genuine
+backend event loss and snapshot-diff budget exhaustion still invalidate every
+scope, including when an excluded subtree caused genuine kernel loss.
 
 On Linux and macOS, an undecodable child name triggers a structural hint for its
 containing directory. If that directory's children are selected by a tree scope
@@ -143,7 +147,8 @@ When the stream paths change, the old stream is stopped, invalidated and release
 on its dispatch queue, then its replacement starts before another guarded pass
 covers the handover. Native exclusions reduce traffic but cannot eliminate real
 FSEvents drops, including during recursive deletion. A shallow tree anchored above
-a busy unselected subtree still receives recursive traffic and can overflow.
+a busy unselected subtree still receives recursive traffic; pending hints fold
+under pressure, while genuine FSEvents drops can still overflow.
 Absolute hints are reduced lexically against the admitted canonical Root;
 outside paths never become detail. Dropped/wrapped streams, RootChanged and
 Unmount trigger guarded reconciliation. Pathname hints can reflect activity
@@ -232,9 +237,9 @@ transient descendant scan errors produce structural invalidations, preserving th
 Root identity checks. Events during a pass coalesce into one pending pass and
 retain bounded detail regardless of how long the scan takes. The 25 ms hint
 coalescing window does not impose a scan deadline. A full native callback queue
-retains its bounded pending batch for retry. Genuine backend loss, exhausted
-detail capacity, or an unclassifiable selected hint emits `overflow` without
-detail. Sustained writes cannot exhaust a pass budget or disable observation.
+retains its bounded pending batch for retry. Pending native and JavaScript hint queues degrade to coarse subtree hints when
+full. Genuine backend loss, exhausted snapshot-diff capacity, or an unclassifiable
+selected hint emits `overflow` without detail. Sustained writes cannot exhaust a pass budget or disable observation.
 
 `reconcile()` resolves after a complete pass that **started after the call**. Calls
 waiting for the same future pass coalesce; an earlier in-flight pass cannot satisfy

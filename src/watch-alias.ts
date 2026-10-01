@@ -4,7 +4,7 @@ import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, resolvePathInRoot, type RootContext } from "./root-context.js";
 import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
-import { excludedWatchPath, nativeChanges, scopedChanges, selectedWatchChildren } from "./watch-hints.js";
+import { excludedWatchPath, nativeChanges, scopedChanges, selectedWatchChildren, selectedWatchSubtree } from "./watch-hints.js";
 import type { NativeWatchBatch } from "./watch-native.js";
 import type { WatchSnapshot } from "./watch-scan.js";
 import type { WatchChange, WatchScope } from "./watch-types.js";
@@ -73,6 +73,15 @@ export async function admittedNativeChanges(
   };
   for (const hint of batch.hints) {
     signal.throwIfAborted();
+    if (hint.event === "subtree") {
+      if (!scheduling) continue; // Only the full guarded snapshot supplies detail.
+      if (selectedWatchSubtree(scopes, hint.directory)) return undefined;
+      const guard = await admittedParent(hint.directory);
+      for (const [name, identity] of candidates) {
+        if (identity.dev === guard.stat.dev && identity.ino === guard.stat.ino && selectedWatchSubtree(scopes, name)) return undefined;
+      }
+      continue;
+    }
     const name = hint.name!; // nativeChanges rejected unknown or non-literal names.
     let parent = hint.directory;
     const relative = parent ? path.join(parent, name) : name;

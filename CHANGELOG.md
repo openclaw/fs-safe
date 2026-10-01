@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- **Watch overflow:** fold busy pending hints into guarded subtree reconciliation so unselected sibling churn beside a missing tree no longer exhausts the hint budget.
+
 - **Native initialization:** lazily load the addon in fs-safe's import context so its housekeeping does not retain the first operation's `AsyncLocalStorage` stores when fs-safe is imported outside caller scopes.
 
 ## 0.22.0 - 2026-10-01

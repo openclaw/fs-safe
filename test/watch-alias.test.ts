@@ -65,7 +65,7 @@ describe.each(["events", "poll"] as const)("filesystem scope spelling (%s)", mod
   });
 });
 
-it.skipIf(!nativeWatchSupported)("retains ambiguity under pending pressure instead of dropping a selected spelling alias", async context => {
+it.skipIf(!nativeWatchSupported)("reconciles a selected spelling alias under pending pressure without overflow", async context => {
   await fs.writeFile(path.join(dir, "Entry.TXT"), "unchanged metadata");
   const actual = await fs.lstat(path.join(dir, "Entry.TXT"), { bigint: true });
   const alias = await fs.lstat(path.join(dir, "entry.txt"), { bigint: true }).catch(() => undefined);
@@ -81,9 +81,10 @@ it.skipIf(!nativeWatchSupported)("retains ambiguity under pending pressure inste
   });
   owners.push(owner); await owner.ready; await owner.reconcile(); values.length = 0;
   for (const names of [["unrelated", "Entry.TXT"], ["Entry.TXT", "unrelated"]]) {
+    await fs.writeFile(path.join(dir, "Entry.TXT"), names.join("-"));
     emit({ overflow: false, hints: names.map(name => ({ directory: "", name, event: "change" })) });
     await owner.reconcile();
-    expect(values).toEqual([{ reason: "overflow", changes: undefined }]);
+    expect(values).toEqual([{ reason: "event", changes: [{ path: "entry.txt", type: "content" }] }]);
     values.length = 0;
   }
   emit({ overflow: false, hints: [{ directory: "", name: "Entry.TXT", event: "change" }] });

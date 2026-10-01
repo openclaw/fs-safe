@@ -1125,6 +1125,10 @@ jobs:
         shell: bash
         run: pnpm test test/watch*.test.ts --maxWorkers=1 --testTimeout=30000 --reporter=verbose
 
+      - name: Measure published missing TREE overflow baseline
+        if: ${{ !matrix.no-openat2 }}
+        run: node scripts/watch-fold-proof.mjs baseline
+
       - name: Prove native event delivery on every platform
         run: node scripts/watch-events-proof.mjs
 

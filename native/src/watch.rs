@@ -27,6 +27,7 @@ pub struct WatchHint {
     pub structural: bool,
     pub flags: Option<u32>,
     pub nameless_child: Option<bool>,
+    pub subtree: Option<bool>,
 }
 #[napi(object)]
 pub struct WatchBatch {
@@ -39,9 +40,11 @@ mod callback;
 use callback::Callback;
 #[path = "watch_memory.rs"]
 mod memory;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum HintKind { Entry, Children, Subtree }
 #[derive(Default)]
 pub(super) struct Pending {
-    paths: BTreeMap<(String, String, bool), (bool, Option<u32>)>,
+    paths: BTreeMap<(String, String, HintKind), (bool, Option<u32>)>,
     overflow: bool,
     limit: usize,
     error: Option<String>,
@@ -64,25 +67,51 @@ impl Pending {
         structural: bool,
         flags: Option<u32>,
     ) {
-        self.push_hint(directory, name, structural, flags, false);
+        self.push_hint(directory, name, structural, flags, HintKind::Entry);
     }
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(super) fn push_children(&mut self, directory: String, flags: Option<u32>) {
-        self.push_hint(directory, String::new(), true, flags, true);
+        self.push_hint(directory, String::new(), true, flags, HintKind::Children);
     }
-    fn push_hint(&mut self, directory: String, name: String, structural: bool, flags: Option<u32>, nameless_child: bool) {
-        if self.overflow {
-            return;
-        }
-        let key = (directory, name, nameless_child);
-        if !self.paths.contains_key(&key) && self.paths.len() >= self.limit {
-            self.overflow();
-            return;
-        }
-        let value = self.paths.entry(key).or_default();
+    fn merge(value: &mut (bool, Option<u32>), structural: bool, flags: Option<u32>) {
         value.0 |= structural;
         if let Some(flags) = flags {
             value.1 = Some(value.1.unwrap_or(0) | flags);
+        }
+    }
+    fn covered(directory: &str, ancestor: &str) -> bool {
+        ancestor.is_empty() || std::path::Path::new(directory).starts_with(ancestor)
+    }
+    fn insert_hint(&mut self, directory: String, name: String, kind: HintKind, structural: bool, flags: Option<u32>) {
+        // This only broadens transport hints. Scope/alias admission belongs to JS.
+        if let Some((_, value)) = self.paths.iter_mut().find(|((parent, _, kind), _)|
+            *kind == HintKind::Subtree && Self::covered(&directory, parent)) {
+            Self::merge(value, structural, flags);
+            return;
+        }
+        let mut value = (structural, flags);
+        if kind == HintKind::Subtree {
+            self.paths.retain(|(child, _, _), prior| {
+                if !Self::covered(child, &directory) { return true; }
+                Self::merge(&mut value, prior.0, prior.1);
+                false
+            });
+        }
+        Self::merge(self.paths.entry((directory, name, kind)).or_default(), value.0, value.1);
+    }
+    fn push_hint(&mut self, directory: String, name: String, structural: bool, flags: Option<u32>, kind: HintKind) {
+        if self.overflow { return; }
+        if self.limit == 0 { self.overflow(); return; }
+        self.insert_hint(directory, name, kind, structural, flags);
+        // At most limit + 1 entries exist transiently. Each sweep removes one
+        // component from existing folds, so even disjoint paths reach the Root.
+        while self.paths.len() > self.limit {
+            for ((directory, _, kind), (_, flags)) in std::mem::take(&mut self.paths) {
+                let directory = if kind == HintKind::Subtree {
+                    std::path::Path::new(&directory).parent().and_then(|p| p.to_str()).unwrap_or("").to_owned()
+                } else { directory };
+                self.insert_hint(directory, String::new(), HintKind::Subtree, true, flags);
+            }
         }
     }
     fn take(&mut self) -> Option<WatchBatch> {
@@ -95,8 +124,9 @@ impl Pending {
             overflow: std::mem::take(&mut self.overflow),
             hints: std::mem::take(&mut self.paths)
                 .into_iter()
-                .map(|((directory, name, nameless_child), (structural, flags))| WatchHint {
-                    nameless_child: nameless_child.then_some(true),
+                .map(|((directory, name, kind), (structural, flags))| WatchHint {
+                    nameless_child: (kind == HintKind::Children).then_some(true),
+                    subtree: (kind == HintKind::Subtree).then_some(true),
                     directory,
                     name,
                     structural,
@@ -111,7 +141,8 @@ impl Pending {
             self.overflow();
         }
         for hint in batch.hints {
-            self.push_hint(hint.directory, hint.name, hint.structural, hint.flags, hint.nameless_child == Some(true));
+            self.push_hint(hint.directory, hint.name, hint.structural, hint.flags,
+                if hint.subtree == Some(true) { HintKind::Subtree } else if hint.nameless_child == Some(true) { HintKind::Children } else { HintKind::Entry });
         }
         if batch.error.is_some() {
             self.error = batch.error;
@@ -493,17 +524,18 @@ mod tests {
         assert_eq!(hint.flags, Some(0x300));
         pending.restore(batch);
         pending.push_children("another".into(), None);
-        assert!(pending.take().unwrap().overflow);
+        assert!(!pending.take().unwrap().overflow);
     }
     #[test]
-    fn pending_is_bounded_and_overflow_erases_names() {
+    fn pending_is_bounded_and_folds_erase_leaf_names() {
         let mut pending = Pending { limit: 1, ..Pending::default() };
         pending.push("".into(), "a".into(), false);
         pending.push("".into(), "a".into(), true);
         assert_eq!(pending.paths.len(), 1);
         pending.push("".into(), "b".into(), false);
         let batch = pending.take().unwrap();
-        assert!(batch.overflow && batch.hints.is_empty());
+        assert!(!batch.overflow && batch.hints.len() == 1);
+        assert_eq!(batch.hints[0].subtree, Some(true));
         assert!(pending.take().is_none());
     }
     #[test]
@@ -517,7 +549,7 @@ mod tests {
         assert!(!batch.overflow && batch.hints[0].structural);
         pending.restore(batch);
         pending.push("".into(), "b".into(), false);
-        assert!(pending.take().unwrap().overflow);
+        assert!(!pending.take().unwrap().overflow);
     }
     #[test]
     fn drains_are_coalesced_and_poisoned_pending_is_recovered() {
@@ -557,5 +589,85 @@ mod tests {
         let mut slot = Some(hub);
         stop_if_empty(&mut slot).unwrap();
         assert_eq!(watch_thread_count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod folding_tests {
+    use super::*;
+
+    #[test]
+    fn pressure_folds_siblings_instead_of_losing_detail() {
+        let mut pending = Pending { limit: 2, ..Default::default() };
+        pending.push("noise".into(), "a".into(), false);
+        pending.push("noise".into(), "b".into(), true);
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow && batch.hints.len() == 2);
+        assert_eq!(batch.hints[0].name, "a");
+        pending.restore(batch);
+        pending.push("noise".into(), "c".into(), false);
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow);
+        assert_eq!(batch.hints.len(), 1);
+        assert_eq!(batch.hints[0].directory, "noise");
+        assert!(batch.hints[0].name.is_empty());
+    }
+
+    #[test]
+    fn pressure_coarsens_to_root_with_bounded_deterministic_output() {
+        let run = |reverse: bool| {
+            let mut pending = Pending { limit: 2, ..Default::default() };
+            for i in 0..1000 {
+                let n = if reverse { 999 - i } else { i };
+                pending.push(format!("branch{n}"), "leaf".into(), false);
+                assert!(pending.paths.len() <= 2);
+            }
+            let batch = pending.take().unwrap();
+            assert!(!batch.overflow);
+            batch.hints.into_iter().map(|hint| (hint.directory, hint.name)).collect::<Vec<_>>()
+        };
+        assert_eq!(run(false), vec![(String::new(), String::new())]);
+        assert_eq!(run(false), run(true));
+    }
+
+    #[test]
+    fn folds_coarsen_by_components_and_merge_diagnostics_through_retry() {
+        let mut pending = Pending { limit: 2, ..Default::default() };
+        let child = |name: &str| std::path::Path::new("noise").join(name).to_str().unwrap().to_owned();
+        for name in ["a", "b", "c"] {
+            pending.push_with_flags(child(name), "leaf".into(), false, Some(0x100));
+        }
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow && batch.hints.len() == 1);
+        assert_eq!(batch.hints[0].directory, "noise");
+        assert_eq!(batch.hints[0].subtree, Some(true));
+        assert_eq!(batch.hints[0].nameless_child, None);
+        pending.restore(batch);
+        pending.push_with_flags(child("later"), "leaf".into(), false, Some(0x200));
+        pending.push_children("noise".into(), Some(0x400));
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow && batch.hints.len() == 1);
+        assert_eq!(batch.hints[0].flags, Some(0x700));
+        assert_eq!(batch.hints[0].subtree, Some(true));
+        assert!(batch.hints[0].structural);
+    }
+
+    #[test]
+    fn zero_capacity_cannot_retain_even_a_root_fold() {
+        let mut pending = Pending::default();
+        pending.push("".into(), "entry".into(), false);
+        assert!(pending.take().unwrap().overflow);
+    }
+
+    #[test]
+    fn genuine_loss_still_erases_folded_names() {
+        let mut pending = Pending { limit: 1, ..Default::default() };
+        pending.push("noise".into(), "a".into(), false);
+        pending.push("noise".into(), "b".into(), false);
+        assert!(!pending.overflow);
+        pending.overflow();
+        pending.push("selected".into(), "file".into(), true);
+        let batch = pending.take().unwrap();
+        assert!(batch.overflow && batch.hints.is_empty());
     }
 }

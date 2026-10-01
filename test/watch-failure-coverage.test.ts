@@ -239,9 +239,11 @@ it("keeps rename hints when later change hints arrive and bounds distinct pendin
   emit({ hints: [{ directory: "", name: "file", event: "change" }], overflow: false });
   await owner.reconcile();
   expect(changes).toEqual([{ reason: "event", changes: [{ path: "file", type: "structural" }] }]);
+  changes.length = 0;
+  await fs.writeFile(path.join(dir, "file"), "changed within the diff budget");
   emit({ hints: ["file", "second"].map(name => ({ directory: "", name, event: "change" })), overflow: false });
   await owner.reconcile();
-  expect(changes.at(-1)).toEqual({ reason: "overflow", changes: undefined });
+  expect(changes).toEqual([{ reason: "event", changes: [{ path: "file", type: "content" }] }]);
 });
 
 it("coalesces backend overflow during a slow pass into one pending overflow", async () => {

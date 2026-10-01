@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { changedEntries, guardedHintChanges, nativeChanges } from "../src/watch-hints.js";
+import { changedEntries, guardedHintChanges, nativeChanges, selectedWatchSubtree } from "../src/watch-hints.js";
 import { watchScopes, type WatchSnapshot } from "../src/watch-scan.js";
 const snapshot = (entries: [string, string][]): WatchSnapshot => ({ entries: new Map(entries), directories: new Map(), targets: new Map(), scanned: entries.length });
 const scopes = watchScopes([{ path: "config.json", kind: "entry" }, { path: "skills", kind: "tree", depth: 2 }]);
@@ -104,4 +104,21 @@ describe("nameless child scope admission", () => {
     const hints = nativeChanges(scopes, before, children(path.join("skills", "unobserved")));
     expect(guardedHintChanges(scopes, before, after, hints, [], 256)).toEqual([]);
   });
+});
+
+it("validates folded directory components without publishing their spelling", () => {
+  for (const directory of ["..", "../skills", path.sep + "skills", path.join("skills", "child") + path.sep + "..", "bad\0directory"]) {
+    expect(nativeChanges(scopes, undefined, { overflow: false, hints: [{ directory, name: "", event: "subtree" }] })).toBeUndefined();
+  }
+  expect(nativeChanges(scopes, undefined, { overflow: false, hints: [{ directory: "skills", name: "invented", event: "subtree" }] })).toBeUndefined();
+  expect(nativeChanges(scopes, undefined, { overflow: false, hints: [{ directory: "skills", name: "", event: "subtree" }] })).toEqual([]);
+});
+
+it("selects folded ancestors and tree boundary directories, keeping nameless-child rules separate", () => {
+  for (const directory of ["", "skills", path.join("skills", "a"), path.join("skills", "a", "b"), "config.json"]) {
+    expect(selectedWatchSubtree(scopes, directory)).toBe(true);
+  }
+  for (const directory of ["unrelated", "skills-other", path.join("skills", "a", "b", "c")]) {
+    expect(selectedWatchSubtree(scopes, directory)).toBe(false);
+  }
 });

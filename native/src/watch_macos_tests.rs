@@ -653,6 +653,11 @@ fn decoder_preserves_inside_names_and_discards_outside_paths() {
         events.record(path, 0x1000);
         assert!(pending.lock().unwrap().take().is_none());
     }
+    for flags in [1, 2, 4, 8, 32, 128] {
+        events.record(b"/admitted/selected/file", flags | 0x1000);
+        let batch = pending.lock().unwrap().take().unwrap();
+        assert!(batch.overflow && batch.hints.is_empty());
+    }
     drop(events);
     backend.remove(registration.id).unwrap();
     drop(backend);

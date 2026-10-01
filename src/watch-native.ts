@@ -5,9 +5,9 @@ import type { RootContext } from "./root-context.js";
 import type { DirectoryIdentity, WatchSnapshot } from "./watch-scan.js";
 import type { WatchStreamPaths } from "./watch-stream.js";
 
-export type NativeWatchHint = { directory: string; name: string; event: "rename" | "change" | "children" };
+export type NativeWatchHint = { directory: string; name: string; event: "rename" | "change" | "children" | "subtree" };
 export type NativeWatchBatch = { hints: NativeWatchHint[]; overflow: boolean; error?: string };
-export type NativeWatchWireBatch = { hints: { directory: string; name: string; structural: boolean; flags?: number; namelessChild?: boolean }[]; overflow: boolean; error?: string };
+export type NativeWatchWireBatch = { hints: { directory: string; name: string; structural: boolean; flags?: number; namelessChild?: boolean; subtree?: boolean }[]; overflow: boolean; error?: string };
 export type NativeWatchEntry = { scope: string; directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }; name: string; target?: DirectoryIdentity & { kind: string } };
 export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | undefined {
   if (mode === "poll") return;
@@ -26,7 +26,7 @@ export class NativeWatchBackend {
     this.streamPaths = JSON.stringify({ anchors: [], exclusions: [] });
     try { this.id = binding.watchRegister!(root.rootReal, limit, batch => {
       if (this.id !== undefined) callback({ overflow: batch.overflow, error: batch.error, hints: batch.hints.map(hint => ({
-        directory: hint.directory, name: hint.name, event: hint.namelessChild ? "children" : hint.structural ? "rename" : "change",
+        directory: hint.directory, name: hint.name, event: hint.subtree ? "subtree" : hint.namelessChild ? "children" : hint.structural ? "rename" : "change",
       })) });
     }, persistent); } catch (cause) { throw watchError(cause); }
   }

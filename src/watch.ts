@@ -182,8 +182,15 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         pendingUncertain = true;
         continue;
       }
-      const key = JSON.stringify([hint.directory, hint.name]);
-      if (!pendingChanges.has(key) && pendingChanges.size >= maxPendingPaths) { pendingChanges = undefined; break; }
+      // Multiple bounded native batches can still fill the JS coalescing window.
+      // A Root fold retains discovery while letting the guarded diff own detail.
+      if (pendingChanges.get("subtree-root")?.event === "subtree") continue;
+      const key = JSON.stringify([hint.directory, hint.name, hint.event === "children" || hint.event === "subtree" ? hint.event : "entry"]);
+      if (!pendingChanges.has(key) && pendingChanges.size >= maxPendingPaths) {
+        pendingChanges.clear();
+        pendingChanges.set("subtree-root", { directory: "", name: "", event: "subtree" });
+        break;
+      }
       const previous = pendingChanges.get(key);
       pendingChanges.set(key, previous?.event === "rename" ? previous : hint);
     }

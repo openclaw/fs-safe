@@ -36,6 +36,11 @@ export function selectedWatchChildren(scopes: readonly WatchScope[], directory: 
   return scopes.some(scope => scope.kind === "tree" && (scope.path === directory ? scope.depth! > 0 :
     below(scope.path, directory) && distance(scope.path, directory) < scope.depth!));
 }
+/** A folded directory can contain a missing scope component, unlike a nameless child. */
+export function selectedWatchSubtree(scopes: readonly WatchScope[], directory: string): boolean {
+  return scopes.some(scope => scope.path === directory || below(directory, scope.path) ||
+    (scope.kind === "tree" && below(scope.path, directory) && distance(scope.path, directory) <= scope.depth!));
+}
 function literalName(name: unknown): name is string {
   return typeof name === "string" && !!name && name !== "." && name !== ".." && !name.includes("\0") && !name.includes("/") &&
     (process.platform !== "win32" || !/[\\:]/.test(name));
@@ -48,7 +53,9 @@ export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnap
     // Backend filenames are untrusted hints. Never resolve or perform I/O on them.
     if (typeof hint.directory !== "string" || (hint.directory && !hint.directory.split(path.sep).every(literalName))) return undefined;
     const children = hint.event === "children";
-    if (children ? name !== "" : !literalName(name)) return undefined;
+    const subtree = hint.event === "subtree";
+    if (children || subtree ? name !== "" : !literalName(name)) return undefined;
+    if (subtree) continue; // Folded hints only schedule guarded diff passes; never publish their spelling.
     if (children && !selectedWatchChildren(scopes, hint.directory)) continue;
     const relative = children ? hint.directory : hint.directory ? path.join(hint.directory, name) : name;
     if (excludedWatchPath(snapshot, relative) || excludedWatchPath(after, relative)) continue;
