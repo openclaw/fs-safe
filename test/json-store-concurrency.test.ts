@@ -9,6 +9,7 @@ import {
   type JsonStoreAdapter,
 } from "../src/json-document-store.js";
 import { jsonStore } from "../src/json-store.js";
+import { deferred } from "./helpers/deferred.js";
 
 type State = { count: number };
 type Mutation = "update" | "updateOr" | "write";
@@ -16,14 +17,6 @@ type Mutation = "update" | "updateOr" | "write";
 const { tempRoot } = useTempDirs();
 
 
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 async function runMutation(
   store: JsonStore<State>,

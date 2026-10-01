@@ -14,20 +14,13 @@ import {
   createFileLockManager,
   withFileLockSync,
 } from "../src/file-lock.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useTempDirs();
 
 
 function payload(): { pid: number; createdAt: string } {
   return { pid: process.pid, createdAt: new Date().toISOString() };
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 

@@ -14,23 +14,21 @@ import type { NativePolicyParent } from "./native-policy-parent.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
 
-export function assertWindowsPolicyParentCurrent(parent: NativePolicyParent): BigIntStats {
-  const current = inspectFileIdentitySync(() => fsSync.fstatSync(parent.fd, { bigint: true }), parent.guard.stat);
+export function assertWindowsPolicyParentCurrent(parent: NativePolicyParent): void {
+  inspectFileIdentitySync(() => fsSync.fstatSync(parent.fd, { bigint: true }), parent.guard.stat);
   assertDirectoryIdentitySync(parent.guard.dir, {
     dev: parent.guard.stat.dev,
     ino: parent.guard.stat.ino,
     realPath: parent.guard.realPath,
   });
-  return current;
 }
 
 export function closeWindowsPolicyParentAfterFailure(
   closeFd: (fd: number) => void,
-  fd: number | undefined,
+  fd: number,
   failure?: { error: unknown },
   report = false,
 ): void {
-  if (fd === undefined) return;
   try {
     closeFd(fd);
   } catch (error) {

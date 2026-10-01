@@ -1,20 +1,10 @@
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { movePathWithCopyFallback } from "../src/move-path.js";
+import { useTempDirs } from "./helpers/vitest.js";
 
-const tempDirs: string[] = [];
-
-async function tempRoot(prefix: string): Promise<string> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fsp.rm(dir, { recursive: true, force: true })));
-});
+const { tempRoot } = useTempDirs();
 
 describe.runIf(process.platform === "win32")("movePathWithCopyFallback on Windows", () => {
   it("moves a newly created directory when hardlink rejection requires copy fallback", async () => {

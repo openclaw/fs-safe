@@ -2,14 +2,21 @@
 
 ## Unreleased
 
-- **Windows publication:** `retainEntryForPublication` now retains regular files, directories, symbolic links and junctions on local NTFS for atomic no-replace export. Link targets stay opaque; commit, indeterminate and close failures remain distinct, and disposal never deletes either location.
+## 0.22.0 - 2026-10-01
 
-- **One-way publication:** `retainEntryForPublication` now admits direct POSIX symlink entries, retaining the link inode and exact target bytes without following external payloads. Relative and dangling targets keep their original spelling; disposal remains close-only.
+### Highlights
+
+- **One-way publication:** `retainEntryForPublication` on `advanced` provides no-replace export for POSIX directories, regular files and direct symlinks, plus Windows NTFS files, directories, symbolic links and junctions. ([#776](https://github.com/openclaw/fs-safe/pull/776), [#778](https://github.com/openclaw/fs-safe/pull/778), [#779](https://github.com/openclaw/fs-safe/pull/779))
+- **Windows path hardening:** reject foreign UNC shares and device namespaces before filesystem probes, blocking attacker-chosen SMB lookups, NTLM exposure and stalls. ([#781](https://github.com/openclaw/fs-safe/pull/781), [#784](https://github.com/openclaw/fs-safe/pull/784))
+- **Watch overflow fixes:** Linux watch-retirement echoes no longer overflow unrelated subscriptions; Linux and macOS classify undecodable names, Linux preserves nameless lifecycle events, and macOS cleans up failed startup correctly. ([#782](https://github.com/openclaw/fs-safe/pull/782), [#783](https://github.com/openclaw/fs-safe/pull/783), [#769](https://github.com/openclaw/fs-safe/pull/769))
+
+### Features
+
+- **One-way publication:** `retainEntryForPublication` retains source and parent identities for native no-replace export on supported local POSIX filesystems and Windows NTFS. It supports directories, regular files and direct symbolic links, plus NTFS junctions; link targets stay opaque, and POSIX relative and dangling targets retain their exact bytes. Commit, indeterminate and close failures remain distinct. Requires caller-exclusive source namespaces, with no source-CAS or automatic rollback guarantee; disposal only closes retained resources and never deletes either location. ([#776](https://github.com/openclaw/fs-safe/pull/776), [#778](https://github.com/openclaw/fs-safe/pull/778), [#779](https://github.com/openclaw/fs-safe/pull/779))
 
 ### Fixes
 
 - **Watch name handling:** ignore undecodable unselected siblings, fail closed for selected tree names on Linux and macOS, and preserve Linux directory lifecycle detail without spurious overflow. ([#783](https://github.com/openclaw/fs-safe/pull/783))
-
 - **Windows UNC admission:** Root, root-file readers, `pathScope`, `isPathInside`, secret-file writers, sibling-temp output, trash admission, and archive output preparation reject foreign UNC shares and device namespaces before probing them, comparing hosts without Unicode case folding, preventing attacker-chosen SMB lookups, NTLM exposure, and stalls. Existing containment errors are preserved; absolute paths on another share no longer resolve through aliases back into the boundary. ([#781](https://github.com/openclaw/fs-safe/pull/781), [#784](https://github.com/openclaw/fs-safe/pull/784))
 - **Linux watch isolation:** closing or replacing a watch, including after a scan failure, no longer overflows unrelated subscriptions. ([#782](https://github.com/openclaw/fs-safe/pull/782))
 - **macOS watch startup:** clean up rejected FSEvents configuration and failed stream startup with the correct lifecycle calls, keeping the registration available for retry. ([#769](https://github.com/openclaw/fs-safe/pull/769))
@@ -19,9 +26,9 @@
 - **Bounded temporary-directory cleanup:** avoid a redundant descriptor metadata read for each descendant directory on Linux and macOS, while retaining fresh name identity checks before removal. ([#760](https://github.com/openclaw/fs-safe/pull/760))
 - **Atomic temp cleanup:** use the file identity captured after creation, avoiding an unnecessary metadata lookup and preserving preexisting temporary paths. ([#772](https://github.com/openclaw/fs-safe/pull/772))
 
-## 0.22.0 - 2026-09-30
+### Compatibility
 
-- **One-way publication:** `retainEntryForPublication` on `advanced` retains directory or regular-file source/parent identities for native no-replace export, with truthful commit/indeterminate results and close-only disposal. Requires caller-exclusive source namespaces on supported local POSIX filesystems; no source-CAS or automatic rollback guarantee.
+- Windows now rejects foreign UNC shares and device namespaces before probing them. Absolute paths on another share no longer resolve through aliases back into the boundary; callers that relied on that behavior must pass in-boundary paths. ([#781](https://github.com/openclaw/fs-safe/pull/781), [#784](https://github.com/openclaw/fs-safe/pull/784))
 
 ## 0.21.3 - 2026-09-30
 

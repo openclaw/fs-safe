@@ -7,6 +7,7 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
@@ -27,12 +28,6 @@ type ManagerState = {
   held: Map<string, unknown>;
   admissions: Map<string, object>;
 };
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => { resolve = settle; });
-  return { promise, resolve };
-}
 
 function managerState(key: string): ManagerState {
   const managers = Reflect.get(globalThis, managersKey) as Map<string, ManagerState>;

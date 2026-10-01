@@ -903,7 +903,10 @@ fn directory_observation_identity(
 pub(crate) fn observe_directory_identity(handle: HANDLE) -> NativeResult<(u32, u64)> {
     // The complete handle information already includes the reparse/directory
     // attributes. Keep those facts with the exact identity in one observation.
-    directory_observation_identity(&guarded_handle_information(handle)?)
+    directory_observation_identity(&guarded_handle_information(
+        handle,
+        "inspect owned directory identity",
+    )?)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -959,14 +962,14 @@ pub(crate) fn handle_file_identity(handle: HANDLE) -> NativeResult<HandleFileIde
     })
 }
 
-fn guarded_handle_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
+pub(crate) fn guarded_handle_information(
+    handle: HANDLE,
+    operation: &str,
+) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
     // SAFETY: info is a valid output buffer for this API.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
     if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "inspect owned directory identity",
-        ));
+        return Err(win_error(unsafe { GetLastError() }, operation));
     }
     Ok(info)
 }
@@ -993,7 +996,7 @@ pub(crate) fn handle_attributes(handle: HANDLE) -> NativeResult<u32> {
 pub(crate) fn handle_identity_and_size(
     handle: HANDLE,
 ) -> NativeResult<((u32, u64, bool), u64)> {
-    let info = guarded_handle_information(handle)?;
+    let info = guarded_handle_information(handle, "inspect owned directory identity")?;
     Ok((
         identity_from_handle_information(&info),
         ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
@@ -1217,15 +1220,7 @@ pub fn remove_owned_tree(
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     let handle = root_handle(fd)?;
     assert_not_reparse(handle)?;
-    // SAFETY: info is a valid output buffer for this API.
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        // SAFETY: GetLastError has no memory safety preconditions.
-        return Err(win_error(
-            unsafe { GetLastError() },
-            "inspect file identity",
-        ));
-    }
+    let info = guarded_handle_information(handle, "inspect file identity")?;
     let is_directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
     let size = ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64;
     let ino = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;

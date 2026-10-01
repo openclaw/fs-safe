@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { replaceFileAtomic, type ReplaceFileAtomicFileSystem } from "../src/atomic.js";
 import { useTempDirs } from "./helpers/vitest.js";
+import { bindHandle } from "./helpers/file-handle-proxy.js";
 
 const { tempRoot } = useTempDirs();
 const PRIMARY_FAILURES = [
@@ -23,16 +24,6 @@ type Phase = typeof PHASES[number];
 type Delivery = "throw" | "reject";
 const CLOSE_CASES = PRIMARY_FAILURES.flatMap(failure =>
   (["throw", "reject"] as const).map(delivery => ({ ...failure, delivery })));
-
-function bindHandle(handle: FileHandle, overrides: Partial<FileHandle>): FileHandle {
-  return new Proxy(handle, {
-    get(target, property) {
-      if (property in overrides) return overrides[property as keyof FileHandle];
-      const value = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
 
 async function runPublicAdapter(params: {
   dest: string;

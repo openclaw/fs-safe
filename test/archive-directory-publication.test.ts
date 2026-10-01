@@ -9,6 +9,7 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { removeModeFixture } from "./helpers/archive-modes.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
+import { deferred } from "./helpers/deferred.js";
 
 let suiteDir: string | undefined;
 const runFixture = useSuiteFixture(async () => {
@@ -28,12 +29,6 @@ function run(operation: (directory: string) => Promise<void>) {
       vi.restoreAllMocks();
     }
   });
-}
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
 }
 
 async function fixture(directory: string, children = true) {

@@ -10,6 +10,7 @@ import {
   type ReplaceFileAtomicSyncFileSystem,
 } from "../src/atomic.js";
 import { useTempDirs } from "./helpers/vitest.js";
+import { bindHandle } from "./helpers/file-handle-proxy.js";
 
 const { tempRoot } = useTempDirs();
 const DESTINATION_WRITE_FLAGS =
@@ -21,16 +22,6 @@ type Failure = { enabled: true; value: unknown } | { enabled: false };
 type Settlement = { failed: true; value: unknown } | { failed: false };
 
 const noFailure: Failure = { enabled: false };
-
-function bindHandle(handle: FileHandle, overrides: Partial<FileHandle>): FileHandle {
-  return new Proxy(handle, {
-    get(target, property) {
-      if (property in overrides) return overrides[property as keyof FileHandle];
-      const value = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
 
 function isDestinationWriter(candidate: fsSync.PathLike, flags: string | number, dest: string): boolean {
   return String(candidate) === dest && typeof flags === "number" &&

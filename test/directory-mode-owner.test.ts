@@ -1,20 +1,14 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtomicIo, runAsync } from "../src/atomic-io.js";
 import { pinNodeDirectoryForMode } from "../src/directory-mode-node.js";
 import { applyDirectoryMode } from "../src/replace-file-descriptor.js";
+import { deferred } from "./helpers/deferred.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
-}
 
 describe.skipIf(process.platform === "win32")("directory mode ownership", () => {
   it("keeps partial injected adapters on descriptor chmod without host fd operations", async () => {

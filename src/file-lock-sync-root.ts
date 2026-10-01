@@ -3,6 +3,7 @@ import path from "node:path";
 import { assertMutationNotDenied, type DenyMutationPolicy } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { assertNoNulPathInput, isNotFoundPathError } from "./path.js";
+import { sameAbsolutePath } from "./path-segment-route.js";
 import { resolveRootPathSync } from "./root-path.js";
 import { isRootPathEscapeError } from "./root-path-errors.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
@@ -139,10 +140,6 @@ export function invokeFileLockSyncRootMutationAuthority(
   return true;
 }
 
-function samePath(left: string, right: string): boolean {
-  return path.relative(path.resolve(left), path.resolve(right)) === "";
-}
-
 function absoluteRootPath(
   authority: FileLockSyncRootAuthority,
   relativePath: string,
@@ -201,7 +198,7 @@ function resolveAdmittedPath(
     candidatePath: resolved.canonicalPath,
     rootIdentity: context.rootIdentity,
   });
-  if (!admitted || admitted.relativePath === "" || samePath(admitted.path, context.rootReal)) {
+  if (!admitted || admitted.relativePath === "" || sameAbsolutePath(admitted.path, context.rootReal)) {
     throw outsideWorkspaceError();
   }
   return {
@@ -225,7 +222,7 @@ function resolveBothPolicies(
   const readable = policiesMatch
     ? mutation
     : resolveAdmittedPath(authority, absolutePath, readPolicy, rootPath);
-  if (!samePath(mutation.path, readable.path)) {
+  if (!sameAbsolutePath(mutation.path, readable.path)) {
     throw new FsSafeError("path-mismatch", "sidecar read and mutation paths resolve differently");
   }
   assertFileLockSyncRootMutationAllowed(mutation.path, authority.denyMutations);
@@ -286,7 +283,7 @@ export function assertFileLockSyncRootResolvedPathCurrent(
     absoluteRootPath(pathAuthority.authority, pathAuthority.relativePath),
     pathAuthority.authority.context.rootReal,
   );
-  if (!samePath(resolved.path, pathAuthority.path)) {
+  if (!sameAbsolutePath(resolved.path, pathAuthority.path)) {
     throw new FsSafeError("path-mismatch", "sidecar lock path changed during operation");
   }
 }
