@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   closeSync,
   openSync,
@@ -12,6 +13,9 @@ import { getFsSafeNativeConfig } from "./native-config.js";
 export type { NativeBinding } from "./native-binding.js";
 
 const require = createRequire(import.meta.url);
+// Native registration creates process-lifetime housekeeping. Use the import
+// context rather than retaining the first operation's AsyncLocalStorage stores.
+const runNativeInitialization = AsyncLocalStorage.snapshot();
 let binding: NativeBinding | undefined;
 let loadError: unknown;
 let attempted = false;
@@ -172,7 +176,7 @@ function loadBundledBinding(): NativeBinding {
   if (!target) {
     throw new Error(`Unsupported OS or architecture: ${process.platform}-${process.arch}`);
   }
-  const loaded = require(nativePackageForTarget(target)) as NativeBinding;
+  const loaded = runNativeInitialization(() => require(nativePackageForTarget(target))) as NativeBinding;
   captureNativeFdClose(loaded);
   return loaded;
 }

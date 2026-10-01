@@ -333,6 +333,15 @@ infer native loading from timing.
 
 ## Loader security
 
+Native initialization runs in the async context captured when fs-safe's loader
+module is evaluated. Import fs-safe during application startup, outside request
+or lease scopes, so the addon's process-lifetime housekeeping cannot retain the
+first operation's `AsyncLocalStorage` stores. Importing still does not load the
+addon: only the first native operation pays the registration cost. Subsequent
+operations and their callbacks retain their own caller context. Dynamically
+importing fs-safe for the first time inside a request scope captures that import
+scope instead; this boundary does not clear an already active import context.
+
 Importing fs-safe never executes a child process. Linux libc selection uses
 the Node process report, then the ELF `PT_INTERP` field of `process.execPath`,
 then conventional musl library filenames. An installed compatibility loader

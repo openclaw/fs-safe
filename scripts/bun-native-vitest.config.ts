@@ -17,6 +17,7 @@ export default {
       "test/windows-native-fd-bridge.test.ts",
       "test/darwin-acl-native.test.ts",
       "test/native-loader.test.ts",
+      "test/native-init-context.test.ts",
       "test/native-write-containment.test.ts",
       "test/native-staging-regression.test.ts",
       "test/read-boundary-bypass.test.ts",
