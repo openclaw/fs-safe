@@ -21,6 +21,7 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { serializePathWrite } from "./write-queue.js";
 import {
   assertNoWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
@@ -86,7 +87,8 @@ function isRelativeEscape(relativePath: string): boolean {
 
 function assertPathWithinRoot(rootDir: string, targetPath: string): void {
   const relative = path.relative(rootDir, targetPath);
-  if (!relative || isRelativeEscape(relative)) {
+  // path.relative folds Unicode case on Windows, so it alone could admit another host.
+  if (!relative || isRelativeEscape(relative) || isForeignWindowsShareOrDevicePath(targetPath, [rootDir])) {
     throw new Error(`Private secret path must stay under ${rootDir}.`);
   }
 }

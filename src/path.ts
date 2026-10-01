@@ -7,6 +7,7 @@ import { isDriveRelativePath } from "./safe-path-segment.js";
 import {
   assertNoWindowsPathAlias,
   hasWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   pathForWindowsFilesystem,
   resolvePathFromBasePreservingWindowsRoot,
   resolvePathPreservingWindowsRoot,
@@ -75,6 +76,8 @@ export function isSymlinkOpenError(value: unknown): boolean {
 
 export function isPathInside(root: string, target: string): boolean {
   if (process.platform === "win32") {
+    // Comparison folds Unicode case, so it alone could admit another host.
+    if (isForeignWindowsShareOrDevicePath(target, [root])) return false;
     const rootForCompare = resolveWindowsPathForComparison(root);
     const targetForCompare = resolveWindowsPathForComparison(target);
     // Resolved drive paths already have canonical separators and case. A full

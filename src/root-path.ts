@@ -175,15 +175,16 @@ function prepareRootTraversal(
 ): LexicalResolutionParams {
   let raw = rawAbsolutePath;
   let trustedAbsolutePath = false;
+  // Even a metadata lookup on a foreign share contacts that host, including the
+  // identity check behind a case-folded root prefix.
+  if (isForeignWindowsShareOrDevicePath(raw, [rootPath, rootCanonicalPath])) {
+    throw pathEscapeError({ rootPath, absolutePath: raw, boundaryLabel: params.boundaryLabel });
+  }
   const direct = admitRawPathInsideRoot(rootPath, raw, params.rootIdentity);
   if (direct) {
     raw = direct.path;
     trustedAbsolutePath = direct.admission === "identity";
   } else {
-    // Even a metadata lookup on a foreign share contacts that host.
-    if (isForeignWindowsShareOrDevicePath(raw, [rootPath, rootCanonicalPath])) {
-      throw pathEscapeError({ rootPath, absolutePath: raw, boundaryLabel: params.boundaryLabel });
-    }
     const canonical = admitRawPathInsideRoot(rootCanonicalPath, raw, params.rootIdentity);
     const relative = canonical?.relativePath
       ?? rawPathRelativeToCanonicalRoot(raw, rootCanonicalPath, params);

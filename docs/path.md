@@ -36,7 +36,7 @@ isPathInside("/srv/uploads", "/srv/uploads-other/x");        // false
 isPathInside("/srv/uploads", "/srv/uploads");                // true (root itself counts)
 ```
 
-The check is platform-aware: on Windows, paths are normalized for case and separator before comparison. This is deliberately a string-only, lexical answer; case folding does not prove that two differently cased prefixes name the same directory on a case-sensitive Windows directory. Root operations perform their own filesystem-identity admission when containment depends on case folding.
+The check is platform-aware: on Windows, paths are normalized for case and separator before comparison. This is deliberately a string-only, lexical answer; case folding does not prove that two differently cased prefixes name the same directory on a case-sensitive Windows directory. Root operations perform their own filesystem-identity admission when containment depends on case folding. A target on a different UNC share or device namespace than `rootDir` is never inside it: hosts and shares compare with ASCII-only case folding, and namespace spellings whose share or device cannot be identified count as outside unless spelled exactly under `rootDir` (see the [security model](security-model.md)).
 It is a lexical comparison, not a filesystem-admission boundary: it does not
 reject Windows alternate data streams or index-allocation aliases. Use a
 filesystem operation such as `root()` when a caller-controlled path will be

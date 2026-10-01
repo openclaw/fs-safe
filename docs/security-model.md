@@ -49,15 +49,23 @@ If you need full sandboxing, run the worker under reduced privileges (uid, conta
 
 Every path is resolved against the canonicalized real path of the root, then checked at that boundary. On Windows, an exact-case structural Root prefix stays on the lexical fast path; a prefix accepted only by case folding must have the Root's exact directory identity and is rebased onto the trusted Root spelling before use. Alias resolution walks components before applying a later `..`, so a symlink cannot change what that parent segment means after validation. Parent traversal, an absolute spelling, or any alias whose canonical result is outside the root throws `outside-workspace`; absolute spellings that remain inside the root are accepted.
 
-On Windows, Root, root-file readers, `pathScope`, secret-file writers,
-sibling-temp output, trash admission, and archive output preparation reject
-foreign share or device roots before filesystem access can contact an
-attacker-chosen host. Namespaced drive roots keep their existing handling;
-explicitly selected shares, such as a Root, allowed trash root, or destination
-on `\\server\share`, remain supported. `\\?\` and `\\.\` spellings under
-`GLOBALROOT`/`Global`, or with components Windows would rewrite (dot segments,
-trailing dots or spaces, empty components), are always treated as foreign
-because their share or device cannot be identified from the spelling.
+On Windows, Root, root-file readers, `pathScope`, `isPathInside`, secret-file
+writers, sibling-temp output, trash admission, and archive output preparation
+reject foreign share or device roots before filesystem access can contact an
+attacker-chosen host. Shares are compared by exact host and share name with
+ASCII-only case folding, so Unicode case folding (for example the Kelvin sign
+for `k`) cannot make another host look trusted. Namespaced drive roots keep
+their existing handling, and explicitly selected shares, such as a Root,
+allowed trash root, or destination on `\\server\share`, remain supported.
+`\\?\` and `\\.\` spellings under `GLOBALROOT`/`Global`, or whose components
+Windows would rewrite (empty or trailing-dot/space authority components, or
+dot segments climbing above the drive, share, or device), are foreign unless
+spelled exactly under the trusted boundary, because their target cannot be
+identified from the spelling.
+
+An absolute path on a different share or device is rejected even when a
+filesystem alias would resolve it back inside the boundary. Pass a path
+relative to the boundary, or spell it on the boundary's own share.
 
 Guarded pathname APIs reject Windows `:` namespace aliases before normalization
 or filesystem access. The only colon admitted in a Windows filesystem path is

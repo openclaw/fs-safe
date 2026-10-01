@@ -4,16 +4,25 @@ import {
   hasWindowsDrivePrefix,
   rootedWindowsDriveColonIndex,
   windowsNamespaceMarker,
+  windowsSegmentsClimbAbove,
   windowsShareOrDeviceRoot,
 } from "./windows-path-syntax.js";
 
 export type WindowsPathAliasKind = "filesystem" | "relative";
 
+function isExactlyUnderWindowsPath(trusted: string, value: string): boolean {
+  const root = trusted.replaceAll("/", "\\").replace(/(?<=.)\\+$/, "");
+  const candidate = value.replaceAll("/", "\\");
+  if (candidate !== root && !candidate.startsWith(root.endsWith("\\") ? root : `${root}\\`)) return false;
+  return !windowsSegmentsClimbAbove(candidate.slice(root.length).split("\\"));
+}
+
 /**
- * True when a Windows path names a UNC share or device namespace that none of
- * the trusted boundary paths live on, or one its spelling cannot identify.
- * Reject such input before any filesystem call: even lstat on
- * `\\host\share\x` makes Windows contact host.
+ * True when a Windows path could reach a UNC share or device namespace that
+ * none of the trusted boundary paths live on: its share or device differs from
+ * theirs or cannot be identified from its spelling, and it is not spelled
+ * exactly under one of them. Reject such input before any filesystem call:
+ * even lstat on `\\host\share\x` makes Windows contact host.
  */
 export function isForeignWindowsShareOrDevicePath(
   value: string,
@@ -23,9 +32,9 @@ export function isForeignWindowsShareOrDevicePath(
   if (platform !== "win32") return false;
   const key = windowsShareOrDeviceRoot(value);
   if (key === undefined) return false;
-  return key === null || !trustedPaths.some(
-    trusted => trusted !== undefined && windowsShareOrDeviceRoot(trusted) === key,
-  );
+  return !trustedPaths.some(trusted => trusted !== undefined && (
+    (key !== null && windowsShareOrDeviceRoot(trusted) === key) || isExactlyUnderWindowsPath(trusted, value)
+  ));
 }
 
 function isBareWindowsNamespaceDrive(value: string): boolean {

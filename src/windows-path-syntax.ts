@@ -30,6 +30,21 @@ function asciiLowercase(value: string): string {
 }
 
 /**
+ * True when dot-like components climb above the start of `segments`. Win32
+ * trims trailing dots and spaces, so any all-dot or all-space component other
+ * than `.` is counted as a parent step.
+ */
+export function windowsSegmentsClimbAbove(segments: readonly string[]): boolean {
+  let depth = 0;
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    depth += /^[. ]+$/.test(segment) ? -1 : 1;
+    if (depth < 0) return true;
+  }
+  return false;
+}
+
+/**
  * Comparable share or device root of a path spelled with two leading
  * separators, excluding namespaced drive roots such as `\\?\C:\`.
  * Returns undefined for drive, rooted, and relative spellings, and null when
@@ -38,24 +53,25 @@ function asciiLowercase(value: string): string {
 export function windowsShareOrDeviceRoot(value: string): string | null | undefined {
   if (!isWindowsSeparator(value, 0) || !isWindowsSeparator(value, 1)) return undefined;
   const spelled = value.replaceAll("/", "\\");
-  const namespaced = windowsNamespaceMarker(spelled) !== undefined;
-  if (namespaced) {
-    // Win32 trims trailing dots and spaces and collapses empty components, and
-    // dot segments climb out of a drive or share (`\\.\C:\..\UNC\host`), so any
-    // component it would rewrite hides the target. GLOBALROOT or Global expose
-    // whole object namespaces.
-    const segments = spelled.slice(4).split("\\");
-    const head = asciiLowercase(segments[0] ?? "");
-    if (
-      head === "globalroot" || head === "global" ||
-      segments.some((segment, index) => /[. ]$/.test(segment) || (segment === "" && index < segments.length - 1))
-    ) {
-      return null;
-    }
+  if (windowsNamespaceMarker(spelled) === undefined) {
+    return asciiLowercase(path.win32.parse(spelled).root.replace(/\\+$/, ""));
+  }
+  // Node passes namespace spellings to Win32 unchanged, where `..` climbs out
+  // of a drive or share (`\\.\C:\..\UNC\host`) and trailing dots, spaces and
+  // empty components are rewritten. GLOBALROOT and Global expose whole object
+  // namespaces, so none of these identify a single share or device.
+  const segments = spelled.slice(4).split("\\");
+  const head = asciiLowercase(segments[0] ?? "");
+  const authority = head === "unc" ? segments.slice(0, 3) : segments.slice(0, 1);
+  if (
+    head === "globalroot" || head === "global" || authority.length < (head === "unc" ? 3 : 1) ||
+    authority.some(segment => segment === "" || /[. ]$/.test(segment)) ||
+    windowsSegmentsClimbAbove(segments.slice(authority.length))
+  ) {
+    return null;
   }
   if (rootedWindowsDriveColonIndex(value) === 5) return undefined;
-  const folded = namespaced && asciiLowercase(spelled.slice(4, 8)) === "unc\\"
-    ? `\\\\${spelled.slice(8)}`
-    : spelled;
-  return asciiLowercase(path.win32.parse(folded).root.replace(/\\+$/, ""));
+  return asciiLowercase(head === "unc"
+    ? `\\\\${authority[1]}\\${authority[2]}`
+    : `${spelled.slice(0, 4)}${authority[0]}`);
 }

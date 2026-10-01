@@ -1,6 +1,10 @@
 import path from "node:path";
 import { isPathInside, isPathRelativeEscape } from "./path.js";
-import { hasWindowsPathAlias, resolvePathFromBasePreservingWindowsRoot } from "./windows-path-alias.js";
+import {
+  hasWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
+  resolvePathFromBasePreservingWindowsRoot,
+} from "./windows-path-alias.js";
 
 export type ResolvePathWithinRootParams = {
   rootDir: string;
@@ -13,6 +17,8 @@ function pathStaysWithinRoot(rootDir: string, candidatePath: string): boolean {
   if (process.platform !== "win32") {
     return candidatePath !== rootDir && isPathInside(rootDir, candidatePath);
   }
+  // path.relative folds Unicode case, so it alone could admit another host.
+  if (isForeignWindowsShareOrDevicePath(candidatePath, [rootDir])) return false;
   const relative = path.relative(rootDir, candidatePath);
   return Boolean(relative) && !isPathRelativeEscape(relative);
 }
