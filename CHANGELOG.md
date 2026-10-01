@@ -8,7 +8,7 @@
 
 ### Fixes
 
-- **Linux watch isolation:** closing or replacing a watch, including after a scan failure, no longer overflows unrelated subscriptions.
+- **Linux watch isolation:** closing or replacing a watch, including after a scan failure, no longer overflows unrelated subscriptions. ([#782](https://github.com/openclaw/fs-safe/pull/782))
 
 - **macOS watch startup:** clean up rejected FSEvents configuration and failed stream startup with the correct lifecycle calls, keeping the registration available for retry. ([#769](https://github.com/openclaw/fs-safe/pull/769))
 
