@@ -55,17 +55,20 @@ export async function foldProof(api, { baseline = false } = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const baseline = process.argv[2] === "baseline";
+  const command = process.argv[2];
   let installed;
   try {
-    let base = path.resolve("dist");
-    if (baseline) {
+    if (command === "baseline") {
       installed = await fs.mkdtemp(path.join(os.tmpdir(), "watch-fold-published-"));
-      execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--prefix", installed, "--no-audit", "--no-fund", "@openclaw/fs-safe@0.22.0"],
-        { stdio: "inherit", shell: process.platform === "win32" });
-      base = path.join(installed, "node_modules", "@openclaw", "fs-safe", "dist");
+      execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--no-audit", "--no-fund", "@openclaw/fs-safe@0.22.0"],
+        { cwd: installed, stdio: "inherit", shell: process.platform === "win32" });
+      // Windows keeps loaded addon DLLs locked until their process exits.
+      execFileSync(process.execPath, [process.argv[1], "baseline-installed", path.join(installed, "node_modules", "@openclaw", "fs-safe", "dist")], { stdio: "inherit" });
+    } else {
+      const baseline = command === "baseline-installed";
+      const base = baseline ? process.argv[3] : path.resolve("dist");
+      const api = { ...await import(pathToFileURL(path.join(base, "root.js"))), ...await import(pathToFileURL(path.join(base, "watch.js"))) };
+      await foldProof(api, { baseline });
     }
-    const api = { ...await import(pathToFileURL(path.join(base, "root.js"))), ...await import(pathToFileURL(path.join(base, "watch.js"))) };
-    await foldProof(api, { baseline });
   } finally { if (installed) await fs.rm(installed, { recursive: true, force: true }); }
 }
