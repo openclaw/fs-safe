@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import fc from "fast-check";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RootContext } from "../src/root-context.js";
@@ -6,19 +7,38 @@ import type { WatchSnapshot } from "../src/watch-scan.js";
 import * as rootContext from "../src/root-context.js";
 import * as listing from "../src/root-directory-list.js";
 import * as entries from "../src/root-directory-entry.js";
-import { admittedNativeChanges } from "../src/watch-alias.ts";
+
+const { admittedNativeChanges } = await vi.importActual<typeof import("../src/watch-alias.js")>(
+  fileURLToPath(new URL("../src/watch-alias.ts", import.meta.url)),
+);
 
 const fake = { directories: new Map<string, bigint>(), entries: new Map<string, { ino: bigint; directory: boolean }>() };
+const fakeRoot = Object.freeze({}) as RootContext;
 beforeEach(() => {
-  vi.spyOn(rootContext, "assertRootIdentityCurrent").mockResolvedValue(undefined);
-  vi.spyOn(rootContext, "resolvePathInRoot").mockImplementation(async (_, name) =>
-    ({ resolved: name === "." ? "" : name.slice(2) }) as Awaited<ReturnType<typeof rootContext.resolvePathInRoot>>);
-  vi.spyOn(listing, "createRootDirectoryObservationGuard").mockImplementation(async (_, name) => {
+  const original = {
+    assertRoot: rootContext.assertRootIdentityCurrent, resolve: rootContext.resolvePathInRoot,
+    createGuard: listing.createRootDirectoryObservationGuard, assertGuard: listing.assertRootDirectoryObservationGuard,
+    lookup: entries.lookupRootDirectoryEntry,
+  };
+  vi.spyOn(rootContext, "assertRootIdentityCurrent").mockImplementation(async (...args) => {
+    if (args[0] !== fakeRoot) await original.assertRoot(...args);
+  });
+  vi.spyOn(rootContext, "resolvePathInRoot").mockImplementation(async (...args) => {
+    if (args[0] !== fakeRoot) return original.resolve(...args);
+    return { resolved: args[1] === "." ? "" : args[1].slice(2) } as Awaited<ReturnType<typeof rootContext.resolvePathInRoot>>;
+  });
+  vi.spyOn(listing, "createRootDirectoryObservationGuard").mockImplementation(async (...args) => {
+    if (args[0] !== fakeRoot) return original.createGuard(...args);
+    const name = args[1];
     if (!fake.directories.has(name)) throw Object.assign(new Error("missing parent"), { code: "ENOENT" });
     return { realPath: name, stat: { dev: 1n, ino: fake.directories.get(name) } } as Awaited<ReturnType<typeof listing.createRootDirectoryObservationGuard>>;
   });
-  vi.spyOn(listing, "assertRootDirectoryObservationGuard").mockResolvedValue(undefined);
-  vi.spyOn(entries, "lookupRootDirectoryEntry").mockImplementation(async (_, guard, name) => {
+  vi.spyOn(listing, "assertRootDirectoryObservationGuard").mockImplementation(async (...args) => {
+    if (args[0] !== fakeRoot) await original.assertGuard(...args);
+  });
+  vi.spyOn(entries, "lookupRootDirectoryEntry").mockImplementation(async (...args) => {
+    if (args[0] !== fakeRoot) return original.lookup(...args);
+    const [, guard, name] = args;
     const parent = guard.realPath === "ALIAS" ? "selected" : guard.realPath;
     const entry = fake.entries.get(parent ? path.join(parent, name) : name);
     return entry && { identity: { dev: 1n, ino: entry.ino }, entry: {
@@ -45,7 +65,7 @@ it("never dismisses selected activity in random alias/folded streams with a fake
       scopeAnchors: new Map([["selected", { directory: "", name: "selected", target: { ...identity(2n), kind: "directory" } }]]),
     };
     const scopes = [{ path: "selected", kind: "tree" as const, depth: 2 }];
-    const result = await admittedNativeChanges({} as RootContext, scopes, snapshot, snapshot,
+    const result = await admittedNativeChanges(fakeRoot, scopes, snapshot, snapshot,
       { overflow: false, hints }, new AbortController().signal, limit, true);
     // The reference resolves identities independently of spelling. Coarse or
     // uncertain admission may ask for a full pass, but cannot return "unrelated".
@@ -54,7 +74,7 @@ it("never dismisses selected activity in random alias/folded streams with a fake
       expect(change.path === "selected" || change.path.startsWith("selected" + path.sep)).toBe(true);
       expect(change.path.includes("ALIAS")).toBe(false);
     }
-    const published = await admittedNativeChanges({} as RootContext, scopes, snapshot, snapshot,
+    const published = await admittedNativeChanges(fakeRoot, scopes, snapshot, snapshot,
       { overflow: false, hints }, new AbortController().signal, limit);
     if (hints.every(hint => hint.event === "subtree")) expect(published).toEqual([]);
     for (const change of published ?? []) expect(change.path.startsWith("ALIAS")).toBe(false);
