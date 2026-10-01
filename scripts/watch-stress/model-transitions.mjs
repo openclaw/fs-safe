@@ -19,13 +19,15 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "watch-transitions-"));
   const full = name => path.join(temporary, name);
   const writer = createRenameWriter();
-  const canonical = await fs.realpath(temporary), native = { losses: 0 };
-  lossObservers.set(canonical, native);
+  let canonical, failure;
+  const native = { losses: 0 }, opaqueNames = [];
   const owners = new Set(), events = [], health = [];
   const observed = new Set(), expected = new Map(), cache = new Map();
   let stage = "setup", pending = false, callbackError, owner, checks = 0;
   const features = { caseAlias: false, normalizationAlias: false, undecodable: process.platform === "linux" };
   try {
+    canonical = await fs.realpath(temporary);
+    lossObservers.set(canonical, native);
     await fs.mkdir(full("anchor"));
     await fs.mkdir(full("other"));
     await fs.writeFile(full("other/steady"), "unchanged");
@@ -66,9 +68,8 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
       return result;
     }
     const sorted = map => [...map].sort(([a], [b]) => a.localeCompare(b));
-    async function checkpoint(label, requireEvent = false) {
+    async function checkpoint(label, requiredEvent) {
       stage = label;
-      const start = events.length;
       for (let pass = 0; pass < passes; pass++) {
         if (mode === "poll" || !nativeOnly) await owner.reconcile();
         else await delay(25);
@@ -80,7 +81,9 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
           cache.clear();
           for (const [name, value] of next) { cache.set(name, value); observed.add(name); }
         }
-        if (JSON.stringify(sorted(cache)) === JSON.stringify(sorted(expected)) && (!requireEvent || events.length > start)) {
+        const notified = !requiredEvent || events.slice(requiredEvent.since).some(event =>
+          !event.changes || event.changes.some(change => change.path === requiredEvent.path));
+        if (JSON.stringify(sorted(cache)) === JSON.stringify(sorted(expected)) && notified) {
           assert.deepEqual(sorted(await snapshot()), sorted(expected), `reference model: ${label}`);
           checks++; return;
         }
@@ -152,6 +155,7 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
     await checkpoint("excluded subtree");
     if (features.undecodable) {
       const bad = Buffer.concat([Buffer.from(full("anchor") + path.sep), Buffer.from([0xff])]);
+      opaqueNames.push(bad);
       await fs.writeFile(bad, "undecodable unselected sibling");
       expected.set(path.join(selected, "file"), "file:after undecodable");
       await fs.writeFile(full(path.join(actual, "file")), "after undecodable");
@@ -159,8 +163,9 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
       await fs.unlink(bad);
     }
     if (process.platform !== "win32") {
+      const since = events.length;
       await fs.chmod(full(actual), 0o750);
-      await checkpoint("directory chmod", true);
+      await checkpoint("directory chmod", { since, path: selected });
     }
     // Retire and replace scopes while a separate owner remains live and quiet.
     const retiring = owner;
@@ -181,6 +186,7 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
       await fs.mkdir(full(actual), { recursive: true }); expected.set(selected, "directory");
       await checkpoint("selected undecodable preparation");
       const bad = Buffer.concat([Buffer.from(full(actual) + path.sep), Buffer.from([0xff])]);
+      opaqueNames.push(bad);
       await fs.writeFile(bad, "selected undecodable child");
       await assert.rejects(owner.reconcile(), { code: "invalid-path" });
       assert.equal(owner.health().state, "unavailable");
@@ -196,10 +202,18 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
     assert.equal(health.some(value => value.state === "unavailable"), features.undecodable);
     return { checks, features, maxPendingPaths, invalidations: events.length, overflows: events.filter(event => event.reason === "overflow").length, ...writer.metrics };
   } catch (cause) {
-    throw new Error(`watch transitions seed ${seed}, ${mode}, ${stage}: ${cause.message}`, { cause });
+    failure = new Error(`watch transitions seed ${seed}, ${mode}, ${stage}: ${cause?.message ?? String(cause)}`, { cause });
+    throw failure;
   } finally {
     lossObservers.delete(canonical);
-    await Promise.all([...owners].map(owner => owner.close()));
-    await fs.rm(temporary, { force: true, recursive: true });
+    const closed = await Promise.allSettled([...owners].map(owner => Promise.resolve().then(() => owner.close())));
+    const errors = closed.filter(result => result.status === "rejected").map(result => result.reason);
+    for (const name of opaqueNames) {
+      try { await fs.unlink(name); }
+      catch (error) { if (error.code !== "ENOENT") errors.push(error); }
+    }
+    try { await fs.rm(temporary, { force: true, recursive: true }); }
+    catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(failure ? [failure, ...errors] : errors, "watch transition cleanup failed");
   }
 }

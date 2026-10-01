@@ -291,9 +291,13 @@ async function listGuardedDirectoryPath(
     const beforeObservation = getFsSafeTestHooks()?.beforeRootListObservation;
     if (beforeObservation) await beforeObservation(guard.realPath, withFileTypes);
     const names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName).sort();
-    entries = withFileTypes
-      ? names.map(name => pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name)), name))
-      : names;
+    if (withFileTypes) {
+      // readdir supplies literal child names beneath the already-canonical directory.
+      const prefix = guard.realPath.endsWith(path.sep) ? guard.realPath : `${guard.realPath}${path.sep}`;
+      entries = names.map(name => pathStatFromStats(fsSync.lstatSync(`${prefix}${name}`), name));
+    } else {
+      entries = names;
+    }
   } catch (error) {
     // Preserve ordinary observation errors only while the admitted directory is
     // still current. A post-admission replacement is an identity failure.

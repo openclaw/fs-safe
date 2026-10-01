@@ -4,9 +4,13 @@
 
 ### Performance
 
+- **Root metadata path assembly:** avoid renormalizing each literal child beneath its canonical directory, cutting 1,000-entry listing time by a further 19–23% and sampled allocations by 33–34% on Linux x64.
+
 - **Root metadata listings:** construct named metadata once per entry, reducing 1,000-entry listing time by 16% and sampled allocations by 27–28% on Linux x64, with all filesystem and identity checks retained.
 
 ### Fixes
+
+- **Atomic writes:** preserve both parent-directory preparation and descriptor-close failures, in operation-first order, for synchronous and asynchronous replacements.
 
 - **Watch overflow:** fold busy pending hints into guarded subtree reconciliation so unselected sibling churn beside a missing tree no longer exhausts the hint budget. ([#813](https://github.com/openclaw/fs-safe/pull/813))
 

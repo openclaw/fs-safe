@@ -49,7 +49,8 @@ if (values.replay) {
           (summary.transitions ??= []).push({ seed, mode, ...transition });
         } catch (error) {
           failed = true;
-          const failure = { seed, mode, phase: "transitions", error: String(error.stack), cause: String(error.cause?.stack ?? "") };
+          const failure = { seed, mode, phase: "transitions", error: String(error.stack), cause: String(error.cause?.stack ?? ""),
+            errors: error instanceof AggregateError ? error.errors.map(value => String(value?.stack ?? value)) : undefined };
           summary.failures.push(failure); console.error(JSON.stringify(failure)); return;
         }
       }
