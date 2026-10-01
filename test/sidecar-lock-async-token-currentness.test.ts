@@ -11,29 +11,10 @@ import {
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { deferred } from "./helpers/deferred.js";
+import { managerState, requiredNativeMode, rejection, freshProbe } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
 type Authority = "raw" | "root";
-type ManagerState = {
-  admissions: Map<string, object>;
-  held: Map<string, HeldSidecarLock>;
-};
-
-function managerState(key: string): ManagerState {
-  return (Reflect.get(globalThis, managersKey) as Map<string, ManagerState>).get(key)!;
-}
-
-function requiredNativeMode(): "off" | "require" {
-  return process.env.FS_SAFE_NATIVE_MODE === "require" ? "require" : "off";
-}
-
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  return await promise.then(
-    () => { throw new Error("expected acquisition to reject"); },
-    (error: unknown) => error,
-  );
-}
 
 function pauseRawObservation(
   authority: Authority,
@@ -50,23 +31,6 @@ function pauseRawObservation(
   __setFsSafeTestHooksForTest(authority === "raw"
     ? { beforeSidecarLockSnapshotOpen: pause }
     : { beforeRootReadFinalFence: pause });
-}
-
-async function freshProbe(
-  manager: ReturnType<typeof createSidecarLockManager>,
-  targetPath: string,
-  lockRoot: Awaited<ReturnType<typeof root>> | undefined,
-): Promise<void> {
-  const probe = await manager.acquire({
-    targetPath,
-    lockRoot,
-    staleMs: 30_000,
-    timeoutMs: 0,
-    retry: { retries: 0 },
-    payload: async () => ({ owner: "probe" }),
-  });
-  expect(await probe.verifyStillHeld()).toBe(true);
-  await probe.release();
 }
 
 afterEach(() => {
@@ -89,7 +53,7 @@ describe("async sidecar admission token currentness", () => {
         targetPath, lockRoot, staleMs: 30_000,
         payload: async () => ({ owner: "holder" }),
       });
-      const state = managerState(key);
+      const state = managerState<HeldSidecarLock>(key);
       const originalHeld = state.held.get(holder.normalizedTargetPath)!;
       const originalRaw = await fs.readFile(holder.lockPath, "utf8");
       const entered = deferred(), resume = deferred();
@@ -142,7 +106,7 @@ describe("async sidecar admission token currentness", () => {
         targetPath, lockRoot, staleMs: 30_000,
         payload: async () => ({ owner: "holder" }),
       });
-      const state = managerState(key);
+      const state = managerState<HeldSidecarLock>(key);
       const normalized = holder.normalizedTargetPath;
       const originalHeld = state.held.get(normalized)!;
       const replacement = { lockPath: "replacement" } as HeldSidecarLock;
@@ -211,8 +175,8 @@ describe("async sidecar admission token currentness", () => {
         expect(await rejection(manager.acquire(options))).toMatchObject({ code: "file_lock_timeout" });
         await release;
         expect(parser).not.toHaveBeenCalled();
-        expect(managerState(key).held.size).toBe(0);
-        expect(managerState(key).admissions.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(key).held.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
       } finally {
         await release?.catch(() => undefined);
         await holder.release().catch(() => undefined);
@@ -236,7 +200,7 @@ describe("async sidecar admission token currentness", () => {
       const lockRoot = authority === "root" ? await root(directory) : undefined;
       const key = `stale-token:${stage}:${authority}:${directory}`;
       const manager = createSidecarLockManager(key);
-      const state = managerState(key);
+      const state = managerState<HeldSidecarLock>(key);
       const normalized = path.join(await fs.realpath(directory), path.basename(targetPath));
       const unrelatedTarget = path.join(directory, "unrelated.json");
       const replacement = { lockPath: "replacement" } as HeldSidecarLock;

@@ -10,19 +10,9 @@ import {
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { deferred } from "./helpers/deferred.js";
+import { managerState } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
-
-type ManagerState = {
-  held: Map<string, unknown>;
-  admissions: Map<string, object>;
-};
-
-function managerState(key: string): ManagerState {
-  const managers = Reflect.get(globalThis, managersKey) as Map<string, ManagerState>;
-  return managers.get(key)!;
-}
 
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
