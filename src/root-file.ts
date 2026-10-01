@@ -157,19 +157,25 @@ export function matchRootFileOpenFailure<T>(
   return handlers.fallback(failure);
 }
 
-function openRootFileResolved(params: ResolvedRootFilePath & RootFileOpenSettings): RootFileOpenResult {
+function finalizeRootFileOpen(params: RootFileOpenSettings & {
+  resolved: ResolvedRootFilePath | RootFileOpenResult;
+}): RootFileOpenResult {
+  if ("ok" in params.resolved) {
+    return params.resolved;
+  }
+  const resolved = params.resolved;
   const rejectHardlinks = params.rejectHardlinks ?? true;
   const opened = openPinnedFileSync({
-    filePath: params.absolutePath,
-    resolvedPath: params.resolvedPath,
+    filePath: resolved.absolutePath,
+    resolvedPath: resolved.resolvedPath,
     rejectHardlinks,
     maxBytes: params.maxBytes,
     allowedType: params.allowedType,
     ioFs: params.ioFs,
     finalAdmission: createRootFileFinalAdmission(
       params.ioFs,
-      params.rootObservation,
-      params.boundaryLabel,
+      resolved.rootObservation,
+      resolved.boundaryLabel,
       rejectHardlinks,
     ),
   });
@@ -181,27 +187,8 @@ function openRootFileResolved(params: ResolvedRootFilePath & RootFileOpenSetting
     path: opened.path,
     fd: opened.fd,
     stat: opened.stat,
-    rootRealPath: params.rootRealPath,
+    rootRealPath: resolved.rootRealPath,
   };
-}
-
-function finalizeRootFileOpen(params: RootFileOpenSettings & {
-  resolved: ResolvedRootFilePath | RootFileOpenResult;
-}): RootFileOpenResult {
-  if ("ok" in params.resolved) {
-    return params.resolved;
-  }
-  return openRootFileResolved({
-    absolutePath: params.resolved.absolutePath,
-    resolvedPath: params.resolved.resolvedPath,
-    rootRealPath: params.resolved.rootRealPath,
-    boundaryLabel: params.resolved.boundaryLabel,
-    rootObservation: params.resolved.rootObservation,
-    maxBytes: params.maxBytes,
-    rejectHardlinks: params.rejectHardlinks,
-    allowedType: params.allowedType,
-    ioFs: params.ioFs,
-  });
 }
 
 export async function openRootFile(
