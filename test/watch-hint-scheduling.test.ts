@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import type { NativeBinding } from "../src/native.js";
 import * as native from "../src/watch-native.js";
-import * as aliases from "../src/watch-alias.js";
+import * as aliases from "../src/watch-hints.js";
 import { __setFsSafeTestHooksForTest as hooks } from "../src/test-hooks.js";
 import { watch, type WatchInvalidation, type WatchScope, type WatchSubscription } from "../src/watch.js";
 import { useRealTempDirs } from "./helpers/vitest.js";

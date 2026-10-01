@@ -21,6 +21,16 @@ describe("bounded advisory hints", () => {
     }
     expect(nativeChanges(scopes, undefined, { overflow: true, hints: [] })).toBeUndefined();
   });
+  it("merges duplicate paths at capacity without weakening structural hints or changing order", () => {
+    const before = snapshot([["config.json", "file:1:2:3:4:5"]]);
+    const hints = ["change", "rename", "change"].map(event => ({ directory: "", name: "config.json", event: event as "change" | "rename" }));
+    const changes = nativeChanges(scopes, before, { overflow: false, hints }, 1);
+    expect(changes).toEqual([{ path: "config.json", type: "structural" }]);
+    const merged = guardedHintChanges(scopes, before, before, changes, [{ path: "config.json", type: "content" }], 1);
+    expect(merged).toEqual(changes);
+    expect(Object.isFrozen(merged![0])).toBe(true);
+    expect(nativeChanges(scopes, before, { overflow: false, hints: [...hints, { directory: "skills", name: "new", event: "rename" }] }, 1)).toBeUndefined();
+  });
   it("distinguishes structural and content reconciliation without using numeric metadata as authority", () => {
     const before = snapshot([["file", "file:1:2:3:4:5"], ["link", "symlink:1:3:4:5:6"]]);
     const after = snapshot([["file", "file:1:2:4:5:5"], ["link", "symlink:1:4:4:5:6"]]);
