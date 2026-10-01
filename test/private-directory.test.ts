@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -14,7 +13,7 @@ import { inspectPathPermissions } from "../src/permissions.js";
 import { inspectWindowsAcl } from "../src/permissions-windows.js";
 import { createPrivateDirectory } from "../src/permissions-public.js";
 import { expectFsSafeError } from "./helpers/security.js";
-import { itPosix } from "./helpers/vitest.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
 try {
@@ -22,33 +21,24 @@ try {
 } catch {
   // Ordinary JS jobs do not build a host binding.
 }
-const tempDirs: string[] = [];
-
-async function tempRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-private-dir-"));
-  tempDirs.push(root);
-  return root;
-}
+const { tempRoot } = useTempDirs();
 
 afterEach(async () => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
-  await Promise.all(
-    tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
-  );
 });
 
 describe("createPrivateDirectory", () => {
   itPosix("fails closed without mutating POSIX paths", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-private-dir-");
     const target = path.join(root, "private");
     await expectFsSafeError(createPrivateDirectory(target), "helper-unavailable");
     await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("fails closed when Windows native mode requires a missing binding", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-private-dir-");
     const target = path.join(root, "fallback");
     configureFsSafeNative({ mode: "require" });
     __setNativeLoaderForTest(() => { throw new Error("optional native package omitted"); });
@@ -62,7 +52,7 @@ describe("createPrivateDirectory", () => {
   it.runIf(process.platform === "win32" && Boolean(native))(
     "rejects ambiguous components before creating any directory",
     async () => {
-      const root = await tempRoot();
+      const root = await tempRoot("fs-safe-private-dir-");
       __setNativeLoaderForTest(() => native!);
       configureFsSafeNative({ mode: "require" });
       for (const suffix of [
@@ -85,7 +75,7 @@ describe("createPrivateDirectory", () => {
   it.runIf(process.platform === "win32" && Boolean(native))(
     "preserves existing empty and populated directories",
     async () => {
-      const root = await tempRoot();
+      const root = await tempRoot("fs-safe-private-dir-");
       __setNativeLoaderForTest(() => native!);
       configureFsSafeNative({ mode: "require" });
       for (const populated of [false, true]) {
@@ -107,7 +97,7 @@ describe("createPrivateDirectory", () => {
   it.runIf(process.platform === "win32" && Boolean(native))(
     "rejects an immediate parent junction without creating its child",
     async () => {
-      const root = await tempRoot();
+      const root = await tempRoot("fs-safe-private-dir-");
       const parent = path.join(root, "parent");
       const junction = path.join(root, "junction");
       await fs.mkdir(parent);
@@ -125,7 +115,7 @@ describe("createPrivateDirectory", () => {
   it.runIf(process.platform === "win32" && Boolean(native))(
     "creates and inspects the direct native DACL",
     async () => {
-      const root = await tempRoot();
+      const root = await tempRoot("fs-safe-private-dir-");
       const target = path.join(root, "native");
       __setNativeLoaderForTest(() => native!);
       configureFsSafeNative({ mode: "require" });

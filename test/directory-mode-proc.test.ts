@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pinNodeDirectoryForMode } from "../src/directory-mode-node.js";
 import { withExtractionDeadline } from "../src/archive-deadline.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -16,12 +17,6 @@ afterEach(async () => {
   Object.defineProperty(process, "arch", architecture);
   for (const dir of restoreModes.splice(0)) await fs.chmod(dir, 0o700).catch(() => undefined);
 });
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
-}
 
 // These are mocked Linux namespace/dispatch tests using a real owned directory fd.
 // The parent separately runs the actual non-root Linux O_PATH/procfs syscall proof.

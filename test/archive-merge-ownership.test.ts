@@ -6,6 +6,7 @@ import { withExtractionDeadline } from "../src/archive-deadline.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 
@@ -29,12 +30,6 @@ async function fixture() {
     base, source, target,
     params: { sourceDir, destinationDir, destinationRealDir: destinationDir },
   };
-}
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
 }
 
 describe("archive merge cleanup ownership", () => {

@@ -1,27 +1,18 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import type { RootWalkEntry } from "../src/root-walk.js";
+import { useTempDirs } from "./helpers/vitest.js";
 
-const tempDirs: string[] = [];
-
-async function tempRoot(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-root-walk-options-"));
-  tempDirs.push(directory);
-  return directory;
-}
+const { tempRoot } = useTempDirs();
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(
-    tempDirs.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })),
-  );
 });
 
 it("prunes skip-subtree directories while plain skip still descends", async () => {
-  const directory = await tempRoot();
+  const directory = await tempRoot("fs-safe-root-walk-options-");
   await fs.mkdir(path.join(directory, "keep"));
   await fs.mkdir(path.join(directory, "skip"));
   await fs.writeFile(path.join(directory, "keep", "value.txt"), "keep");
@@ -54,7 +45,7 @@ it("prunes skip-subtree directories while plain skip still descends", async () =
 });
 
 it("counts skipped entries against the traversal budget", async () => {
-  const directory = await tempRoot();
+  const directory = await tempRoot("fs-safe-root-walk-options-");
   await fs.writeFile(path.join(directory, "one.txt"), "one");
   await fs.writeFile(path.join(directory, "two.txt"), "two");
   const capability = await root(directory);
@@ -82,7 +73,7 @@ it.each([
   { name: "depth", options: { maxDepth: 1 }, marker: "a/inner" },
   { name: "entry", options: { maxEntries: 2 }, marker: "a/inner/file.txt" },
 ])("ends every generator frame after a nested $name limit", async ({ options, marker }) => {
-  const directory = await tempRoot();
+  const directory = await tempRoot("fs-safe-root-walk-options-");
   await fs.mkdir(path.join(directory, "a", "inner"), { recursive: true });
   await fs.writeFile(path.join(directory, "a", "inner", "file.txt"), "nested");
   await fs.writeFile(path.join(directory, "z.txt"), "later sibling");
@@ -105,7 +96,7 @@ it.each([
 });
 
 it("reports failed directory subtrees and continues when requested", async () => {
-  const directory = await tempRoot();
+  const directory = await tempRoot("fs-safe-root-walk-options-");
   await fs.mkdir(path.join(directory, "broken"));
   await fs.mkdir(path.join(directory, "healthy"));
   await fs.writeFile(path.join(directory, "healthy", "value.txt"), "healthy");
@@ -145,7 +136,7 @@ it("reports failed directory subtrees and continues when requested", async () =>
 });
 
 it("observes an abort that occurs while an empty directory is being listed", async () => {
-  const directory = await tempRoot();
+  const directory = await tempRoot("fs-safe-root-walk-options-");
   const controller = new AbortController();
   const capability = await root(directory);
   const readdir = fs.readdir.bind(fs);
@@ -171,7 +162,7 @@ it.each([
   { symlinkPolicy: "skip", onDirectoryError: "unexpected" },
   { symlinkPolicy: "skip", order: "unexpected" },
 ])("rejects invalid runtime walk policies: %j", async (options) => {
-  const directory = await tempRoot();
+  const directory = await tempRoot("fs-safe-root-walk-options-");
   const capability = await root(directory);
 
   await expect(async () => {

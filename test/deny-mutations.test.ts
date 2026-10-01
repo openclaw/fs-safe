@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveMutationComparablePaths } from "../src/deny-mutations.js";
@@ -12,12 +12,10 @@ import {
 } from "../src/root-path-existing.js";
 
 const skipOnWindows = process.platform === "win32";
-const { tempDirs, tempRoot } = useTempDirs();
-
+const { tempRoot } = useTempDirs();
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
 describe("root denyMutations policies", () => {

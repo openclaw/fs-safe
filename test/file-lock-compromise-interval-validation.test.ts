@@ -9,6 +9,7 @@ import {
 } from "../src/file-lock.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { useTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useTempDirs();
 const invalidIntervals = [
@@ -27,14 +28,6 @@ const intervalError = new RangeError(
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 describe("file-lock compromise interval validation", () => {
   it.each(invalidIntervals)(

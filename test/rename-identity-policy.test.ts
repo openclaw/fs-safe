@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix } from "./helpers/vitest.js";
 import { configureFsSafeNative, root as openRoot } from "../src/index.js";
