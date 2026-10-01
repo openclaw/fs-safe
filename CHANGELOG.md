@@ -8,6 +8,8 @@
 
 ### Fixes
 
+- **Watch name handling:** ignore undecodable unselected siblings, fail closed for selected tree names on Linux and macOS, and preserve Linux directory lifecycle detail without spurious overflow.
+
 - **Windows UNC admission:** Root, root-file readers, `pathScope`, secret-file writers, sibling-temp output, trash admission, and archive output preparation reject foreign UNC shares and device namespaces before probing them, preventing attacker-chosen SMB lookups, NTLM exposure, and stalls. Existing containment errors are preserved. ([#781](https://github.com/openclaw/fs-safe/pull/781))
 - **Linux watch isolation:** closing or replacing a watch, including after a scan failure, no longer overflows unrelated subscriptions. ([#782](https://github.com/openclaw/fs-safe/pull/782))
 - **macOS watch startup:** clean up rejected FSEvents configuration and failed stream startup with the correct lifecycle calls, keeping the registration available for retry. ([#769](https://github.com/openclaw/fs-safe/pull/769))

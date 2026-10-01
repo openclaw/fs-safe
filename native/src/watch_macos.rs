@@ -121,13 +121,13 @@ unsafe extern "C" fn callback(_: Ref, info: Ref, count: usize, paths: Ref, flags
     let owner = unsafe { &*(info.cast::<Owner>()) };
     for index in 0..count {
         let flag = unsafe { *flags.add(index) };
-        let path = unsafe { CStr::from_ptr(*(paths.cast::<*const c_char>()).add(index)) }.to_str();
-        owner.record(path.ok(), flag);
+        let path = unsafe { CStr::from_ptr(*(paths.cast::<*const c_char>()).add(index)) }.to_bytes();
+        owner.record(path, flag);
     }
     owner.notify.wake();
 }
 impl Owner {
-    fn record(&self, path: Option<&str>, flags: u32) {
+    fn record(&self, path: &[u8], flags: u32) {
         let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // Dropped/wrapped streams, RootChanged and Unmount require guarded reconciliation.
         if flags & (1 | 2 | 4 | 8 | 32 | 128) != 0 {
@@ -142,16 +142,26 @@ impl Owner {
             return;
         }
         let relative = path
-            .and_then(|p| p.strip_prefix(self.root.trim_end_matches('/')))
-            .and_then(|p| p.strip_prefix('/'))
+            .strip_prefix(self.root.trim_end_matches('/').as_bytes())
+            .and_then(|p| p.strip_prefix(b"/"))
             .filter(|p| !p.is_empty());
         let Some(relative) = relative else {
             return; // Activity only: never retain an outside pathname.
         };
-        if relative.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
+        if relative.split(|b| *b == b'/').any(|s| s.is_empty() || s == b"." || s == b"..") {
             return;
         }
-        let (directory, name) = relative.rsplit_once('/').unwrap_or(("", relative));
+        let mut directory = String::new();
+        for component in relative.split(|b| *b == b'/') {
+            let Ok(component) = std::str::from_utf8(component) else {
+                // Keep the nearest decodable directory, never a lossy child spelling.
+                pending.push_children(directory, Some(flags));
+                return;
+            };
+            if !directory.is_empty() { directory.push('/'); }
+            directory.push_str(component);
+        }
+        let (directory, name) = directory.rsplit_once('/').unwrap_or(("", &directory));
         pending.push_with_flags(
             directory.into(),
             name.into(),
@@ -266,7 +276,7 @@ impl Backend {
     pub fn test_event(&self, id: u32, path: &str, flags: u32) -> NativeResult<()> {
         let owner =
             self.owners.get(&id).ok_or_else(|| native_error("EINVAL", "unknown watch registration"))?;
-        owner.record(Some(path), flags);
+        owner.record(path.as_bytes(), flags);
         Ok(())
     }
     pub fn waker(&self) -> Waker {

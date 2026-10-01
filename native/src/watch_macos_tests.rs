@@ -631,14 +631,27 @@ fn decoder_preserves_inside_names_and_discards_outside_paths() {
         pending: pending.clone(),
         notify: backend.owners[&registration.id].notify.clone(),
     };
-    events.record(Some("/admitted/kept"), 0x1000);
+    events.record(b"/admitted/kept", 0x1000);
     let batch = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().unwrap();
     assert!(!batch.overflow);
     assert_eq!(batch.hints.len(), 1);
     assert_eq!(batch.hints[0].name, "kept");
     for path in ["/admitted-other/private", "/admitted/../private", "/outside/private"] {
-        events.record(Some(path), 0x1000);
+        events.record(path.as_bytes(), 0x1000);
         assert!(pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().is_none());
+    }
+    for (path, directory) in [(b"/admitted/selected/\xff".as_slice(), "selected"),
+        (b"/admitted/selected/\xff/deeper".as_slice(), "selected"), (b"/admitted/\xff".as_slice(), "")] {
+        events.record(path, 0x1000);
+        let batch = pending.lock().unwrap().take().unwrap();
+        assert!(!batch.overflow);
+        assert_eq!(batch.hints[0].directory, directory);
+        assert_eq!(batch.hints[0].nameless_child, Some(true));
+        assert!(batch.hints[0].name.is_empty());
+    }
+    for path in [b"/admitted-other/\xff".as_slice(), b"/admitted/../\xff".as_slice()] {
+        events.record(path, 0x1000);
+        assert!(pending.lock().unwrap().take().is_none());
     }
     drop(events);
     backend.remove(registration.id).unwrap();

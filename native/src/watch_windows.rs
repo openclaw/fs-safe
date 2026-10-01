@@ -352,4 +352,19 @@ mod tests {
             assert!(pending.take().unwrap().overflow);
         }
     }
+
+    #[test]
+    fn unpaired_utf16_surrogates_fail_closed_instead_of_disappearing() {
+        let mut pending = Pending { limit: 2, ..Pending::default() };
+        for invalid in [0xd800u16, 0xdc00u16] {
+            let mut bytes = Vec::new();
+            bytes.extend(0u32.to_le_bytes());
+            bytes.extend(1u32.to_le_bytes());
+            bytes.extend(2u32.to_le_bytes());
+            bytes.extend(invalid.to_le_bytes());
+            decode(&mut pending, &bytes);
+            let batch = pending.take().unwrap();
+            assert!(batch.overflow && batch.hints.is_empty());
+        }
+    }
 }

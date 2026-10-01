@@ -1,4 +1,4 @@
-use super::{Directory, Notify, SharedPending};
+use super::{Directory, Notify, Pending, SharedPending};
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -243,27 +243,11 @@ impl Backend {
                     continue;
                 }
                 if let Some(owners) = self.watches.get(&event.wd) {
-                    let bytes = &buffer[start..end];
-                    let bytes = &bytes[..bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len())];
-                    let name = std::str::from_utf8(bytes).ok().filter(|s| !s.is_empty());
                     for (id, directories) in owners {
                         if let Some(pending) = self.pending.get(id) {
                             let mut pending = pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                            if let Some(name) = name {
-                                for directory in directories {
-                                    pending.push(
-                                        directory.clone(),
-                                        name.into(),
-                                        event.mask
-                                            & (libc::IN_CREATE
-                                                | libc::IN_DELETE
-                                                | libc::IN_MOVED_FROM
-                                                | libc::IN_MOVED_TO)
-                                            != 0,
-                                    );
-                                }
-                            } else {
-                                pending.overflow();
+                            for directory in directories {
+                                record(&mut pending, directory, &buffer[start..end], event.mask);
                             }
                         }
                     }
@@ -275,6 +259,29 @@ impl Backend {
                 }
             }
         }
+    }
+}
+
+fn record(pending: &mut Pending, directory: &str, bytes: &[u8], mask: u32) {
+    if bytes.is_empty() {
+        // Self-events name the watched directory, not one of its children.
+        if directory.is_empty() {
+            pending.overflow();
+        } else {
+            let (parent, name) = directory.rsplit_once('/').unwrap_or(("", directory));
+            pending.push(parent.into(), name.into(), true);
+        }
+        return;
+    }
+    let Some(end) = bytes.iter().position(|b| *b == 0).filter(|end| *end > 0) else {
+        pending.overflow();
+        return;
+    };
+    match std::str::from_utf8(&bytes[..end]) {
+        Ok(name) => pending.push(directory.into(), name.into(),
+            mask & (libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO) != 0),
+        // JS admits only the directory, never a lossy child spelling.
+        Err(_) => pending.push_children(directory.into(), None),
     }
 }
 
@@ -334,6 +341,42 @@ mod tests {
             if !auto_removed {
                 fs::remove_dir_all(&root).unwrap();
             }
+        }
+    }
+
+    #[test]
+    fn classifies_children_self_events_and_malformed_names() {
+        for mask in [libc::IN_ATTRIB, libc::IN_MODIFY, libc::IN_MOVE_SELF, libc::IN_DELETE_SELF, libc::IN_IGNORED] {
+            let mut pending = Pending { limit: 16, ..Default::default() };
+            record(&mut pending, "parent/child", &[], mask);
+            let batch = pending.take().unwrap();
+            assert!(!batch.overflow);
+            assert_eq!(batch.hints[0].directory, "parent");
+            assert_eq!(batch.hints[0].name, "child");
+            assert!(batch.hints[0].structural);
+            assert_eq!(batch.hints[0].nameless_child, None);
+            record(&mut pending, "", &[], mask);
+            assert!(pending.take().unwrap().overflow);
+        }
+        let mut pending = Pending { limit: 16, ..Default::default() };
+        record(&mut pending, "selected", &[0xff, 0, 0, 0], libc::IN_CREATE);
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow);
+        assert_eq!(batch.hints[0].directory, "selected");
+        assert!(batch.hints[0].name.is_empty());
+        assert_eq!(batch.hints[0].nameless_child, Some(true));
+        pending.restore(batch);
+        assert_eq!(pending.take().unwrap().hints[0].nameless_child, Some(true));
+        for mask in [libc::IN_CREATE, libc::IN_MODIFY] {
+            record(&mut pending, "selected", b"valid\0\0\0", mask);
+            let hint = pending.take().unwrap().hints.remove(0);
+            assert_eq!(hint.name, "valid");
+            assert_eq!(hint.structural, mask == libc::IN_CREATE);
+            assert_eq!(hint.nameless_child, None);
+        }
+        for bytes in [&b"unterminated"[..], &b"\0\0\0\0"[..]] {
+            record(&mut pending, "selected", bytes, libc::IN_CREATE);
+            assert!(pending.take().unwrap().overflow);
         }
     }
 

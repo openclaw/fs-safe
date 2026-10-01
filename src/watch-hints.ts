@@ -31,14 +31,26 @@ export function scopedChanges(scopes: readonly WatchScope[], change: WatchChange
   }
   return [...result.values()];
 }
+/** An undecodable child cannot equal a validated literal scope component. */
+export function selectedWatchChildren(scopes: readonly WatchScope[], directory: string): boolean {
+  return scopes.some(scope => scope.kind === "tree" && (scope.path === directory ? scope.depth! > 0 :
+    below(scope.path, directory) && distance(scope.path, directory) < scope.depth!));
+}
+function literalName(name: unknown): name is string {
+  return typeof name === "string" && !!name && name !== "." && name !== ".." && !name.includes("\0") && !name.includes("/") &&
+    (process.platform !== "win32" || !/[\\:]/.test(name));
+}
 export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnapshot | undefined, batch: NativeWatchBatch, limit = 256, after?: WatchSnapshot): WatchChange[] | undefined {
   if (batch.overflow) return undefined;
   const result = new Map<string, WatchChange>();
   for (const hint of batch.hints) {
     const name = hint.name;
     // Backend filenames are untrusted hints. Never resolve or perform I/O on them.
-    if (typeof name !== "string" || !name || name === "." || name === ".." || name.includes("\0") || name.includes("/") || (process.platform === "win32" && /[\\:]/.test(name))) return undefined;
-    const relative = hint.directory ? path.join(hint.directory, name) : name;
+    if (typeof hint.directory !== "string" || (hint.directory && !hint.directory.split(path.sep).every(literalName))) return undefined;
+    const children = hint.event === "children";
+    if (children ? name !== "" : !literalName(name)) return undefined;
+    if (children && !selectedWatchChildren(scopes, hint.directory)) continue;
+    const relative = children ? hint.directory : hint.directory ? path.join(hint.directory, name) : name;
     if (excludedWatchPath(snapshot, relative) || excludedWatchPath(after, relative)) continue;
     for (const change of scopedChanges(scopes, {
       path: relative,

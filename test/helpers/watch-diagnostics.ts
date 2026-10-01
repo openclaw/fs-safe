@@ -2,11 +2,12 @@ import { vi } from "vitest";
 import { getNativeBinding } from "../../src/native.js";
 import * as scanner from "../../src/watch-scan.js";
 import type { WatchInvalidation } from "../../src/watch.js";
+import type { NativeWatchWireBatch } from "../../src/watch-native.js";
 import type { WatchSubscription } from "../../src/watch.js";
 import { setTimeout as delay } from "node:timers/promises";
 
 /** Bounded synthetic-fixture evidence; raw backend hints never enter public invalidations. */
-export function watchDiagnostics(selected: string) {
+export function watchDiagnostics(selected: string, onBatch?: (batch: NativeWatchWireBatch) => void) {
   let phase = "setup";
   let activity = 0;
   const start = performance.now();
@@ -29,6 +30,7 @@ export function watchDiagnostics(selected: string) {
     const register = native.watchRegister;
     vi.spyOn(native, "watchRegister").mockImplementation((root, limit, callback, persistent) => register(root, limit, batch => {
       activity++;
+      onBatch?.(batch);
       add({ ...stamp(), kind: "native", ...batch });
       for (const hint of batch.hints) if (hint.name === selected) {
         selectedHints.push({ ...stamp(), ...hint, flagsHex: typeof hint.flags === "number" ? `0x${hint.flags.toString(16)}` : undefined, ...latest });

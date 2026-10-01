@@ -73,6 +73,18 @@ without descent. Bounded exclusion records recognize late deletion hints.
 Genuine backend event loss and detail-budget exhaustion still invalidate every
 scope, including when an excluded subtree caused the underlying event pressure.
 
+On Linux and macOS, an undecodable child name triggers a structural hint for its
+containing directory. If that directory's children are selected by a tree scope
+with remaining depth, a guarded scan fails closed with `invalid-path` while the
+name remains present. An undecodable sibling beside an ancestor or missing-scope
+anchor is ignored: it cannot match a validated literal scope component. Raw or
+lossily decoded names are never published or used for child I/O. Windows already
+fails closed by reconciling after an undecodable UTF-16 notification.
+
+Linux nameless self-events (including directory chmod, rename and deletion) retain
+structural detail for the watched directory. Self-events for the Root itself,
+kernel queue overflow and malformed transport buffers still lose detail.
+
 ## Transport and mode
 
 | Platform/runtime | `auto` | Event transport / limitation |

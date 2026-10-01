@@ -26,6 +26,7 @@ pub struct WatchHint {
     pub name: String,
     pub structural: bool,
     pub flags: Option<u32>,
+    pub nameless_child: Option<bool>,
 }
 #[napi(object)]
 pub struct WatchBatch {
@@ -40,7 +41,7 @@ use callback::Callback;
 mod memory;
 #[derive(Default)]
 pub(super) struct Pending {
-    paths: BTreeMap<(String, String), (bool, Option<u32>)>,
+    paths: BTreeMap<(String, String, bool), (bool, Option<u32>)>,
     overflow: bool,
     limit: usize,
     error: Option<String>,
@@ -63,10 +64,17 @@ impl Pending {
         structural: bool,
         flags: Option<u32>,
     ) {
+        self.push_hint(directory, name, structural, flags, false);
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    pub(super) fn push_children(&mut self, directory: String, flags: Option<u32>) {
+        self.push_hint(directory, String::new(), true, flags, true);
+    }
+    fn push_hint(&mut self, directory: String, name: String, structural: bool, flags: Option<u32>, nameless_child: bool) {
         if self.overflow {
             return;
         }
-        let key = (directory, name);
+        let key = (directory, name, nameless_child);
         if !self.paths.contains_key(&key) && self.paths.len() >= self.limit {
             self.overflow();
             return;
@@ -87,7 +95,8 @@ impl Pending {
             overflow: std::mem::take(&mut self.overflow),
             hints: std::mem::take(&mut self.paths)
                 .into_iter()
-                .map(|((directory, name), (structural, flags))| WatchHint {
+                .map(|((directory, name, nameless_child), (structural, flags))| WatchHint {
+                    nameless_child: nameless_child.then_some(true),
                     directory,
                     name,
                     structural,
@@ -102,7 +111,7 @@ impl Pending {
             self.overflow();
         }
         for hint in batch.hints {
-            self.push_with_flags(hint.directory, hint.name, hint.structural, hint.flags);
+            self.push_hint(hint.directory, hint.name, hint.structural, hint.flags, hint.nameless_child == Some(true));
         }
         if batch.error.is_some() {
             self.error = batch.error;
@@ -468,6 +477,23 @@ mod tests {
         pending.restore(batch);
         assert!(pending.take().is_some());
         assert!(pending.take().is_none());
+    }
+    #[test]
+    fn nameless_children_remain_distinct_bounded_hints_through_callback_retry() {
+        let mut pending = Pending { limit: 2, ..Pending::default() };
+        pending.push_children("selected".into(), Some(0x100));
+        pending.push_children("selected".into(), Some(0x200));
+        pending.push("selected".into(), "".into(), true);
+        let batch = pending.take().unwrap();
+        assert!(!batch.overflow && batch.hints.len() == 2);
+        pending.restore(batch);
+        let batch = pending.take().unwrap();
+        let hint = batch.hints.iter().find(|hint| hint.nameless_child == Some(true)).unwrap();
+        assert!(hint.structural && hint.name.is_empty());
+        assert_eq!(hint.flags, Some(0x300));
+        pending.restore(batch);
+        pending.push_children("another".into(), None);
+        assert!(pending.take().unwrap().overflow);
     }
     #[test]
     fn pending_is_bounded_and_overflow_erases_names() {
