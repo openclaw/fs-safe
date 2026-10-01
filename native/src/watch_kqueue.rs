@@ -1,5 +1,5 @@
 //! Descriptor-bound, nonrecursive transport for admitted entry scopes.
-use super::super::{SharedPending, WatchEntriesResult, WatchEntryRegistration};
+use super::super::{SharedPending, WatchEntriesResult, WatchEntryRegistration, unix_error as error};
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -13,15 +13,6 @@ const NOTES: u32 = libc::NOTE_WRITE
     | libc::NOTE_RENAME
     | libc::NOTE_REVOKE
     | libc::NOTE_LINK;
-
-fn error(operation: &str) -> napi::Error<String> {
-    crate::unix::os_error(
-        rustix::io::Errno::from_raw_os_error(
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO),
-        ),
-        operation,
-    )
-}
 
 fn event(ident: usize, filter: i16, flags: u16, fflags: u32) -> libc::kevent {
     libc::kevent { ident, filter, flags, fflags, data: 0, udata: std::ptr::null_mut() }
@@ -245,7 +236,7 @@ impl Queue {
             let detail = spec.target
                 && (spec.kind != "directory" || structural || event.fflags & libc::NOTE_ATTRIB != 0);
             if detail {
-                pending.push_with_flags(spec.directory.clone(), spec.name.clone(), structural, None);
+                pending.push(spec.directory.clone(), spec.name.clone(), structural, None);
             } else {
                 pending.rescan = true;
             }
