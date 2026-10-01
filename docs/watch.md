@@ -306,7 +306,9 @@ binding and never silently falls back to polling. The small
 `test/watch-model.test.ts` corpus runs in ordinary CI; native-event cases also run
 when `FS_SAFE_TEST_WATCH_EVENTS=1`. Keep fixtures on normal `os.tmpdir()` storage.
 
-Add `--transitions` to exercise a finite state corpus before each random sequence.
+The nightly watch-stress workflow includes 500 seeds per mode with the finite
+state corpus on all five runners. Add `--transitions` to exercise that corpus
+before each random sequence in a local run.
 It varies `maxPendingPaths` from 2 through 8, creates missing tree descendants
 beside concurrent sibling churn, uses filesystem-proven case and Unicode aliases,
 and covers atomic-save names, excluded subtrees, Linux undecodable siblings,

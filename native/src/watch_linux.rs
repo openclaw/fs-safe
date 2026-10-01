@@ -1,4 +1,4 @@
-use super::{Directory, Notify, Pending, SharedPending};
+use super::{Directory, Notify, Pending, SharedPending, unix_error as error};
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -27,17 +27,6 @@ pub(super) struct Backend {
     // rm_watch queues IN_IGNORED after any older events. Keep their former owner
     // known until that echo (or a fully drained queue) retires the descriptor.
     retiring: HashSet<i32>,
-}
-fn error(operation: &str) -> napi::Error<String> {
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ENOSPC) {
-        native_error("watch-limit", "inotify watch limit exhausted")
-    } else {
-        crate::unix::os_error(
-            rustix::io::Errno::from_raw_os_error(error.raw_os_error().unwrap_or(libc::EIO)),
-            operation,
-        )
-    }
 }
 impl Backend {
     pub fn new() -> NativeResult<Self> {
@@ -125,48 +114,33 @@ impl Backend {
             self.pending[&id].lock().unwrap_or_else(|poisoned| poisoned.into_inner()).overflow();
         }
         // Re-registration replaces this owner's old inode without disturbing aliases or peers.
-        let mut failure = None;
-        self.watches.retain(|old_wd, owners| {
-            if *old_wd == wd {
-                return true;
-            }
+        for (old_wd, owners) in &mut self.watches {
+            if *old_wd == wd { continue; }
             if let Some(names) = owners.get_mut(&id) {
                 names.remove(relative);
-                if names.is_empty() {
-                    owners.remove(&id);
-                }
+                if names.is_empty() { owners.remove(&id); }
             }
-            if !owners.is_empty() {
-                return true;
-            }
-            if unsafe { libc::inotify_rm_watch(self.fd.as_raw_fd(), *old_wd) } < 0
-                && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL)
-            {
-                failure.get_or_insert_with(|| error("replace inotify watch"));
-            } else {
-                self.retiring.insert(*old_wd);
-            }
-            false
-        });
-        failure.map_or(Ok(()), Err) // inotify owns the inode reference; both opened descriptors close here.
+        }
+        // inotify owns the inode reference; both opened descriptors close here.
+        self.retire_empty("replace inotify watch")
     }
     pub fn remove(&mut self, id: u32) -> NativeResult<()> {
         self.pending.remove(&id);
+        for owners in self.watches.values_mut() { owners.remove(&id); }
+        self.retire_empty("remove inotify watch")
+    }
+    fn retire_empty(&mut self, operation: &str) -> NativeResult<()> {
         let mut failure = None;
         self.watches.retain(|wd, owners| {
-            owners.remove(&id);
-            if owners.is_empty() {
-                if unsafe { libc::inotify_rm_watch(self.fd.as_raw_fd(), *wd) } < 0
-                    && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL)
-                {
-                    failure.get_or_insert_with(|| error("remove inotify watch"));
-                } else {
-                    self.retiring.insert(*wd);
-                }
-                false
+            if !owners.is_empty() { return true; }
+            if unsafe { libc::inotify_rm_watch(self.fd.as_raw_fd(), *wd) } < 0
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL)
+            {
+                failure.get_or_insert_with(|| error(operation));
             } else {
-                true
+                self.retiring.insert(*wd);
             }
+            false
         });
         failure.map_or(Ok(()), Err)
     }
@@ -268,8 +242,7 @@ fn record(pending: &mut Pending, directory: &str, bytes: &[u8], mask: u32) {
         if directory.is_empty() {
             pending.overflow();
         } else {
-            let (parent, name) = directory.rsplit_once('/').unwrap_or(("", directory));
-            pending.push(parent.into(), name.into(), true);
+            pending.push_path(directory, true, None);
         }
         return;
     }
@@ -279,7 +252,7 @@ fn record(pending: &mut Pending, directory: &str, bytes: &[u8], mask: u32) {
     };
     match std::str::from_utf8(&bytes[..end]) {
         Ok(name) => pending.push(directory.into(), name.into(),
-            mask & (libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO) != 0),
+            mask & (libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO) != 0, None),
         // JS admits only the directory, never a lossy child spelling.
         Err(_) => pending.push_children(directory.into(), None),
     }

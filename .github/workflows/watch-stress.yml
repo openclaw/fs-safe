@@ -16,7 +16,7 @@ jobs:
   stress:
     name: Watch stress (${{ matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -103,7 +103,7 @@ jobs:
 
       - name: Model (500 seeds per mode)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: node scripts/watch-stress/model-runner.mjs --seed 1 --seeds 500 --mode both --concurrency 4 --steps 32 --settle 40 --output watch-stress-results/model.json
+        run: node scripts/watch-stress/model-runner.mjs --transitions --seed 1 --seeds 500 --mode both --concurrency 4 --steps 32 --settle 40 --output watch-stress-results/model.json
 
       - name: Short soak (2 minutes)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

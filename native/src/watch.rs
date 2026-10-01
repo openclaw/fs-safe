@@ -59,11 +59,7 @@ impl Pending {
         self.paths.clear();
         self.overflow = true;
     }
-    #[cfg(any(not(target_os = "macos"), test))]
-    pub(super) fn push(&mut self, directory: String, name: String, structural: bool) {
-        self.push_with_flags(directory, name, structural, None);
-    }
-    pub(super) fn push_with_flags(
+    pub(super) fn push(
         &mut self,
         directory: String,
         name: String,
@@ -71,6 +67,10 @@ impl Pending {
         flags: Option<u32>,
     ) {
         self.push_hint(directory, name, structural, flags, HintKind::Entry);
+    }
+    fn push_path(&mut self, relative: &str, structural: bool, flags: Option<u32>) {
+        let (directory, name) = relative.rsplit_once(std::path::MAIN_SEPARATOR).unwrap_or(("", relative));
+        self.push(directory.into(), name.into(), structural, flags);
     }
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(super) fn push_children(&mut self, directory: String, flags: Option<u32>) {
@@ -195,7 +195,7 @@ pub(super) struct Directory {
     root_identity: crate::ExactFileIdentity,
     identity: crate::ExactFileIdentity,
 }
-type Reply = mpsc::SyncSender<NativeResult<()>>;
+type Reply<T = ()> = mpsc::SyncSender<NativeResult<T>>;
 enum Command {
     Register(u32, String, Registration, Reply),
     Add(u32, Directory, Reply),
@@ -207,7 +207,7 @@ enum Command {
     #[cfg(target_os = "macos")]
     Configure(u32, Vec<String>, Vec<String>, Reply),
     #[cfg(target_os = "macos")]
-    Entries(u32, Vec<WatchEntryRegistration>, mpsc::SyncSender<NativeResult<WatchEntriesResult>>),
+    Entries(u32, Vec<WatchEntryRegistration>, Reply<WatchEntriesResult>),
 }
 #[derive(Clone)]
 struct Commands {
@@ -246,8 +246,7 @@ static THREADS: AtomicU32 = AtomicU32::new(0);
 thread_local! {
     static CLEANUPS: std::cell::RefCell<HashSet<u32>> = std::cell::RefCell::new(HashSet::new());
 }
-// napi-rs 3.12's removal API leaves its boxed cleanup context allocated. Node
-// treats this data as opaque: the never-reused id needs no heap allocation.
+// Node treats cleanup data as opaque: the never-reused id needs no heap allocation.
 fn cleanup_data(id: u32) -> *mut c_void {
     std::ptr::without_provenance_mut(id as usize)
 }
@@ -256,6 +255,15 @@ unsafe extern "C" fn cleanup_env(data: *mut c_void) {
     if CLEANUPS.with(|hooks| hooks.borrow_mut().remove(&id)) {
         let _ = unregister(id);
     }
+}
+#[cfg(unix)]
+fn unix_error(operation: &str) -> napi::Error<String> {
+    let code = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+    #[cfg(target_os = "linux")]
+    if code == libc::ENOSPC {
+        return native_error("watch-limit", "inotify watch limit exhausted");
+    }
+    crate::unix::os_error(rustix::io::Errno::from_raw_os_error(code), operation)
 }
 fn unavailable() -> napi::Error<String> {
     native_error("ENOTSUP", "native watch hub is unavailable")
@@ -399,11 +407,13 @@ fn add_impl(id: u32, value: WatchDirectory) -> NativeResult<()> {
         root: value.root,
         relative: value.relative,
     };
-    let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let hub = slot.as_ref().ok_or_else(unavailable)?;
-    request(hub, |reply| Command::Add(id, directory, reply))
+    request_current(|reply| Command::Add(id, directory, reply))
 }
-fn request(hub: &Hub, command: impl FnOnce(Reply) -> Command) -> NativeResult<()> {
+fn request_current<T>(command: impl FnOnce(Reply<T>) -> Command) -> NativeResult<T> {
+    let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    request(slot.as_ref().ok_or_else(unavailable)?, command)
+}
+fn request<T>(hub: &Hub, command: impl FnOnce(Reply<T>) -> Command) -> NativeResult<T> {
     let (reply, result) = mpsc::sync_channel(1);
     hub.commands.send(command(reply))?;
     result.recv().unwrap_or_else(|_| Err(unavailable()))
@@ -465,34 +475,17 @@ pub fn watch_memory_stats() -> Result<memory::WatchMemoryStats> {
 #[cfg(target_os = "macos")]
 #[napi]
 pub fn watch_entries(env: Env, id: u32, entries: Vec<WatchEntryRegistration>) -> Result<WatchEntriesResult> {
-    let result = (|| {
-        let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let hub = slot.as_ref().ok_or_else(unavailable)?;
-        let (reply, result) = mpsc::sync_channel(1);
-        hub.commands.send(Command::Entries(id, entries, reply))?;
-        result.recv().unwrap_or_else(|_| Err(unavailable()))
-    })();
-    crate::into_napi(env, result)
+    crate::into_napi(env, request_current(|reply| Command::Entries(id, entries, reply)))
 }
 #[cfg(target_os = "macos")]
 #[napi]
 pub fn watch_configure(env: Env, id: u32, anchors: Vec<String>, exclusions: Vec<String>) -> Result<()> {
-    let result = (|| {
-        let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let hub = slot.as_ref().ok_or_else(unavailable)?;
-        request(hub, |reply| Command::Configure(id, anchors, exclusions, reply))
-    })();
-    crate::into_napi(env, result)
+    crate::into_napi(env, request_current(|reply| Command::Configure(id, anchors, exclusions, reply)))
 }
 #[cfg(target_os = "macos")]
 #[napi]
 pub fn watch_test_event(env: Env, id: u32, path: String, flags: u32) -> Result<()> {
-    let result = (|| {
-        let slot = HUB.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let hub = slot.as_ref().ok_or_else(unavailable)?;
-        request(hub, |reply| Command::TestEvent(id, path, flags, reply))
-    })();
-    crate::into_napi(env, result)
+    crate::into_napi(env, request_current(|reply| Command::TestEvent(id, path, flags, reply)))
 }
 #[cfg(test)]
 mod tests {
@@ -500,7 +493,7 @@ mod tests {
     #[test]
     fn nameless_rescans_do_not_consume_detail_budget_and_survive_backpressure() {
         let mut pending = Pending { limit: 1, rescan: true, ..Pending::default() };
-        pending.push("".into(), "entry".into(), false);
+        pending.push("".into(), "entry".into(), false, None);
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints.len() == 1);
         pending.restore(batch);
@@ -517,7 +510,7 @@ mod tests {
         let mut pending = Pending { limit: 2, ..Pending::default() };
         pending.push_children("selected".into(), Some(0x100));
         pending.push_children("selected".into(), Some(0x200));
-        pending.push("selected".into(), "".into(), true);
+        pending.push("selected".into(), "".into(), true, None);
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints.len() == 2);
         pending.restore(batch);
@@ -532,10 +525,10 @@ mod tests {
     #[test]
     fn pending_is_bounded_and_folds_erase_leaf_names() {
         let mut pending = Pending { limit: 1, ..Pending::default() };
-        pending.push("".into(), "a".into(), false);
-        pending.push("".into(), "a".into(), true);
+        pending.push("".into(), "a".into(), false, None);
+        pending.push("".into(), "a".into(), true, None);
         assert_eq!(pending.paths.len(), 1);
-        pending.push("".into(), "b".into(), false);
+        pending.push("".into(), "b".into(), false, None);
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints.len() == 1);
         assert_eq!(batch.hints[0].subtree, Some(true));
@@ -544,14 +537,14 @@ mod tests {
     #[test]
     fn undelivered_detail_is_retained_and_still_bounded() {
         let mut pending = Pending { limit: 1, ..Pending::default() };
-        pending.push("".into(), "a".into(), false);
+        pending.push("".into(), "a".into(), false, None);
         let batch = pending.take().unwrap();
         pending.restore(batch);
-        pending.push("".into(), "a".into(), true);
+        pending.push("".into(), "a".into(), true, None);
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints[0].structural);
         pending.restore(batch);
-        pending.push("".into(), "b".into(), false);
+        pending.push("".into(), "b".into(), false, None);
         assert!(!pending.take().unwrap().overflow);
     }
     #[test]
@@ -602,13 +595,13 @@ mod folding_tests {
     #[test]
     fn pressure_folds_siblings_instead_of_losing_detail() {
         let mut pending = Pending { limit: 2, ..Default::default() };
-        pending.push("noise".into(), "a".into(), false);
-        pending.push("noise".into(), "b".into(), true);
+        pending.push("noise".into(), "a".into(), false, None);
+        pending.push("noise".into(), "b".into(), true, None);
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints.len() == 2);
         assert_eq!(batch.hints[0].name, "a");
         pending.restore(batch);
-        pending.push("noise".into(), "c".into(), false);
+        pending.push("noise".into(), "c".into(), false, None);
         let batch = pending.take().unwrap();
         assert!(!batch.overflow);
         assert_eq!(batch.hints.len(), 1);
@@ -622,7 +615,7 @@ mod folding_tests {
             let mut pending = Pending { limit: 2, ..Default::default() };
             for i in 0..1000 {
                 let n = if reverse { 999 - i } else { i };
-                pending.push(format!("branch{n}"), "leaf".into(), false);
+                pending.push(format!("branch{n}"), "leaf".into(), false, None);
                 assert!(pending.paths.len() <= 2);
             }
             let batch = pending.take().unwrap();
@@ -638,7 +631,7 @@ mod folding_tests {
         let mut pending = Pending { limit: 2, ..Default::default() };
         let child = |name: &str| std::path::Path::new("noise").join(name).to_str().unwrap().to_owned();
         for name in ["a", "b", "c"] {
-            pending.push_with_flags(child(name), "leaf".into(), false, Some(0x100));
+            pending.push(child(name), "leaf".into(), false, Some(0x100));
         }
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints.len() == 1);
@@ -646,7 +639,7 @@ mod folding_tests {
         assert_eq!(batch.hints[0].subtree, Some(true));
         assert_eq!(batch.hints[0].nameless_child, None);
         pending.restore(batch);
-        pending.push_with_flags(child("later"), "leaf".into(), false, Some(0x200));
+        pending.push(child("later"), "leaf".into(), false, Some(0x200));
         pending.push_children("noise".into(), Some(0x400));
         let batch = pending.take().unwrap();
         assert!(!batch.overflow && batch.hints.len() == 1);
@@ -658,18 +651,18 @@ mod folding_tests {
     #[test]
     fn zero_capacity_cannot_retain_even_a_root_fold() {
         let mut pending = Pending::default();
-        pending.push("".into(), "entry".into(), false);
+        pending.push("".into(), "entry".into(), false, None);
         assert!(pending.take().unwrap().overflow);
     }
 
     #[test]
     fn genuine_loss_still_erases_folded_names() {
         let mut pending = Pending { limit: 1, ..Default::default() };
-        pending.push("noise".into(), "a".into(), false);
-        pending.push("noise".into(), "b".into(), false);
+        pending.push("noise".into(), "a".into(), false, None);
+        pending.push("noise".into(), "b".into(), false, None);
         assert!(!pending.overflow);
         pending.overflow();
-        pending.push("selected".into(), "file".into(), true);
+        pending.push("selected".into(), "file".into(), true, None);
         let batch = pending.take().unwrap();
         assert!(batch.overflow && batch.hints.is_empty());
     }

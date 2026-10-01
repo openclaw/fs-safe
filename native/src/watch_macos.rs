@@ -161,13 +161,7 @@ impl Owner {
             if !directory.is_empty() { directory.push('/'); }
             directory.push_str(component);
         }
-        let (directory, name) = directory.rsplit_once('/').unwrap_or(("", &directory));
-        pending.push_with_flags(
-            directory.into(),
-            name.into(),
-            flags & (0x100 | 0x200 | 0x800) != 0,
-            Some(flags),
-        );
+        pending.push_path(&directory, flags & (0x100 | 0x200 | 0x800) != 0, Some(flags));
     }
 }
 
