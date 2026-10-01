@@ -12,7 +12,7 @@ import {
   isPathRelativeEscape,
 } from "./path.js";
 import { realpathSync } from "./realpath.js";
-import { resolvePathWithinRoot } from "./root-paths-lexical.js";
+import { invalidPath, resolvePathWithinRoot } from "./root-paths-lexical.js";
 import {
   assertNoWindowsPathAlias,
   pathForWindowsFilesystem,
@@ -22,10 +22,6 @@ import {
 export type DirectoryResult =
   | { ok: true; path: string }
   | { ok: false; error: string; diagnostic?: FsSafeError };
-
-function invalidPath(scopeLabel: string): { ok: false; error: string } {
-  return { ok: false, error: `Invalid path: must stay within ${scopeLabel}` };
-}
 
 export function resolveNearestExistingPath(targetPath: string): string {
   assertNoWindowsPathAlias(targetPath);
