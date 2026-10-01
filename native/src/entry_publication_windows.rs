@@ -1,12 +1,12 @@
 //! One-way retained-handle publication on local NTFS. No delete or pathname fallback.
 use napi::{bindgen_prelude::BigInt, Env, Result};
 use napi_derive::napi;
-use std::{mem::zeroed, ptr::{null, null_mut}};
+use std::ptr::{null, null_mut};
 use windows_sys::{Wdk::Storage::FileSystem::{FILE_DIRECTORY_FILE, FILE_SYNCHRONOUS_IO_NONALERT},
     Win32::{Foundation::{GetLastError, HANDLE, INVALID_HANDLE_VALUE}, Storage::FileSystem::*,
     System::{IO::DeviceIoControl, Ioctl::FSCTL_GET_REPARSE_POINT}}};
 use crate::{exact_identity_component, into_napi, native_error, NativeResult};
-use crate::windows::{OwnedHandle, handle_file_identity, handle_identity_and_size, open_retained_child, set_rename_information, win_error};
+use crate::windows::{OwnedHandle, guarded_handle_information, handle_file_identity, handle_identity_and_size, open_retained_child, set_rename_information, win_error};
 
 #[derive(Clone)]
 #[napi(object)]
@@ -61,15 +61,8 @@ fn ntfs(handle: HANDLE) -> NativeResult<()> {
     if &name[..n] != [78, 84, 70, 83] { return Err(native_error("ENOTSUP", "publication requires local NTFS")); }
     Ok(())
 }
-fn information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
-    let mut info = unsafe { zeroed() };
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(unsafe { GetLastError() }, "inspect publication entry"));
-    }
-    Ok(info)
-}
 fn physical_directory(handle: HANDLE) -> NativeResult<()> {
-    let attrs = information(handle)?.dwFileAttributes;
+    let attrs = guarded_handle_information(handle, "inspect publication entry")?.dwFileAttributes;
     if attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) != FILE_ATTRIBUTE_DIRECTORY {
         return Err(native_error("path-mismatch", "publication parent is not a physical directory"));
     }
@@ -100,7 +93,7 @@ fn reparse_bytes(handle: HANDLE) -> NativeResult<Vec<u8>> {
     Ok(bytes)
 }
 fn entry(handle: HANDLE, kind: &str) -> NativeResult<Vec<u8>> {
-    let info = information(handle)?;
+    let info = guarded_handle_information(handle, "inspect publication entry")?;
     let reparse = info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
     let directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
     if match kind { "symlink" => !reparse, "directory" => reparse || !directory, "file" => reparse || directory, _ => true } {

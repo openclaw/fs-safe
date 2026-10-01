@@ -82,9 +82,8 @@ function shouldStop(result: WalkDirectoryResult, options: Pick<WalkDirectoryOpti
   return options.maxEntries !== undefined && result.scannedEntryCount >= Math.max(0, options.maxEntries);
 }
 
-function buildEntry(params: Pick<WalkDirectoryEntry, "relativePath" | "dirent" | "depth"> & {
+function buildEntry(params: Pick<WalkDirectoryEntry, "relativePath" | "dirent" | "depth" | "kind"> & {
   fullPath: string;
-  kind?: WalkEntryKind;
 }): WalkDirectoryEntry {
   const fullPath = params.fullPath;
   return {
@@ -92,7 +91,7 @@ function buildEntry(params: Pick<WalkDirectoryEntry, "relativePath" | "dirent" |
     path: fullPath,
     relativePath: params.relativePath,
     depth: params.depth,
-    kind: params.kind ?? kindForDirent(params.dirent),
+    kind: params.kind,
     dirent: params.dirent,
   };
 }

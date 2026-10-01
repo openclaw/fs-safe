@@ -141,10 +141,10 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         const directory = await fs.open(fixture.destDir, "r");
         try {
           // Invoke each real N-API pass independently: preflight must not mask
-          // an extractor or selected-entry reader that stops at logical EOF.
+          // an extractor or buffer reader that stops at logical EOF.
           await expect(paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, signal)).rejects.toThrow(code);
           await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], limits, signal)).rejects.toThrow(code);
-          await expect(paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, limits, signal)).rejects.toThrow(code);
+          await expect(paxNative!.openTarBufferNative(await fs.readFile(fixture.archivePath), "tar", limits, signal)).rejects.toThrow(code);
         } finally {
           await directory.close();
         }
@@ -161,14 +161,16 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         try {
           expect(await paxNative!.inspectArchiveNative(fixture.archivePath, "tar", limits, signal)).toMatchObject([{ path: "value", size: 7 }]);
           await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], limits, signal)).resolves.toBeUndefined();
-          expect(await paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, limits, signal)).toEqual(Buffer.from("payload"));
+          const input = await fs.readFile(fixture.archivePath);
+          const reader = await paxNative!.openTarBufferNative(input, "tar", limits, signal);
+          expect(await reader.readEntry(0, 7, signal)).toEqual(Buffer.from("payload"));
           for (const field of Object.keys(limits)) {
             for (const value of [NaN, Infinity, -Infinity, -1, -0.5]) {
               const malformed = { ...resolveTarMeterLimits(), [field]: value };
               const error = { code: "InvalidArg", message: `${field} is out of range` };
               await expect(Promise.resolve().then(() => paxNative!.inspectArchiveNative(fixture.archivePath, "tar", malformed, signal))).rejects.toMatchObject(error);
               await expect(Promise.resolve().then(() => paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], malformed, signal))).rejects.toMatchObject(error);
-              await expect(Promise.resolve().then(() => paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, malformed, signal))).rejects.toMatchObject(error);
+              await expect(Promise.resolve().then(() => paxNative!.openTarBufferNative(input, "tar", malformed, signal))).rejects.toMatchObject(error);
             }
           }
         } finally {
@@ -208,21 +210,24 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
         expect(read).toHaveBeenCalledTimes(1);
       });
 
-      it.skipIf(backend === "off" || backend === "auto-missing")("preserves native selected-output and first-match semantics while finishing traversal", async () => {
+      it.skipIf(backend === "off" || backend === "auto-missing")("admits the full native buffer before enforcing selected-entry policy", async () => {
         const bytes = tarFixture([member, { path: "value", body: "larger ignored duplicate" }, { path: "directory", type: "5" }]);
         const fixture = await setup(bytes, gzip);
         const limits = { ...resolveTarMeterLimits(), maxDecodedBytes: bytes.length };
         const signal = new AbortController().signal;
-        const nativeRead = (name: string, maxBytes: number) => paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", name, maxBytes, limits, signal);
-        expect(await nativeRead("value", 7)).toEqual(Buffer.from("payload"));
-        await expect(nativeRead("value", 6)).rejects.toThrow("archive-entry-extracted-size-exceeds-limit");
-        await expect(nativeRead("absent", 7)).rejects.toThrow("archive entry not found: absent");
-        await expect(nativeRead("directory", 7)).rejects.toThrow("archive entry is not a file: directory");
-        await expect(paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "value", 7, { ...limits, maxEntries: 1 }, signal)).rejects.toThrow("archive-entry-count-exceeds-limit");
+        const nativeRead = async (index: number, maxBytes: number) => {
+          const reader = await paxNative!.openTarBufferNative(await fs.readFile(fixture.archivePath), "tar", limits, signal);
+          return reader.readEntry(index, maxBytes, signal);
+        };
+        expect(await nativeRead(0, 7)).toEqual(Buffer.from("payload"));
+        await expect(nativeRead(0, 6)).rejects.toThrow("archive-entry-extracted-size-exceeds-limit");
+        await expect(nativeRead(3, 7)).rejects.toThrow("archive entry not found");
+        await expect(nativeRead(2, 7)).rejects.toThrow("archive entry is not a file");
+        await expect(paxNative!.openTarBufferNative(await fs.readFile(fixture.archivePath), "tar", { ...limits, maxEntries: 1 }, signal)).rejects.toThrow("archive-entry-count-exceeds-limit");
         await fs.writeFile(fixture.archivePath, gzip ? gzipSync(Buffer.concat([bytes, Buffer.from([1])])) : Buffer.concat([bytes, Buffer.from([1])]));
-        await expect(nativeRead("value", 6)).rejects.toThrow("archive-header-invalid");
-        await expect(nativeRead("directory", 7)).rejects.toThrow("archive-header-invalid");
-        await expect(nativeRead("absent", 7)).rejects.toThrow("archive-header-invalid");
+        await expect(nativeRead(0, 6)).rejects.toThrow("archive-header-invalid");
+        await expect(nativeRead(2, 7)).rejects.toThrow("archive-header-invalid");
+        await expect(nativeRead(3, 7)).rejects.toThrow("archive-header-invalid");
       });
 
       it.skipIf(backend === "off" || backend === "auto-missing")("rejects the physical tail before creating native staging entries", async () => {
@@ -305,7 +310,7 @@ for (const backend of ["off", "auto-missing", "auto", "require"] as const) {
           try {
             const signal = new AbortController().signal;
             await expect(paxNative!.extractArchiveNative(fixture.archivePath, "tar", directory.fd, [], resolveTarMeterLimits(limits), signal)).rejects.toThrow(code);
-            await expect(paxNative!.readArchiveEntryNative(fixture.archivePath, "tar", "absent", 7, resolveTarMeterLimits(limits), signal)).rejects.toThrow(code);
+            await expect(paxNative!.openTarBufferNative(await fs.readFile(fixture.archivePath), "tar", resolveTarMeterLimits(limits), signal)).rejects.toThrow(code);
           } finally {
             await directory.close();
           }

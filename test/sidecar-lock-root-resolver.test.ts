@@ -6,8 +6,8 @@ import { FsSafeError } from "../src/errors.js";
 import { createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
 import { realpathSync } from "../src/realpath.js";
-import { readSidecarLockSnapshot } from "../src/sidecar-lock-reclaim.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();

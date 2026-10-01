@@ -160,10 +160,7 @@ async function initializeTempWorkspaceChildMode(
   try {
     await owner.apply(mode, { check: parent.assertCurrent });
     const current = inspectDirectoryIdentitySync(dir, expected);
-    assertTempWorkspaceChildState(current, parent.ownerUid);
-    if (!childHasRequestedMode(current, mode)) {
-      throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
-    }
+    validateAdmittedTempWorkspaceChild(current, parent.ownerUid, mode);
     parent.assertCurrent();
   } finally {
     await owner.close();
@@ -195,10 +192,7 @@ export function admitTempWorkspaceChildSync(
   try {
     owner.apply(mode, parent.assertCurrent);
     const current = inspectDirectoryIdentitySync(dir, expected);
-    assertTempWorkspaceChildState(current, parent.ownerUid);
-    if (!childHasRequestedMode(current, mode)) {
-      throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
-    }
+    validateAdmittedTempWorkspaceChild(current, parent.ownerUid, mode);
     parent.assertCurrent();
   } finally {
     owner.close();
@@ -209,10 +203,9 @@ export function validateAdmittedTempWorkspaceChild(
   current: TempWorkspaceIdentityStat,
   ownerUid: number | undefined,
   mode: number,
-): TempWorkspaceIdentityStat {
+): void {
   assertTempWorkspaceChildState(current, ownerUid);
   if (!childHasRequestedMode(current, mode)) {
     throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
   }
-  return current;
 }
