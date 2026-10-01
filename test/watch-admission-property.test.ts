@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import fc from "fast-check";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RootContext } from "../src/root-context.js";
@@ -8,9 +9,13 @@ import * as rootContext from "../src/root-context.js";
 import * as listing from "../src/root-directory-list.js";
 import * as entries from "../src/root-directory-entry.js";
 
-const { admittedNativeChanges } = await vi.importActual<typeof import("../src/watch-alias.js")>(
-  fileURLToPath(new URL("../src/watch-alias.ts", import.meta.url)),
-);
+const admissionSource = fileURLToPath(new URL("../src/watch-alias.ts", import.meta.url));
+console.log("admission loader diagnostic", {
+  cwd: process.cwd(), source: admissionSource, exists: existsSync(admissionSource),
+  size: existsSync(admissionSource) ? statSync(admissionSource).size : undefined,
+  candidates: readdirSync(path.dirname(admissionSource)).filter(name => name.startsWith("watch")),
+});
+const { admittedNativeChanges } = await vi.importActual<typeof import("../src/watch-alias.js")>(admissionSource);
 
 const fake = { directories: new Map<string, bigint>(), entries: new Map<string, { ino: bigint; directory: boolean }>() };
 const fakeRoot = Object.freeze({}) as RootContext;
