@@ -129,10 +129,8 @@ async function realpathOrThrowNotFile(target: string): Promise<string> {
 }
 
 /**
- * Walks from `rootReal` down to `targetPath`, creating missing components
- * unless disabled and guarding every step. Returns the real path of the final
- * component so callers can guard/use that path directly instead of
- * re-deriving it from the original, possibly-symlinked, lexical path.
+ * Guard each component from rootReal to targetPath; optionally create missing ones.
+ * Returns the resolved path: use it, rather than the lexical input, for later guards.
  */
 export async function mkdirPathComponentsWithGuards(params: {
   rootReal: string;
@@ -324,15 +322,8 @@ export async function mkdirPathComponentsWithGuards(params: {
     }
     const admittedNextPath = admittedNextReal.path;
     if (stat?.isSymbolicLink()) {
-      // An existing path component may legitimately be a symlink to a real
-      // directory inside the root (e.g. a skill-bank layout). We already
-      // verified above that it resolves inside the root, so treat the
-      // resolved real path as the directory for the rest of this walk
-      // instead of rejecting it outright. Guard checks from here on operate
-      // on the real (non-symlink) path, preserving TOCTOU protection for
-      // every subsequent segment. Callers that need the final directory
-      // (e.g. to guard it themselves after this function returns) must use
-      // the returned resolved path, not their own lexical parent path.
+      // Containment was checked above. Continue through the symlink's real directory
+      // so subsequent guards bind that directory.
       const targetStat = fsSync.statSync(admittedNextPath);
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();

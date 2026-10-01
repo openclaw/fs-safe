@@ -66,41 +66,11 @@ fs.reader(options?)            // (path) => Promise<Buffer>; useful for loader A
 fs.walk(rel, options)          // root-bounded AsyncIterable<{ relativePath, kind, size }>
 ```
 
-`walk()` is the incremental, root-bounded recursive scan. It supports entry and
-depth budgets, cancellation, and `symlinkPolicy: "skip" |
-"follow-within-root" | "include"`. Include mode returns links as
-`{ relativePath, kind: "symlink", size }` without resolving or entering their
-targets, including dangling and outside-root links. `size` describes the link,
-not its target. With an entry budget, sorted walks prepare small metadata
-batches within the remaining budget; unbounded sorted walks reuse the full
-directory snapshot.
-The default `order: "sorted"` enumerates all names in each visited directory
-and sorts them lexicographically, even with `maxEntries`. This keeps truncated
-results deterministic for an unchanged tree, but the entry budget does not bound
-name enumeration memory or time. Use `order: "filesystem"` for bounded memory in
-wide directories. Budget exhaustion yields a `"truncated"` marker by
-default or throws `FsSafeError("too-large")` with `limitBehavior: "throw"`.
-Use `entryFilter(entry)` to return `"include"`, `"skip"`, or
-`"skip-subtree"`, directly or through a Promise. `"skip"` omits the current
-entry but still descends into a directory; `"skip-subtree"` omits a directory
-and all of its descendants.
-Filters run serially outside metadata batches, with the options object as their
-`this` receiver. After an awaited filter resolves, the walk checks cancellation
-and revalidates the current listing directory and Root identities before using
-the decision. Captured entry metadata retains its snapshot semantics.
-
-Cancellation and iterator disposal wait for a pending filter to settle; they do
-not race the callback or close its directory while it is running. Callback
-throws and promise rejections reject the walk through normal cleanup.
-Directory reads remain fail-fast by default. With
-`onDirectoryError: "skip-and-report"`, the iterator instead yields
-`{ relativePath, kind: "directory-error", size: 0, error }` and continues with
-the remaining tree. That policy also covers identity-check failures after an
-awaited filter, while callback failures always reject.
-In include mode, a directory that becomes a symlink before descent is a
-`path-mismatch` directory error; it is never silently omitted or followed.
-See [Directory walking](walk.md) for the pure-Node guarantees and the contrast
-with the standalone best-effort walkers.
+`walk()` is the root-bounded recursive iterator, with budgets, cancellation,
+and symlink/filter policies. Default `order: "sorted"` enumerates and sorts all
+names in each directory even with an entry budget; use `order: "filesystem"`
+for bounded memory in wide directories. See [Root-bounded walking](walk.md#root-bounded-async-iteration)
+for truncation, callback, and directory-error contracts.
 
 `open()` returns a Node `FileHandle` for streaming. Prefer `await using` for cleanup:
 
@@ -145,142 +115,22 @@ fs.mkdir(rel, options?)                  // mkdir -p (creates missing parents)
 fs.ensureRoot(options?)                  // accepts "" / "." as the root itself
 ```
 
-`mkdir`, `ensureRoot`, `create`, and `createJson` accept `private: true`.
-Missing directories are created with private permissions, and an existing
-requested directory must already be private. Existing ancestors are not
-chmodded or assigned new ACLs. Private files use owner-only POSIX permissions
-or a protected Windows DACL granting access to the current user, System, and
-Administrators. On macOS, private directories and files must also have no ACL;
-creation rejects relevant inheritable parent ACLs, while noninheriting parent
-ACLs remain allowed. A native helper with `inspectDarwinAcl` is required. Native
-`off`, a missing helper, or an older helper without that capability rejects with
-`helper-unavailable` before creating parents or stages. See [creation](creation.md)
-for platform support, synchronous leaf creation, and failure handling.
+Mutation options control parent creation, modes, durability, and publication.
+`write`, `create`, `append`, `writeJson`, `createJson`, and `copyIn` inherit
+`durable` from Root defaults (normally `true`); `false` skips synchronization
+without changing publication or identity checks. See [write options](writing.md#write-options)
+for precedence and platform behavior, and [append](writing.md#write-verbs)
+for newline handling and creation modes.
 
-```ts
-await fs.mkdir("private-data", { private: true });
-await fs.create("private-data/credential", "synthetic credential", { private: true });
-```
+`mkdir`, `ensureRoot`, `create`, and `createJson` accept `private: true`; see
+[Creation](creation.md) for permission checks and native requirements.
+Buffered `create` and `createJson` support [atomic publication](writing.md#atomic-buffered-creation)
+and `durable: "file"`; `create` also supports [streamed input](writing.md#streamed-creation).
 
-`write`, `create`, `append`, `writeJson`, and `createJson` accept `mode?: number`; use `0o600` for credentials and other private state. `writeJson` also accepts the same options as `JSON.stringify` plus `trailingNewline?: boolean` (defaults `true` so the file ends in `\n`).
-
-For `append` and `openWritable`, `mode` only affects new-file creation: POSIX
-permissions remain subject to the process umask. These methods do not chmod
-existing files. Replacement and create-only writes apply their final mode
-through the retained descriptor; see [Writing](writing.md#write-options).
-
-Buffered `create` and `createJson` also accept `atomic?: boolean`. With `true`,
-complete content is staged before exclusive publication even in native-off mode;
-the fallback requires hardlinks. Omitted or `false` keeps the existing buffered
-publication behavior. Streamed creates always stage complete content. The flag
-does not change `durable` or promise stronger containment or crash durability.
-See [atomic creation and settlement](writing.md#atomic-buffered-creation).
-
-`create` also accepts `AsyncIterable<Uint8Array>` with `RootCreateStreamOptions`:
-the same path, authority, mode, and durability options, plus `maxBytes` and
-`signal`, without `encoding` or `renameIdentity`. It consumes one chunk at a
-time and publishes the completed file exclusively. The byte cap inherits an
-explicit `Root.defaults.maxBytes`; without either cap, consumption is unlimited.
-See [streamed creation](writing.md#streamed-creation) for cancellation,
-cleanup, and filesystem requirements.
-
-`append` accepts `prependNewlineIfNeeded: true` to separate text from existing
-content when neither side supplies a newline. String data uses its `encoding`
-for the newline check, including UTF-16LE; Buffer data uses a single LF byte.
-Empty strings and Buffers add no separator; an empty append still creates a
-missing file.
-
-These five methods and `copyIn` also accept `durable?: boolean`: the per-call value overrides
-`Root.defaults.durable`, which defaults to `true` when omitted. An explicitly
-`undefined` per-call value preserves the root default. `durable: false` keeps
-the existing publication behavior, modes, and identity checks but skips file
-and parent-directory fsync calls. Use it only for reconstructible data: a crash
-may lose the write or leave the previous file. See [Writing](writing.md#write-options)
-for platform details.
-
-`mkdir: false` requires the parent directories to exist and never creates a
-missing parent. On POSIX, otherwise permitted relative in-root parent aliases
-remain available to buffered and streamed writes and copies with native support
-enabled or disabled. An explicit mutation symlink policy still applies.
-
-`create` and `createJson` additionally accept `durable: "file"` to require file
-synchronization, including propagating `EPERM`. Parent-directory synchronization
-retains its existing best-effort behavior. This option applies to buffered and
-streamed creation and does not select a publication strategy.
-
-`copyIn` accepts a `RootCopySource`: a trusted absolute source path or a file
-within another Root. The guarded form supplies `root` with only its `open` and
-`stat` read capabilities, plus `relativePath`:
-
-```ts
-const source = await root("/srv/templates");
-const destination = await root("/srv/workspace");
-await destination.copyIn("config/settings.json", {
-  root: source,
-  relativePath: "config/settings.json",
-}, {
-  overwrite: false,
-  clone: "auto",
-  mode: 0o600,
-  signal: AbortSignal.timeout(30_000),
-});
-```
-
-The source Root applies its read policies, including confinement and symlink
-handling. `sourceHardlinks` overrides its hardlink policy only when supplied;
-otherwise the source Root default is retained. The admitted source
-descriptor stays open through copying and source-identity verification; copying
-does not consume its current file position. Both forms enforce `maxBytes` while
-reading, including when a file grows after admission, and use bounded buffers.
-Copies have independent file data; changing either file cannot change the other.
-Set `preserveSourceMode: true` to select the mode from the admitted source
-descriptor. An explicit numeric `mode`, including `Root.defaults.mode`, takes
-precedence. By default, copying retains the existing destination-mode rules.
-The operation verifies source identity, not a coherent snapshot of concurrent
-in-place edits. Keep the source unchanged when snapshot consistency is required.
-
-`overwrite` defaults to `true`, preserving the existing replacement behavior.
-With `overwrite: false`, an existing destination produces `already-exists` and
-is never altered. Copying prepares a private sibling file before publishing its
-completed contents. Native mode uses no-replace rename. The guarded JavaScript
-fallback links the completed stage and removes its temporary name in the same
-JavaScript turn; the filesystem must support hardlinks. Other processes can
-briefly observe both names. The source is never hardlinked to the destination.
-
-`clone` chooses the file-data transfer strategy through `CopyCloneMode`, shared
-with [`copyTree`](copy.md#api). File copies default to `"never"`; tree copies
-default to `"auto"`:
-
-| Value | Behavior |
-| --- | --- |
-| `never` | Copy regular file bytes using reads and writes, without explicit cloning or copy offload. |
-| `auto` | Try native file cloning, then copy offload or ordinary byte copying when cloning is unavailable. |
-| `always` | Require native cloning; fail when the binding or filesystem cannot provide it. |
-
-Native file cloning supports APFS and supported Linux filesystems. Windows
-currently uses byte copying for `never` and `auto`; `always` fails. Clone choice
-does not change modes, durability, root confinement, or source and publication
-identity checks. The shared strategy does not replace Root's guarded regular-file
-contract with `copyTree`'s caller-owned immutable-tree and metadata contract.
-
-An already aborted `signal` prevents I/O. Cancellation during copying waits for
-admitted reads and native work to settle, then cleans only the owned unpublished
-stage. The final authority check runs before publication. Once publication has
-occurred, later cancellation or verification failure preserves the destination.
-The synchronous optional `onDestinationPublished` callback receives a frozen
-`RootCopyPublicationReceipt` containing `{ path, dev, ino }`, with exact bigint identity immediately after
-publication, before later checks can fail. Callback errors also preserve the
-published file and retain their original thrown value when cleanup succeeds,
-including errors whose metadata cannot be inspected. Promise, thenable, and synchronous or asynchronous generator
-results reject with `TypeError`; returned generators are never advanced. Other
-synchronous return values are ignored. This receipt records an outcome; it does
-not authorize removing a file that another actor may have edited. Application recovery and cooperative
-locking remain caller-owned.
-
-Existing `copyIn` callers must account for completed destinations retained after
-a post-publication source-verification failure, even without the new options.
-Recovery must inspect current destination state rather than assume a rejected
-copy left no file.
+`copyIn` accepts a trusted absolute path or another Root as its source, with
+byte limits, cloning, cancellation, and publication receipts. See the complete
+[copy contract](writing.md#write-verbs); a rejected copy
+can still leave a completed destination after publication.
 
 Root operations that choose a new destination reject a leading Windows
 drive-relative spelling such as `C:name` on every platform. This applies to
@@ -302,17 +152,11 @@ does not otherwise reject them.
 
 `openWritable` opens a writable file with options `mode?: number` and `writeMode?: "replace" | "append" | "update"`. `replace` truncates existing files and is the default; `update` keeps existing contents. Before truncation or handle return, descriptor and pathname identities are compared with lossless bigint metadata; persistently unknown Windows identities fail closed. The returned `stat` remains an ordinary numeric Node `Stats` object. Use it for streaming output. Prefer `await using` for cleanup.
 
-`remove` leaves non-empty directories unchanged unless `recursive: true` is
-provided. Recursive removal defaults to streaming entries in filesystem order;
-`order: "sorted"` processes each directory's children lexicographically. The
-`maxEntries` (100,000 by default) and `maxDepth` (64 by default) budgets accept
-explicit `Infinity` when the caller needs unlimited traversal. It never
-follows discovered symlinks; an explicit `mutationSymlinks` policy rejects them,
-while the omitted policy unlinks them. `force: true` ignores missing targets,
-and `signal` stops further work after admitted I/O and resource cleanup settle.
-Removal is not transactional: a budget, cancellation, policy, or identity
-failure can leave a partially removed tree. See [removal](writing.md)
-for the full counting and failure contract.
+`remove` leaves non-empty directories unchanged unless `recursive: true`.
+Recursive removal defaults to filesystem order, `maxEntries: 100_000`, and
+`maxDepth: 64`. It is incremental: budget, cancellation, policy, or identity
+failures can leave a partially removed tree. See [removal](writing.md#write-verbs)
+for ordering, symlink, and failure semantics.
 
 ### Live mutation authority
 
@@ -548,17 +392,8 @@ const b = await load("/srv/workspace/state.bin"); // absolute, but inside the ro
 
 ### "Touch only if missing" seeding
 
-```ts
-try {
-  await fs.create("config/seed.json", initialJson);
-} catch (err) {
-  if (err instanceof FsSafeError && err.code === "already-exists") {
-    // existing config wins
-  } else {
-    throw err;
-  }
-}
-```
+Use `create()` and handle `already-exists` so existing configuration wins;
+see the [seeding example](writing.md#write-verbs).
 
 ### Replace + verify
 
