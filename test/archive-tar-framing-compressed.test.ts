@@ -64,7 +64,7 @@ describe.each(backends)("compressed TAR framing backend=$label", (backend) => {
         const directory = await fs.open(destDir, "r");
         try {
           await expect(paxNative!.extractArchiveNative(archivePath, kind, directory.fd, [], resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
-          await expect(paxNative!.readArchiveEntryNative(archivePath, kind, "absent", 7, resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
+          await expect(paxNative!.openTarBufferNative(await fs.readFile(archivePath), kind, resolveTarMeterLimits(limits), new AbortController().signal)).rejects.toThrow(code);
         } finally {
           await directory.close();
         }
@@ -79,7 +79,9 @@ describe.each(backends)("compressed TAR framing backend=$label", (backend) => {
       const requested = "directory/" + "x".repeat(120);
       expect(await readArchiveEntry(archivePath, requested, { kind, maxBytes: 3 })).toEqual(Buffer.from("gnu"));
       if (backend.native) {
-        expect(await paxNative!.readArchiveEntryNative(archivePath, kind, requested, 3, resolveTarMeterLimits(), new AbortController().signal)).toEqual(Buffer.from("gnu"));
+        const reader = await paxNative!.openTarBufferNative(await fs.readFile(archivePath), kind, resolveTarMeterLimits());
+        const entry = reader.entries.find((entry) => entry.path === requested)!;
+        expect(await reader.readEntry(entry.index, 3)).toEqual(Buffer.from("gnu"));
       }
       await expect(readArchiveEntry(archivePath, requested, { kind, maxBytes: 2 })).rejects.toMatchObject({
         name: "ArchiveLimitError", code: "archive-entry-extracted-size-exceeds-limit",

@@ -14,8 +14,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, DELETE as DELETE_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
     FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_END_OF_FILE_INFO,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_STREAM_INFO,
-    FileBasicInfo, FileEndOfFileInfo, FileStreamInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
+    FileBasicInfo, FileEndOfFileInfo, FileStreamInfo, GetFileInformationByHandleEx,
+    GetVolumeInformationByHandleW,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
@@ -26,8 +26,9 @@ use windows_sys::Win32::System::Ioctl::{
 };
 
 use crate::windows::{
-    OwnedHandle, ReparsePolicy, duplicate_handle, handle_identity, handle_is_reparse, list_directory_entries,
-    mark_clone_handle_for_deletion, nt_open_relative_with_policy, nt_open_relative_with_sharing,
+    OwnedHandle, ReparsePolicy, duplicate_handle, guarded_handle_information, handle_identity,
+    handle_is_reparse, list_directory_entries, mark_clone_handle_for_deletion,
+    nt_open_relative_with_policy, nt_open_relative_with_sharing,
     remove_directory_handle, root_handle, set_file_information, win_error,
 };
 use crate::{NativeResult, native_error};
@@ -126,14 +127,6 @@ fn create_source_handle(parent: HANDLE, basename: &str) -> NativeResult<()> {
     }
     create_directory(parent, basename)?;
     Ok(())
-}
-
-fn file_information(handle: HANDLE) -> NativeResult<BY_HANDLE_FILE_INFORMATION> {
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(unsafe { GetLastError() }, "inspect clone source"));
-    }
-    Ok(info)
 }
 
 fn metadata(handle: HANDLE) -> NativeResult<FILE_BASIC_INFO> {
@@ -273,7 +266,7 @@ fn open_source(job: &FileJob) -> NativeResult<(OwnedHandle, BY_HANDLE_FILE_INFOR
         ReparsePolicy::AllowLeaf,
         FILE_SHARE_READ | FILE_SHARE_DELETE,
     )?;
-    let information = file_information(source.0)?;
+    let information = guarded_handle_information(source.0, "inspect clone source")?;
     let identity = (
         information.dwVolumeSerialNumber,
         ((information.nFileIndexHigh as u64) << 32) | information.nFileIndexLow as u64,
@@ -405,7 +398,7 @@ fn clone_file(job: FileJob, cancelled: &AtomicBool) -> NativeResult<()> {
         }
     }
     let after = metadata(source.0)?;
-    let final_information = file_information(source.0)?;
+    let final_information = guarded_handle_information(source.0, "inspect clone source")?;
     if before.LastWriteTime != after.LastWriteTime
         || before.ChangeTime != after.ChangeTime
         || information.nFileSizeHigh != final_information.nFileSizeHigh

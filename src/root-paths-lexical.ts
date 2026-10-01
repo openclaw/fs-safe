@@ -5,7 +5,7 @@ import {
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
-function invalidPath(scopeLabel: string): { ok: false; error: string } {
+export function invalidPath(scopeLabel: string): { ok: false; error: string } {
   return { ok: false, error: `Invalid path: must stay within ${scopeLabel}` };
 }
 

@@ -255,14 +255,6 @@ export interface NativeBinding {
   mkdirOpenChildBeneath?(parentFd: number, basename: string, mode: number, flags: number): { fd: number; created: boolean };
   mkdirBeneath(rootFd: number, relPath: string, mode: number): void;
   openBeneath(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
-  readArchiveEntryNative(
-    path: string,
-    kind: string,
-    requested: string,
-    maxBytes: number,
-    limits: TarMeterLimits,
-    signal: AbortSignal,
-  ): Promise<Buffer>;
   readOwnerAndDacl(path: string): NativeWindowsSecurityFacts;
   /** Internal Windows-only inspection of the exact borrowed Node descriptor. */
   inspectWindowsSecureFileHandle?(fd: number): NativeWindowsDescriptorSecurityFacts;
