@@ -51,6 +51,8 @@ The `loadZipArchiveWithPreflight/zip-end-scan-*` rows cover complete public ZIP
 loading with a 64 KiB stored payload, a maximum-length ordinary comment, and a
 64 KiB stored payload full of false end-record signatures. The dense fixture
 checks that sparse-search improvements do not penalize hostile marker patterns.
+These fixtures use a fixed ZIP timestamp so clock-dependent metadata cannot
+complete a false end record in the dense payload.
 The `loadZipArchiveWithPreflight/name-admission/` family loads 2,048 entries at
 depths 1/8 with flagged ASCII, unflagged ASCII, and Unicode names, each in ordinary
 and shared backing memory. JSZip Unicode file comments set the UTF-8 flag for

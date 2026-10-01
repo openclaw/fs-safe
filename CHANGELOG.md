@@ -17,6 +17,7 @@
 ### Performance
 
 - **Bounded temporary-directory cleanup:** avoid a redundant descriptor metadata read for each descendant directory on Linux and macOS, while retaining fresh name identity checks before removal. ([#760](https://github.com/openclaw/fs-safe/pull/760))
+- **Atomic temp cleanup:** use the file identity captured after creation, avoiding an unnecessary metadata lookup and preserving preexisting temporary paths. ([#772](https://github.com/openclaw/fs-safe/pull/772))
 
 ## 0.22.0 - 2026-09-30
 
