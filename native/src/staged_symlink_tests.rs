@@ -2,13 +2,12 @@ use super::*;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::test_support::temp_path;
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("fs-safe-symlink-{}-{stamp}", std::process::id()));
+        let path = temp_path("symlink");
         std::fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
         Self(path)
     }

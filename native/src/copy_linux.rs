@@ -86,7 +86,7 @@ mod tests {
     use std::io::{Seek, SeekFrom, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::MetadataExt;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::test_support::temp_path;
 
     #[test]
     fn copy_cancellation_precedes_descriptor_admission() {
@@ -97,12 +97,7 @@ mod tests {
 
     #[test]
     fn sparse_transfer_preserves_bytes_length_and_borrowed_offsets() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("fs-safe-sparse-{}-{nonce}", std::process::id()));
+        let directory = temp_path("sparse");
         fs::create_dir(&directory).unwrap();
         for size in [
             0,
@@ -159,12 +154,7 @@ mod tests {
 
     #[test]
     fn existing_target_is_overwritten_densely_without_losing_its_tail() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("fs-safe-copy-tail-{}-{nonce}", std::process::id()));
+        let directory = temp_path("copy-tail");
         fs::create_dir(&directory).unwrap();
         let source_path = directory.join("source");
         let target_path = directory.join("target");

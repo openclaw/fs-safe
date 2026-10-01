@@ -1456,7 +1456,7 @@ mod windows {
         use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::io::AsRawHandle;
         use std::path::{Path, PathBuf};
-        use std::time::{SystemTime, UNIX_EPOCH};
+        use crate::test_support::unique_path_in;
 
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
@@ -1467,14 +1467,7 @@ mod windows {
 
         fn temp_root(label: &str) -> PathBuf {
             let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let root = base.join(format!(
-                "fs-safe-private-directory-{label}-{}-{nonce}",
-                std::process::id()
-            ));
+            let root = unique_path_in(&base, &format!("private-directory-{label}"));
             fs::create_dir(&root).unwrap();
             root
         }

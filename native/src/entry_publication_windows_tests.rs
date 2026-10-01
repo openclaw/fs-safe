@@ -1,12 +1,12 @@
 use super::*;
-use std::{fs, mem::zeroed, path::{Path, PathBuf}, sync::atomic::{AtomicU64, Ordering}};
+use std::{fs, mem::zeroed, path::{Path, PathBuf}};
+use crate::test_support::temp_path;
 use windows_sys::Win32::{System::Ioctl::FSCTL_SET_REPARSE_POINT};
 use crate::windows::open_existing_handle;
 struct Fixture { root: PathBuf, source: PathBuf, target: PathBuf }
 impl Fixture {
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!("fs-safe-publication-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let root = temp_path("publication");
         fs::create_dir(&root).unwrap(); let root = fs::canonicalize(root).unwrap();
         let source = root.join("staging"); let target = root.join("target"); fs::create_dir(&source).unwrap(); fs::create_dir(&target).unwrap();
         fs::write(source.join("entry"), b"original").unwrap(); Self { root, source, target }
