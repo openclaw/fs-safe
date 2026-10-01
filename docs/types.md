@@ -194,21 +194,9 @@ policy; omission preserves each mutation method's existing behavior.
 
 ## `FsSafeErrorCode` / `FsSafeErrorCategory`
 
-```ts
-type FsSafeErrorCode =
-  | "already-exists" | "denied-path" | "device-path" | "hardlink"
-  | "helper-failed"
-  | "helper-unavailable" | "insecure-permissions" | "invalid-path"
-  | "not-empty" | "not-file" | "not-found" | "not-owned"
-  | "not-removable" | "outside-workspace" | "path-alias"
-  | "path-mismatch" | "permission-unverified" | "read-failed" | "secret-exists"
-  | "store-reentrant-update" | "symlink"
-  | "timeout" | "too-large" | "unsupported-platform";
-```
+`FsSafeErrorCode` is a closed union you switch on; the [code union](errors.md#code-union) lists every member and the [code reference](errors.md#code-reference) explains each one.
 
-Closed union you switch on. See the [Errors](errors.md) reference for what each one means.
-
-`FsSafeError.category` is `"policy"` for unsafe input or target state rejected by a safety policy and `"operational"` for routine filesystem outcomes or environment/runtime failures. `not-found`, `not-empty`, `not-removable`, and `read-failed` are operational.
+`FsSafeError.category` is `"policy"` for unsafe input or target state rejected by a safety policy and `"operational"` for routine filesystem outcomes or environment/runtime failures. [Errors](errors.md#shape) lists the exact operational set.
 
 ## See also
 
