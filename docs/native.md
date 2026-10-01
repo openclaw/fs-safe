@@ -17,7 +17,7 @@ guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
 run postinstall code, or fetch binaries at runtime. Seven exact-version optional
 packages are filtered by OS, CPU, and Linux libc, so an installation receives
 only its matching prebuilt binding.
-Native-only formats fail explicitly
+Native-only operations fail explicitly
 instead of substituting a weaker implementation.
 
 ## The beneath model
@@ -235,11 +235,8 @@ not bypass the byte limit.
 
 ## Mode semantics
 
-| Mode | Native loading | Fallback |
-|---|---|---|
-| `auto` | Try once, cache the result | Use guarded JavaScript when safe; reject native-only operations |
-| `require` | Try once, cache the result | Throw `FsSafeError("helper-unavailable")` |
-| `off` | Never attempt a binding load | Use guarded JavaScript when safe; reject native-only operations |
+See [Native helper policy](native-helper.md#modes) for the `auto`, `require`, and
+`off` contracts and cached loader behavior.
 
 `sha256FileSync()` is a synchronous Node implementation in all three modes and
 does not load the binding. Use asynchronous `sha256File()` for native hashing
@@ -251,19 +248,10 @@ Features without a safe fallback, including no-clobber
 when native support is absent or off. Staging is currently Linux/macOS only and
 rejects Windows with `unsupported-platform`.
 
-Windows raw owner/DACL inspection, private-directory creation, and secure-file
-descriptor inspection can use a package-shipped, readable `.ps1` driver and
-adjacent `.cs` source in `auto` or `off` mode when their binding or capability is
-unavailable. System Windows PowerShell runs the fixed driver with `-File`;
-paths remain data, with no runtime-generated helper script or encoded launcher.
-The [Windows security fallback prerequisites](install.md#windows-security-fallback)
-apply, and unsupported or disallowed command execution fails closed. This route
-preserves raw ACL facts, private DACLs at creation, and descriptor-bound secure
-reads, and emits a path-free `FS_SAFE_NATIVE_FALLBACK` warning once per capability
-per process. Each call adds PowerShell startup and compilation overhead.
-`require` rejects missing capabilities without a command, and an available native operation's
-failure never triggers this fallback. See [Permissions](permissions.md) and
-[Secure file reads](secure-file.md) for error and platform contracts.
+Windows owner/DACL inspection, private-directory creation, and secure-file
+inspection support [PowerShell fallbacks](install.md#windows-security-fallback)
+in `auto` and `off`. `require` rejects missing capabilities, and native operation
+failures are terminal.
 
 The staged-file owner also serves POSIX native pinned writes, including streaming.
 Unpublished files remain at `0600`; requested modes are applied through the

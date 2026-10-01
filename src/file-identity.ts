@@ -60,12 +60,9 @@ export function sameFileIdentityForCleanup(
     return sameCleanupStatValue(left.dev, right.dev) && sameCleanupStatValue(left.ino, right.ino);
   }
 
-  // A zero Windows device or inode is unknown, not proof that a pathname still
-  // names the object we created. Cleanup must fail closed rather than delete a
-  // replacement that happens to share the known half of the identity.
-  // Capture each potentially adapter-backed observation once. This strengthens
-  // the fence against changing accessors; exact legacy getter traces are not a
-  // compatibility contract.
+  // Unknown Windows identity components cannot authorize cleanup: a replacement
+  // could share the known component. Snapshot adapter-backed fields once so
+  // changing accessors cannot alter the check.
   const leftDev = left.dev;
   if (isZero(leftDev)) return false;
   const leftIno = left.ino;

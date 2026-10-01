@@ -191,36 +191,11 @@ the cause.
 
 ### Loading modes
 
-The platform native binaries provide fd-relative open/link/mkdir primitives,
-atomic no-replace rename, and file identity checks. The default is `auto`: use
-the matching binary when it loads, otherwise use the guarded JavaScript path
-where a safe fallback exists. Native-only operations fail with
-`helper-unavailable`.
-
-```ts
-import { configureFsSafeNative } from "@openclaw/fs-safe/config";
-
-configureFsSafeNative({ mode: "auto" });    // default
-configureFsSafeNative({ mode: "off" });     // disable the addon; reject native-only operations
-configureFsSafeNative({ mode: "require" }); // fail closed if unavailable
-```
-
-Environment variables are read at runtime:
-
-```bash
-FS_SAFE_NATIVE_MODE=off      # auto | off | require
-```
-
-`OPENCLAW_FS_SAFE_NATIVE_MODE` is also accepted.
-
-Disabling native loading keeps fallback-capable operations working through Node path
-operations guarded by lexical and canonical checks plus identity verification.
-Use `require` when native-backed operations must fail instead of falling back.
-Temp workspaces retain compatible JavaScript quarantine cleanup in `auto` and
-`off`. Set `cleanupSafety: "require-bounded"` to reject before child creation
-unless native no-replace quarantine and descriptor-bounded tree removal are
-available. See the [temp workspace contract](temp.md#private-temp-workspaces). The exact boundary
-for other operations is documented in [native helper policy](native-helper.md).
+Configure `auto` (default), `off`, or `require` before first use with
+`configureFsSafeNative()` or `FS_SAFE_NATIVE_MODE`. See
+[Native helper policy](native-helper.md#modes) for mode selection, loader lifetime,
+and strict failure behavior. Temp workspace `cleanupSafety` is a separate policy;
+see the [temp workspace contract](temp.md#private-temp-workspaces).
 
 ## Verify the install
 
