@@ -11,6 +11,7 @@ import {
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { mockCleanupBinding } from "./helpers/cleanup-binding.js";
 
 const { tempRoot } = useRealTempDirs();
 const supportsSearchOnlyDirectory =
@@ -27,13 +28,9 @@ afterEach(() => {
 describe.runIf(supportsSearchOnlyDirectory)("temp workspace cleanup descriptor access", () => {
   function availableCleanupBinding() {
     return {
-      closeOwnedFd: vi.fn(),
+      ...mockCleanupBinding(vi.fn(() => true)),
       // Directories stay readable; only retained-descriptor opens inject EACCES.
       canonicalizePath: (pathname: string) => ({ path: fsSync.realpathSync(pathname) }),
-      renameNoReplace: vi.fn(),
-      removeOwnedTree: vi.fn(),
-      removeOwnedTreeSync: vi.fn(),
-      ownedTreeRemovalAvailable: vi.fn(() => true),
     };
   }
 

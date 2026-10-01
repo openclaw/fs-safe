@@ -1,22 +1,15 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
+import { describe, expect, it, vi } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
+import { __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useWorkspaceFixture, observeSyncOpen } from "./helpers/temp-workspace.js";
 
-const { tempRoot } = useRealTempDirs();
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
-afterEach(() => {
-  vi.restoreAllMocks();
-  cleanup.__cleanupRegisteredTempPathsForTest();
-  __resetNativeLoaderForTest();
-  __resetFsSafeNativeConfigForTest();
-});
+const { tempRoot } = useWorkspaceFixture();
 
 for (const variant of ["async", "sync"] as const) {
   describe(`${variant} temp workspace creation admission`, () => {
@@ -57,15 +50,12 @@ for (const variant of ["async", "sync"] as const) {
     ) {
       let child = "";
       let childFd: number | undefined;
-      const open = fsSync.openSync.bind(fsSync);
-      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-        const fd = open(...args);
+      observeSyncOpen((args, fd) => {
         if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
           path.basename(args[0]).startsWith("workspace-")) {
           child = args[0];
           childFd = fd;
         }
-        return fd;
       });
       const fstat = fsSync.fstatSync.bind(fsSync);
       let observed = false;
@@ -290,15 +280,12 @@ for (const variant of ["async", "sync"] as const) {
         await fs.writeFile(path.join(outside, "keep"), "outside");
         let child = "";
         let childFd: number | undefined;
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (typeof args[0] === "string" && path.dirname(args[0]) === rootDir &&
             path.basename(args[0]).startsWith("workspace-")) {
             child = args[0];
             childFd = fd;
           }
-          return fd;
         });
         const failure = Object.assign(new Error("chmod rejected"), { code: "EPERM" });
         const beforeChmod = vi.fn(() => {

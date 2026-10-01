@@ -3,7 +3,7 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stageFileInDirectory, type StagedFile, type StagedFileCleanupReceipt } from "../src/advanced.js";
-import { FsSafeError, type FsSafeErrorCode } from "../src/errors.js";
+import { FsSafeError } from "../src/errors.js";
 import { configureFsSafeNative, root, type RootCopyPublicationReceipt } from "../src/index.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../src/native.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { rejection, assertWrapped, hostileErrors } from "./helpers/staged-errors.js";
 
 const posix = process.platform === "linux" || process.platform === "darwin";
 let native: NativeBinding | undefined;
@@ -25,50 +26,9 @@ afterEach(() => {
   __resetNativeLoaderForTest();
 });
 
-async function rejection(operation: Promise<unknown>): Promise<{ error: unknown }> {
-  return operation.then(
-    () => { throw new Error("expected operation to reject"); },
-    (error: unknown) => ({ error }),
-  );
-}
-
-function assertWrapped(error: unknown, cause: unknown, code: FsSafeErrorCode = "helper-failed"): FsSafeError {
-  let wrapped = false;
-  try { wrapped = error instanceof FsSafeError; } catch { /* A hostile raw value is not a wrapper. */ }
-  expect(wrapped).toBe(true);
-  const result = error as FsSafeError;
-  expect(result.code).toBe(code);
-  // Never ask an assertion formatter to inspect the hostile cause.
-  expect(result.cause === cause).toBe(true);
-  return result;
-}
-
 function descriptorCount(): number | undefined {
   return posix ? fsSync.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length : undefined;
 }
-
-const hostileErrors = [
-  {
-    label: "throwing code getter",
-    create: () => Object.defineProperty(new Error("caller failure"), "code", {
-      get() { throw new Error("code must not escape classification"); },
-    }),
-  },
-  {
-    label: "revoked proxy",
-    create: () => {
-      const { proxy, revoke } = Proxy.revocable(new Error("caller failure"), {});
-      revoke();
-      return proxy;
-    },
-  },
-  {
-    label: "throwing prototype lookup",
-    create: () => new Proxy(new Error("caller failure"), {
-      getPrototypeOf() { throw new Error("prototype must not escape classification"); },
-    }),
-  },
-];
 
 describe.each(["off", "require"] as const)("Root.copyIn hostile publication errors with native %s", nativeMode => {
   it.skipIf(nativeMode === "require" && !native).each(
