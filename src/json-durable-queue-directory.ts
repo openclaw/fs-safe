@@ -55,11 +55,7 @@ class QueueDirectory {
       throw new Error(`durable queue path is not a directory: ${dir}`);
     }
     const segments = path.relative(base, target).split(path.sep).filter(Boolean);
-    for (let index = 0; index < segments.length; index++) {
-      const segment = segments[index];
-      if (segment === undefined) {
-        continue;
-      }
+    for (const segment of segments) {
       current = path.join(current, segment);
       let stat: Awaited<ReturnType<typeof fs.promises.lstat>>;
       try {

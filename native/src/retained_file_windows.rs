@@ -10,7 +10,7 @@ use windows_sys::Win32::System::IO::{CancelIoEx, DeviceIoControl, GetOverlappedR
 use windows_sys::Win32::System::Ioctl::{FSCTL_REQUEST_OPLOCK, REQUEST_OPLOCK_INPUT_BUFFER, REQUEST_OPLOCK_OUTPUT_BUFFER, OPLOCK_LEVEL_CACHE_READ, REQUEST_OPLOCK_INPUT_FLAG_REQUEST};
 use windows_sys::Win32::System::Threading::CreateEventW;
 use crate::{NativeResult, native_error};
-use crate::windows::{OwnedHandle, open_retained_child, handle_attributes, handle_file_identity, handle_identity_and_size, win_error};
+use crate::windows::{OwnedHandle, open_retained_child, guarded_handle_information, handle_attributes, handle_file_identity, handle_identity_and_size, win_error};
 
 pub(super) fn basename(name: &str) -> NativeResult<()> {
     crate::validate_child_basename(name)?;
@@ -102,10 +102,7 @@ pub(super) fn exact(handle: HANDLE, dev: u64, ino: u64, directory: bool) -> Nati
 }
 
 pub(super) fn regular(handle: HANDLE, size: u64) -> NativeResult<()> {
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
-    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
-        return Err(win_error(unsafe { GetLastError() }, "inspect retained regular file"));
-    }
+    let info = guarded_handle_information(handle, "inspect retained regular file")?;
     if info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
         || info.nNumberOfLinks != 1 || ((info.nFileSizeHigh as u64) << 32 | info.nFileSizeLow as u64) != size {
         return Err(native_error("path-mismatch", "retained file type, link count or size changed"));

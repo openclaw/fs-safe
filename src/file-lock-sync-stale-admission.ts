@@ -44,7 +44,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
   try {
     rawSnapshot = readSidecarLockRawSnapshotSync(acquisition.lockPath, {
       rejectNonFile: true,
-      onOpenFailure: (error) => {
+      onOpenFailure: () => {
         lockFileOpenDenied = true;
         assertUnheld();
       },
