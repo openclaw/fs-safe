@@ -409,65 +409,45 @@ describe("method-audit provenance validation", () => {
   it("fails incomplete, mutated, distribution-mismatched, and native-mismatched evidence", () => {
     const plan = planFor();
     const before = snapshotFor(plan);
-    const reports = new Map(plan.reports.map((entry) => [entry.file, rawReport(plan, entry)]));
     const candidateReport = plan.reports.find(({ role }) => role === "candidate")!;
-    expect(() => validateCompleteReportSet(plan, new Map([...reports].slice(1)), before, before)).toThrow("incomplete");
-
+    const makeReports = () => new Map(plan.reports.map((entry) => [entry.file, rawReport(plan, entry)]));
     const mutated = structuredClone(before);
     mutated.builds["candidate-build"].distTreeHash.hash = N64;
     expect(() => assertStableSnapshots(before, mutated)).toThrow("mutated");
 
-    const wrongDist = structuredClone(reports);
-    const first = wrongDist.get(plan.reports[0].file)!;
-    first.metadata.distHash = N64;
-    expect(() => validateCompleteReportSet(plan, wrongDist, before, before)).toThrow("distribution hash mismatch");
-
-    const wrongProfile = structuredClone(reports);
-    wrongProfile.get(candidateReport.file)!.metadata
-      .measuredDistribution.observedFilenameFallbackProfile = "legacy";
-    expect(() => validateCompleteReportSet(plan, wrongProfile, before, before))
-      .toThrow("filename fallback profile mismatch");
-
-    const wrongBinding = structuredClone(reports);
-    wrongBinding.get(candidateReport.file)!.metadata.measuredDistribution.buildId = "baseline-build";
-    expect(() => validateCompleteReportSet(plan, wrongBinding, before, before))
-      .toThrow("measured buildId mismatch");
-
-    const wrongSourceRole = structuredClone(reports);
-    wrongSourceRole.get(candidateReport.file)!.metadata.measuredDistribution.sourceRole = "baseline";
-    expect(() => validateCompleteReportSet(plan, wrongSourceRole, before, before))
-      .toThrow("measured sourceRole mismatch");
-
-    const wrongSampleSemantics = structuredClone(reports);
-    wrongSampleSemantics.get(plan.reports[0].file)!.metadata.sampleSemantics = "individual calls";
-    expect(() => validateCompleteReportSet(plan, wrongSampleSemantics, before, before))
-      .toThrow("sample semantics mismatch");
-
-    const wrongSemantics = structuredClone(reports);
-    wrongSemantics.get(plan.reports[0].file)!.results = [{
-      name: "sanitizeUntrustedFileName/matrix/fallback-path",
-      iterations: 1,
-      samplesUs: [1, 1, 1, 1, 1],
-      minUs: 1, medianUs: 1, maxUs: 1,
-      workloadSemantics: "equivalent-output",
-    }];
-    expect(() => validateCompleteReportSet(plan, wrongSemantics, before, before))
-      .toThrow("workload semantics mismatch");
-
-    const wrongNative = structuredClone(reports);
-    const nativeReport = wrongNative.get(plan.reports[0].file)!;
-    nativeReport.metadata.native = true;
-    nativeReport.metadata.nativeHash = H64;
-    expect(() => validateCompleteReportSet(plan, wrongNative, before, before)).toThrow("native addon hash mismatch");
-
-    const normalizedAway = structuredClone(before);
-    normalizedAway.builds["candidate-build"].manifestHash = H64;
-    expect(() => validateCompleteReportSet(plan, reports, normalizedAway, normalizedAway))
-      .toThrow("not bound to its resolved source blobs");
-
-    const wrongFilenameSource = structuredClone(before);
-    wrongFilenameSource.builds["candidate-build"].filenameSourceHash = H64;
-    expect(() => validateCompleteReportSet(plan, reports, wrongFilenameSource, wrongFilenameSource))
-      .toThrow("not bound to its resolved source blobs");
+    const reportCases: Array<[(reports: ReturnType<typeof makeReports>) => void, string]> = [
+      [(reports) => { reports.delete(plan.reports[0].file); }, "incomplete"],
+      [(reports) => { reports.get(plan.reports[0].file)!.metadata.distHash = N64; }, "distribution hash mismatch"],
+      [(reports) => {
+        reports.get(candidateReport.file)!.metadata.measuredDistribution.observedFilenameFallbackProfile = "legacy";
+      }, "filename fallback profile mismatch"],
+      [(reports) => { reports.get(candidateReport.file)!.metadata.measuredDistribution.buildId = "baseline-build"; },
+        "measured buildId mismatch"],
+      [(reports) => { reports.get(candidateReport.file)!.metadata.measuredDistribution.sourceRole = "baseline"; },
+        "measured sourceRole mismatch"],
+      [(reports) => { reports.get(plan.reports[0].file)!.metadata.sampleSemantics = "individual calls"; }, "sample semantics mismatch"],
+      [(reports) => {
+        reports.get(plan.reports[0].file)!.results = [{
+          name: "sanitizeUntrustedFileName/matrix/fallback-path", iterations: 1,
+          samplesUs: [1, 1, 1, 1, 1], minUs: 1, medianUs: 1, maxUs: 1, workloadSemantics: "equivalent-output",
+        }];
+      }, "workload semantics mismatch"],
+      [(reports) => {
+        const report = reports.get(plan.reports[0].file)!;
+        report.metadata.native = true;
+        report.metadata.nativeHash = H64;
+      }, "native addon hash mismatch"],
+    ];
+    for (const [mutate, message] of reportCases) {
+      const changed = makeReports();
+      mutate(changed);
+      expect(() => validateCompleteReportSet(plan, changed, before, before)).toThrow(message);
+    }
+    for (const field of ["manifestHash", "filenameSourceHash"] as const) {
+      const changed = structuredClone(before);
+      changed.builds["candidate-build"][field] = H64;
+      expect(() => validateCompleteReportSet(plan, makeReports(), changed, changed))
+        .toThrow("not bound to its resolved source blobs");
+    }
   });
 });

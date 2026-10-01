@@ -42,11 +42,6 @@ const cache = fileStore({
 
 Store and per-call `maxBytes` values must be non-negative safe integers or positive `Infinity`. Zero is an active zero-byte cap; `Infinity` disables the cap. An omitted or explicitly `undefined` per-call value preserves the store-level limit. The same rule applies to buffer writes, streams, copies, async reads, and synchronous reads/writes.
 
-Use `private: true` for credentials, auth profiles, tokens, and other private
-state. Private mode keeps the same `FileStore` shape but routes writes through
-the secret-file atomic path, refusing symlink parent components and re-asserting
-mode after rename.
-
 Returns a `FileStore`:
 
 ```ts
@@ -115,6 +110,34 @@ key, and `writeJson` serializes its value before validating the key. Key rejecti
 therefore does not imply that no filesystem access or serialization occurred.
 
 `root()` returns a [`Root`](root.md) handle for the same directory when you need the full surface (move, list, mkdir). It's a fresh handle per call and is safe to call frequently.
+
+## Private mode
+
+Use `fileStore({ private: true })` for credentials, auth profiles, tokens, and
+other private state. It keeps the same `FileStore` shape and mode defaults above.
+Async writes use the secret-file atomic path, refusing symlink parent components
+and re-asserting file mode after rename. Existing directories must already have
+the requested mode; async writes reject unsuitable permissions rather than
+repairing them. New-directory initialization requires guarded descriptor
+authority and can fail closed under restrictive platform/umask combinations;
+see the [secret-directory policy](secret-file.md#parameters).
+
+Private locked JSON mutations prepare directories before sidecar acquisition
+and bind the lock to the admitted parent identity. Lock normalization is
+read-only: a deleted or replaced parent is rejected, not recreated. The writer
+revalidates directory admission afterward. Reads never create directories and
+retain the shared [read semantics](#reads).
+
+For boot paths or sync-only integrations:
+
+```ts
+import { fileStoreSync } from "@openclaw/fs-safe/store";
+
+fileStoreSync({ rootDir: "/var/lib/app", private: true }).writeJson("config.json", config);
+```
+
+Sync directory modes remain repair-compatible on POSIX through verified
+descriptors, with the platform limitations described under [Writes](#writes).
 
 ## Writes
 

@@ -6,28 +6,9 @@ import { createSidecarLockManager, type SidecarLockHandle } from "../src/sidecar
 import type { HeldSidecarLock } from "../src/sidecar-lock-acquire.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { deferred } from "./helpers/deferred.js";
+import { managerState, rejection } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-
-type ManagerState = {
-  admissions: Map<string, object>;
-  held: Map<string, HeldSidecarLock>;
-};
-
-function managerState(key: string): ManagerState {
-  const managers = Reflect.get(globalThis, Symbol.for("fsSafe.sidecarLockManagers")) as Map<
-    string,
-    ManagerState
-  >;
-  return managers.get(key)!;
-}
-
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  return await promise.then(
-    () => { throw new Error("expected acquisition to reject"); },
-    (error: unknown) => error,
-  );
-}
 
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
@@ -158,8 +139,8 @@ describe("async stale-policy admission ancestry", () => {
       });
       expect(nestedError).toMatchObject({ code: "file_lock_timeout" });
       expect(nestedPayload).not.toHaveBeenCalled();
-      expect(managerState(key).admissions.size).toBe(0);
-      expect(managerState(key).held.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).held.size).toBe(0);
       expect(await fs.readFile(lockPath, "utf8")).toBe(original);
       await manager.drain();
     },
@@ -189,12 +170,12 @@ describe("async stale-policy admission ancestry", () => {
         },
       });
       expect(await rejection(failed)).toBe(releaseError);
-      expect(managerState(key).admissions.size).toBe(0);
-      expect(managerState(key).held.size).toBe(1);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).held.size).toBe(1);
     } finally {
       remove.mockRestore();
       await manager.drain();
     }
-    expect(managerState(key).held.size).toBe(0);
+    expect(managerState<HeldSidecarLock>(key).held.size).toBe(0);
   });
 });

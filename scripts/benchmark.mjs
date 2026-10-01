@@ -178,148 +178,44 @@ async function main() {
     }
 
     const cases = [
-      {
-        group: "read file",
-        name: "raw fs.readFile",
-        baseline: true,
-        run: async () => {
-          await fs.readFile(readPath);
-        },
-      },
-      {
-        group: "read file",
-        name: "readRegularFile",
-        run: async () => {
-          await readRegularFile({ filePath: readPath });
-        },
-      },
-      {
-        group: "read file",
-        name: "root.readBytes",
-        run: async () => {
-          await safe.readBytes(readRelPath);
-        },
-      },
-      {
-        group: "write file",
-        name: "raw fs.writeFile",
-        baseline: true,
-        run: async (i) => {
-          await fs.writeFile(path.join(workspace, "raw-write.txt"), `${i}:${payload.toString("utf8")}`);
-        },
-      },
-      {
-        group: "write file",
-        name: "replaceFileAtomic",
-        run: async (i) => {
-          await replaceFileAtomic({
-            filePath: path.join(workspace, "atomic-write.txt"),
-            content: `${i}:${payload.toString("utf8")}`,
-          });
-        },
-      },
-      {
-        group: "write file",
-        name: "root.write",
-        run: async (i) => {
-          await safe.write("root-write.txt", `${i}:${payload.toString("utf8")}`);
-        },
-      },
-      {
-        group: "write file",
-        name: "root.write durable:false",
-        run: async (i) => {
-          await safe.write("root-write-nondurable.txt", `${i}:${payload.toString("utf8")}`, { durable: false });
-        },
-      },
-      {
-        group: "file store",
-        name: "raw fs.writeFile",
-        baseline: true,
-        run: () => fs.writeFile(path.join(workspace, "store-raw.txt"), payload, { mode: 0o600 }),
-      },
-      {
-        group: "file store",
-        name: "fileStore.write",
-        run: () => store.write("store-write.txt", payload),
-      },
-      {
-        group: "file store",
-        name: "fileStore.write durable:false",
-        run: () => store.write("store-write-nondurable.txt", payload, { durable: false }),
-      },
-      {
-        group: "read json",
-        name: "raw readFile + JSON.parse",
-        baseline: true,
-        run: async () => {
-          JSON.parse(await fs.readFile(jsonPath, "utf8"));
-        },
-      },
-      {
-        group: "read json",
-        name: "tryReadJson",
-        run: async () => {
-          await tryReadJson(jsonPath);
-        },
-      },
-      {
-        group: "write json",
-        name: "raw writeFile + stringify",
-        baseline: true,
-        run: async (i) => {
-          await fs.writeFile(
-            path.join(workspace, "raw-json.json"),
-            `${JSON.stringify({ ...jsonPayload, count: i }, null, 2)}\n`,
-          );
-        },
-      },
-      {
-        group: "write json",
-        name: "writeJson",
-        run: async (i) => {
-          await writeJson(path.join(workspace, "safe-json.json"), { ...jsonPayload, count: i }, {
-            trailingNewline: true,
-          });
-        },
-      },
-      {
-        group: "write file 1 MiB", name: "raw fs.writeFile", baseline: true, iterationsDivisor: 10,
-        run: () => fs.writeFile(path.join(workspace, "raw-write-1mib.bin"), largePayload),
-      },
-      {
-        group: "write file 1 MiB", name: "replaceFileAtomic", iterationsDivisor: 10,
-        run: () => replaceFileAtomic({ filePath: path.join(workspace, "atomic-write-1mib.bin"), content: largePayload }),
-      },
-      {
-        group: "write file 1 MiB", name: "root.write", iterationsDivisor: 10,
-        run: () => safe.write("root-write-1mib.bin", largePayload),
-      },
-      {
-        group: "read file 1 MiB", name: "raw fs.readFile", baseline: true, iterationsDivisor: 10,
-        run: () => fs.readFile(largeReadPath),
-      },
-      {
-        group: "read file 1 MiB", name: "readRegularFile", iterationsDivisor: 10,
-        run: () => readRegularFile({ filePath: largeReadPath }),
-      },
-      {
-        group: "read file 1 MiB", name: "root.readBytes", iterationsDivisor: 10,
-        run: () => safe.readBytes("read-1mib.bin"),
-      },
-      {
-        group: "write inherited mode 0640", name: "raw fs.writeFile", baseline: true,
-        run: () => fs.writeFile(path.join(workspace, "raw-mode.txt"), payload),
-      },
-      {
-        group: "write inherited mode 0640", name: "replaceFileAtomic",
-        run: () => replaceFileAtomic({ filePath: path.join(workspace, "atomic-mode.txt"), content: payload, preserveExistingMode: true }),
-      },
-      {
-        group: "write inherited mode 0640", name: "root.write",
-        run: () => safe.write("root-mode.txt", payload),
-      },
-    ];
+      ["read file", "raw fs.readFile", async () => { await fs.readFile(readPath); }, true],
+      ["read file", "readRegularFile", async () => { await readRegularFile({ filePath: readPath }); }],
+      ["read file", "root.readBytes", async () => { await safe.readBytes(readRelPath); }],
+      ["write file", "raw fs.writeFile", async (i) => {
+        await fs.writeFile(path.join(workspace, "raw-write.txt"), `${i}:${payload.toString("utf8")}`);
+      }, true],
+      ["write file", "replaceFileAtomic", async (i) => {
+        await replaceFileAtomic({ filePath: path.join(workspace, "atomic-write.txt"), content: `${i}:${payload.toString("utf8")}` });
+      }],
+      ["write file", "root.write", async (i) => { await safe.write("root-write.txt", `${i}:${payload.toString("utf8")}`); }],
+      ["write file", "root.write durable:false", async (i) => {
+        await safe.write("root-write-nondurable.txt", `${i}:${payload.toString("utf8")}`, { durable: false });
+      }],
+      ["file store", "raw fs.writeFile", () => fs.writeFile(path.join(workspace, "store-raw.txt"), payload, { mode: 0o600 }), true],
+      ["file store", "fileStore.write", () => store.write("store-write.txt", payload)],
+      ["file store", "fileStore.write durable:false", () => store.write("store-write-nondurable.txt", payload, { durable: false })],
+      ["read json", "raw readFile + JSON.parse", async () => { JSON.parse(await fs.readFile(jsonPath, "utf8")); }, true],
+      ["read json", "tryReadJson", async () => { await tryReadJson(jsonPath); }],
+      ["write json", "raw writeFile + stringify", async (i) => {
+        await fs.writeFile(path.join(workspace, "raw-json.json"), `${JSON.stringify({ ...jsonPayload, count: i }, null, 2)}\n`);
+      }, true],
+      ["write json", "writeJson", async (i) => {
+        await writeJson(path.join(workspace, "safe-json.json"), { ...jsonPayload, count: i }, { trailingNewline: true });
+      }],
+      ["write file 1 MiB", "raw fs.writeFile", () => fs.writeFile(path.join(workspace, "raw-write-1mib.bin"), largePayload), true, 10],
+      ["write file 1 MiB", "replaceFileAtomic", () => replaceFileAtomic({
+        filePath: path.join(workspace, "atomic-write-1mib.bin"), content: largePayload,
+      }), undefined, 10],
+      ["write file 1 MiB", "root.write", () => safe.write("root-write-1mib.bin", largePayload), undefined, 10],
+      ["read file 1 MiB", "raw fs.readFile", () => fs.readFile(largeReadPath), true, 10],
+      ["read file 1 MiB", "readRegularFile", () => readRegularFile({ filePath: largeReadPath }), undefined, 10],
+      ["read file 1 MiB", "root.readBytes", () => safe.readBytes("read-1mib.bin"), undefined, 10],
+      ["write inherited mode 0640", "raw fs.writeFile", () => fs.writeFile(path.join(workspace, "raw-mode.txt"), payload), true],
+      ["write inherited mode 0640", "replaceFileAtomic", () => replaceFileAtomic({
+        filePath: path.join(workspace, "atomic-mode.txt"), content: payload, preserveExistingMode: true,
+      })],
+      ["write inherited mode 0640", "root.write", () => safe.write("root-mode.txt", payload)],
+    ].map(([group, name, run, baseline, iterationsDivisor]) => ({ group, name, run, baseline, iterationsDivisor }));
 
     const results = [];
     for (const benchCase of cases) {

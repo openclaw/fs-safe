@@ -151,67 +151,34 @@ describe("copyTree successful-settlement benchmark receipts", () => {
     const rows = measuredCopyRows(requestedIterations);
     const report = { metadata: { mode: "off" }, results: rows };
     expect(() => validateCopyTreeSuccessReport(report, "", requestedIterations)).not.toThrow();
-    expect(() => validateCopyTreeSuccessReport({ ...report, results: rows.slice(1) }, "", requestedIterations))
-      .toThrow("row set mismatch");
-    expect(() => validateCopyTreeSuccessReport({ ...report, results: [...rows, rows[0]!] }, "", requestedIterations))
-      .toThrow("row set mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: [...rows, { ...rows[0]!, name: "copyTree/settled-success/unknown" }],
-    }, "", requestedIterations)).toThrow("row set mismatch");
-    const wrappedUnknown = {
-      ...rows[0]!,
-      name: "other/copyTree/settled-success/unknown",
-    };
-    expect(() => validateCopyTreeSuccessWorkloadResult(wrappedUnknown))
-      .toThrow("Unknown copyTree success row");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: [...rows, wrappedUnknown],
-    }, "copyTree/settled-success/", requestedIterations)).toThrow("row set mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: [...rows, { ...wrappedUnknown, skipped: "not run" }],
-    }, "copyTree/settled-success/", requestedIterations)).toThrow("row set mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: rows.map((row, index) => index === 0 ? { ...row, skipped: "not run" } : row),
-    }, "", requestedIterations)).toThrow("row was not measured");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: rows.map((row, index) => index === 0 ? {
-        ...row,
-        workloadDetails: { ...row.workloadDetails, files: 31 },
-      } : row),
-    }, "", requestedIterations)).toThrow("workload receipt mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: rows.map((row, index) => index === 0 ? {
-        ...row,
-        fixturePlacement: { ...row.fixturePlacement, autoByteFallbackVerified: true },
-      } : row),
-    }, "", requestedIterations)).toThrow("fixture receipt mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: rows.map((row, index) => index === 0 ? { ...row, iterations: 500 } : row),
-    }, "", requestedIterations)).toThrow("iteration count mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: rows.map(row => ({
-        ...row,
-        fixturePlacement: { ...row.fixturePlacement, nativeMode: "require" },
-      })),
-    }, "", requestedIterations)).toThrow("report native mode mismatch");
-    expect(() => validateCopyTreeSuccessReport({
-      ...report,
-      results: rows.map((row, index) => index === 1 ? {
-        ...row,
-        fixturePlacement: {
-          ...row.fixturePlacement,
-          executionPath: "portable-native-byte-copy",
-        },
-      } : row),
-    }, "", requestedIterations)).toThrow("native-off execution path mismatch");
+    const wrappedUnknown = { ...rows[0]!, name: "other/copyTree/settled-success/unknown" };
+    expect(() => validateCopyTreeSuccessWorkloadResult(wrappedUnknown)).toThrow("Unknown copyTree success row");
+    const reportCases: Array<[(rows: ReturnType<typeof measuredCopyRows>) => object[], string, string?]> = [
+      [(rows) => rows.slice(1), "row set mismatch"],
+      [(rows) => [...rows, rows[0]!], "row set mismatch"],
+      [(rows) => [...rows, { ...rows[0]!, name: "copyTree/settled-success/unknown" }], "row set mismatch"],
+      [(rows) => [...rows, wrappedUnknown], "row set mismatch", "copyTree/settled-success/"],
+      [(rows) => [...rows, { ...wrappedUnknown, skipped: "not run" }], "row set mismatch", "copyTree/settled-success/"],
+      [(rows) => rows.map((row, index) => index === 0 ? { ...row, skipped: "not run" } : row), "row was not measured"],
+      [(rows) => rows.map((row, index) => index === 0 ? {
+        ...row, workloadDetails: { ...row.workloadDetails, files: 31 },
+      } : row), "workload receipt mismatch"],
+      [(rows) => rows.map((row, index) => index === 0 ? {
+        ...row, fixturePlacement: { ...row.fixturePlacement, autoByteFallbackVerified: true },
+      } : row), "fixture receipt mismatch"],
+      [(rows) => rows.map((row, index) => index === 0 ? { ...row, iterations: 500 } : row), "iteration count mismatch"],
+      [(rows) => rows.map((row) => ({
+        ...row, fixturePlacement: { ...row.fixturePlacement, nativeMode: "require" },
+      })), "report native mode mismatch"],
+      [(rows) => rows.map((row, index) => index === 1 ? {
+        ...row, fixturePlacement: { ...row.fixturePlacement, executionPath: "portable-native-byte-copy" },
+      } : row), "native-off execution path mismatch"],
+    ];
+    for (const [mutate, message, filter = ""] of reportCases) {
+      expect(() => validateCopyTreeSuccessReport(
+        { ...report, results: mutate(measuredCopyRows(requestedIterations)) }, filter, requestedIterations,
+      )).toThrow(message);
+    }
 
     const filter = COPY_TREE_SUCCESS_NAMES[0]!;
     expect(() => validateCopyTreeSuccessReport(
@@ -243,43 +210,33 @@ describe("copyTree successful-settlement benchmark receipts", () => {
       "",
       requestedIterations,
     )).not.toThrow();
-    expect(() => validateProbeTreeSuccessReport({ results: [] }, "", requestedIterations))
-      .toThrow("row set mismatch");
-    expect(() => validateProbeTreeSuccessReport({ results: [row, row] }, "", requestedIterations))
-      .toThrow("row set mismatch");
-    for (const name of [
-      "probeTreeClone/unknown",
-      "probeTreeClone-extra",
-      "other/probeTreeClone",
-    ]) {
-      const unknown = { ...row, name };
-      expect(() => validateProbeTreeSuccessWorkloadResult(unknown))
-        .toThrow("Unknown probeTreeClone success row");
-      expect(() => validateProbeTreeSuccessReport({
-        results: [row, unknown],
-      }, "probeTreeClone", requestedIterations)).toThrow("row set mismatch");
-      expect(() => validateProbeTreeSuccessReport({
-        results: [row, { ...unknown, skipped: "not run" }],
-      }, "probeTreeClone", requestedIterations)).toThrow("row set mismatch");
+    const reportCases: Array<[(row: ReturnType<typeof measuredProbeRow>) => object, string]> = [
+      [() => ({ results: [] }), "row set mismatch"],
+      [(row) => ({ results: [row, row] }), "row set mismatch"],
+      [(row) => ({ results: [{ ...row, skipped: "not run" }] }), "row was not measured"],
+      [(row) => ({ results: [{ ...row, iterations: 1 }] }), "iteration count mismatch"],
+      [(row) => ({ metadata: { mode: "require" }, results: [row] }), "report native mode mismatch"],
+    ];
+    for (const [mutate, message] of reportCases) {
+      expect(() => validateProbeTreeSuccessReport(mutate(measuredProbeRow(requestedIterations)), "", requestedIterations))
+        .toThrow(message);
     }
-    expect(() => validateProbeTreeSuccessReport({
-      results: [{ ...row, skipped: "not run" }],
-    }, "", requestedIterations)).toThrow("row was not measured");
-    expect(() => validateProbeTreeSuccessReport({
-      results: [{ ...row, iterations: 1 }],
-    }, "", requestedIterations)).toThrow("iteration count mismatch");
-    expect(() => validateProbeTreeSuccessReport({
-      metadata: { mode: "require" },
-      results: [row],
-    }, "", requestedIterations)).toThrow("report native mode mismatch");
-    expect(() => validateProbeTreeSuccessWorkloadResult({
-      ...row,
-      fixturePlacement: { ...row.fixturePlacement, executionPath: "native-probe-parent-open-close" },
-    })).toThrow("fixture receipt mismatch");
-    expect(() => validateProbeTreeSuccessWorkloadResult({
-      ...row,
-      workloadDetails: { ...PROBE_TREE_SUCCESS_WORKLOAD, timedBoundary: "probe-only" },
-    })).toThrow("workload receipt mismatch");
+    for (const name of ["probeTreeClone/unknown", "probeTreeClone-extra", "other/probeTreeClone"]) {
+      const unknown = { ...measuredProbeRow(requestedIterations), name };
+      expect(() => validateProbeTreeSuccessWorkloadResult(unknown)).toThrow("Unknown probeTreeClone success row");
+      for (const extra of [unknown, { ...unknown, skipped: "not run" }]) {
+        expect(() => validateProbeTreeSuccessReport({ results: [measuredProbeRow(requestedIterations), extra] },
+          "probeTreeClone", requestedIterations)).toThrow("row set mismatch");
+      }
+    }
+    const workloadCases = [
+      [{ fixturePlacement: { ...row.fixturePlacement, executionPath: "native-probe-parent-open-close" } }, "fixture receipt mismatch"],
+      [{ workloadDetails: { ...PROBE_TREE_SUCCESS_WORKLOAD, timedBoundary: "probe-only" } }, "workload receipt mismatch"],
+    ] as const;
+    for (const [mutation, message] of workloadCases) {
+      expect(() => validateProbeTreeSuccessWorkloadResult({ ...measuredProbeRow(requestedIterations), ...mutation }))
+        .toThrow(message);
+    }
     expect(() => validateProbeTreeSuccessReport({ results: [] }, "copyTree", requestedIterations))
       .not.toThrow();
   });

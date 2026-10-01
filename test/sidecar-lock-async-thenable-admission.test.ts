@@ -7,23 +7,11 @@ import { createSidecarLockManager, type SidecarLockHandle } from "../src/sidecar
 import type { HeldSidecarLock } from "../src/sidecar-lock-acquire.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { deferred } from "./helpers/deferred.js";
+import { managerState, rejection, requiredNativeMode } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
 type ResultForm = "then-getter" | "async-then" | "promise-subclass";
 type CallbackSite = "payload" | "shouldReclaim" | "shouldRemoveStaleLock";
-type ManagerState = { admissions: Map<string, object>; held: Map<string, HeldSidecarLock> };
-
-function managerState(key: string): ManagerState {
-  return (Reflect.get(globalThis, managersKey) as Map<string, ManagerState>).get(key)!;
-}
-
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  return await promise.then(
-    () => { throw new Error("expected acquisition to reject"); },
-    (error: unknown) => error,
-  );
-}
 
 function assimilating<T>(form: ResultForm, value: T, effect: () => Promise<void>): Promise<T> {
   let started: Promise<void> | undefined;
@@ -62,10 +50,6 @@ function assimilating<T>(form: ResultForm, value: T, effect: () => Promise<void>
   return new AssimilatingPromise<T>((resolve) => resolve(value));
 }
 
-function requiredNativeMode(): "off" | "require" {
-  return process.env.FS_SAFE_NATIVE_MODE === "require" ? "require" : "off";
-}
-
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
@@ -95,7 +79,7 @@ describe("async sidecar thenable assimilation admission", () => {
       const syntheticHeld = {
         reentrantOwner: "cycle", releasePromise: releaseGate.promise,
       } as unknown as HeldSidecarLock;
-      managerState(key).held.set(normalizedA, syntheticHeld);
+      managerState<HeldSidecarLock>(key).held.set(normalizedA, syntheticHeld);
       try {
         const nested = manager.acquire({
           targetPath: targetA, lockRoot, staleMs: 30_000, reentrantOwner: "cycle",
@@ -110,8 +94,8 @@ describe("async sidecar thenable assimilation admission", () => {
         await distinct.release();
         distinct = undefined;
       } finally {
-        if (managerState(key).held.get(normalizedA) === syntheticHeld) {
-          managerState(key).held.delete(normalizedA);
+        if (managerState<HeldSidecarLock>(key).held.get(normalizedA) === syntheticHeld) {
+          managerState<HeldSidecarLock>(key).held.delete(normalizedA);
         }
         releaseGate.resolve();
       }
@@ -142,7 +126,7 @@ describe("async sidecar thenable assimilation admission", () => {
       expect(nestedPayload).not.toHaveBeenCalled();
       expect(distinctPayload).toHaveBeenCalledOnce();
       expect(sleeps).not.toHaveBeenCalled();
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
     } finally {
       await distinct?.release().catch(() => undefined);
       await outer?.release().catch(() => undefined);
@@ -183,7 +167,7 @@ describe("async sidecar thenable assimilation admission", () => {
         } : {}),
       });
       expect(await rejection(rejected)).toBe(failure);
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
       await expect(fs.access(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: "ENOENT" });
       if (site !== "payload") expect(await fs.readFile(lockPath, "utf8")).toBe(original);
       await fs.rm(lockPath, { force: true });
@@ -216,7 +200,7 @@ describe("async sidecar thenable assimilation admission", () => {
           payload: () => Promise.reject(failure),
         });
         expect(await rejection(failed)).toBe(failure);
-        expect(managerState(key).admissions.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
         expect(await holder.verifyStillHeld()).toBe(true);
       } finally {
         await holder.release();
@@ -256,7 +240,7 @@ describe("async sidecar thenable assimilation admission", () => {
         } : {}),
       });
       expect(await rejection(failed)).toBe(failure);
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
       await expect(fs.access(`${lockPath}.reclaim`)).rejects.toMatchObject({ code: "ENOENT" });
       expect(await fs.readFile(lockPath, "utf8")).toBe(original);
       await fs.rm(lockPath);
@@ -279,7 +263,7 @@ describe("async sidecar thenable assimilation admission", () => {
       targetPath: target, staleMs: 30_000, reentrantOwner: "holder",
       payload: async () => ({ owner: "holder" }),
     });
-    const held = managerState(key).held.get(holder.normalizedTargetPath)!;
+    const held = managerState<HeldSidecarLock>(key).held.get(holder.normalizedTargetPath)!;
     const releaseGate = deferred();
     held.releasePromise = releaseGate.promise;
     const nestedPayload = vi.fn(async () => ({ owner: "nested" }));
@@ -390,7 +374,7 @@ describe("async sidecar thenable assimilation admission", () => {
               timeoutMs: Number.POSITIVE_INFINITY, retry: {}, payload: nestedPayload,
             }));
           } else {
-            managerState(key).admissions.clear();
+            managerState<HeldSidecarLock>(key).admissions.clear();
           }
           return undefined;
         },
@@ -403,7 +387,7 @@ describe("async sidecar thenable assimilation admission", () => {
         expect(getterCalls).toBe(1);
         expect(await nested).toMatchObject({ code: "file_lock_timeout" });
         expect(nestedPayload).not.toHaveBeenCalled();
-        expect(managerState(key).admissions.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
         expect(await outer.verifyStillHeld()).toBe(true);
       } finally {
         await outer.release();
@@ -425,7 +409,7 @@ describe("async sidecar thenable assimilation admission", () => {
       const payload = Object.defineProperty({ owner: "lost" }, "then", {
         get() {
           getterCalls += 1;
-          managerState(key).admissions.clear();
+          managerState<HeldSidecarLock>(key).admissions.clear();
           return undefined;
         },
       });
@@ -435,7 +419,7 @@ describe("async sidecar thenable assimilation admission", () => {
       });
       expect(await rejection(failed)).toMatchObject({ code: "file_lock_timeout" });
       expect(getterCalls).toBe(1);
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
       await expect(fs.access(`${target}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
       const probe = await manager.acquire({
         targetPath: target, lockRoot, staleMs: 30_000,

@@ -221,5 +221,5 @@ const state = await readJsonIfExists<State>("./state.json");
 - [JSON store](json-store.md) — a single-file state wrapper with explicit per-call fallback (`readOr` / `updateOr`) and optional sidecar locking.
 - [Atomic writes](atomic.md) — lower-level sibling-temp replacement helpers.
 - [Secret files](secret-file.md) — JSON-or-text writes with mode 0600 in mode 0700 dirs.
-- [Private file-store mode](private-file-store.md) — root-bounded JSON+text state stores.
+- [Private file-store mode](file-store.md#private-mode) — root-bounded JSON+text state stores.
 - [File lock](sidecar-lock.md) — cross-process coordination.

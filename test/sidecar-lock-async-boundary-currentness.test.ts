@@ -7,36 +7,11 @@ import type { HeldSidecarLock } from "../src/sidecar-lock-acquire.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { managerState, requiredNativeMode, freshProbe } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
 type Authority = "raw" | "root";
 type Loss = "token" | "holder";
-type ManagerState = {
-  admissions: Map<string, object>;
-  held: Map<string, HeldSidecarLock>;
-};
-
-function managerState(key: string): ManagerState {
-  return (Reflect.get(globalThis, managersKey) as Map<string, ManagerState>).get(key)!;
-}
-
-function requiredNativeMode(): "off" | "require" {
-  return process.env.FS_SAFE_NATIVE_MODE === "require" ? "require" : "off";
-}
-
-async function freshProbe(
-  manager: ReturnType<typeof createSidecarLockManager>,
-  targetPath: string,
-  lockRoot: Awaited<ReturnType<typeof root>> | undefined,
-): Promise<void> {
-  const probe = await manager.acquire({
-    targetPath, lockRoot, staleMs: 30_000, timeoutMs: 0, retry: { retries: 0 },
-    payload: async () => ({ owner: "probe" }),
-  });
-  expect(await probe.verifyStillHeld()).toBe(true);
-  await probe.release();
-}
 
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
@@ -56,7 +31,7 @@ describe("async sidecar admission boundary currentness", () => {
     const lockRoot = authority === "root" ? await root(directory) : undefined;
     const key = `option-boundary:${stage}:${loss}:${authority}:${directory}`;
     const manager = createSidecarLockManager(key);
-    const state = managerState(key);
+    const state = managerState<HeldSidecarLock>(key);
     const normalized = path.join(await fs.realpath(directory), path.basename(targetPath));
     const replacement = { lockPath: "replacement" } as HeldSidecarLock;
     const unrelatedPath = path.join(directory, "unrelated.json");
@@ -121,7 +96,7 @@ describe("async sidecar admission boundary currentness", () => {
       const lockRoot = authority === "root" ? await root(directory) : undefined;
       const key = `stale-boundary:${stage}:${loss}:${authority}:${directory}`;
       const manager = createSidecarLockManager(key);
-      const state = managerState(key);
+      const state = managerState<HeldSidecarLock>(key);
       const normalized = path.join(await fs.realpath(directory), path.basename(targetPath));
       const replacement = { lockPath: "replacement" } as HeldSidecarLock;
       const unrelatedPath = path.join(directory, "unrelated.json");

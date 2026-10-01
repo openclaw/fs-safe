@@ -42,12 +42,22 @@ configureFsSafeNative({ mode: "auto" });
 | `configureFsSafePython({ mode })` | `configureFsSafeNative({ mode })` |
 | `FS_SAFE_PYTHON_MODE` | `FS_SAFE_NATIVE_MODE` |
 | `OPENCLAW_FS_SAFE_PYTHON_MODE` | `OPENCLAW_FS_SAFE_NATIVE_MODE` |
-| `pythonPath`, `FS_SAFE_PYTHON`, pinned-Python aliases | Nothing; prebuilt native binaries do not use an interpreter |
+| `pythonPath`, `FS_SAFE_PYTHON`, `OPENCLAW_FS_SAFE_PYTHON`, `OPENCLAW_PINNED_PYTHON`, `OPENCLAW_PINNED_WRITE_PYTHON` | Nothing; prebuilt native binaries do not use an interpreter |
 
-The old names warn once and map `auto`, `off`, or `require` so a shipped 0.4
-deployment does not silently change policy. Interpreter paths are ignored and
-Python is never spawned. Treat that warning as an upgrade diagnostic, not as a
-second supported helper path.
+`configureFsSafePython()` and the six legacy environment names above emit one
+`DeprecationWarning` per process with code `FS_SAFE_PYTHON_DEPRECATED`, naming
+the mapped native mode. The function warns when called; legacy environment
+settings warn when configuration is read. Modes map to `auto`, `off`, or `require`.
+A legacy interpreter-path environment setting without a mode maps to `auto`;
+interpreter paths are ignored and Python is never spawned.
+
+Programmatic native configuration takes precedence, then `FS_SAFE_NATIVE_MODE`,
+then `OPENCLAW_FS_SAFE_NATIVE_MODE`, then legacy environment configuration.
+Within legacy settings, `FS_SAFE_PYTHON_MODE` precedes
+`OPENCLAW_FS_SAFE_PYTHON_MODE`. An explicit mode passed to
+`configureFsSafePython()` sets the programmatic native override; a path-only
+call warns with `auto` but does not replace an existing override. Treat the
+bridge as an upgrade diagnostic, not a second helper path.
 
 Choose the production mode deliberately:
 

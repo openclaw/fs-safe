@@ -12,24 +12,12 @@ import {
   type SidecarLockAcquireOptions,
 } from "../src/sidecar-lock.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { managerState } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
 const syncHeldKey = Symbol.for("fsSafe.syncSidecarLocks");
 const syncAdmissionsKey = Symbol.for("fsSafe.syncSidecarLockAdmissions");
 const syncCleanupHandlerKey = Symbol.for("fsSafe.syncSidecarLockCleanupHandler");
-
-type ManagerState = {
-  held: Map<string, unknown>;
-  admissions: Map<string, object>;
-};
-
-function managerState(key: string): ManagerState {
-  const managers = Reflect.get(globalThis, Symbol.for("fsSafe.sidecarLockManagers")) as Map<
-    string,
-    ManagerState
-  >;
-  return managers.get(key)!;
-}
 
 function shadowCall<T extends object>(callback: T): T {
   return new Proxy(callback, {
