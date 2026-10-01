@@ -24,6 +24,9 @@ pub(super) struct Backend {
     waker: Waker,
     pending: HashMap<u32, SharedPending>,
     watches: HashMap<i32, HashMap<u32, HashSet<String>>>,
+    // rm_watch queues IN_IGNORED after any older events. Keep their former owner
+    // known until that echo (or a fully drained queue) retires the descriptor.
+    retiring: HashSet<i32>,
 }
 fn error(operation: &str) -> napi::Error<String> {
     let error = std::io::Error::last_os_error();
@@ -53,6 +56,7 @@ impl Backend {
             waker: Waker(Arc::new(unsafe { OwnedFd::from_raw_fd(wake_fd) })),
             pending: HashMap::new(),
             watches: HashMap::new(),
+            retiring: HashSet::new(),
         })
     }
     pub fn register(&mut self, id: u32, _: &str, pending: SharedPending, _: Notify) -> NativeResult<()> {
@@ -116,6 +120,10 @@ impl Backend {
             return Err(error("register inotify directory"));
         }
         self.watches.entry(wd).or_default().entry(id).or_default().insert(relative.to_owned());
+        if self.retiring.remove(&wd) {
+            // Descriptor wraparound makes old and new events indistinguishable.
+            self.pending[&id].lock().unwrap_or_else(|poisoned| poisoned.into_inner()).overflow();
+        }
         // Re-registration replaces this owner's old inode without disturbing aliases or peers.
         let mut failure = None;
         self.watches.retain(|old_wd, owners| {
@@ -135,6 +143,8 @@ impl Backend {
                 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL)
             {
                 failure.get_or_insert_with(|| error("replace inotify watch"));
+            } else {
+                self.retiring.insert(*old_wd);
             }
             false
         });
@@ -150,6 +160,8 @@ impl Backend {
                     && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINVAL)
                 {
                     failure.get_or_insert_with(|| error("remove inotify watch"));
+                } else {
+                    self.retiring.insert(*wd);
                 }
                 false
             } else {
@@ -200,6 +212,9 @@ impl Backend {
             if count < 0 {
                 if std::io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN) {
                     self.overflow();
+                } else {
+                    // An IN_IGNORED lost to queue overflow cannot leave a permanent tombstone.
+                    self.retiring.clear();
                 }
                 break;
             }
@@ -219,6 +234,12 @@ impl Backend {
                 offset = end;
                 if event.mask & libc::IN_Q_OVERFLOW != 0 {
                     self.overflow();
+                    continue;
+                }
+                if self.retiring.contains(&event.wd) {
+                    if event.mask & libc::IN_IGNORED != 0 {
+                        self.retiring.remove(&event.wd);
+                    }
                     continue;
                 }
                 if let Some(owners) = self.watches.get(&event.wd) {
@@ -265,6 +286,58 @@ mod tests {
     use std::sync::Mutex;
 
     #[test]
+    fn retirement_echoes_do_not_overflow_an_unrelated_owner() {
+        for auto_removed in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "fs-safe-watch-retire-{}-{auto_removed}",
+                std::process::id()
+            ));
+            fs::create_dir(&root).unwrap();
+            let stat = fs::metadata(&root).unwrap();
+            let identity = ExactFileIdentity {
+                dev: stat.dev(),
+                ino: stat.ino(),
+            };
+            let mut backend = Backend::new().unwrap();
+            let unrelated = Arc::new(Mutex::new(super::super::Pending {
+                limit: 16,
+                ..Default::default()
+            }));
+            backend.pending.insert(1, unrelated.clone());
+            backend
+                .pending
+                .insert(2, Arc::new(Mutex::new(super::super::Pending::default())));
+            backend
+                .add(
+                    2,
+                    &Directory {
+                        root: root.to_str().unwrap().into(),
+                        relative: "".into(),
+                        root_identity: identity,
+                        identity,
+                    },
+                )
+                .unwrap();
+            if auto_removed {
+                fs::remove_dir(&root).unwrap();
+            } else {
+                // Include named events queued before IN_IGNORED, not only the echo.
+                fs::write(root.join("queued"), "pending").unwrap();
+            }
+            backend.remove(2).unwrap();
+            backend.poll();
+            assert!(backend.retiring.is_empty());
+            assert!(
+                !unrelated.lock().unwrap().overflow,
+                "auto_removed={auto_removed}"
+            );
+            if !auto_removed {
+                fs::remove_dir_all(&root).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn replacement_retires_old_inode_but_preserves_other_owners() {
         let root = std::env::temp_dir().join(format!("fs-safe-watch-replace-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
@@ -300,5 +373,28 @@ mod tests {
         backend.remove(2).unwrap();
         assert!(backend.watches.is_empty());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reused_descriptor_overflows_only_its_new_owner_and_drain_clears_tombstones() {
+        let root = std::env::temp_dir().join(format!("fs-safe-watch-reuse-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let stat = fs::metadata(&root).unwrap();
+        let identity = ExactFileIdentity { dev: stat.dev(), ino: stat.ino() };
+        let mut backend = Backend::new().unwrap();
+        for id in [1, 2] {
+            backend.pending.insert(id, Arc::new(Mutex::new(super::super::Pending { limit: 16, ..Default::default() })));
+        }
+        // A fresh inotify instance starts at wd 1; simulate its presence after wraparound.
+        backend.retiring.extend([1, 2]);
+        backend.add(1, &Directory { root: root.to_str().unwrap().into(), relative: "".into(), root_identity: identity, identity }).unwrap();
+        assert!(backend.watches.contains_key(&1));
+        assert!(!backend.retiring.contains(&1));
+        assert!(backend.pending[&1].lock().unwrap().overflow);
+        assert!(!backend.pending[&2].lock().unwrap().overflow);
+        backend.poll();
+        assert!(backend.retiring.is_empty());
+        backend.remove(1).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 }
