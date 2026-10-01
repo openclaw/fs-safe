@@ -284,69 +284,49 @@ describe("clawpatch regression coverage", () => {
     expect((await fs.stat(outsideDir)).mode & 0o777).toBe(0o755);
   });
 
-  itPosix("rejects symlinked durable queue parents before mkdir", async () => {
-    const rootDir = await tempRoot("fs-safe-queue-symlink-parent-");
+  itPosix.each([
+    { name: "independent shallow parents", prefix: "symlink-parent", shared: false, parentPath: "", absent: "queue" },
+    { name: "shared nested parent", prefix: "shared-symlink-parent", shared: true, parentPath: "missing/state", absent: "missing" },
+  ])("rejects missing durable queue dirs under symlinked $name before mkdir", async ({ prefix, shared, parentPath, absent }) => {
+    const rootDir = await tempRoot(`fs-safe-queue-${prefix}-`);
     const outsideDir = path.join(rootDir, "outside");
     const queueParent = path.join(rootDir, "link");
-    const queueDir = path.join(queueParent, "queue");
-    const failedDir = path.join(rootDir, "failed");
-    await fs.mkdir(outsideDir, { mode: 0o755 });
-    await fs.mkdir(failedDir);
-    await fs.chmod(outsideDir, 0o755);
+    const queueDir = path.join(queueParent, parentPath, "queue");
+    const failedDir = path.join(shared ? queueParent : rootDir, parentPath, "failed");
+    await fs.mkdir(outsideDir, shared ? undefined : { mode: 0o755 });
+    if (!shared) {
+      await fs.mkdir(failedDir);
+      await fs.chmod(outsideDir, 0o755);
+    }
     await fs.symlink(outsideDir, queueParent, "dir");
 
     await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
-    await expect(fs.lstat(path.join(outsideDir, "queue"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(outsideDir, absent))).rejects.toMatchObject({
       code: "ENOENT",
     });
-    expect((await fs.stat(outsideDir)).mode & 0o777).toBe(0o755);
+    if (!shared) expect((await fs.stat(outsideDir)).mode & 0o777).toBe(0o755);
   });
 
-  itPosix("rejects missing durable queue dirs under shared symlink parents", async () => {
-    const rootDir = await tempRoot("fs-safe-queue-shared-symlink-parent-");
+  itPosix.each([
+    { name: "independent shallow parents", prefix: "existing-symlink-parent", shared: false, parentPath: "" },
+    { name: "shared nested parent", prefix: "shared-existing-symlink-parent", shared: true, parentPath: "state" },
+  ])("rejects existing durable queue dirs under symlinked $name without chmoding targets", async ({ prefix, shared, parentPath }) => {
+    const rootDir = await tempRoot(`fs-safe-queue-${prefix}-`);
     const outsideDir = path.join(rootDir, "outside");
     const queueParent = path.join(rootDir, "link");
-    const queueDir = path.join(queueParent, "missing", "state", "queue");
-    const failedDir = path.join(queueParent, "missing", "state", "failed");
-    await fs.mkdir(outsideDir);
+    const queueDir = path.join(queueParent, parentPath, "queue");
+    const failedDir = path.join(shared ? queueParent : rootDir, parentPath, "failed");
+    const targets = (shared ? ["queue", "failed"] : ["queue"])
+      .map((name) => path.join(outsideDir, parentPath, name));
+    for (const target of targets) await fs.mkdir(target, { mode: 0o755, recursive: true });
+    if (!shared) await fs.mkdir(failedDir);
     await fs.symlink(outsideDir, queueParent, "dir");
+    const originalModes = await Promise.all(targets.map(async (target) => (await fs.stat(target)).mode & 0o777));
 
     await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
-    await expect(fs.lstat(path.join(outsideDir, "missing"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
-
-  itPosix("rejects existing durable queue directories under symlinked parents", async () => {
-    const rootDir = await tempRoot("fs-safe-queue-existing-symlink-parent-");
-    const outsideDir = path.join(rootDir, "outside");
-    const queueParent = path.join(rootDir, "link");
-    const queueDir = path.join(queueParent, "queue");
-    const failedDir = path.join(rootDir, "failed");
-    await fs.mkdir(path.join(outsideDir, "queue"), { mode: 0o755, recursive: true });
-    await fs.mkdir(failedDir);
-    await fs.symlink(outsideDir, queueParent, "dir");
-    const originalMode = (await fs.stat(path.join(outsideDir, "queue"))).mode & 0o777;
-
-    await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
-    expect((await fs.stat(path.join(outsideDir, "queue"))).mode & 0o777).toBe(originalMode);
-  });
-
-  itPosix("rejects shared existing durable queue dirs under symlinked parents", async () => {
-    const rootDir = await tempRoot("fs-safe-queue-shared-existing-symlink-parent-");
-    const outsideDir = path.join(rootDir, "outside");
-    const queueParent = path.join(rootDir, "link");
-    const queueDir = path.join(queueParent, "state", "queue");
-    const failedDir = path.join(queueParent, "state", "failed");
-    await fs.mkdir(path.join(outsideDir, "state", "queue"), { mode: 0o755, recursive: true });
-    await fs.mkdir(path.join(outsideDir, "state", "failed"), { mode: 0o755, recursive: true });
-    await fs.symlink(outsideDir, queueParent, "dir");
-    const originalQueueMode = (await fs.stat(path.join(outsideDir, "state", "queue"))).mode & 0o777;
-    const originalFailedMode = (await fs.stat(path.join(outsideDir, "state", "failed"))).mode & 0o777;
-
-    await expect(ensureJsonDurableQueueDirs({ queueDir, failedDir })).rejects.toBeTruthy();
-    expect((await fs.stat(path.join(outsideDir, "state", "queue"))).mode & 0o777).toBe(originalQueueMode);
-    expect((await fs.stat(path.join(outsideDir, "state", "failed"))).mode & 0o777).toBe(originalFailedMode);
+    for (const [index, target] of targets.entries()) {
+      expect((await fs.stat(target)).mode & 0o777).toBe(originalModes[index]);
+    }
   });
 
   itPosix("rejects symlinked durable queue failed directories during moves", async () => {

@@ -9,15 +9,10 @@ import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoad
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { probeTreeClone, readCloneFileMetadata } from "../src/copy.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const nativeAvailable = Boolean(loadTestNative("required-env"));
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
   vi.restoreAllMocks();

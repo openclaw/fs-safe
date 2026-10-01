@@ -12,14 +12,9 @@ import {
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { root } from "../src/root.js";
 import { useTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = process.platform !== "win32";
-} catch {
-  // The fallback CI lane intentionally has no binding; native CI builds it first.
-}
+const nativeAvailable = Boolean(loadTestNative("optional")) && process.platform !== "win32";
 const { tempRoot } = useTempDirs();
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });

@@ -2,15 +2,10 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { __loadBundledNativeForTest, type NativeBinding } from "../src/native.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
-let native: NativeBinding | undefined;
-try {
-  native = __loadBundledNativeForTest();
-} catch {
-  // Native platform jobs build the binding; JavaScript-only jobs skip this proof.
-}
+const native = loadTestNative("optional");
 const { tempRoot } = useTempDirs();
 
 describe.runIf(native)("native owned-tree removal", () => {

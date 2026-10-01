@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafePython,
@@ -9,7 +10,6 @@ import {
   getFsSafeNativeConfig,
 } from "../src/native-config.js";
 import {
-  __loadBundledNativeForTest,
   __nativeLoaderDetectorsForTest,
   __nativeTargetForTest,
   __resetNativeLoaderForTest,
@@ -168,12 +168,7 @@ describe("native helper configuration", () => {
 });
 
 describe("platform native loader", () => {
-  let hostBinding: NativeBinding | undefined;
-  try {
-    hostBinding = __loadBundledNativeForTest();
-  } catch {
-    // Ordinary JavaScript-only jobs intentionally run without a built binding.
-  }
+  const hostBinding = loadTestNative("optional");
 
   it.runIf(Boolean(hostBinding))("loads the platform binary for the host target", () => {
     expect(hostBinding?.closeOwnedFd).toBeTypeOf("function");

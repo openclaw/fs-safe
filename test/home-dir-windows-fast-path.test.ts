@@ -55,7 +55,17 @@ describe("Windows home-path admission fast path", () => {
     expect(reads).toBe(2);
   });
 
-  it("preserves the repair-helper platform read for an ordinary six-character path", () => {
+  it.each([
+    {
+      name: "preserves the repair-helper platform read for an ordinary six-character path",
+      input: "C:\\abc", resolve: resolveToInput, expected: "C:\\abc", expectedReads: 3,
+    },
+    {
+      name: "repairs a six-character result once for a seven-character ordinary input",
+      input: "C:\\safe", resolve: () => vi.spyOn(path, "resolve").mockReturnValue("\\\\?\\C:"),
+      expected: "\\\\?\\C:\\", expectedReads: 5,
+    },
+  ])("$name", ({ input, resolve, expected, expectedReads }) => {
     let reads = 0;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -64,11 +74,11 @@ describe("Windows home-path admission fast path", () => {
         return "win32";
       },
     });
-    resolveToInput();
+    resolve();
 
-    expect(resolveHomeRelativePath("C:\\abc")).toBe("C:\\abc");
+    expect(resolveHomeRelativePath(input)).toBe(expected);
     expect(path.resolve).toHaveBeenCalledOnce();
-    expect(reads).toBe(3);
+    expect(reads).toBe(expectedReads);
   });
 
   it("fully admits a changed resolver result", () => {
@@ -179,14 +189,23 @@ describe("Windows home-path admission fast path", () => {
     expect(reads).toBe(3);
   });
 
-  it("checks a raw non-Windows alias again when resolution switches to Windows", () => {
+  it.each([
+    {
+      name: "checks a raw non-Windows alias again when resolution switches to Windows",
+      resolve: () => vi.spyOn(path, "resolve").mockReturnValue("C:\\safe\\file.txt:stream"),
+    },
+    {
+      name: "rechecks an unchanged nonordinary result when resolution switches to Windows",
+      resolve: resolveToInput,
+    },
+  ])("$name", ({ resolve }) => {
     const platforms = ["linux", "win32"] as const;
     let reads = 0;
     Object.defineProperty(process, "platform", {
       configurable: true,
       get: () => platforms[reads++],
     });
-    vi.spyOn(path, "resolve").mockReturnValue("C:\\safe\\file.txt:stream");
+    resolve();
 
     expect(() => resolveHomeRelativePath("relative:literal.txt")).toThrow(
       expect.objectContaining({ code: "invalid-path" }),
@@ -194,22 +213,17 @@ describe("Windows home-path admission fast path", () => {
     expect(reads).toBe(2);
   });
 
-  it("rechecks an unchanged nonordinary result when resolution switches to Windows", () => {
-    const platforms = ["linux", "win32"] as const;
-    let reads = 0;
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      get: () => platforms[reads++],
-    });
-    resolveToInput();
-
-    expect(() => resolveHomeRelativePath("relative:literal.txt")).toThrow(
-      expect.objectContaining({ code: "invalid-path" }),
-    );
-    expect(reads).toBe(2);
-  });
-
-  it("preserves root-resolver platform reads for seven-character input", () => {
+  it.each([
+    {
+      name: "preserves root-resolver platform reads for seven-character input",
+      input: "C:\\safe", resolve: resolveToInput, expected: "C:\\safe", expectedReads: 3,
+    },
+    {
+      name: "preserves root repair and its platform reads for a six-character result",
+      input: "C:\\safe\\nested\\file.txt", resolve: () => vi.spyOn(path, "resolve").mockReturnValue("\\\\?\\C:"),
+      expected: "\\\\?\\C:\\", expectedReads: 4,
+    },
+  ])("$name", ({ input, resolve, expected, expectedReads }) => {
     let reads = 0;
     Object.defineProperty(process, "platform", {
       configurable: true,
@@ -218,41 +232,10 @@ describe("Windows home-path admission fast path", () => {
         return "win32";
       },
     });
-    resolveToInput();
+    resolve();
 
-    expect(resolveHomeRelativePath("C:\\safe")).toBe("C:\\safe");
-    expect(reads).toBe(3);
-  });
-
-  it("preserves root repair and its platform reads for a six-character result", () => {
-    let reads = 0;
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      get: () => {
-        reads += 1;
-        return "win32";
-      },
-    });
-    vi.spyOn(path, "resolve").mockReturnValue("\\\\?\\C:");
-
-    expect(resolveHomeRelativePath("C:\\safe\\nested\\file.txt")).toBe("\\\\?\\C:\\");
-    expect(reads).toBe(4);
-  });
-
-  it("repairs a six-character result once for a seven-character ordinary input", () => {
-    let reads = 0;
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      get: () => {
-        reads += 1;
-        return "win32";
-      },
-    });
-    vi.spyOn(path, "resolve").mockReturnValue("\\\\?\\C:");
-
-    expect(resolveHomeRelativePath("C:\\safe")).toBe("\\\\?\\C:\\");
-    expect(reads).toBe(5);
-    expect(path.resolve).toHaveBeenCalledOnce();
+    expect(resolveHomeRelativePath(input)).toBe(expected);
+    expect(reads).toBe(expectedReads);
   });
 
   it("does not retry general-root repair after a platform transition", () => {

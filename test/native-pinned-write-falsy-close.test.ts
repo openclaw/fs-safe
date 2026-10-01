@@ -5,21 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root } from "../src/index.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
-  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
-  type NativeBinding,
 } from "../src/native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
-let native: NativeBinding | undefined;
-try {
-  native = __loadBundledNativeForTest();
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const native = loadTestNative("required-env");
 
 afterEach(() => {
   vi.restoreAllMocks();

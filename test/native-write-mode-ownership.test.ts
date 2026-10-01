@@ -6,16 +6,11 @@ import { configureFsSafeNative } from "../src/config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "../src/secret.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const nativeAvailable = Boolean(loadTestNative("required-env"));
 afterEach(() => {
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", platform);

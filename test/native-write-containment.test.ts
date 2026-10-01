@@ -4,19 +4,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafeNative } from "../src/native-config.js";
 import {
-  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
 } from "../src/native.js";
 import { root, type Root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
-let bundledNativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  bundledNativeAvailable = true;
-} catch {
-  // Ordinary JavaScript-only CI legs intentionally have no host binding.
-}
+const bundledNativeAvailable = Boolean(loadTestNative("optional"));
 
 const tempDirs: string[] = [];
 
