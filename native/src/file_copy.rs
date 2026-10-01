@@ -73,7 +73,6 @@ pub struct FileCopyTask {
     clone_mode: CloneMode,
     max_bytes: u64,
     cancelled: Arc<AtomicBool>,
-    sync: bool,
 }
 
 impl Task for FileCopyTask {
@@ -185,11 +184,6 @@ impl FileCopyTask {
             self.check_size(created.fd())?;
             rustix::fs::fchmod(created.fd(), Mode::from_bits_retain(0o600))
                 .map_err(|error| os_error(error, "set copied file mode"))?;
-            if self.sync {
-                self.check_cancelled()?;
-                rustix::fs::fsync(created.fd())
-                    .map_err(|error| os_error(error, "sync copied file"))?;
-            }
             self.check_cancelled()
         })()
         .err();
@@ -327,7 +321,6 @@ pub fn copy_file_exclusive(
     clone_mode: String,
     max_bytes: Option<f64>,
     signal: Option<AbortSignal>,
-    sync: bool,
 ) -> Result<AsyncTask<FileCopyTask>> {
     validate_child_basename(&basename)
         .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
@@ -348,7 +341,6 @@ pub fn copy_file_exclusive(
         clone_mode,
         max_bytes,
         cancelled,
-        sync,
     }))
 }
 
@@ -404,7 +396,6 @@ mod tests {
                 clone_mode,
                 max_bytes,
                 cancelled: Arc::new(AtomicBool::new(false)),
-                sync: false,
             }
         }
     }
@@ -666,7 +657,6 @@ mod tests {
             "require".to_owned(),
             None,
             None,
-            false,
         )
         .err()
         .expect("retired clone mode must be rejected");

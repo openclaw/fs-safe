@@ -100,7 +100,6 @@ if (process.argv[2] === "--child") {
           "auto",
           expected.length,
           undefined,
-          false,
         );
         try {
           assert.equal(copied.errorCode, undefined);

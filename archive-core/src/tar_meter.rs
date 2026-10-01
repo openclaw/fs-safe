@@ -38,7 +38,6 @@ enum MeterState {
         padding: u64,
     },
     SparseHeader {
-        data_remaining: u64,
         meta_bytes: u64,
     },
 }
@@ -289,7 +288,6 @@ impl<R> TarMetadataMeter<R> {
             match self.block[482] {
                 0 => return Err(Self::invalid("GNU sparse entries are not supported")),
                 1 => MeterState::SparseHeader {
-                    data_remaining: padded,
                     meta_bytes: 0,
                 },
                 _ => return Err(Self::invalid("GNU sparse extension flag is not 0 or 1")),
@@ -326,7 +324,7 @@ impl<R> TarMetadataMeter<R> {
         Ok(())
     }
 
-    fn finish_sparse_header(&mut self, data_remaining: u64, meta_bytes: u64) -> io::Result<()> {
+    fn finish_sparse_header(&mut self, meta_bytes: u64) -> io::Result<()> {
         let metered = meta_bytes.checked_add(512).ok_or_else(Self::meta_limit)?;
         if metered > self.limits.max_meta_entry_bytes {
             return Err(Self::meta_limit());
@@ -334,7 +332,6 @@ impl<R> TarMetadataMeter<R> {
         self.state = match self.block[504] {
             0 => return Err(Self::invalid("GNU sparse entries are not supported")),
             1 => MeterState::SparseHeader {
-                data_remaining,
                 meta_bytes: metered,
             },
             _ => return Err(Self::invalid("GNU sparse extension flag is not 0 or 1")),
@@ -398,7 +395,6 @@ impl<R> TarMetadataMeter<R> {
                     };
                 }
                 MeterState::SparseHeader {
-                    data_remaining,
                     meta_bytes,
                 } => {
                     let take = (512 - self.block_len).min(bytes.len() - offset);
@@ -407,7 +403,7 @@ impl<R> TarMetadataMeter<R> {
                     self.block_len += take;
                     offset += take;
                     if self.block_len == 512 {
-                        self.finish_sparse_header(data_remaining, meta_bytes)?;
+                        self.finish_sparse_header(meta_bytes)?;
                     }
                 }
             }

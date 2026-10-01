@@ -70,7 +70,7 @@ export async function createNativeCopyFile(
     return await native.copyFileExclusive(
       input.handle.fd, parentFd, basename, input.clone,
       maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined,
-      nativeSignal, false,
+      nativeSignal,
     );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
