@@ -378,36 +378,6 @@ describe("movePathWithCopyFallback regressions", () => {
     await expect(fsp.readFile(dest, "utf8")).resolves.toBe("source");
   });
 
-  itPosix("preserves late source children during Windows EPERM fallback cleanup", async () => {
-    const base = await tempRoot("fs-safe-move-eperm-late-child-");
-    const source = path.join(base, "source-dir");
-    const dest = path.join(base, "dest-dir");
-    await fsp.mkdir(source);
-    await fsp.writeFile(path.join(source, "copied.txt"), "copied");
-
-    spyOnRename(async (from, to, rename) => {
-      if (from === source && to === dest) {
-        throw Object.assign(new Error("initial rename denied"), { code: "EPERM" });
-      }
-      await rename(from, to);
-      if (String(from).includes(".fs-safe-move-") && to === dest) {
-        await fsp.writeFile(path.join(source, "late.txt"), "late");
-      }
-    });
-
-    await withProcessPlatform("win32", async () => {
-      await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
-        code: "ESTALE",
-      });
-    });
-
-    await expect(fsp.readFile(path.join(dest, "copied.txt"), "utf8")).resolves.toBe("copied");
-    await expect(fsp.stat(path.join(source, "copied.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(fsp.readFile(path.join(source, "late.txt"), "utf8")).resolves.toBe("late");
-  });
-
   itPosix("preserves directory modes during EXDEV move fallback", async () => {
     const base = await tempRoot("fs-safe-move-exdev-dir-mode-");
     const source = path.join(base, "source-dir");
@@ -436,15 +406,18 @@ describe("movePathWithCopyFallback regressions", () => {
     await expect(fsp.readFile(path.join(dest, "copied.txt"), "utf8")).resolves.toBe("copied");
   });
 
-  itPosix("removes unchanged copied children when source directory gains a late child", async () => {
-    const base = await tempRoot("fs-safe-move-exdev-added-source-");
+  itPosix.each([
+    { code: "EXDEV", message: "cross-device", platform: undefined },
+    { code: "EPERM", message: "initial rename denied", platform: "win32" },
+  ] as const)("preserves late children and removes unchanged copied children during $code cleanup", async ({ code, message, platform }) => {
+    const base = await tempRoot(`fs-safe-move-${code.toLowerCase()}-late-child-`);
     const source = path.join(base, "source-dir");
     const dest = path.join(base, "dest-dir");
     await fsp.mkdir(source);
     await fsp.writeFile(path.join(source, "copied.txt"), "copied");
     spyOnRename(async (from, to, rename) => {
       if (from === source && to === dest) {
-        throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+        throw Object.assign(new Error(message), { code });
       }
       await rename(from, to);
       if (to === dest && String(from).includes(".fs-safe-move-")) {
@@ -452,14 +425,14 @@ describe("movePathWithCopyFallback regressions", () => {
       }
     });
 
-    await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({
-      code: "ESTALE",
-    });
+    const move = async () => {
+      await expect(movePathWithCopyFallback({ from: source, to: dest })).rejects.toMatchObject({ code: "ESTALE" });
+    };
+    if (platform) await withProcessPlatform(platform, move);
+    else await move();
 
     await expect(fsp.readFile(path.join(dest, "copied.txt"), "utf8")).resolves.toBe("copied");
-    await expect(fsp.stat(path.join(source, "copied.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(fsp.stat(path.join(source, "copied.txt"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fsp.readFile(path.join(source, "late.txt"), "utf8")).resolves.toBe("late");
   });
 

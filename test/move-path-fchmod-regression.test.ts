@@ -107,65 +107,31 @@ describe.runIf(process.platform !== "win32")("move staging descriptor modes", ()
     }
   });
 
-  it("does not redirect a staged file mode through a swapped symlink", async () => {
-    const sourceDir = await tempRoot("fs-safe-move-file-source-");
-    const targetDir = await tempRoot("fs-safe-move-file-target-");
-    const victimDir = await tempRoot("fs-safe-move-file-victim-");
-    const sourcePath = path.join(sourceDir, "source.txt");
-    const targetPath = path.join(targetDir, "target.txt");
-    const victimPath = path.join(victimDir, "victim.txt");
-    await fs.writeFile(sourcePath, "source");
-    await fs.chmod(sourcePath, 0o666);
-    await fs.writeFile(victimPath, "victim");
-    await fs.chmod(victimPath, 0o644);
-    const swaps = await installStagingModeSwap({
-      targetDir,
-      victimPath,
-      symlinkType: "file",
-    });
-
-    const previousUmask = process.umask(0o077);
-    try {
-      await movePathWithCopyFallback({
-        from: sourcePath,
-        sourceHardlinks: "reject",
-        to: targetPath,
-      });
-    } finally {
-      process.umask(previousUmask);
-    }
-
-    expect({
-      publishedMode: (await fs.stat(targetPath)).mode & 0o777,
-      swaps: swaps(),
-      victimMode: (await fs.stat(victimPath)).mode & 0o777,
-    }).toEqual({ publishedMode: 0o666, swaps: 1, victimMode: 0o644 });
-  });
-
-  it("does not redirect a staged directory mode through a swapped symlink", async () => {
-    const sourceParent = await tempRoot("fs-safe-move-dir-source-");
-    const targetDir = await tempRoot("fs-safe-move-dir-target-");
-    const victimParent = await tempRoot("fs-safe-move-dir-victim-");
-    const sourcePath = path.join(sourceParent, "source");
+  it.each([
+    {
+      kind: "file", symlinkType: "file", sourceMode: 0o666, victimMode: 0o644,
+      create: async (candidate: string, content: string, _mode: number) => { await fs.writeFile(candidate, content); },
+    },
+    {
+      kind: "directory", symlinkType: "dir", sourceMode: 0o777, victimMode: 0o755,
+      create: async (candidate: string, _content: string, mode: number) => { await fs.mkdir(candidate, { mode }); },
+    },
+  ] as const)("does not redirect a staged $kind mode through a swapped symlink", async ({ kind, symlinkType, sourceMode, victimMode, create }) => {
+    const sourceDir = await tempRoot(`fs-safe-move-${kind}-source-`);
+    const targetDir = await tempRoot(`fs-safe-move-${kind}-target-`);
+    const victimDir = await tempRoot(`fs-safe-move-${kind}-victim-`);
+    const sourcePath = path.join(sourceDir, "source");
     const targetPath = path.join(targetDir, "target");
-    const victimPath = path.join(victimParent, "victim");
-    await fs.mkdir(sourcePath, { mode: 0o777 });
-    await fs.chmod(sourcePath, 0o777);
-    await fs.mkdir(victimPath, { mode: 0o755 });
-    await fs.chmod(victimPath, 0o755);
-    const swaps = await installStagingModeSwap({
-      targetDir,
-      victimPath,
-      symlinkType: "dir",
-    });
+    const victimPath = path.join(victimDir, "victim");
+    await create(sourcePath, "source", sourceMode);
+    await fs.chmod(sourcePath, sourceMode);
+    await create(victimPath, "victim", victimMode);
+    await fs.chmod(victimPath, victimMode);
+    const swaps = await installStagingModeSwap({ targetDir, victimPath, symlinkType });
 
     const previousUmask = process.umask(0o077);
     try {
-      await movePathWithCopyFallback({
-        from: sourcePath,
-        sourceHardlinks: "reject",
-        to: targetPath,
-      });
+      await movePathWithCopyFallback({ from: sourcePath, sourceHardlinks: "reject", to: targetPath });
     } finally {
       process.umask(previousUmask);
     }
@@ -174,6 +140,6 @@ describe.runIf(process.platform !== "win32")("move staging descriptor modes", ()
       publishedMode: (await fs.stat(targetPath)).mode & 0o777,
       swaps: swaps(),
       victimMode: (await fs.stat(victimPath)).mode & 0o777,
-    }).toEqual({ publishedMode: 0o777, swaps: 1, victimMode: 0o755 });
+    }).toEqual({ publishedMode: sourceMode, swaps: 1, victimMode });
   });
 });

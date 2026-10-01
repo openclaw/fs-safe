@@ -392,63 +392,32 @@ describe("atomic helpers", () => {
     expect(fsSync.readFileSync(filePath, "utf8")).toBe("original");
   });
 
-  itPosix("does not copy fallback through destination symlinks", async () => {
-    const root = await tempRoot("fs-safe-atomic-link-");
+  itPosix.each(["async", "sync"] as const)("does not %s-copy fallback through destination symlinks", async (mode) => {
+    const root = await tempRoot(`fs-safe-atomic-link-${mode}-`);
     const filePath = path.join(root, "state.txt");
     const outsidePath = path.join(root, "outside.txt");
     await fs.writeFile(outsidePath, "outside", "utf8");
     await fs.symlink(outsidePath, filePath);
-
-    await expect(
-      replaceFileAtomic({
-        filePath,
-        content: "new",
-        copyFallbackOnPermissionError: true,
-        copyFallbackRestore: "restore-original",
-        maxRestoreBytes: 1024,
-        fileSystem: {
-          promises: {
-            ...fs,
-            rename: async () => {
-              const error = new Error("rename denied") as NodeJS.ErrnoException;
-              error.code = "EPERM";
-              throw error;
-            },
-          },
-        },
-      }),
-    ).rejects.toThrow("Refusing copy fallback through symlink destination");
-
-    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
-    expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
-    expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-replace")))
-      .toEqual([]);
-  });
-
-  itPosix("does not sync-copy fallback through destination symlinks", async () => {
-    const root = await tempRoot("fs-safe-atomic-link-sync-");
-    const filePath = path.join(root, "state.txt");
-    const outsidePath = path.join(root, "outside.txt");
-    await fs.writeFile(outsidePath, "outside", "utf8");
-    await fs.symlink(outsidePath, filePath);
-
-    expect(() =>
-      replaceFileAtomicSync({
-        filePath,
-        content: "new",
-        copyFallbackOnPermissionError: true,
-        copyFallbackRestore: "restore-original",
-        maxRestoreBytes: 1024,
-        fileSystem: {
-          ...fsSync,
-          renameSync: () => {
-            const error = new Error("rename denied") as NodeJS.ErrnoException;
-            error.code = "EPERM";
-            throw error;
-          },
-        },
-      }),
-    ).toThrow("Refusing copy fallback through symlink destination");
+    const options = {
+      filePath,
+      content: "new",
+      copyFallbackOnPermissionError: true,
+      copyFallbackRestore: "restore-original",
+      maxRestoreBytes: 1024,
+    } as const;
+    const renameDenied = () => Object.assign(new Error("rename denied"), { code: "EPERM" });
+    const message = "Refusing copy fallback through symlink destination";
+    if (mode === "async") {
+      await expect(replaceFileAtomic({
+        ...options,
+        fileSystem: { promises: { ...fs, rename: async () => { throw renameDenied(); } } },
+      })).rejects.toThrow(message);
+    } else {
+      expect(() => replaceFileAtomicSync({
+        ...options,
+        fileSystem: { ...fsSync, renameSync: () => { throw renameDenied(); } },
+      })).toThrow(message);
+    }
 
     await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside");
     expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
