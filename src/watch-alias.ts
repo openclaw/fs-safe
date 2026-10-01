@@ -4,7 +4,7 @@ import { isNotFoundPathError } from "./path.js";
 import { assertRootIdentityCurrent, resolvePathInRoot, type RootContext } from "./root-context.js";
 import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
-import { excludedWatchPath, nativeChanges, scopedChanges } from "./watch-hints.js";
+import { excludedWatchPath, nativeChanges, scopedChanges, selectedWatchChildren } from "./watch-hints.js";
 import type { NativeWatchBatch } from "./watch-native.js";
 import type { WatchSnapshot } from "./watch-scan.js";
 import type { WatchChange, WatchScope } from "./watch-types.js";
@@ -103,6 +103,12 @@ export async function admittedNativeChanges(
       [parent, expected] = admitted;
     }
     if (scheduling) guard = await admittedParent(parent);
+    if (hint.event === "children") {
+      // There is no child spelling to look up. Only guarded scans may discover it.
+      if (selectedWatchChildren(scopes, parent) && !excludedWatchPath(before, parent) && !excludedWatchPath(after, parent) &&
+        !add({ path: parent, type: "structural" })) return undefined;
+      continue;
+    }
     const candidate = parent ? path.join(parent, name) : name;
     if (excludedWatchPath(before, candidate) || excludedWatchPath(after, candidate)) {
       if (scheduling) return undefined;

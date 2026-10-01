@@ -112,3 +112,20 @@ it.skipIf(!nativeWatchSupported)("does not infer a selected identity for unseen 
   await owner.reconcile();
   expect(values).toEqual([{ reason: "event", changes: [{ path: "entry.txt", type: "structural" }] }]);
 });
+
+it.skipIf(!nativeWatchSupported)("admits nameless child activity through an observed directory alias", async context => {
+  await fs.mkdir(path.join(dir, "MixedDir"));
+  const actual = await fs.stat(path.join(dir, "MixedDir"), { bigint: true });
+  const alias = await fs.stat(path.join(dir, "mixeddir"), { bigint: true }).catch(() => undefined);
+  if (alias?.dev !== actual.dev || alias?.ino !== actual.ino) { context.skip("filesystem has no case alias"); return; }
+  const native = getNativeBinding()!, register = native.watchRegister!;
+  vi.spyOn(native, "watchRegister").mockImplementation((root, limit, _callback, persistent) => register(root, limit, () => {}, persistent));
+  let emit!: (batch: NativeWatchBatch) => void;
+  __setFsSafeTestHooksForTest({ afterWatchBackendCreated: (_, callback) => { emit = callback; } });
+  const values: WatchInvalidation[] = [];
+  const owner = watch(await root(dir), { mode: "events", scopes: [{ path: "mixeddir", kind: "tree", depth: 1 }], onInvalidate: value => { values.push(value); } });
+  owners.push(owner); await owner.ready; values.length = 0;
+  emit({ overflow: false, hints: [{ directory: "MixedDir", name: "", event: "children" }] });
+  await owner.reconcile();
+  expect(values).toEqual([{ reason: "event", changes: [{ path: "mixeddir", type: "structural" }] }]);
+});

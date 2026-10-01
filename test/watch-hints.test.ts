@@ -75,3 +75,33 @@ describe("unobserved transient hints", () => {
     expect(guardedHintChanges(scopes, snapshot([]), snapshot([]), [target], [], 1)).toEqual([target]);
   });
 });
+
+describe("nameless child scope admission", () => {
+  const identity = { dev: 1n, ino: 2n };
+  const children = (directory: string) => ({ overflow: false, hints: [{ directory, name: "", event: "children" as const }] });
+  it("selects only directories whose children are within tree depth", () => {
+    const selected = watchScopes([{ path: "skills", kind: "tree", depth: 2 }, { path: "config", kind: "entry" }, { path: "zero", kind: "tree", depth: 0 }]);
+    for (const directory of ["", "config", "zero", "unrelated", path.join("skills", "child", "limit")]) {
+      expect(nativeChanges(selected, undefined, children(directory))).toEqual([]);
+    }
+    for (const directory of ["skills", path.join("skills", "child")]) {
+      expect(nativeChanges(selected, undefined, children(directory))).toEqual([{ path: directory, type: "structural" }]);
+    }
+    expect(nativeChanges(watchScopes([{ path: "", kind: "tree", depth: 1 }]), undefined, children(""))).toEqual([{ path: "", type: "structural" }]);
+    expect(nativeChanges(watchScopes([{ path: "a/b/c", kind: "tree" }]), undefined, children(path.join("a", "b")))).toEqual([]);
+  });
+  it("honors excluded directories and rejects malformed directory hints", () => {
+    const before = snapshot([]); before.excluded = new Map([["skills", "directory"]]);
+    expect(nativeChanges(scopes, before, children("skills"))).toEqual([]);
+    for (const directory of ["..", "../skills", "/skills", "skills/../outside", "bad\0directory"]) {
+      expect(nativeChanges(scopes, undefined, children(directory))).toBeUndefined();
+    }
+    expect(nativeChanges(scopes, undefined, { overflow: false, hints: [{ directory: "skills", name: "invented", event: "children" }] })).toBeUndefined();
+  });
+  it("never publishes an unobserved directory spelling", () => {
+    const before = snapshot([]), after = snapshot([]);
+    before.directories.set("skills", identity); after.directories.set("skills", identity);
+    const hints = nativeChanges(scopes, before, children(path.join("skills", "unobserved")));
+    expect(guardedHintChanges(scopes, before, after, hints, [], 256)).toEqual([]);
+  });
+});
