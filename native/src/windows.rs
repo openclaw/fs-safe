@@ -1351,7 +1351,7 @@ mod tests {
     use std::fs::{self, OpenOptions};
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::{AsRawHandle, IntoRawHandle};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::test_support::{directory, temp_path, unique_path_in};
 
     use super::*;
 
@@ -1623,14 +1623,7 @@ mod tests {
 
     #[test]
     fn runtime_descriptor_bridge_transfers_handle_ownership_only_on_success() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "fs-safe-runtime-fd-ownership-{}-{nonce}",
-            std::process::id(),
-        ));
+        let path = temp_path("runtime-fd-ownership");
         fs::write(&path, b"owned").unwrap();
 
         let open_exclusive = || OpenOptions::new().read(true).share_mode(0).open(&path);
@@ -1671,11 +1664,7 @@ mod tests {
     #[test]
     fn directory_enumeration_spans_batches_and_restarts_without_losing_entries() {
         let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = base.join(format!("fs-safe-directory-batches-{}-{nonce}", std::process::id()));
+        let root = unique_path_in(&base, "directory-batches");
         fs::create_dir(&root).unwrap();
         let owned = fs::canonicalize(&root).unwrap();
         assert_eq!(owned.parent(), Some(base.as_path()));
@@ -1765,14 +1754,7 @@ mod tests {
             FileEndOfFileInfo,
         };
 
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "fs-safe-fixed-setter-{}-{nonce}",
-            std::process::id(),
-        ));
+        let path = temp_path("fixed-setter");
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -1925,22 +1907,10 @@ mod tests {
 
     #[test]
     fn owned_tree_cleanup_preserves_a_directory_replaced_by_a_file() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "fs-safe-native-win-owned-type-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = temp_path("native-win-owned-type");
         fs::create_dir_all(root.join("nested")).unwrap();
         fs::write(root.join("nested/owned"), b"owned").unwrap();
-        let directory = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&root)
-            .unwrap();
+        let directory = directory(&root);
         let error = remove_directory_handle_with_hook(
             directory.as_raw_handle() as HANDLE,
             &mut |name| {
@@ -1960,23 +1930,11 @@ mod tests {
 
     #[test]
     fn owned_tree_cleanup_rejects_an_enumerated_child_replacement() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "fs-safe-native-win-owned-child-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = temp_path("native-win-owned-child");
         let workspace = root.join("workspace");
         fs::create_dir_all(workspace.join("nested")).unwrap();
         fs::write(workspace.join("nested/owned"), b"owned").unwrap();
-        let directory = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&workspace)
-            .unwrap();
+        let directory = directory(&workspace);
         let mut swapped = false;
         let error = remove_directory_handle_with_hook(
             directory.as_raw_handle() as HANDLE,
@@ -2000,29 +1958,12 @@ mod tests {
 
     #[test]
     fn owned_tree_cleanup_preserves_a_root_replaced_by_a_file() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "fs-safe-native-win-owned-root-type-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = temp_path("native-win-owned-root-type");
         let workspace = root.join("workspace");
         fs::create_dir_all(workspace.join("nested")).unwrap();
         fs::write(workspace.join("nested/owned"), b"owned").unwrap();
-        let parent = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&root)
-            .unwrap();
-        let directory = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&workspace)
-            .unwrap();
+        let parent = directory(&root);
+        let directory = directory(&workspace);
         fs::rename(&workspace, root.join("original")).unwrap();
         fs::write(&workspace, b"replacement").unwrap();
 
@@ -2043,31 +1984,14 @@ mod tests {
 
     #[test]
     fn owned_tree_cleanup_deletes_the_opened_root_not_a_final_replacement() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "fs-safe-native-win-owned-tree-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = temp_path("native-win-owned-tree");
         let workspace = root.join("workspace");
         fs::create_dir(&root).unwrap();
         fs::create_dir(&workspace).unwrap();
         fs::create_dir(workspace.join("nested")).unwrap();
         fs::write(workspace.join("nested/owned"), b"owned").unwrap();
-        let parent = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&root)
-            .unwrap();
-        let directory = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&workspace)
-            .unwrap();
+        let parent = directory(&root);
+        let directory = directory(&workspace);
 
         let outcome = remove_owned_tree_handles_with_hook(
             parent.as_raw_handle() as HANDLE,
@@ -2091,12 +2015,7 @@ mod tests {
 
     #[test]
     fn renames_directory_sources_without_replacing_destinations() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir()
-            .join(format!("fs-safe-native-win-dir-{}-{nonce}", std::process::id()));
+        let root = temp_path("native-win-dir");
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("source")).unwrap();
         fs::write(root.join("source/owned.txt"), b"owned").unwrap();
@@ -2144,12 +2063,7 @@ mod tests {
 
     #[test]
     fn rejects_reparse_points_and_preserves_existing_rename_target() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("fs-safe-native-win-{}-{nonce}", std::process::id()));
+        let root = temp_path("native-win");
         fs::create_dir(&root).unwrap();
         fs::write(root.join("source"), b"source").unwrap();
         fs::write(root.join("target"), b"target").unwrap();

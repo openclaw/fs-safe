@@ -2,17 +2,12 @@ use super::*;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+use crate::test_support::temp_path;
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("fs-safe-root-remove-{}-{stamp}-{sequence}", std::process::id()));
+        let path = temp_path("root-remove");
         fs::create_dir(&path).unwrap();
         Self(path)
     }

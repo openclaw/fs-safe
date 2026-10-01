@@ -1,5 +1,6 @@
 use super::*;
-use std::{fs, path::{Path, PathBuf}, sync::atomic::{AtomicU64, Ordering}};
+use std::{fs, path::{Path, PathBuf}};
+use crate::test_support::temp_path;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -10,8 +11,7 @@ use crate::windows::{open_existing_handle, handle_identity_and_size, win_error};
 struct Fixture { directory: PathBuf, file: PathBuf }
 impl Fixture {
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let directory = std::env::temp_dir().join(format!("fs-safe-retained-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let directory = temp_path("retained");
         fs::create_dir(&directory).unwrap();
         let directory = fs::canonicalize(directory).unwrap();
         let file = directory.join("backup");

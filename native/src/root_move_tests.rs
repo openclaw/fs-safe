@@ -1,16 +1,12 @@
 use super::*;
-use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::PathBuf};
 use std::os::unix::fs::{MetadataExt, symlink};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+use crate::test_support::temp_path;
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("fs-safe-root-move-{}-{}-{sequence}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let path = temp_path("root-move");
         fs::create_dir_all(path.join("parent")).unwrap();
         fs::create_dir_all(path.join("outside")).unwrap();
         fs::write(path.join("parent/source"), b"inside").unwrap();

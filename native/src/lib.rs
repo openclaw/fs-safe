@@ -6,6 +6,8 @@ use napi_derive::napi;
 mod archive;
 mod archive_gzip;
 mod task;
+#[cfg(test)]
+mod test_support;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod watch;
 mod fast_file;

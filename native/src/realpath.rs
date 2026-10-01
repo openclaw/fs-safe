@@ -79,18 +79,12 @@ pub struct NativeRealpathResult {
 mod tests {
     use super::*;
     use rustix::fs::{FlockOperation, fcntl_lock};
-    use std::{env, fs, process::Command, time::SystemTime};
+    use std::{env, fs, process::Command};
+    use crate::test_support::temp_path;
 
     #[test]
     fn ordinary_resolution_rejects_lexical_symlink_cycles() {
-        let nonce = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = env::temp_dir().join(format!(
-            "fs-safe-realpath-cycle-{}-{nonce}",
-            std::process::id()
-        ));
+        let directory = temp_path("realpath-cycle");
         fs::create_dir_all(directory.join("target/child")).unwrap();
         std::os::unix::fs::symlink("target/child", directory.join("b")).unwrap();
         for (name, target) in [("a", "b/../a"), ("growing", "b/../growing/child")] {
@@ -130,14 +124,7 @@ mod tests {
             return;
         }
 
-        let nonce = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = env::temp_dir().join(format!(
-            "fs-safe-realpath-lock-{}-{nonce}",
-            std::process::id()
-        ));
+        let path = temp_path("realpath-lock");
         let file = fs::File::create_new(&path).unwrap();
         fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive).unwrap();
         let check = |blocked| {
