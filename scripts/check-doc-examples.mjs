@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { FsSafeError, root } from "@openclaw/fs-safe";
 import { resolveArchiveKind } from "@openclaw/fs-safe/archive";
 import {
@@ -20,51 +18,7 @@ import {
   resolveSafeBaseDir,
 } from "@openclaw/fs-safe/path";
 import { fileStore } from "@openclaw/fs-safe/store";
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-function readRepoFile(relativePath) {
-  return fsSync.readFileSync(path.join(repoRoot, relativePath), "utf8");
-}
-
-function checkDocumentedImports() {
-  const manifest = JSON.parse(readRepoFile("test/public-api.json")).packageSubpaths;
-  const markdownFiles = [
-    "README.md",
-    ...fsSync.readdirSync(path.join(repoRoot, "docs"))
-      .filter((name) => name.endsWith(".md"))
-      .map((name) => `docs/${name}`),
-  ];
-  const failures = [];
-
-  for (const relativePath of markdownFiles) {
-    const markdown = readRepoFile(relativePath);
-    for (const block of markdown.matchAll(/```(?:ts|typescript)\n(?<code>[\s\S]*?)```/gu)) {
-      for (const statement of block.groups.code.matchAll(
-        /import\s+(?:type\s+)?\{(?<names>[^}]+)\}\s+from\s+["']@openclaw\/fs-safe(?<subpath>\/[^"']+)?["']/gu,
-      )) {
-        const subpath = statement.groups.subpath ? `.${statement.groups.subpath}` : ".";
-        const entry = manifest[subpath];
-        if (!entry) {
-          failures.push(`${relativePath}: unknown package subpath ${subpath}`);
-          continue;
-        }
-        const exported = new Set([...(entry.runtime ?? []), ...(entry.types ?? [])]);
-        const imported = statement.groups.names
-          .replace(/\/\/[^\n]*/gu, "")
-          .split(",")
-          .map((name) => name.trim().replace(/^type\s+/u, "").split(/\s+as\s+/u)[0])
-          .filter(Boolean);
-        for (const name of imported) {
-          if (!exported.has(name)) {
-            failures.push(`${relativePath}: ${name} is not exported from ${subpath}`);
-          }
-        }
-      }
-    }
-  }
-  assert.deepEqual(failures, []);
-}
+import { documentedImportFailures } from "./documented-imports.mjs";
 
 function runPureExamples() {
   assert.equal(isPathInside("/srv/uploads", "/srv/uploads/photo.jpg"), true);
@@ -162,7 +116,7 @@ async function runFilesystemExamples() {
   }
 }
 
-checkDocumentedImports();
+assert.deepEqual(documentedImportFailures(), []);
 runPureExamples();
 await runFilesystemExamples();
 console.log("documentation examples match the built package");

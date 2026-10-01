@@ -30,7 +30,7 @@ import {
 | `fileStoreSync()` | Synchronous variant of `fileStore()` for places that genuinely cannot await. |
 | [`jsonStore()`](json-store.md) | A single keyed JSON state file with explicit fallback, atomic writes, and optional sidecar locking around read-modify-write updates. |
 | Durable JSON queue helpers | Append/load/ack JSON entry files using atomic writes and delivered markers. |
-| [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for credentials, tokens, and per-agent state at `0600` files under `0700` directories. |
+| [Private file-store mode](file-store.md#private-mode) | `fileStore({ private: true })` for credentials, tokens, and per-agent state at `0600` files under `0700` directories. |
 
 `fileStore().json("rel.json")` and `jsonStore({ filePath })` are intentionally separate primitives. Use `fileStore().json(...)` when JSON state lives alongside other files in the same managed directory; use `jsonStore({ filePath })` when you have one trusted path, resolved to an absolute path at construction, and want the keyed JSON shape directly.
 
@@ -124,6 +124,6 @@ rejects non-files, symlinks, hardlinks, and entries over the byte limit.
 
 - [`fileStore`](file-store.md) — full API for the multi-file store.
 - [`jsonStore`](json-store.md) — single-file JSON store with locking.
-- [Private file-store mode](private-file-store.md) — credential-shaped variant.
+- [Private file-store mode](file-store.md#private-mode) — credential-shaped variant.
 - [JSON files](json.md) — lower-level `readJson` / `writeJson` helpers.
 - [Atomic writes](atomic.md) — what `fileStore` and `jsonStore` use under the hood.
