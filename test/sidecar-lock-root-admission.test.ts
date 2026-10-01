@@ -5,8 +5,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createFileLockManager } from "../src/file-lock.js";
 import * as boundedRead from "../src/bounded-read.js";
 import { root } from "../src/root.js";
-import { readSidecarLockSnapshot } from "../src/sidecar-lock-reclaim.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useTempDirs();

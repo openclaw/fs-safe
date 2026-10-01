@@ -170,10 +170,6 @@ async function writeZipFileEntry(params: {
       },
       resolveFinalPath: (filePath) => filePath,
     });
-  } catch (err) {
-    // Failures here happen before the temp has been committed. The destination
-    // parent may already be untrusted, so cleanup must stay limited to temp state.
-    throw err;
   } finally {
     const openTempHandle = tempHandle as FileHandle | null;
     if (openTempHandle && !handleClosedByStream) {

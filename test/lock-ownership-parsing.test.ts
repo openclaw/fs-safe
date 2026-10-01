@@ -6,10 +6,8 @@ import { acquireFileLockSync, createFileLockManager } from "../src/file-lock.js"
 import { getRootSyncHeldLocks, readRootSidecarSnapshotSync } from "../src/file-lock-sync-root-held.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
-import {
-  readSidecarLockSnapshot,
-  readSidecarLockSnapshotSync,
-} from "../src/sidecar-lock-reclaim.js";
+import { readSidecarLockSnapshotSync } from "../src/sidecar-lock-reclaim.js";
+import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();

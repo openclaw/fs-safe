@@ -46,8 +46,6 @@ export function isHardlinkFallbackError(error: unknown): boolean {
   return HARDLINK_FALLBACK_CODES.has((error as NodeJS.ErrnoException | undefined)?.code ?? "");
 }
 
-function sourceOpenFlags(): number { return resolveReadOpenFlags(); }
-
 function directoryOpenFlags(): number {
   return (
     fsSync.constants.O_RDONLY |
@@ -158,7 +156,7 @@ async function copyPinnedSource(params: {
           createdIdentity,
         );
         const identity = fsSync.lstatSync(params.targetPath, { bigint: true });
-        target = await fs.open(params.targetPath, sourceOpenFlags());
+        target = await fs.open(params.targetPath, resolveReadOpenFlags());
         const opened = fsSync.fstatSync(target.fd, { bigint: true });
         if (
           identity.isSymbolicLink() ||
@@ -293,7 +291,7 @@ export async function publishFileExclusive(params: {
   if (sourcePathStat.isSymbolicLink() || !sourcePathStat.isFile()) {
     throw new FsSafeError("not-file", "publication source must be a regular file");
   }
-  const source = await fs.open(sourcePath, sourceOpenFlags());
+  const source = await fs.open(sourcePath, resolveReadOpenFlags());
   let parent: Awaited<ReturnType<typeof pinDirectory>> | undefined;
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
