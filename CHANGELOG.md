@@ -11,6 +11,10 @@
 - **Windows UNC admission:** Root, root-file readers, `pathScope`, secret-file writers, sibling-temp output, trash admission, and archive output preparation reject foreign UNC shares and device namespaces before probing them, preventing attacker-chosen SMB lookups, NTLM exposure, and stalls. Existing containment errors are preserved. ([#781](https://github.com/openclaw/fs-safe/pull/781))
 - **macOS watch startup:** clean up rejected FSEvents configuration and failed stream startup with the correct lifecycle calls, keeping the registration available for retry. ([#769](https://github.com/openclaw/fs-safe/pull/769))
 
+### Performance
+
+- **Bounded temporary-directory cleanup:** avoid a redundant descriptor metadata read for each descendant directory on Linux and macOS, while retaining fresh name identity checks before removal. ([#760](https://github.com/openclaw/fs-safe/pull/760))
+
 ## 0.22.0 - 2026-09-30
 
 - **One-way publication:** `retainEntryForPublication` on `advanced` retains directory or regular-file source/parent identities for native no-replace export, with truthful commit/indeterminate results and close-only disposal. Requires caller-exclusive source namespaces on supported local POSIX filesystems; no source-CAS or automatic rollback guarantee.
