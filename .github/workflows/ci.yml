@@ -1095,8 +1095,14 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/linux-openat2-fallback.test.ts test/root-move-noreplace.test.ts test/root-move-native-integration.test.ts
 
-      - name: Test native Windows Root removal
-        if: runner.os == 'Windows'
+      - name: Test native overwrite Root moves
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/root-move-replace-native-integration.test.ts
+
+      # This suite requires recursive removal success on Linux, which needs openat2.
+      - name: Test native Root removal
+        if: ${{ !matrix.no-openat2 }}
         env:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/root-remove-native-integration.test.ts
@@ -1481,6 +1487,7 @@ jobs:
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
             FS_SAFE_NATIVE_MODE=require pnpm test test/native-worker-fd-ownership.test.ts
+            FS_SAFE_NATIVE_MODE=require pnpm test test/root-remove-native-integration.test.ts test/root-move-replace-native-integration.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/file-hash-options.test.ts
             node scripts/sidecar-contention-proof.mjs require
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts

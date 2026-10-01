@@ -36,9 +36,8 @@ pub fn root_removal_stat(env: Env, parent: i32, name: String) -> Result<WindowsR
     })())
 }
 
-fn unlink_with_hook(parent: HANDLE, name: &str, expected: ExactFileIdentity, directory: bool, before_final: impl FnOnce()) -> NativeResult<()> {
+fn unlink_entry(parent: HANDLE, name: &str, expected: ExactFileIdentity, directory: bool) -> NativeResult<()> {
     validate_child_basename(name)?;
-    before_final();
     let child = open(parent, name, DELETE)?;
     let (identity, is_directory, _) = inspect(child.0)?;
     if identity != expected || is_directory != directory {
@@ -51,7 +50,7 @@ fn unlink_with_hook(parent: HANDLE, name: &str, expected: ExactFileIdentity, dir
 #[napi(js_name = "rootRemovalUnlink")]
 pub fn root_removal_unlink(env: Env, parent: i32, name: String, dev: BigInt, ino: BigInt, directory: bool) -> Result<()> {
     into_napi(env, (|| {
-        unlink_with_hook(root_handle(parent)?, &name, crate::exact_file_identity(&dev, &ino)?, directory, || {})
+        unlink_entry(root_handle(parent)?, &name, crate::exact_file_identity(&dev, &ino)?, directory)
     })())
 }
 
@@ -71,18 +70,17 @@ mod tests {
         let handle = parent.as_raw_handle() as HANDLE;
         fs::write(base.join("file"), b"original").unwrap();
         let identity = { let child = open(handle, "file", 0).unwrap(); inspect(child.0).unwrap().0 };
-        let error = unlink_with_hook(handle, "file", identity, false, || {
-            fs::rename(base.join("file"), base.join("held")).unwrap();
-            fs::write(base.join("file"), b"replacement").unwrap();
-        }).unwrap_err();
+        fs::rename(base.join("file"), base.join("held")).unwrap();
+        fs::write(base.join("file"), b"replacement").unwrap();
+        let error = unlink_entry(handle, "file", identity, false).unwrap_err();
         assert_eq!(error.status, "path-mismatch");
         assert_eq!(fs::read(base.join("file")).unwrap(), b"replacement");
         let identity = { let child = open(handle, "file", 0).unwrap(); inspect(child.0).unwrap().0 };
-        unlink_with_hook(handle, "file", identity, false, || {}).unwrap();
+        unlink_entry(handle, "file", identity, false).unwrap();
         assert!(!base.join("file").exists());
         fs::create_dir(base.join("directory")).unwrap();
         let identity = { let child = open(handle, "directory", 0).unwrap(); inspect(child.0).unwrap().0 };
-        unlink_with_hook(handle, "directory", identity, true, || {}).unwrap();
+        unlink_entry(handle, "directory", identity, true).unwrap();
         assert!(!base.join("directory").exists());
         drop(parent);
         fs::remove_dir_all(base).unwrap();
@@ -103,7 +101,7 @@ mod tests {
         assert!(before.1);
         assert!(!before.2);
 
-        let error = unlink_with_hook(handle, "full", before.0, true, || {}).unwrap_err();
+        let error = unlink_entry(handle, "full", before.0, true).unwrap_err();
         assert_eq!(error.status, "ENOTEMPTY");
         assert_eq!(error.reason, "remove owned tree handle failed with Windows error 145");
         let after = { let child = open(handle, "full", 0).unwrap(); inspect(child.0).unwrap() };
@@ -113,7 +111,7 @@ mod tests {
         assert_eq!(names, [std::ffi::OsString::from("value")]);
         assert_eq!(fs::read(directory.join("value")).unwrap(), b"preserve\0payload");
         fs::remove_file(directory.join("value")).unwrap();
-        unlink_with_hook(handle, "full", before.0, true, || {}).unwrap();
+        unlink_entry(handle, "full", before.0, true).unwrap();
         assert!(!directory.exists());
         drop(parent);
         fs::remove_dir_all(base).unwrap();
