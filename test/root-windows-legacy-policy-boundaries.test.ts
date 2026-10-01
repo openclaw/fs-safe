@@ -13,10 +13,10 @@ import {
   __setNativeLoaderForTest,
   type NativeBinding,
 } from "../src/native.js";
-import * as writeAdmission from "../src/root-write-admission.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
+import { runSelectedTargetScenario } from "./helpers/selected-target-admission.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -300,69 +300,23 @@ describe.skipIf(process.platform !== "win32")(
         // Do not let setup that outlived its test install process-global
         // instrumentation after Vitest has started teardown.
         context.signal.throwIfAborted();
-        const handles: FileHandle[] = [];
-        const realOpen = fs.open.bind(fs);
-        const open = vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
-          const handle = await realOpen(...args);
-          handles.push(handle);
-          return handle;
-        });
-        let admissions = 0;
-        let policyRetargeted = false;
-        let selectedAdmissionChecks = 0;
-        if (boundary === "authorization") {
-          const resolveTarget = writeAdmission.resolveGuardedWriteTargetInRoot;
-          vi.spyOn(writeAdmission, "resolveGuardedWriteTargetInRoot").mockImplementation(
-            async (...args) => {
-              const guarded = await resolveTarget(...args);
-              const admission = guarded.selectedTargetAdmission!;
-              expect(admission).toBeDefined();
-              const authorize = admission.authorize.bind(admission);
-              return {
-                ...guarded,
-                selectedTargetAdmission: Object.freeze({
-                  ...admission,
-                  async authorize(selectedPath: string) {
-                    selectedAdmissionChecks += 1;
-                    expect(selectedPath).toBe(selected);
-                    expect(policyRetargeted).toBe(false);
-                    policyRetargeted = true;
-                    await fs.unlink(deniedAlias);
-                    await fs.symlink(selected, deniedAlias, "file");
-                    await authorize(selectedPath);
-                  },
-                }),
-              };
+        const { admissions, policyRetargeted, selectedAdmissionChecks, callback, open, handles } =
+          await runSelectedTargetScenario(
+            boundary === "authorization"
+              ? { boundary, selected, deniedAlias }
+              : { boundary, alias, retarget },
+            async callback => {
+              const safe = await root(directory);
+              const opened = await safe.openWritable("VALUE", {
+                writeMode: "update",
+                assertBeforeMutation: callback,
+                denyMutations: boundary === "authorization"
+                  ? { paths: [deniedAlias] }
+                  : unrelatedPolicy(directory),
+              });
+              await opened.handle.close();
             },
           );
-          __setFsSafeTestHooksForTest({
-            beforePinnedWriteParentAdmission() {
-              admissions += 1;
-              expect(policyRetargeted).toBe(false);
-            },
-          });
-        } else {
-          __setFsSafeTestHooksForTest({
-            async beforePinnedWriteParentAdmission() {
-              if (++admissions !== 2) return;
-              await fs.unlink(alias);
-              await fs.symlink(retarget, alias, "file");
-            },
-          });
-        }
-        const callback = vi.fn();
-        const safe = await root(directory);
-        const opening = safe.openWritable("VALUE", {
-          writeMode: "update",
-          assertBeforeMutation: callback,
-          denyMutations: boundary === "authorization"
-            ? { paths: [deniedAlias] }
-            : unrelatedPolicy(directory),
-        }).then(async opened => await opened.handle.close());
-
-        await expect(opening).rejects.toMatchObject({
-          code: boundary === "authorization" ? "denied-path" : "path-mismatch",
-        });
 
         expect(admissions).toBe(boundary === "authorization" ? 1 : 2);
         expect(policyRetargeted).toBe(boundary === "authorization");

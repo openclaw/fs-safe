@@ -3,10 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { FsSafeError } from "../src/errors.js";
-import { root } from "../src/root.js";
+import { root, type DenyMutationPolicy } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { noReplaceAdapter } from "./helpers/no-replace-adapter.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -19,31 +20,20 @@ afterEach(() => {
   __setFsSafeTestHooksForTest();
 });
 
-async function fixture() {
-  const directory = await tempRoot("fs-safe-native-move-source-authority-");
-  const source = path.join(directory, "source");
-  const target = path.join(directory, "target");
+async function fixture(layout: "flat" | "separate-parents") {
+  const directory = await tempRoot("fs-safe-native-move-authority-");
+  const source = path.join(directory, layout === "flat" ? "source" : "incoming/source");
+  const target = path.join(directory, layout === "flat" ? "target" : "archive/target");
   const retained = path.join(directory, "retained");
+  if (layout === "separate-parents") {
+    await Promise.all([fs.mkdir(path.dirname(source)), fs.mkdir(path.dirname(target))]);
+  }
   await fs.writeFile(source, "original");
   const original = await fs.lstat(source, { bigint: true });
-  const directories = new Map<number, string>();
-  const renameNoReplace = vi.fn((sourceFd: number, sourceName: string, targetFd: number, targetName: string) => {
-    const targetPath = path.join(directories.get(targetFd)!, targetName);
-    if (fsSync.existsSync(targetPath)) throw Object.assign(new Error("destination exists"), { code: "EEXIST" });
-    fsSync.renameSync(path.join(directories.get(sourceFd)!, sourceName), targetPath);
-  });
-  __setNativeLoaderForTest(() => ({
-    openBeneath: (_fd: number, relative: string, flags: number) => {
-      const parent = path.join(directory, relative);
-      const fd = fsSync.openSync(parent, flags);
-      directories.set(fd, parent);
-      return { fd, containment: "best-effort" as const };
-    },
-    renameNoReplace,
-    closeOwnedFd: (fd: number) => fsSync.closeSync(fd),
-  }) as NativeBinding);
+  const { binding, renameNoReplace } = noReplaceAdapter(directory);
+  __setNativeLoaderForTest(() => binding);
   configureFsSafeNative({ mode: "require" });
-  return { source, target, retained, original, renameNoReplace, scoped: await root(directory) };
+  return { directory, source, target, retained, original, renameNoReplace };
 }
 
 it.each([
@@ -51,7 +41,8 @@ it.each([
   { change: "directory", code: "invalid-path" },
   { change: "replacement", code: "path-mismatch" },
 ] as const)("rejects a source $change introduced by the final authority callback", async ({ change, code }) => {
-  const f = await fixture();
+  const f = await fixture("flat");
+  const scoped = await root(f.directory);
   let replacement: fsSync.BigIntStats | undefined;
   const assertBeforeMutation = vi.fn(() => {
     if (change === "hardlink") {
@@ -63,7 +54,7 @@ it.each([
     }
     replacement = fsSync.lstatSync(f.source, { bigint: true });
   });
-  const outcome = await f.scoped.move("source", "target", { assertBeforeMutation }).then(
+  const outcome = await scoped.move("source", "target", { assertBeforeMutation }).then(
     () => ({ resolved: true }),
     error => ({ error }),
   );
@@ -81,7 +72,8 @@ it.each([
 });
 
 it.each(["dev", "ino"] as const)("compares exact source %s after authority", async field => {
-  const f = await fixture();
+  const f = await fixture("flat");
+  const scoped = await root(f.directory);
   const original = 9007199254740992n;
   const replacement = original + 1n;
   expect(Number(original)).toBe(Number(replacement));
@@ -95,7 +87,7 @@ it.each(["dev", "ino"] as const)("compares exact source %s after authority", asy
     return Object.assign(Object.create(actual), { [field]: typeof actual[field] === "bigint" ? value : Number(value) });
   }) as typeof fsSync.lstatSync);
 
-  await expect(f.scoped.move("source", "target", {
+  await expect(scoped.move("source", "target", {
     assertBeforeMutation: () => { changed = true; },
   })).rejects.toMatchObject({ code: "path-mismatch" });
   expect(changed).toBe(true);
@@ -107,7 +99,8 @@ it.each(["dev", "ino"] as const)("compares exact source %s after authority", asy
 it.each((["dev", "ino"] as const).flatMap(field =>
   (["no-callback", "before-callback", "after-callback"] as const).map(phase => ({ field, phase })),
 ))("handles unknown Windows source $field with $phase", async ({ field, phase }) => {
-  const f = await fixture();
+  const f = await fixture("flat");
+  const scoped = await root(f.directory);
   let unknown = false;
   const lstat = fsSync.lstatSync.bind(fsSync);
   // Project Windows source metadata after native parent admission; I/O and guards stay real.
@@ -121,7 +114,7 @@ it.each((["dev", "ino"] as const).flatMap(field =>
     unknown = phase !== "after-callback";
   } });
   const assertBeforeMutation = vi.fn(() => { unknown = true; });
-  const moving = f.scoped.move("source", "target", phase === "no-callback" ? {} : { assertBeforeMutation });
+  const moving = scoped.move("source", "target", phase === "no-callback" ? {} : { assertBeforeMutation });
   if (phase === "no-callback") {
     await moving;
     expect(f.renameNoReplace).toHaveBeenCalledOnce();
@@ -138,7 +131,8 @@ it.each((["dev", "ino"] as const).flatMap(field =>
 });
 
 it.each(["admission", "authority"] as const)("normalizes a source removed during %s", async phase => {
-  const f = await fixture();
+  const f = await fixture("flat");
+  const scoped = await root(f.directory);
   const lstat = fsSync.lstatSync.bind(fsSync);
   let observedFailure: unknown;
   vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
@@ -153,7 +147,7 @@ it.each(["admission", "authority"] as const)("normalizes a source removed during
     __setFsSafeTestHooksForTest({ beforeRootFallbackMutation: () => { fsSync.unlinkSync(f.source); } });
   }
   const assertBeforeMutation = vi.fn(() => { fsSync.unlinkSync(f.source); });
-  const error = await f.scoped.move("source", "target", { assertBeforeMutation }).catch(error => error);
+  const error = await scoped.move("source", "target", { assertBeforeMutation }).catch(error => error);
 
   expect(error).toBeInstanceOf(FsSafeError);
   expect(error).toMatchObject({ code: "not-found", message: "file not found" });
@@ -168,9 +162,10 @@ it.each(["admission", "authority"] as const)("normalizes a source removed during
 
 it.each([undefined, null, false, 0, "", { code: "ENOENT" }])(
   "preserves an arbitrary authority rejection: %j", async rejection => {
-    const f = await fixture();
+    const f = await fixture("flat");
+    const scoped = await root(f.directory);
     const assertBeforeMutation = vi.fn(() => { throw rejection; });
-    const outcome = await f.scoped.move("source", "target", { assertBeforeMutation }).then(
+    const outcome = await scoped.move("source", "target", { assertBeforeMutation }).then(
       () => ({ resolved: true }),
       error => ({ error }),
     );
@@ -181,3 +176,83 @@ it.each([undefined, null, false, 0, "", { code: "ENOENT" }])(
     await expect(fs.lstat(f.target)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it.each(
+  (["default", "per-call"] as const).flatMap(scope =>
+    (["paths", "prefixes"] as const).flatMap(field =>
+      (["source", "target"] as const).map(boundary => ({ scope, field, boundary })),
+    ),
+  ),
+)("snapshots $scope $field denying the $boundary before the first await", async ({ scope, field, boundary }) => {
+  const f = await fixture("separate-parents");
+  const entries = [field === "paths" ? f[boundary] : path.dirname(f[boundary])];
+  const denyMutations: DenyMutationPolicy = { [field]: entries };
+  const assertBeforeMutation = vi.fn();
+  const scoped = await root(f.directory, {
+    denyMutations: scope === "default" ? denyMutations : undefined,
+  });
+  const options = {
+    denyMutations: scope === "per-call" ? denyMutations : undefined,
+    assertBeforeMutation,
+  };
+
+  const pending = scoped.move("incoming/source", "archive/target", options);
+  entries.length = 0;
+  await expect(pending).rejects.toMatchObject({ code: "denied-path" });
+
+  expect(assertBeforeMutation).not.toHaveBeenCalled();
+  expect(f.renameNoReplace).not.toHaveBeenCalled();
+  expect(await fs.lstat(f.source, { bigint: true })).toMatchObject({
+    dev: f.original.dev,
+    ino: f.original.ino,
+  });
+  expect(await fs.readFile(f.source, "utf8")).toBe("original");
+  await expect(fs.lstat(f.target)).rejects.toMatchObject({ code: "ENOENT" });
+
+  await scoped.move("incoming/source", "archive/target", options);
+
+  expect(assertBeforeMutation).toHaveBeenCalledOnce();
+  expect(f.renameNoReplace).toHaveBeenCalledOnce();
+  expect(await fs.lstat(f.target, { bigint: true })).toMatchObject({
+    dev: f.original.dev,
+    ino: f.original.ino,
+  });
+  expect(await fs.readFile(f.target, "utf8")).toBe("original");
+  await expect(fs.lstat(f.source)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves live authority revocation after native parent admission", async () => {
+  const f = await fixture("separate-parents");
+  const rejection = Object.assign(new Error("lease expired"), { code: "ENOENT" });
+  let leaseExpired = false;
+  const defaultAssertion = vi.fn();
+  const callAssertion = vi.fn(() => {
+    if (leaseExpired) throw rejection;
+  });
+  const scoped = await root(f.directory, {
+    denyMutations: { paths: [path.join(f.directory, "protected")] },
+    assertBeforeMutation: defaultAssertion,
+  });
+  const afterAdmission = vi.fn((operation: string, targetPath: string) => {
+    expect(operation).toBe("move");
+    expect(targetPath).toBe(f.target);
+    leaseExpired = true;
+  });
+  __setFsSafeTestHooksForTest({ beforeRootFallbackMutation: afterAdmission });
+
+  await expect(scoped.move("incoming/source", "archive/target", {
+    assertBeforeMutation: callAssertion,
+  })).rejects.toBe(rejection);
+
+  expect(afterAdmission).toHaveBeenCalledOnce();
+  expect(leaseExpired).toBe(true);
+  expect(defaultAssertion).toHaveBeenCalledOnce();
+  expect(callAssertion).toHaveBeenCalledOnce();
+  expect(f.renameNoReplace).not.toHaveBeenCalled();
+  expect(await fs.lstat(f.source, { bigint: true })).toMatchObject({
+    dev: f.original.dev,
+    ino: f.original.ino,
+  });
+  expect(await fs.readFile(f.source, "utf8")).toBe("original");
+  await expect(fs.lstat(f.target)).rejects.toMatchObject({ code: "ENOENT" });
+});
