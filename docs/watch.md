@@ -311,6 +311,9 @@ A separate quiet subscription must remain unaffected. The checker records genuin
 backend loss and rejects overflow without that loss or a selected diff exceeding
 the configured budget. Each checkpoint permits at most four guarded passes and
 refreshes the consumer cache only in response to invalidation.
+Volumes without Unicode-normalization aliases also receive a distinct spelling
+beside the missing target. On Linux a selected undecodable child must fail its
+owner closed with `invalid-path` while the other subscription stays healthy.
 
 ```sh
 node scripts/watch-stress/model-runner.mjs --transitions --seeds 500 --mode both --output watch-transition-results.json

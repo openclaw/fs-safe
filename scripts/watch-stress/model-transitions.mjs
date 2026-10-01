@@ -126,6 +126,12 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
         await fs.writeFile(sibling, String(seed)); await fs.unlink(sibling);
       }
     };
+    if (!features.normalizationAlias) {
+      const distinct = path.join("anchor", "cafe\u0301", "missing");
+      await fs.mkdir(full(distinct), { recursive: true });
+      await fs.writeFile(full(path.join(distinct, "file")), "unselected normalization variant");
+      await checkpoint("distinct Unicode missing-descendant variant");
+    }
     expected.set(selected, "directory");
     expected.set(path.join(selected, "file"), "file:created");
     await Promise.all([churn(), (async () => {
@@ -171,10 +177,23 @@ export async function runTransitions({ root, watch }, seed, { mode, maxPendingPa
     await checkpoint("watched directory recreation");
     await fs.rm(full(actual), { recursive: true }); expected.clear();
     await checkpoint("watched directory delete");
+    if (features.undecodable) {
+      await fs.mkdir(full(actual), { recursive: true }); expected.set(selected, "directory");
+      await checkpoint("selected undecodable preparation");
+      const bad = Buffer.concat([Buffer.from(full(actual) + path.sep), Buffer.from([0xff])]);
+      await fs.writeFile(bad, "selected undecodable child");
+      await assert.rejects(owner.reconcile(), { code: "invalid-path" });
+      assert.equal(owner.health().state, "unavailable");
+      assert.equal(owner.health().failure?.code, "invalid-path");
+      await fs.unlink(bad);
+      checks++;
+    }
     if (mode === "poll") await other.reconcile();
     await delay(100);
+    assert.equal(other.health().failure, undefined, "other subscription failed closed");
+    assert.ok(["ready", "reconciling"].includes(other.health().state), "other subscription stopped");
     assert.deepEqual(unrelated, [], "cross-subscription invalidation");
-    assert.equal(health.some(value => value.state === "unavailable"), false);
+    assert.equal(health.some(value => value.state === "unavailable"), features.undecodable);
     return { checks, features, maxPendingPaths, invalidations: events.length, overflows: events.filter(event => event.reason === "overflow").length, ...writer.metrics };
   } catch (cause) {
     throw new Error(`watch transitions seed ${seed}, ${mode}, ${stage}: ${cause.message}`, { cause });

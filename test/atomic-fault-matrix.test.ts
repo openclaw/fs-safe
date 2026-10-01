@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/atomic.js";
+import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -22,10 +23,15 @@ async function exercise(mode: Mode, code?: string, faultIndex = -1, shortWrites 
     if (trace.length - 1 === faultIndex) { injected = true; throw fault; }
   };
   const role = (candidate: unknown) => String(candidate) === directory ? "parent" : String(candidate) === filePath ? "destination" : "temp";
+  const openedRole = (candidate: unknown, flags: unknown) => {
+    const kind = role(candidate);
+    if (kind === "temp" && flags !== "wx") return "copy-source";
+    return kind === "destination" && shortWrites ? "restore-destination" : kind;
+  };
   let outcome: unknown;
   if (mode === "async") {
     const open: typeof fs.open = async (candidate, flags, permission) => {
-      const kind = role(candidate); point(kind + ".open");
+      const kind = openedRole(candidate, flags); point(kind + ".open");
       const handle = await fs.open(candidate, flags, permission);
       const allocation = ++nextDescriptor; descriptors.add(allocation);
       if (kind === "temp") temp = String(candidate);
@@ -45,7 +51,7 @@ async function exercise(mode: Mode, code?: string, faultIndex = -1, shortWrites 
     };
     try {
       await replaceFileAtomic({ filePath, content: "replacement payload", syncTempFile: true, syncParentDir: true,
-        copyFallbackOnPermissionError: shortWrites, copyFallbackRestore: shortWrites ? "restore-original" : "none", maxRestoreBytes: 1024,
+        copyFallbackOnPermissionError: shortWrites, copyFallbackRestore: shortWrites ? "restore-original" : "none", maxRestoreBytes: 1024, throwOnCleanupError: shortWrites,
         fileSystem: { promises: { ...fs, open,
           mkdir: (async (...args) => { point("parent.mkdir"); return fs.mkdir(...args); }) as typeof fs.mkdir,
           lstat: (async (...args) => { point(role(args[0]) + ".lstat"); return fs.lstat(...args); }) as typeof fs.lstat,
@@ -60,7 +66,7 @@ async function exercise(mode: Mode, code?: string, faultIndex = -1, shortWrites 
     const allocations = new Map<number, number>();
     const io = { ...sync };
     io.openSync = (candidate, flags, permission) => {
-      const kind = role(candidate); point(kind + ".open");
+      const kind = openedRole(candidate, flags); point(kind + ".open");
       const fd = sync.openSync(candidate, flags, permission); roles.set(fd, kind);
       const allocation = ++nextDescriptor; allocations.set(fd, allocation); descriptors.add(allocation);
       if (kind === "temp") temp = String(candidate);
@@ -83,10 +89,10 @@ async function exercise(mode: Mode, code?: string, faultIndex = -1, shortWrites 
     io.renameSync = (...args) => { point("rename"); if (shortWrites) throw Object.assign(new Error("fallback"), { code: "EPERM" }); sync.renameSync(...args); committed = true; };
     io.unlinkSync = (...args) => { point("temp.unlink"); sync.unlinkSync(...args); };
     try { replaceFileAtomicSync({ filePath, content: "replacement payload", syncTempFile: true, syncParentDir: true,
-      copyFallbackOnPermissionError: shortWrites, copyFallbackRestore: shortWrites ? "restore-original" : "none", maxRestoreBytes: 1024, fileSystem: io }); }
+      copyFallbackOnPermissionError: shortWrites, copyFallbackRestore: shortWrites ? "restore-original" : "none", maxRestoreBytes: 1024, throwOnCleanupError: shortWrites, fileSystem: io }); }
     catch (error) { outcome = error; }
   }
-  return { trace, outcome, fault, injected, committed, admitted, temp, descriptors, closed,
+  return { directory, trace, outcome, fault, injected, committed, admitted, temp, descriptors, closed,
     entries: await fs.readdir(directory), content: await fs.readFile(filePath, "utf8") };
 }
 
@@ -113,7 +119,36 @@ describe.each(["async", "sync"] as const)("atomic fault matrix (%s)", mode => {
     const result = await exercise(mode, undefined, -1, true);
     expect(result.outcome).toBeUndefined();
     expect(result.content).toBe("replacement payload");
-    expect(result.trace.filter(step => step === "destination.write").length).toBeGreaterThan(1);
+    expect(result.trace.filter(step => step === "restore-destination.write").length).toBeGreaterThan(1);
     expect(result.entries).toEqual(["destination"]);
   });
+  it.each(codes)("injects %s through copy fallback, restoration, and cleanup", async code => {
+    const baseline = await exercise(mode, undefined, -1, true);
+    expect(baseline.outcome).toBeUndefined();
+    const contains = (error: unknown, fault: unknown): boolean => error === fault ||
+      (error instanceof Error && (contains(error.cause, fault) || (error instanceof AggregateError && error.errors.some(value => contains(value, fault)))));
+    for (let index = 0; index < baseline.trace.length; index++) {
+      const result = await exercise(mode, code, index, true);
+      const step = baseline.trace[index]!;
+      expect(result.injected, step).toBe(true);
+      if (result.outcome !== undefined) expect(contains(result.outcome, result.fault), step).toBe(true);
+      else {
+        // Documented retry and best-effort boundaries are the only places a
+        // fault may settle successfully. The copy source and existing restore
+        // destination retain their documented best-effort close contracts.
+        const accepted = (step === "rename" && ["EPERM", "EEXIST"].includes(code)) ||
+          (step === "temp.sync" && code === "EPERM") || step === "parent.sync" ||
+          (step.startsWith("parent.") && baseline.trace.slice(0, index).includes("rename")) ||
+          step === "restore-destination.close" || step === "copy-source.close";
+        expect(accepted, `unexpectedly swallowed ${step}`).toBe(true);
+      }
+      expect(["original", "replacement payload"], step).toContain(result.content);
+      expect([...result.descriptors].every(fd => result.closed.has(fd)), step).toBe(true);
+      // A refused unlink remains registered with its exact identity. A later
+      // authorized cleanup can finish; an unadmitted temp must still be retained.
+      __cleanupRegisteredTempPathsForTest();
+      const unadmitted = result.temp && !result.admitted;
+      expect(await fs.readdir(result.directory), step).toEqual(unadmitted ? [path.basename(result.temp), "destination"].sort() : ["destination"]);
+    }
+  }, 60_000);
 });
