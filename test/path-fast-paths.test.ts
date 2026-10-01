@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { isPathInside } from "../src/path.js";
+import { isForeignWindowsShareOrDevicePath } from "../src/windows-path-alias.js";
 import { safePathSegmentHashed } from "../src/install-path.js";
 import { sanitizeUntrustedFileName } from "../src/filename.js";
 
@@ -42,7 +43,10 @@ describe("path utility fast paths", () => {
           windowsPathForOracle(root),
           windowsPathForOracle(target),
         );
-        const expected = relative === "" || (relative !== ".." && !relative.startsWith("..\\") && !path.win32.isAbsolute(relative));
+        // A share or device the root does not live on is never inside, even when
+        // Node's lexical relative path says so (`\\?\UNC\host\..` reaches host).
+        const expected = !isForeignWindowsShareOrDevicePath(target, [root], "win32") && (relative === "" ||
+          (relative !== ".." && !relative.startsWith("..\\") && !path.win32.isAbsolute(relative)));
         expect(isPathInside(root, target), `${root} -> ${target}`).toBe(expected);
       }
     }), { numRuns: 4000, seed: 1702 });
