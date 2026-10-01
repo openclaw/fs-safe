@@ -314,5 +314,5 @@ await withTimeout(
 
 - [JSON files](json.md) — `writeJson` accepts `mode: 0o600` for non-secret JSON state.
 - [Atomic writes](atomic.md) — the lower-level `replaceFileAtomic` used by these helpers.
-- [Private file-store mode](private-file-store.md) — root-bounded JSON+text stores using secret-file write policy.
+- [Private file-store mode](file-store.md#private-mode) — root-bounded JSON+text stores using secret-file write policy.
 - [Migrating to 0.5](migrating-to-0.5.md) — strict/try reads and create-only adoption checklist.

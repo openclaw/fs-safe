@@ -54,55 +54,31 @@ unavailable namespace evidence leaves admission unchanged.
 The first admitted unmapped ancestor emits `FS_SAFE_UNMAPPED_TEMP_ANCESTOR`
 through Node's warning event. The warning contains no caller paths.
 
-For an already existing canonical root, discovery retains only its immutable
-exact identity. Cleanup-parent retention is provisional: after any native
-capability probe, creation captures and validates the complete ancestry,
-re-observes the root against discovery, and associates the retained parent
-descriptor. Async creation and sync creation outside the Linux/macOS
-direct-mode case dispatch `mkdtemp` immediately after that synchronous boundary
-without another yield or native probe. Existing aliases and missing-component
-roots keep the guarded admission route.
+Existing canonical-root discovery retains immutable exact identity; parent retention is provisional until,
+after any native probe, creation validates complete ancestry, rechecks the root, and binds the parent descriptor.
+Existing aliases and missing-component roots keep guarded admission. Async creation, default `0o700`, and
+ineligible sync modes dispatch `mkdtemp` (initial mode `0o700`) immediately after admission, without another yield or probe.
 
-On Linux and macOS, synchronous creation can instead use an exclusive six-character
-random child name when an explicit requested mode other than `0o700` has owner
-`rwx`, no special bits, and no group/world write bits. The requested mode is
-passed directly to `mkdir` and the observed complete permission bits, rather
-than the requested bits, are authoritative. Umask, inherited ACL state, or
-inherited special bits can make that observation differ, in which case creation
-corrects the mode through the retained descriptor. This mode-based optimization
-does not claim that Linux and macOS have identical syscall or ACL behavior, and
-POSIX mode bits do not establish ACL privacy. Creation makes at most 64 attempts;
-after a name collision, each retry generates its candidate first, replays the
-already admitted immutable ancestry and descriptor receipts, and then
-immediately attempts exclusive creation. A colliding entry is never inspected,
-adopted, corrected, registered, or deleted. The default `0o700`, async creation, and
-other sync modes retain the `mkdtemp` path. That path requests initial mode
-`0o700`; a result different from `dirMode` is initialized through the same
-descriptor-bound correction.
+Linux/macOS sync creation can use exclusive `mkdir` with a six-character random suffix when an explicit
+mode other than `0o700` grants owner `rwx`, no special bits, and no group/world write. Each of at most
+64 attempts generates a candidate, replays admitted ancestry and descriptor receipts, then creates immediately.
+Colliding entries are never inspected, adopted, corrected, registered, or deleted. Observed complete mode bits
+are authoritative: umask, inherited ACLs, or special bits can change the requested mode. POSIX modes do not
+establish ACL privacy, and this optimization does not promise identical Linux/macOS syscalls or ACL behavior.
 
-The direct sync path opens the new child without following its final component
-and captures one exact descriptor observation after the parent replay. The new
-child's exact identity, type, owner, private bits, and complete `0o7777` mode are
-checked before mode initialization. When its creation mode already
-matches `dirMode` (including the default `0o700`), creation avoids an extra mode
-descriptor and chmod. If the observed creation mode differs from `dirMode`, the
-immediate synchronous correction consumes that one-shot observation, checks the
-fresh child name, replays the parent, and applies correction through the retained
-descriptor. Later admission always performs fresh descriptor and name checks.
-Permission failures propagate. POSIX `dirMode`
-must not grant group/world write access; it only controls the new workspace,
-not existing supplied directories. After the
-first exact child observation, final adoption retains a no-follow child
-descriptor, rechecks complete ancestry and retained cleanup-parent authority,
-and then validates the original child's descriptor and current name for exact
-identity, owner, private bits, and requested mode before cleanup is registered.
-Linux and macOS may replay exact identities through round-trip-safe nonnegative
-numeric `dev`/`ino` projections. Initial receipts that cannot be represented
-exactly stay on the BigInt path; a malformed or mismatched numeric replay fails
-closed without an exact retry.
-Parent or child replacements observed during creation reject before cleanup
-ownership is registered. Unverified artifacts are left in place for
-caller-directed recovery.
+The direct sync path opens the child without following its final component and captures one exact descriptor
+observation after parent replay. Creation checks identity, type, owner, private bits, and complete `0o7777` mode.
+Matching `dirMode` avoids an extra mode descriptor and chmod; mismatches use descriptor-bound correction.
+Immediate sync correction consumes the initial observation, checks the fresh child name, and replays the parent;
+later admission uses fresh descriptor/name checks. Permission failures propagate. POSIX `dirMode` cannot grant
+group/world write and affects only the new workspace, never existing supplied directories.
+
+Before registering cleanup, final adoption retains a no-follow child descriptor, rechecks complete ancestry
+and retained cleanup-parent authority, then verifies the original child's descriptor and current name for exact
+identity, owner, private bits, and requested mode. Linux/macOS replay retained identities through round-trip-safe
+nonnegative numeric `dev`/`ino` projections when exact (otherwise BigInt); malformed or mismatched numeric
+observations fail closed without an exact retry. Observed parent/child replacements reject before ownership
+registration; unverifiable artifacts remain for caller-directed recovery.
 
 On Windows, POSIX mode/UID metadata does not establish ACL privacy, and these
 factories neither claim nor initialize a POSIX `dirMode`; every requested value
@@ -247,9 +223,7 @@ name before quarantine returns `"identity-mismatch"` when the parent is stable;
 an ambiguous parent returns `"indeterminate"`. After successful removal,
 repeated cleanup returns `"missing"` without touching a recreated public name.
 Other statuses remain stable. Compatible recursive-removal failures propagate
-the exact thrown value, including `undefined`, `null`, `false`, positive or
-negative numeric zero, bigint zero, an empty string, and `NaN`; they are never
-inferred from value identity or truthiness. Uncertain quarantine and
+the original thrown value, including falsy values. Uncertain quarantine and
 retained-parent checks instead return
 `"indeterminate"`. After a propagated removal failure, later cleanup returns
 `"indeterminate"` without retrying. Disposal and scoped helpers ignore returned
@@ -293,16 +267,8 @@ The callback receives the same workspace shape as `tempWorkspace()`. Cleanup is 
 
 ### Manual lifetime
 
-Lower-level. You manage the lifetime:
-
-```ts
-const workspace = await tempWorkspace({ rootDir: "/tmp/my-app", prefix: "scan-" });
-try {
-  // …work in workspace.dir…
-} finally {
-  await workspace.cleanup();
-}
-```
+Manage the lifetime with `try/finally` and inspect the cleanup result, as in the
+[receipt-inspecting example above](#tempworkspace).
 
 ### Sync variants
 
