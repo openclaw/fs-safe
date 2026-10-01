@@ -133,22 +133,13 @@ export async function createNearestExistingDirectoryGuard(
   targetPath: string,
   options = { bigint: false },
 ): Promise<AnyAsyncDirectoryGuard> {
-  return nearestExistingDirectoryGuard(rootReal, targetPath, "native", options);
-}
-
-function nearestExistingDirectoryGuard(
-  rootReal: string,
-  targetPath: string,
-  mode: "native",
-  options?: DirectoryGuardOptions,
-): AnyAsyncDirectoryGuard {
   assertNoWindowsPathAlias(rootReal, "filesystem");
   assertNoWindowsPathAlias(targetPath, "filesystem");
   let current = resolvePathPreservingWindowsRoot(targetPath);
   const root = resolvePathPreservingWindowsRoot(rootReal);
   while (current !== root) {
     try {
-      return captureDirectoryGuard(current, mode, options);
+      return captureDirectoryGuard(current, "native", options);
     } catch (error) {
       if (!isNotFoundPathError(error)) {
         throw error;
@@ -156,7 +147,7 @@ function nearestExistingDirectoryGuard(
       current = path.dirname(current);
     }
   }
-  return captureDirectoryGuard(root, mode, options);
+  return captureDirectoryGuard(root, "native", options);
 }
 
 // Recovery receipts must retain every identity bit, including on Windows.

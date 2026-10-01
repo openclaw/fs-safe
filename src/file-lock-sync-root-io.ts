@@ -4,6 +4,7 @@ import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
+import { sameAbsolutePath } from "./path-segment-route.js";
 import { assertRootIdentityCurrentSync } from "./root-context.js";
 import { hardlinkedPathNotAllowedError } from "./root-errors.js";
 import type { RootDefaults } from "./root-options.js";
@@ -49,14 +50,11 @@ export type FileLockSyncRootSnapshot = Readonly<{
   snapshot: FileLockSyncRootDiskSnapshot;
 }>;
 
-const samePath = (left: string, right: string) =>
-  path.relative(path.resolve(left), path.resolve(right)) === "";
-
 export function observeDirectory(pathname: string, initial?: BigIntStats): DirectoryReceipt {
   const stat = inspectDirectoryIdentitySync(pathname, undefined, initial);
   const realPath = realpathSync.native(pathForWindowsFilesystem(pathname));
   assertNoWindowsPathAlias(realPath, "filesystem", "sidecar lock parent uses a Windows filesystem namespace alias");
-  if (!samePath(realPath, pathname)) {
+  if (!sameAbsolutePath(realPath, pathname)) {
     throw new FsSafeError("path-mismatch", "sidecar lock parent changed during operation");
   }
   return Object.freeze({

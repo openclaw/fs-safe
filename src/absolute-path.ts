@@ -178,7 +178,6 @@ function resolveTrustedDirectoryPrefix(
         return segmentFailure;
       }
       current = next;
-      currentStat = nextStat;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
@@ -271,18 +270,8 @@ export async function ensureAbsoluteDirectory(
       }
       try {
         const stat = fsSync.lstatSync(current);
-        if (stat.isSymbolicLink()) {
-          return ensureDirectoryFailure(
-            "symlink",
-            `directory path traverses a symlink within ${scopeLabel}`,
-          );
-        }
-        if (!stat.isDirectory()) {
-          return ensureDirectoryFailure(
-            "not-file",
-            `path must be a real directory within ${scopeLabel}`,
-          );
-        }
+        const failure = classifyExistingDirectorySegment(stat, scopeLabel);
+        if (failure) return failure;
         break;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
