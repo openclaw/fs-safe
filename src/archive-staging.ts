@@ -375,8 +375,7 @@ export async function withStagedArchiveDestination<T>(params: {
       await assertDirectoryIdentityGuard(stagingGuard);
       await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     } catch {
-      // The staging path identity changed; deleting by name could target data
-      // outside the private temp tree, so fail closed and leave it for OS cleanup.
+      // Preserve staging when its identity cannot be verified; pathname cleanup is unsafe.
     }
   }
 }

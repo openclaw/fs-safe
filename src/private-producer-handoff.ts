@@ -4,6 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
+import { errorCauseOptions } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import {
   registerTempPathForExit,
@@ -70,9 +71,7 @@ export function assertParents(params: HandoffParents): void {
 export function normalizeLinkError(error: unknown): unknown {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === "EEXIST") {
-    return new FsSafeError("already-exists", "isolated producer sibling already exists", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return new FsSafeError("already-exists", "isolated producer sibling already exists", errorCauseOptions(error));
   }
   if (
     code === "EXDEV" ||
@@ -81,9 +80,7 @@ export function normalizeLinkError(error: unknown): unknown {
     code === "EOPNOTSUPP" ||
     code === "EPERM"
   ) {
-    return new FsSafeError("helper-unavailable", "atomic isolated producer handoff is unavailable", {
-      cause: error instanceof Error ? error : undefined,
-    });
+    return new FsSafeError("helper-unavailable", "atomic isolated producer handoff is unavailable", errorCauseOptions(error));
   }
   return error;
 }

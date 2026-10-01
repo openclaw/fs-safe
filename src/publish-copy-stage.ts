@@ -5,8 +5,8 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import type { PublishedWriteIdentity } from "./pinned-write-types.js";
 
-// Node has no portable no-replace rename. Link only our completed private stage,
-// then unlink it in the same JS turn so local readers never observe two names.
+// Node has no portable no-replace rename. Publish the completed stage by link,
+// then remove its verified temporary name without yielding.
 export function publishCopyStage(params: {
   temporaryPath: string;
   targetPath: string;

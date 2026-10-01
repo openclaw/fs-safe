@@ -6,7 +6,7 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { sleep, sleepSync } from "./timing.js";
 
 export type Procedure<T> = Generator<unknown, T, unknown>;
-export type SyncFchmod = (fd: number, mode: number) => void;
+type SyncFchmod = (fd: number, mode: number) => void;
 
 type AsyncAtomicFileSystem = Partial<Pick<
   typeof fs,
@@ -105,9 +105,9 @@ export class AtomicIo {
     return this.wrap(resource);
   }
 
-  *lstat(pathname: string, synchronousBuiltin = true): Procedure<Stats> {
+  *lstat(pathname: string): Procedure<Stats> {
     if (!this.asyncFs) return this.syncFs!.lstatSync!(pathname);
-    if (synchronousBuiltin && this.asyncFs === fs) return syncFs.lstatSync(pathname);
+    if (this.asyncFs === fs) return syncFs.lstatSync(pathname);
     return yield* wait(this.asyncFs.lstat!(pathname));
   }
 
@@ -132,9 +132,9 @@ export class AtomicIo {
     else this.syncFs!.renameSync!(source, destination);
   }
 
-  *remove(pathname: string, force = true): Procedure<void> {
-    if (this.asyncFs) yield* wait(this.asyncFs.rm!(pathname, { force }));
-    else this.syncFs!.rmSync!(pathname, { force });
+  *remove(pathname: string): Procedure<void> {
+    if (this.asyncFs) yield* wait(this.asyncFs.rm!(pathname, { force: true }));
+    else this.syncFs!.rmSync!(pathname, { force: true });
   }
 
   *unlink(pathname: string): Procedure<void> {
@@ -155,15 +155,15 @@ export class AtomicFile {
     return typeof this.resource === "number" ? this.resource : this.resource.fd;
   }
 
-  *stat(synchronousBuiltin = true): Procedure<Stats> {
+  *stat(): Procedure<Stats> {
     if (typeof this.resource === "number") return this.io.syncFs!.fstatSync!(this.resource);
-    if (synchronousBuiltin && this.io.asyncFs === fs) return syncFs.fstatSync(this.resource.fd);
+    if (this.io.asyncFs === fs) return syncFs.fstatSync(this.resource.fd);
     return yield* wait(this.resource.stat());
   }
 
-  statExact(synchronousBuiltin = true): BigIntStats | Promise<BigIntStats> {
+  statExact(): BigIntStats | Promise<BigIntStats> {
     if (typeof this.resource === "number") return this.io.syncFs!.fstatSync!(this.resource, { bigint: true });
-    if (synchronousBuiltin && this.io.asyncFs === fs) return syncFs.fstatSync(this.resource.fd, { bigint: true });
+    if (this.io.asyncFs === fs) return syncFs.fstatSync(this.resource.fd, { bigint: true });
     return this.resource.stat({ bigint: true });
   }
 
