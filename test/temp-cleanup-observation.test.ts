@@ -15,7 +15,8 @@ it.each([false, true])("preserves a replacement after a missing cleanup observat
     fsSync.writeFileSync(directory ? path.join(target, "payload") : target, content);
   };
   write(tempPath, "owned");
-  const unregister = registerTempPathForExit(tempPath, { recursive: directory });
+  const identity = fsSync.lstatSync(tempPath, { bigint: true });
+  const unregister = registerTempPathForExit(tempPath, { recursive: directory, identity });
   const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementationOnce(() => {
     fsSync.renameSync(tempPath, displaced);
     // Model a new entry arriving just after the kernel observed the old name absent.

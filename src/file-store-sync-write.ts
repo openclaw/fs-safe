@@ -12,8 +12,9 @@ import {
 import { assertSyncStoreDirectoryReceipt } from "./file-store-sync-directory.js";
 import { isPathInside } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { writeTempFileSync } from "./replace-file-descriptor.js";
-import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
+import { writeTempFile } from "./replace-file-descriptor.js";
+import { AtomicIo, runSync } from "./atomic-io.js";
+import { AtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
 import { errorCauseOptions } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -89,33 +90,34 @@ export function writeFileSyncAtomic(params: {
     parentGuard.dir,
     `.fs-safe-${process.pid}-${randomUUID()}.tmp`,
   );
-  const owner = new SyncAtomicTempOwner(tempPath);
+  const io = AtomicIo.sync(fs);
+  const owner = new AtomicTempOwner(tempPath, io);
   let originalFailure: AtomicTempFailure | undefined;
   try {
     getFsSafeTestHooks()?.beforeFileStoreSyncPrivateWrite?.(filePath);
     assertSyncStoreDirectoryReceipt(parentGuard);
     owner.start();
-    const temp = writeTempFileSync({
-      fsModule: fs, tempPath, content: params.content, mode: params.mode, sync: false,
+    io.fchmodSync = (descriptor, mode) => {
+      try {
+        fs.fchmodSync(descriptor, mode);
+      } catch {
+        // Best-effort on platforms that do not enforce POSIX modes.
+      }
+    };
+    const temp = runSync(writeTempFile(io, {
+      tempPath, content: params.content, mode: params.mode, sync: false,
       onIdentity: owner.onIdentity,
-      fchmodSync: (descriptor, mode) => {
-        try {
-          fs.fchmodSync(descriptor, mode);
-        } catch {
-          // Best-effort on platforms that do not enforce POSIX modes.
-        }
-      },
-    });
+    }));
     owner.adopt(temp);
     // Preserve the store's strict fsync errors; the generic temp helper tolerates EPERM.
-    if (params.durable) fs.fsyncSync(temp.fd);
-    verifyStoreFile(temp.fd, owner.identity, tempPath);
+    if (params.durable) fs.fsyncSync(temp.file.fd);
+    verifyStoreFile(temp.file.fd, owner.identity, tempPath);
     assertSyncStoreDirectoryReceipt(parentGuard);
     fs.renameSync(tempPath, filePath);
     owner.markRenamed();
     assertSyncStoreDirectoryReceipt(parentGuard);
     try {
-      verifyStoreFile(temp.fd, owner.identity, filePath);
+      verifyStoreFile(temp.file.fd, owner.identity, filePath);
     } catch (error) {
       if (error instanceof FsSafeError) {
         throw error;
@@ -136,6 +138,6 @@ export function writeFileSyncAtomic(params: {
     originalFailure = { error };
     throw error;
   } finally {
-    owner.finish({ fsModule: fs, originalFailure, throwOnCleanupError: false });
+    runSync(owner.finish({ originalFailure, throwOnCleanupError: false }));
   }
 }

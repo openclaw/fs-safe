@@ -81,11 +81,12 @@ describe("atomic helpers", () => {
     const root = await tempRoot("fs-safe-temp-cleanup-");
     const tempPath = path.join(root, "leftover.tmp");
     await fs.writeFile(tempPath, "temp", "utf8");
+    const identity = await fs.lstat(tempPath, { bigint: true });
     const lstat = vi.spyOn(fsSync, "lstatSync");
-    const unregister = registerTempPathForExit(tempPath);
-    expect(lstat).toHaveBeenCalledWith(tempPath, { bigint: true });
+    const unregister = registerTempPathForExit(tempPath, { identity });
 
     __cleanupRegisteredTempPathForTest(tempPath);
+    expect(lstat).toHaveBeenCalledWith(tempPath, { bigint: true });
 
     await expect(fs.access(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
     unregister();
@@ -111,7 +112,8 @@ describe("atomic helpers", () => {
     const tempDir = path.join(root, "leftover");
     await fs.mkdir(tempDir);
     await fs.writeFile(path.join(tempDir, "file.txt"), "temp", "utf8");
-    registerTempPathForExit(tempDir, { recursive: true });
+    const identity = await fs.lstat(tempDir, { bigint: true });
+    registerTempPathForExit(tempDir, { recursive: true, identity });
     registerTempPathForExit(path.join(root, "missing.tmp"));
 
     __cleanupRegisteredTempPathsForTest();

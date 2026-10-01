@@ -2,12 +2,13 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { AtomicIo, runAsync } from "../src/atomic-io.js";
 import {
   replaceFileAtomic, replaceFileAtomicSync,
   type ReplaceFileAtomicDestinationState, type ReplaceFileAtomicFileSystem,
 } from "../src/replace-file.js";
 import { sha256Hex } from "../src/file-identity.js";
-import { AsyncAtomicTempOwner } from "../src/replace-file-temp-owner.js";
+import { AtomicTempOwner } from "../src/replace-file-temp-owner.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -59,10 +60,6 @@ describe("atomic temp handle ownership", () => {
     let publishedFd: number | undefined;
     rejectCloseAfterRelease(previous, closeFailure, () => { previousCloses += 1; });
 
-    const owner = new AsyncAtomicTempOwner(tempPath);
-    owner.start();
-    owner.adopt({ handle: previous, identity: previousIdentity });
-    owner.markRenamed();
     const adapter: Pick<typeof fs, "lstat" | "open" | "unlink"> = {
       lstat: fs.lstat,
       unlink: fs.unlink,
@@ -73,17 +70,20 @@ describe("atomic temp handle ownership", () => {
         return handle;
       },
     };
+    const io = AtomicIo.async(adapter);
+    const owner = new AtomicTempOwner(tempPath, io);
+    owner.start();
+    owner.adopt({ file: io.wrap(previous), identity: previousIdentity });
+    owner.markRenamed();
 
-    await expect(owner.assertPublished(adapter, publishedPath, sha256Hex(content)))
+    await expect(runAsync(owner.assertPublished(publishedPath, sha256Hex(content))))
       .rejects.toBe(closeFailure);
-    await expect(owner.finish({
-      fsModule: adapter,
+    await expect(runAsync(owner.finish({
       throwOnCleanupError: true,
-    })).resolves.toBeUndefined();
-    await expect(owner.finish({
-      fsModule: adapter,
+    }))).resolves.toBeUndefined();
+    await expect(runAsync(owner.finish({
       throwOnCleanupError: true,
-    })).resolves.toBeUndefined();
+    }))).resolves.toBeUndefined();
 
     expect(previousCloses).toBe(1);
     expect(publishedCloses).toBe(1);
@@ -102,22 +102,21 @@ describe("atomic temp handle ownership", () => {
     let closes = 0;
     rejectCloseAfterRelease(handle, closeFailure, () => { closes += 1; });
 
-    const owner = new AsyncAtomicTempOwner(tempPath);
-    owner.adopt({ handle, identity });
     const adapter: Pick<typeof fs, "lstat" | "open" | "unlink"> = {
       lstat: fs.lstat,
       open: fs.open,
       unlink: fs.unlink,
     };
+    const io = AtomicIo.async(adapter);
+    const owner = new AtomicTempOwner(tempPath, io);
+    owner.adopt({ file: io.wrap(handle), identity });
 
-    await expect(owner.finish({
-      fsModule: adapter,
+    await expect(runAsync(owner.finish({
       throwOnCleanupError: true,
-    })).rejects.toBe(closeFailure);
-    await expect(owner.finish({
-      fsModule: adapter,
+    }))).rejects.toBe(closeFailure);
+    await expect(runAsync(owner.finish({
       throwOnCleanupError: true,
-    })).resolves.toBeUndefined();
+    }))).resolves.toBeUndefined();
 
     expect(closes).toBe(1);
     expectClosed(fd);
