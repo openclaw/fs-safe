@@ -3,13 +3,12 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   assertDestinationHardlinkPolicy,
-  assertDestinationHardlinkPolicySync,
   copyFallbackReplace,
-  copyFallbackReplaceSync,
 } from "../src/replace-file-copy-fallback.js";
 
 const { tempRoot } = useTempDirs();
@@ -31,20 +30,18 @@ describe("copy fallback source and destination guards", () => {
     const dest = path.join(root, "dest");
     await fs.mkdir(directory);
 
-    await expect(copyFallbackReplace({
-      fsModule: fs,
+    await expect(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
       src: directory,
       dest,
       restore: "none",
       sync: false,
-    })).rejects.toThrow("non-file source");
-    expect(() => copyFallbackReplaceSync({
-      fsModule: fsSync,
+    }))).rejects.toThrow("non-file source");
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: directory,
       dest,
       restore: "none",
       sync: false,
-    })).toThrow("non-file source");
+    }))).toThrow("non-file source");
   });
 
   itPosix("rejects symlink sources and destinations without changing their targets", async () => {
@@ -58,39 +55,35 @@ describe("copy fallback source and destination guards", () => {
     await fs.symlink(sourceTarget, sourceLink);
     await fs.symlink(destTarget, destLink);
 
-    await expect(copyFallbackReplace({
-      fsModule: fs,
+    await expect(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
       src: sourceLink,
       dest: path.join(root, "unused"),
       restore: "none",
       sync: false,
-    })).rejects.toThrow("non-file source");
-    expect(() => copyFallbackReplaceSync({
-      fsModule: fsSync,
+    }))).rejects.toThrow("non-file source");
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: sourceLink,
       dest: path.join(root, "unused-sync"),
       restore: "none",
       sync: false,
-    })).toThrow("non-file source");
+    }))).toThrow("non-file source");
 
     const asyncSource = path.join(root, "async-source");
     const syncSource = path.join(root, "sync-source");
     await fs.writeFile(asyncSource, "replacement");
     await fs.writeFile(syncSource, "replacement");
-    await expect(copyFallbackReplace({
-      fsModule: fs,
+    await expect(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
       src: asyncSource,
       dest: destLink,
       restore: "none",
       sync: false,
-    })).rejects.toMatchObject({ code: "symlink" });
-    expect(() => copyFallbackReplaceSync({
-      fsModule: fsSync,
+    }))).rejects.toMatchObject({ code: "symlink" });
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: syncSource,
       dest: destLink,
       restore: "none",
       sync: false,
-    })).toThrow(expect.objectContaining({ code: "symlink" }));
+    }))).toThrow(expect.objectContaining({ code: "symlink" }));
     await expect(fs.readFile(destTarget, "utf8")).resolves.toBe("dest");
   });
 
@@ -108,13 +101,12 @@ describe("copy fallback source and destination guards", () => {
         return await fs.lstat(candidate, options);
       },
     };
-    await expectFsSafeError(copyFallbackReplace({
-      fsModule: asyncFs,
+    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
       src: source,
       dest: path.join(root, "dest"),
       restore: "none",
       sync: false,
-    }), "path-mismatch");
+    })), "path-mismatch");
 
     sourceLstats = 0;
     const syncModule = {
@@ -124,13 +116,12 @@ describe("copy fallback source and destination guards", () => {
         return fsSync.lstatSync(candidate, options);
       },
     };
-    expect(() => copyFallbackReplaceSync({
-      fsModule: syncModule,
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
       src: source,
       dest: path.join(root, "dest-sync"),
       restore: "none",
       sync: false,
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    }))).toThrow(expect.objectContaining({ code: "path-mismatch" }));
   });
 
   it("rejects a destination whose identity changes while it is pinned", async () => {
@@ -148,14 +139,13 @@ describe("copy fallback source and destination guards", () => {
       },
     };
 
-    await expectFsSafeError(copyFallbackReplace({
-      fsModule: asyncFs,
+    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
       src: source,
       dest,
       restore: "restore-original",
       maxRestoreBytes: 32,
       sync: false,
-    }), "path-mismatch");
+    })), "path-mismatch");
     await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
 
     const syncModule = {
@@ -164,14 +154,13 @@ describe("copy fallback source and destination guards", () => {
         return fsSync.openSync(String(candidate) === dest ? other : candidate, flags, mode);
       },
     };
-    expect(() => copyFallbackReplaceSync({
-      fsModule: syncModule,
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
       src: source,
       dest,
       restore: "restore-original",
       maxRestoreBytes: 32,
       sync: false,
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    }))).toThrow(expect.objectContaining({ code: "path-mismatch" }));
   });
 
   itPosix("enforces destination hardlink policy before remove or pinned replacement", async () => {
@@ -185,27 +174,25 @@ describe("copy fallback source and destination guards", () => {
     await fs.writeFile(asyncSource, "replacement");
     await fs.writeFile(syncSource, "replacement");
 
-    await expectFsSafeError(assertDestinationHardlinkPolicy(fs, alias, "reject"), "hardlink");
-    expect(() => assertDestinationHardlinkPolicySync(fsSync, alias, "reject"))
+    await expectFsSafeError(runAsync(assertDestinationHardlinkPolicy(AtomicIo.async(fs), alias, "reject")), "hardlink");
+    expect(() => runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(fsSync), alias, "reject")))
       .toThrow(expect.objectContaining({ code: "hardlink" }));
-    await expectFsSafeError(copyFallbackReplace({
-      fsModule: fs,
+    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
       src: asyncSource,
       dest: alias,
       destinationHardlinks: "reject",
       restore: "restore-original",
       maxRestoreBytes: 32,
       sync: false,
-    }), "hardlink");
-    expect(() => copyFallbackReplaceSync({
-      fsModule: fsSync,
+    })), "hardlink");
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: syncSource,
       dest: alias,
       destinationHardlinks: "reject",
       restore: "restore-original",
       maxRestoreBytes: 32,
       sync: false,
-    })).toThrow(expect.objectContaining({ code: "hardlink" }));
+    }))).toThrow(expect.objectContaining({ code: "hardlink" }));
     await expect(fs.readFile(original, "utf8")).resolves.toBe("original");
   });
 
@@ -215,12 +202,12 @@ describe("copy fallback source and destination guards", () => {
     const directory = path.join(root, "directory");
     await fs.mkdir(directory);
 
-    await expect(assertDestinationHardlinkPolicy(fs, missing, "reject")).resolves.toBeUndefined();
-    await expect(assertDestinationHardlinkPolicy(fs, directory, "reject")).resolves.toBeUndefined();
-    await expect(assertDestinationHardlinkPolicy(fs, directory)).resolves.toBeUndefined();
-    expect(assertDestinationHardlinkPolicySync(fsSync, missing, "reject")).toBeUndefined();
-    expect(assertDestinationHardlinkPolicySync(fsSync, directory, "reject")).toBeUndefined();
-    expect(assertDestinationHardlinkPolicySync(fsSync, directory)).toBeUndefined();
+    await expect(runAsync(assertDestinationHardlinkPolicy(AtomicIo.async(fs), missing, "reject"))).resolves.toBeUndefined();
+    await expect(runAsync(assertDestinationHardlinkPolicy(AtomicIo.async(fs), directory, "reject"))).resolves.toBeUndefined();
+    await expect(runAsync(assertDestinationHardlinkPolicy(AtomicIo.async(fs), directory))).resolves.toBeUndefined();
+    expect(runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(fsSync), missing, "reject"))).toBeUndefined();
+    expect(runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(fsSync), directory, "reject"))).toBeUndefined();
+    expect(runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(fsSync), directory))).toBeUndefined();
   });
 
   itPosix("rejects a destination that becomes a symlink or non-file after open", async () => {
@@ -243,14 +230,13 @@ describe("copy fallback source and destination guards", () => {
         return await fs.lstat(candidate, options);
       },
     };
-    await expectFsSafeError(copyFallbackReplace({
-      fsModule: symlinkAfterOpen,
+    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(symlinkAfterOpen), {
       src: source,
       dest,
       restore: "restore-original",
       maxRestoreBytes: 32,
       sync: false,
-    }), "symlink");
+    })), "symlink");
 
     const nonFileAfterOpen = {
       ...fs,
@@ -266,14 +252,13 @@ describe("copy fallback source and destination guards", () => {
         });
       },
     };
-    await expectFsSafeError(copyFallbackReplace({
-      fsModule: nonFileAfterOpen,
+    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(nonFileAfterOpen), {
       src: source,
       dest,
       restore: "restore-original",
       maxRestoreBytes: 32,
       sync: false,
-    }), "not-file");
+    })), "not-file");
     await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
   });
 
@@ -295,7 +280,7 @@ describe("copy fallback source and destination guards", () => {
         });
       },
     };
-    await expectFsSafeError(assertDestinationHardlinkPolicy(asyncFs, dest, "reject"), "path-mismatch");
+    await expectFsSafeError(runAsync(assertDestinationHardlinkPolicy(AtomicIo.async(asyncFs), dest, "reject")), "path-mismatch");
 
     const syncModule = {
       ...fsSync,
@@ -303,7 +288,7 @@ describe("copy fallback source and destination guards", () => {
         return fsSync.openSync(other, "r");
       },
     };
-    expect(() => assertDestinationHardlinkPolicySync(syncModule, dest, "reject"))
+    expect(() => runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(syncModule), dest, "reject")))
       .toThrow(expect.objectContaining({ code: "path-mismatch" }));
   });
 });
@@ -331,14 +316,13 @@ describe("copy fallback failure and restoration", () => {
       },
     };
 
-    await expect(copyFallbackReplace({
-      fsModule: asyncFs,
+    await expect(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
       src: source,
       dest,
       restore: "restore-original",
       maxRestoreBytes: 8,
       sync: true,
-    })).rejects.toMatchObject({
+    }))).rejects.toMatchObject({
       code: "helper-failed",
       details: { cleanup: "restored" },
     });
@@ -369,14 +353,13 @@ describe("copy fallback failure and restoration", () => {
       },
     };
 
-    expect(() => copyFallbackReplaceSync({
-      fsModule: syncModule,
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
       src: source,
       dest,
       restore: "restore-original",
       maxRestoreBytes: 8,
       sync: true,
-    })).toThrow(expect.objectContaining({
+    }))).toThrow(expect.objectContaining({
       code: "helper-failed",
       details: { cleanup: "restore-failed" },
       cause: expect.any(AggregateError),
@@ -390,28 +373,26 @@ describe("copy fallback failure and restoration", () => {
     const exactDest = path.join(root, "exact-dest");
     await fs.writeFile(exactSource, "new");
     await fs.writeFile(exactDest, "12345");
-    copyFallbackReplaceSync({
-      fsModule: fsSync,
+    runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: exactSource,
       dest: exactDest,
       restore: "restore-original",
       maxRestoreBytes: 5,
       sync: true,
-    });
+    }));
     expect(fsSync.readFileSync(exactDest, "utf8")).toBe("new");
 
     const pastSource = path.join(root, "past-source");
     const pastDest = path.join(root, "past-dest");
     await fs.writeFile(pastSource, "new");
     await fs.writeFile(pastDest, "12345");
-    expect(() => copyFallbackReplaceSync({
-      fsModule: fsSync,
+    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: pastSource,
       dest: pastDest,
       restore: "restore-original",
       maxRestoreBytes: 4,
       sync: false,
-    })).toThrow(expect.objectContaining({ code: "too-large" }));
+    }))).toThrow(expect.objectContaining({ code: "too-large" }));
     expect(fsSync.readFileSync(pastDest, "utf8")).toBe("12345");
   });
 
@@ -420,41 +401,38 @@ describe("copy fallback failure and restoration", () => {
     const missingSource = path.join(root, "missing-source");
     const missingDest = path.join(root, "missing-dest");
     await fs.writeFile(missingSource, "created");
-    await copyFallbackReplace({
-      fsModule: fs,
+    await runAsync(copyFallbackReplace(AtomicIo.async(fs), {
       src: missingSource,
       dest: missingDest,
       restore: "restore-original",
       maxRestoreBytes: 16,
       sync: false,
-    });
+    }));
     await expect(fs.readFile(missingDest, "utf8")).resolves.toBe("created");
 
     const pinnedSource = path.join(root, "pinned-source");
     const pinnedDest = path.join(root, "pinned-dest");
     await fs.writeFile(pinnedSource, "new");
     await fs.writeFile(pinnedDest, "old");
-    await copyFallbackReplace({
-      fsModule: fs,
+    await runAsync(copyFallbackReplace(AtomicIo.async(fs), {
       src: pinnedSource,
       dest: pinnedDest,
       restore: "restore-original",
       maxRestoreBytes: 3,
       sync: true,
-    });
+    }));
     await expect(fs.readFile(pinnedDest, "utf8")).resolves.toBe("new");
 
     const syncSource = path.join(root, "sync-source");
     const syncDest = path.join(root, "sync-dest");
     await fs.writeFile(syncSource, "sync-new");
     await fs.writeFile(syncDest, "sync-old");
-    copyFallbackReplaceSync({
-      fsModule: fsSync,
+    runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
       src: syncSource,
       dest: syncDest,
       restore: "none",
       sync: true,
-    });
+    }));
     expect(fsSync.readFileSync(syncDest, "utf8")).toBe("sync-new");
   });
 

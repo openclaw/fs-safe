@@ -5,8 +5,9 @@ import { assertDirectoryIdentitySync, inspectDirectoryIdentitySync } from "./dir
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { realpathSync } from "./realpath.js";
-import { writeTempFileSync } from "./replace-file-descriptor.js";
-import { SyncAtomicTempOwner } from "./replace-file-temp-owner.js";
+import { writeTempFile } from "./replace-file-descriptor.js";
+import { AtomicIo, runSync } from "./atomic-io.js";
+import { AtomicTempOwner } from "./replace-file-temp-owner.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
 export type ProbePathCaseOptions = {
@@ -56,24 +57,24 @@ function probeEntry(directory: string, name: string, names: ReadonlySet<string>)
 
 function probeTemporaryEntry(directory: string): boolean | undefined {
   const name = `.fs-safe-case-probe-${randomUUID()}`;
-  const owner = new SyncAtomicTempOwner(path.join(directory, name));
+  const io = AtomicIo.sync(fs);
+  const owner = new AtomicTempOwner(path.join(directory, name), io);
   try {
     owner.start();
-    owner.adopt(writeTempFileSync({
-      fsModule: fs,
+    owner.adopt(runSync(writeTempFile(io, {
       tempPath: owner.pathname,
       content: "",
       mode: 0o600,
       sync: false,
       onIdentity: owner.onIdentity,
-    }));
-    owner.assertCurrent(fs);
+    })));
+    runSync(owner.assertCurrent());
     const observed = probeEntry(directory, name, new Set(fs.readdirSync(directory)));
-    owner.assertCurrent(fs);
+    runSync(owner.assertCurrent());
     return observed;
   } finally {
     // Failed cleanup invalidates the observation; the existing owner retains its exit retry.
-    owner.finish({ fsModule: fs, throwOnCleanupError: true });
+    runSync(owner.finish({ throwOnCleanupError: true }));
   }
 }
 

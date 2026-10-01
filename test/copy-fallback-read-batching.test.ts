@@ -2,8 +2,9 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { copyFallbackReplace, copyFallbackReplaceSync } from "../src/replace-file-copy-fallback.js";
-import { readOwnedCopySourceSync } from "../src/replace-file-copy-source.js";
+import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
+import { copyFallbackReplace } from "../src/replace-file-copy-fallback.js";
+import { readOwnedCopySource } from "../src/replace-file-copy-source.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -89,8 +90,8 @@ function instrument(dest: string, options: {
 async function replace(sync: boolean, files: Awaited<ReturnType<typeof fixture>>, maxRestoreBytes: number,
   adapter: ReturnType<typeof instrument>) {
   const options = { src: files.source, dest: files.dest, restore: "restore-original" as const, maxRestoreBytes, sync: false };
-  if (sync) copyFallbackReplaceSync({ ...options, fsModule: adapter.syncModule });
-  else await copyFallbackReplace({ ...options, fsModule: adapter.asyncModule });
+  if (sync) runSync(copyFallbackReplace(AtomicIo.sync(adapter.syncModule), options));
+  else await runAsync(copyFallbackReplace(AtomicIo.async(adapter.asyncModule), options));
 }
 
 describe.each([false, true])("copy fallback restore reads (sync: %s)", sync => {
@@ -157,7 +158,7 @@ it("bounds speculative source allocation and returns only initialized bytes", as
     if (size > 16 * 1024 * 1024 + 1) throw new Error("unbounded size hint");
     return allocate(size);
   });
-  const result = readOwnedCopySourceSync({ fsModule: module, src: source });
+  const result = runSync(readOwnedCopySource(AtomicIo.sync(module), { src: source }));
   expect(result.replacement.toString()).toBe("replacement");
   expect(largest).toBeLessThanOrEqual(16 * 1024 * 1024 + 1);
   expect(result.replacement.buffer.byteLength).toBeLessThan(16 * 1024 * 1024);

@@ -2,8 +2,9 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { AtomicIo, runSync } from "../src/atomic-io.js";
 import { FsSafeError } from "../src/errors.js";
-import { assertDestinationHardlinkPolicySync } from "../src/replace-file-copy-fallback.js";
+import { assertDestinationHardlinkPolicy } from "../src/replace-file-copy-fallback.js";
 import { replaceFileAtomicSync } from "../src/replace-file.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
@@ -118,7 +119,7 @@ describe("synchronous copy-fallback destination admission cleanup", () => {
     });
 
     const error = captureFailure(() =>
-      assertDestinationHardlinkPolicySync(adapter.fileSystem, dest, "reject"));
+      runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(adapter.fileSystem), dest, "reject")));
 
     expect(error).toBe(primary);
     expect((error as Error).cause).toBe(primaryCause);
@@ -143,7 +144,7 @@ describe("synchronous copy-fallback destination admission cleanup", () => {
       });
 
       const error = captureFailure(() =>
-        assertDestinationHardlinkPolicySync(adapter.fileSystem, dest, "reject"));
+        runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(adapter.fileSystem), dest, "reject")));
 
       expect(Object.is(error, value)).toBe(true);
       expect(adapter.destinationCloseCalls()).toBe(1);
@@ -160,7 +161,7 @@ describe("synchronous copy-fallback destination admission cleanup", () => {
     const adapter = destinationAdapter({ dest, other, mismatch: false });
 
     const error = captureFailure(() =>
-      assertDestinationHardlinkPolicySync(adapter.fileSystem, dest, "reject"));
+      runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(adapter.fileSystem), dest, "reject")));
 
     expect(error).toBe(adapter.closeError);
     expect(adapter.destinationCloseCalls()).toBe(1);

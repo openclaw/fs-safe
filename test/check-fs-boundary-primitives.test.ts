@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 
 const checker = fileURLToPath(new URL("../scripts/check-fs-boundary-primitives.mjs", import.meta.url));
 
-function checkSyntheticSource(tempTarget: string) {
+function checkSyntheticSource(tempTarget: string, atomicIo = "export {};\n") {
   const directory = mkdtempSync(join(tmpdir(), "fs-safe-boundary-check-"));
   try {
     const sourceDirectory = join(directory, "src");
@@ -25,6 +25,7 @@ function checkSyntheticSource(tempTarget: string) {
       join(sourceDirectory, "json-durable-queue.ts"),
       'import { assertSafePathSegment } from "./safe-path-segment.js";\n',
     );
+    writeFileSync(join(sourceDirectory, "atomic-io.ts"), atomicIo);
     writeFileSync(join(sourceDirectory, "temp-target.ts"), tempTarget);
     return spawnSync(process.execPath, [checker], {
       cwd: directory,
@@ -63,4 +64,24 @@ it.each([
   expect(result.status).toBe(exitCode);
   expect(result.stdout).toBe("");
   expect(result.stderr).toBe(diagnostic);
+});
+
+it.each([
+  { source: "await handle.writeFile(bytes);\nfs.writeSync(fd, bytes);\n", forbidden: false },
+  { source: "fs.copyFile(source, destination);\n", forbidden: true },
+  { source: "fs.copyFileSync(source, destination);\n", forbidden: true },
+  { source: "this.asyncFs.copyFile!(source, destination);\n", forbidden: true },
+  { source: "this.syncFs.copyFileSync!(source, destination);\n", forbidden: true },
+])("enforces admitted atomic I/O writes (forbidden=$forbidden): $source", ({ source, forbidden }) => {
+  const result = checkSyntheticSource(
+    'import { normalizeSafePathSegment, isSafePathSegment } from "./safe-path-segment.js";\n',
+    source,
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.signal).toBeNull();
+  expect(result.status).toBe(forbidden ? 1 : 0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe(forbidden
+    ? "src/atomic-io.ts: atomic I/O must copy through admitted file handles or descriptors\n"
+    : "");
 });
