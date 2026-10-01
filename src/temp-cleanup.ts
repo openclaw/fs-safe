@@ -73,13 +73,7 @@ export function registerTempPathForExit(
     singleLinkFile: options?.singleLinkFile,
     cleanupSync: options?.cleanupSync,
   };
-  if (!entry.identity && !entry.cleanupSync) {
-    try {
-      entry.identity = fsSync.lstatSync(tempPath, { bigint: true });
-    } catch {
-      // Callers that register before creation set the identity after opening.
-    }
-  }
+  // Only the caller's receipt or cleanup callback grants removal authority.
   tempCleanupEntries.set(tempPath, entry);
   const unregister = (() => {
     if (tempCleanupEntries.get(tempPath) === entry) tempCleanupEntries.delete(tempPath);
