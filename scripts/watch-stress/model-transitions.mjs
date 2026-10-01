@@ -15,7 +15,7 @@ export function recordNativeLoss(root, phase) {
 
 // Native-only diagnosis separates transport latency from the bounded guarded
 // passes that every mode promises. The cache is refreshed only by invalidations.
-export async function runTransitions({ root, watch }, seed, { mode, maxPendingPaths = 2 + seed % 7, nativeOnly = false, passes = nativeOnly ? 400 : 4 } = {}) {
+export async function runTransitions({ root, watch }, seed, { mode, maxPendingPaths = 2 + seed % 7, nativeOnly = false, passes = nativeOnly && mode === "events" ? 400 : 4 } = {}) {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "watch-transitions-"));
   const full = name => path.join(temporary, name);
   const writer = createRenameWriter();

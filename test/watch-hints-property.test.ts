@@ -22,8 +22,10 @@ function selected(scopes: WatchScope[], name: string): boolean {
 const snapshot = (): WatchSnapshot => ({ entries: new Map(), directories: new Map(), targets: new Map(), scanned: 0 });
 const sorted = (changes: readonly WatchChange[] | undefined) => changes?.slice().sort((a, b) => a.path.localeCompare(b.path));
 
-it("matches component-based selection for children and folded subtrees", () => {
+it("matches component-based selection for undecodable children and folded subtrees", () => {
   fc.assert(fc.property(fc.array(scope, { maxLength: 8 }), name, (scopes, directory) => {
+    // Children hints stand for undecodable names, which cannot match a literal
+    // scope component. This sentinel is outside the generated component alphabet.
     const child = directory ? directory + path.sep + "leaf" : "leaf";
     expect(selectedWatchChildren(scopes, directory)).toBe(selected(scopes, child));
     const intersects = selected(scopes, directory) || scopes.some(scope => distance(directory, scope.path) >= 0);

@@ -193,6 +193,10 @@ handles and delivery queues, and closing one does not retire another's observati
 
 Periodic guarded reconciliation runs without needing an event. It catches
 missed events and works on filesystems where native hints are incomplete.
+Hint validation, scope relevance, and spelling-alias admission share the internal
+hint module. Bounded change merging preserves structural precedence and insertion
+order; nameless children require remaining tree depth, while folded subtrees also
+cover ancestors of selected scopes.
 Detailed native batches first pass guarded scope and spelling-alias admission;
 proven unrelated activity does not schedule a scan. Relevant entry hints refresh
 the entry scopes, while tree hints refresh the affected directory and its identity

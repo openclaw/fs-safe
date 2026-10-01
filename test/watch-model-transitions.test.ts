@@ -25,11 +25,23 @@ it("joins both closes and removes the fixture without losing the transition fail
   await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
 }, 30_000);
 
-it("rejects a cache whose selected creation notification is lost", async () => {
-  const dropChanges: typeof watch = (capability, options) => watch(capability, {
-    ...options,
-    onInvalidate(event) { if (!event.changes) options.onInvalidate(event); },
-  });
-  await expect(runTransitions({ root, watch: dropChanges }, 7, { mode: "poll" }))
+it.each([false, true])("rejects a lost polling invalidation within four passes (native-only=%s)", async nativeOnly => {
+  let subscriptions = 0, passes = 0, selectedChange = false;
+  const dropChanges: typeof watch = (capability, options) => {
+    const selected = subscriptions++ === 0;
+    const owner = watch(capability, {
+      ...options,
+      onInvalidate(event) {
+        if (selected && event.changes?.length) selectedChange = true;
+        if (!event.changes) options.onInvalidate(event);
+      },
+    });
+    return { ...owner, async reconcile() {
+      await owner.reconcile();
+      if (selected && selectedChange) passes++;
+    } };
+  };
+  await expect(runTransitions({ root, watch: dropChanges }, 7, { mode: "poll", nativeOnly }))
     .rejects.toThrow("lost invalidation: missing descendant plus sibling churn");
+  expect(passes).toBe(4); // Count from creation, excluding filesystem-dependent setup.
 }, 30_000);
