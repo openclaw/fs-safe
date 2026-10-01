@@ -114,18 +114,10 @@ FS_SAFE_NATIVE_MODE=auto      # auto | off | require | true | false | on | 1 | 0
 
 ### Python-helper migration bridge
 
-Version 0.5 detects the former `FS_SAFE_PYTHON_MODE`, `FS_SAFE_PYTHON`,
-`OPENCLAW_FS_SAFE_PYTHON_MODE`, `OPENCLAW_FS_SAFE_PYTHON`,
-`OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON` names. It emits one
-`FS_SAFE_PYTHON_DEPRECATED` warning and maps `auto`, `off`, or `require` to the
-same native mode; interpreter paths are ignored. The deprecated
-`configureFsSafePython()` export behaves the same way.
-
-Replace these inputs with `configureFsSafeNative()` or
-`FS_SAFE_NATIVE_MODE` during the 0.5 upgrade. The bridge exists only so shipped
-0.4 configuration fails loudly and maps predictably; it is not a supported
-Python execution path. Follow the [0.5 migration checklist](migrating-to-0.5.md)
-for the full upgrade.
+`configureFsSafePython()` and legacy Python environment settings remain a
+deprecated bridge to native modes; Python is never executed. See the
+[0.5 migration checklist](migrating-to-0.5.md#2-replace-python-helper-configuration)
+for the complete alias list, warnings, and precedence.
 
 ## Related pages
 

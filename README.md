@@ -57,14 +57,12 @@ This is a **library-level guardrail**, not OS-level isolation. It does not repla
 pnpm add @openclaw/fs-safe
 ```
 
-Node 22 or newer. Core root/path/json/temp helpers avoid framework dependencies. With all optional dependencies omitted, public subpaths remain safe to import and fallback-capable operations work in `auto` or `off`. Native-only features, including no-clobber `Root.move()` and [`private: true` creation on macOS](docs/creation.md#permission-options), remain unavailable and fail with `helper-unavailable`. TAR, gzip, zstd, and bzip2 extraction and bounded entry reads use the same Rust TAR parser through bundled WASM when native support is disabled or absent. Zstd/bzip2 codecs are bundled too; gzip uses Node's built-in decoder. ZIP fallback still needs optional `jszip`. See the [0.6 migration guide](docs/migrating-to-0.6.md).
+Requires Node.js 22 or newer. Bun 1.4.2 is also supported with the
+[Bun runtime requirements](docs/install.md#bun-runtime), including the matching
+Rust addon on macOS and Linux. See
+[Installation](docs/install.md) for supported platforms and optional dependencies.
 
-Bun 1.4.2 is also supported with the [Bun runtime requirements](docs/install.md#bun-runtime), including the matching Rust addon on macOS and Linux. JIT-disabled Bun works too.
-
-The package installs one prebuilt native binding for the current supported target. It
-supplies fd-relative and atomic no-replace primitives that Node does not expose
-directly. Configure the lazy loader before first use when you need a strict
-environment policy:
+Configure native policy before first use:
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe";
@@ -74,63 +72,21 @@ configureFsSafeNative({ mode: "off" });     // disable the addon; use supported 
 configureFsSafeNative({ mode: "require" }); // fail closed if the operation's native capability is unavailable
 ```
 
-Native mode performs `write()`, `create()`, and `copyIn()` parent creation and
-publication relative to pinned directory descriptors, including atomic
-replacement. The JavaScript path selected by `off`, or by `auto` when no
-binding can load, is explicitly best-effort: a same-privilege peer that can
-replace a writable parent between its identity check and Node's pathname
-mutation can redirect that mutation outside the root before the post-check
-reports the escape. For Root removal, recursive removal, mkdir, overwrite move,
-and writable-open creation, `auto` keeps those best-effort paths even when the
-addon is loaded; it does not confine these operations under hostile concurrency.
-`require` selects the hardened native paths and refuses an implicit pathname fallback for Root
-removal, mkdir, overwrite move, and writable-open creation. It does not make
-every Root method or platform kernel-atomic. Consult the
+`FS_SAFE_NATIVE_MODE=auto|off|require` selects the same policy. Native-only
+operations fail with `helper-unavailable` when their capability is unavailable.
+Guarded JavaScript mutations are best-effort: a hostile peer can redirect a
+pathname mutation before its post-check detects the escape. `require` selects
+hardened native paths where documented, but does not make every operation
+kernel-atomic. Read the [native helper policy](docs/native-helper.md) and
 [operation/platform matrix](docs/security-model.md#native-root-mutation-capabilities)
-when hostile concurrent mutation is in scope.
-
-Compatibility: these operations can now reject with `helper-unavailable` even
-when a binding loads. In particular, required recursive removal needs Linux
-`openat2` or the macOS native backend and is currently unavailable on Windows,
-and required writable-open creation needs the native creation/cleanup backend
-and permissions permitting its initial descriptor handoff. These changes apply
-only to `require`; default `auto` retains its existing behavior and cost.
-
-Equivalent env var: `FS_SAFE_NATIVE_MODE=auto|off|require`. The seven bindings
-ship as exact-version optional packages filtered by OS, CPU, and Linux libc, so
-a normal install receives only its matching binary. Linux GNU x64/arm64 bindings
-support [glibc 2.28 or newer](docs/install.md#supported-native-platforms), including
-RHEL 8-family systems. There are no postinstall
-steps, runtime downloads, or consumer Rust builds. On a platform without a
-published binding, or when optional dependencies are omitted, `auto` silently retains lexical and canonical root
-checks, no-follow opens, guarded temp+rename writes, and post-write identity
-verification. See the [native
-helper policy](docs/native-helper.md) for the exact boundary and deployment
-tradeoff, and [native architecture](docs/native.md) for the platform mechanisms
-and policy ownership model.
-
-Open results report the mechanism's containment class as `"kernel-atomic"` or
-`"best-effort"`. Linux native `openBeneath()` is kernel-atomic when `openat2`
-is available. Older kernels and syscall-filtered containers use a guarded
-descriptor-relative walk reporting best-effort; nested no-clobber moves keep
-atomic `renameat2(RENAME_NOREPLACE)`. macOS, Windows, and guarded JavaScript
-results are best-effort. See [Linux compatibility](docs/native.md#linux-without-openat2). See the [security model](docs/security-model.md#containment-guarantees-by-platform) before using that fact in higher-level policy.
+when concurrent mutation is in scope.
 
 ## Migrating from the Python helper
 
-Version 0.5 replaces the persistent Python worker with prebuilt native
-bindings. The modes map directly: `configureFsSafePython({ mode: "auto" })`
-becomes `configureFsSafeNative({ mode: "auto" })`, and likewise for `off` and
-`require`. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`; remove
-`pythonPath`, `FS_SAFE_PYTHON`, and interpreter provisioning because the native
-loader does not spawn Python.
-
-Version 0.5 retains the old function and documented `FS_SAFE_PYTHON*`
-and OpenClaw Python environment names emit one `FS_SAFE_PYTHON_DEPRECATED`
-warning and map the old mode to its native equivalent. They are migration
-bridges for shipped 0.4 consumers, not an alternate helper contract. Update
-startup configuration as part of the 0.5 upgrade rather than relying on the
-warning path. Follow the [0.5 migration checklist](docs/migrating-to-0.5.md).
+Version 0.5 replaced the Python worker with prebuilt native bindings. Follow the
+[0.5 migration checklist](docs/migrating-to-0.5.md) to replace deprecated Python
+configuration with native mode selection; current archive changes are covered
+in the [0.6 migration guide](docs/migrating-to-0.6.md).
 
 ## Quick start
 
@@ -152,68 +108,18 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
-Use `remove(path, { recursive: true, maxEntries: 20_000, maxDepth: 32 })` for
-bounded tree cleanup. It streams directory entries, checks mutation authority
-before every removal, and supports cancellation. See [removal options and partial
-failure semantics](docs/writing.md).
+`root()` requires an existing trusted directory. Its defaults apply to each
+operation; per-call options handle exceptions. See the [Root reference](docs/root.md).
 
-`root()` takes the trusted directory; relative paths in subsequent calls are resolved against it. Defaults you pass to `root()` apply to every call below; per-call options override them.
+`write()` replaces contents by default. Use `create()` or `overwrite: false`
+when an existing destination should be an error. `move()` defaults to no clobber
+and requires native support for the atomic collision decision; it fails with
+`helper-unavailable` when unavailable. Pass `overwrite: true` when replacement
+is intended.
 
-`copyIn()` also accepts `{ root: sourceRoot, relativePath }`, `overwrite: false`,
-and `clone: "auto"` for guarded, exclusive file copies with optional native
-copy-on-write acceleration. Byte limits, cancellation, and publication receipts
-are described in the [Root copy contract](docs/root.md#writes).
-
-When you need metadata or a `FileHandle`:
-
-```ts
-const { buffer, realPath, stat } = await fs.read("notes/today.txt");
-const opened = await fs.open("notes/today.txt");
-```
-
-`create()` is the don't-clobber variant of `write()` and throws `already-exists` when the target already exists:
-
-```ts
-await fs.create("notes/README.md", "seed\n"); // throws if it already exists
-```
-
-Use `private: true` on `mkdir()`, `ensureRoot()`, `create()`, or `createJson()`
-for private creation. On macOS, this requires native ACL inspection before
-creating parents or stages and verifies owner-only permissions with no ACL
-before writing payload bytes. Native `off` or a missing ACL capability rejects
-with `helper-unavailable`; nonprivate creation is unchanged. See the
-[creation contract](docs/creation.md#permission-options) for parent ACL handling
-and platform support.
-
-Pass `{ atomic: true }` to buffered `create()` or `createJson()` to keep the
-destination absent until complete content is ready, including with native support
-disabled. The JavaScript fallback requires hardlinks and never downgrades to a
-partial visible file. Omitted or `false` retains the existing buffered behavior.
-Atomic visibility is separate from the existing `durable` synchronization policy.
-Use `durable: "file"` on `create()` or `createJson()` when file-flush errors,
-including `EPERM`, must propagate. It combines with `atomic: true` without
-requiring strict parent-directory synchronization.
-
-`create()` also accepts an `AsyncIterable<Uint8Array>` for large or incrementally
-produced files. Streamed creates keep the destination absent until all chunks
-are written, support `maxBytes` and `signal`, and recheck mutation authority
-before writes and publication. See [streamed creation](docs/writing.md#streamed-creation)
-for producer ownership and cancellation semantics.
-
-`write()` replaces file contents by default; pass `{ overwrite: false }` or use `create()` when an existing file should be an error. `move()` defaults to no clobber because it can otherwise delete an unrelated target while also consuming the source. No-clobber moves require the native helper so the collision decision and rename are one descriptor-relative operation; they fail with `helper-unavailable` rather than falling back to a replacing rename. Pass `{ overwrite: true }` when replacing the target is intended.
-
-Mutating methods accept `assertBeforeMutation: () => void` for live lease or
-cancellation checks immediately before filesystem dispatch. Root defaults and
-per-call checks compose; cleanup and already-dispatched work still settle.
-See [live mutation authority](docs/root.md#live-mutation-authority) for the exact
-scope, including raw writable handles and lock bookkeeping.
-For workspaces with directory aliases, use `symlinks: "follow-parents-within-root"`
-on reads and `mutationSymlinks: "follow-parents-within-root"` on mutations or root
-defaults. Contained parent symlinks are resolved by the library, while a final
-symlink is rejected. Read policy and mutation policy are separate; omitting
-`mutationSymlinks` preserves the existing mutation behavior. See [root policies](docs/root.md#defaults-vs-per-call-options).
-
-Use `ensureRoot()` when a computed relative directory target resolves to the root itself (`""` or `"."`) and you want the operation to be accepted. `root()` still requires the trusted root directory to already exist.
+See [Writing](docs/writing.md) for copy sources, mutation authority, symlink
+policy, writable handles, and bounded removal, and [Creation](docs/creation.md)
+for private permissions, atomic creation, and durability options.
 
 ## Reading
 
@@ -241,35 +147,10 @@ Root reads default to `DEFAULT_ROOT_MAX_BYTES` (16 MiB). Pass a larger `maxBytes
 for expected large reads, or `Number.POSITIVE_INFINITY` when the caller has a
 separate size budget.
 
-`reader()` returns a callback that reads absolute or relative paths through the same root boundary. It is useful for APIs that accept a `(path) => Promise<Buffer>` loader. For roots configured through a directory symlink or Windows junction, absolute inputs may use either the configured spelling or the canonical real path. Absolute paths outside the root are rejected with `outside-workspace`. `readAbsolute()` has the same absolute-path behavior directly.
-
-When you need a writable `FileHandle`, use `openWritable()` and prefer `await using` for cleanup:
-
-```ts
-await using opened = await fs.openWritable("logs/current.log", { writeMode: "append" });
-{
-  await opened.handle.appendFile("line\n");
-}
-```
-
-`nonBlockingRead` remains as a compatibility hint in `RootDefaults`. Safe read/open operations already use nonblocking descriptor opens where the platform supports them so a raced FIFO cannot pin a worker; filesystem safety policy remains explicit through `hardlinks`, `symlinks`, and `denyMutations`.
-
-On POSIX, `openWritable()` also uses nonblocking admission for existing targets
-so a no-reader FIFO cannot stall validation. Ordinary regular-file write
-semantics are unchanged; see [writing](docs/writing.md#openwritable-for-streaming).
-
-```ts
-const locked = await root("/srv/workspace", {
-  denyMutations: {
-    paths: ["/srv/workspace/.env"],
-    prefixes: ["/srv/workspace/.ssh"],
-  },
-});
-
-await locked.write(".env", "token"); // FsSafeError code "denied-path"
-```
-
-`stat()`, `exists()`, `list()`, and `entries()` check the exact selected objects while collecting their advisory results, but they cannot pin a later operation to the same filesystem object. Use `read()`, `open()`, `write()`, `create()`, `copyIn()`, `move()`, or `remove()` for operation-local identity checks, and inspect `containment` when the platform distinction matters.
+See [Reading](docs/reading.md) for absolute-path loaders, aliases, and read
+budgets, and [Writing](docs/writing.md#openwritable-for-streaming) for writable
+handles. Inspection results from `stat()`, `exists()`, `list()`, and `entries()`
+are advisory; use the operation methods for identity checks at the time of I/O.
 
 ## Subpaths
 
@@ -298,61 +179,14 @@ JSON5-backed plugin manifests.
 
 ## Directory durability
 
-```ts
-import { ensureDurableDirectory, pinDirectory } from "@openclaw/fs-safe/durability";
-
-const receipt = await ensureDurableDirectory({
-  directoryPath: "/srv/backups/sqlite",
-  mode: 0o700,
-});
-const pinned = await pinDirectory(receipt);
-try {
-  await publishSnapshot();
-  const outcome = await pinned.sync();
-  // `unsupported` is explicit on platforms without directory flushing.
-  console.log(outcome.status);
-} finally {
-  await pinned.close();
-}
-```
-
-The durability subpath pins a directory descriptor to its pathname identity,
-detects symlink/FIFO/replacement races, and synchronizes every new parent edge
-when creating a nested directory. Strict sync propagates real I/O failures and
-reports known Windows directory-flush limitations explicitly. Separate
-best-effort helpers preserve operations that do not promise crash durability.
-
-`publishFileExclusive()` adds no-clobber hardlink/copy/rename strategies and a
-typed post-creation receipt. Its `onSyncFailure` policy defaults to
-`"rollback"`; backup writers can choose `"preserve"` to keep a complete target
-when parent-directory sync fails, then inspect `details.directorySync` and
-retry or record the weaker durability state.
-
-See [Directory durability](docs/durability.md) for the receipt, pin lifecycle,
-publication policy, creation callback, and platform contract.
+Use the [Directory durability](docs/durability.md) reference for directory
+receipts, pinned synchronization, and exclusive publication policies, including
+whether a completed target is preserved after a parent-directory sync failure.
 
 ## Atomic writes
 
-For preparation that must survive a parent rename until abort cleanup, use
-[`stageFileInDirectory()`](docs/staged-file.md) from `advanced`. It retains the
-original directory on Linux/macOS and requires native support for this operation.
-It offers atomic replace/no-replace publication, not expected-inode replacement
-or a crash-durability promise; application checks and coordination remain yours.
-
-For caller-owned directory, regular-file or symlink-entry export (including
-Windows junctions on local NTFS),
-[`retainEntryForPublication()`](docs/entry-publication.md) retains original source
-and parent observations, atomically refuses occupied destinations, and returns
-explicit commit/indeterminate results. It only closes on disposal: no automatic
-rollback or deletion. The source namespace must remain caller-exclusive; this is
-not source-identity CAS or current-path confinement.
-
-For an already staged POSIX symlink, [`retainSymlinkInDirectory()`](docs/staged-symlink.md)
-admits caller-captured identity and retains that exact inode through no-replace
-publication or explicit recovery. Same-target foreign replacements are not adopted.
-Staging, cooperative locking and crash recovery remain application responsibilities.
-
-`replaceFileAtomic()` writes a sibling temp file, applies its exact mode through the still-open descriptor, optionally fsyncs it, and renames it over the destination. It never follows the published destination path to set file permissions. Mode preservation inherits only rwx bits from an existing non-symlink regular file; special bits, ownership, ACLs, and extended attributes are not copied. Pinned-destination hardlink rejection, rename retry / copy fallback on `EPERM`, bounded original-content restoration after a torn fallback, parent-directory fsync, and a `beforeRename` hook for backup or observer flows are all opt-in. `movePathWithCopyFallback()` stages cross-device moves before commit and removes only the copied source entries, so concurrent source additions or replacements are preserved. Its optional synchronous `assertBeforeMutation` hook rechecks caller authority before renames and each source removal; `onDestinationPublished` reports an exact bigint destination identity before later checks or cleanup can fail. See [mutation authority and publication receipts](docs/atomic.md#mutation-authority-and-publication-receipts).
+`replaceFileAtomic()` writes a sibling temp and renames it over the destination.
+File and parent-directory synchronization are opt-in:
 
 ```ts
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
@@ -366,13 +200,10 @@ await replaceFileAtomic({
 });
 ```
 
-`replaceFileAtomicSync()` covers the synchronous case with the same options shape. Both accept an injectable `fileSystem` for tests. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation; custom sync adapters using `mode` or `preserveExistingMode` provide the optional descriptor-bound `fchmodSync` operation.
-
-Both variants accept `assertBeforeMutation` for revocable caller authority and
-`onDestinationState` for observed removal, partial-write, and publication facts.
-The observer receives exact bigint identities from retained descriptors, including
-when later completion fails. These facts do not authorize rollback; the caller
-still owns current authority and content checks. See [atomic write authority](docs/atomic.md#atomic-write-authority-and-destination-state).
+See [Atomic writes](docs/atomic.md) for synchronous adapters, fallback recovery,
+mutation authority, and publication receipts. Retained lifecycles have separate
+contracts: [staged files](docs/staged-file.md), [entry publication](docs/entry-publication.md),
+and [staged symlinks](docs/staged-symlink.md).
 
 ## External outputs
 
@@ -392,22 +223,8 @@ await writeExternalFileWithinRoot({
 });
 ```
 
-The callback receives a staged path, not the final destination. The default
-`"workspace"` mode uses private temp storage plus `Root.copyIn()` for
-cross-device-tolerant finalization. `"sibling"` stages in the target directory,
-fsyncs the completed file, and atomically renames it over the target. Choose it
-when the destination directory is itself the writable boundary and atomic
-replacement matters.
-
-For sibling producers that can leave partial output before throwing, opt in to
-`producerIsolation: "private-directory"`. The callback writes inside an owned
-private workspace on the target filesystem, allowing cleanup after producer
-failure while preserving sibling publication behavior. See [external outputs](docs/output.md)
-for the identity checks and cleanup limits.
-
-Use it when the final filename is known before the external writer runs. If the
-filename depends on sniffing the produced bytes, write to a private temp
-workspace first, then finalize through the normal root APIs after validation.
+The callback receives a staged path. Choose workspace or sibling staging and
+producer isolation using the [staging-mode guide](docs/output.md#choosing-a-staging-mode).
 
 ## Stores
 
@@ -424,73 +241,11 @@ const store = files.json("settings.json", { lock: true });
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
 
-`jsonStore({ filePath })` is the single-path convenience wrapper for the same
-primitive and exposes its resolved absolute path.
-
-Use `update()` when missing state is part of your model; use `updateOr()` for
-the common merge-into-defaults case. Standalone helpers use options bags
-because they do not carry a bound root and often need multiple authority, path,
-and policy knobs.
-
-Sidecar locks fail closed on stale holders by default. Opt-in `remove-if-unchanged`
-recovery requires caller approval and serializes snapshot verification and unlink
-with an exclusive reclaim guard so a replacement lock cannot be deleted; see the
-[file lock docs](docs/sidecar-lock.md).
-
-Use `fileStore()` for cache/blob/media-style directories where callers
-need safe relative paths, size limits, atomic replacement, stream writes, and
-TTL cleanup behind one root. Pass `private: true` for credentials, auth
-profiles, tokens, and per-agent private state; private mode keeps the same
-store shape while routing writes through the secret-file atomic path.
-
-```ts
-import { fileStore } from "@openclaw/fs-safe/store";
-
-const media = fileStore({
-  rootDir: "/safe/workspace/media",
-  maxBytes: 5 * 1024 * 1024,
-  mode: 0o600,
-});
-
-await media.write("inbound/photo.jpg", bytes);
-await media.writeJson("state/photo.json", { id: "photo" });
-const cached = await media.readJsonIfExists("state/photo.json");
-const opened = await media.open("inbound/photo.jpg");
-await media.pruneExpired({ ttlMs: 10 * 60 * 1000, recursive: true });
-```
-
-The `store` subpath also includes durable JSON queue helpers for the common
-"one JSON file per work item" pattern: atomic entry writes, pending-entry loads,
-acknowledgement via `.delivered` markers, failed-entry moves, and stale temp
-cleanup. On Windows, every independently supplied queue path rejects NTFS
-alternate-stream and directory-index namespace spellings before reads, locks,
-or mutations. Retry, dedupe, and transport semantics stay with the caller.
-
-`tempWorkspace()` exposes `write()`, `writeText()`, `writeJson()`, `copyIn()`, and `read()` for
-single-file scratch workflows without hand-rolled path joins, plus a `store: FileStore` view of
-the workspace dir for the richer cases (`writeStream`, `readJsonIfExists`, `store.json<T>(rel)`).
-Compatible creation and cleanup remain available without native support.
-Set `cleanupSafety: "require-bounded"` to require collision-safe quarantine and
-descriptor-bounded recursive cleanup before creating a child. See the
-[temp workspace contract](docs/temp.md).
-On POSIX, bounded cleanup requires owner read and search in the final `dirMode`
-(`0o500`); restrictive modes select compatible fallback or reject `require-bounded`
-before child creation.
-Linux bounded cleanup requires the exact `openat2`/`RESOLVE_NO_XDEV` capability
-at runtime; compatible mode falls back when unavailable, while `require-bounded`
-rejects before child creation.
-
-`tempFile()` is the smaller one-file temp helper. It is intentionally an
-advanced primitive: use `tempWorkspace()` for the stable temp surface and reach
-for `tempFile()` only when you need a raw file target.
-
-```ts
-import { tempFile } from "@openclaw/fs-safe/advanced";
-
-await using target = await tempFile({ prefix: "download", fileName: "payload.bin" });
-await fs.promises.writeFile(target.path, bytes);
-const checksumPath = target.file("payload.sha256");
-```
+See [JSON stores](docs/json-store.md) for single-path stores and update semantics,
+[File stores](docs/file-store.md) for blobs, streams, and private state, and
+[File locks](docs/sidecar-lock.md) for coordination and stale-lock recovery.
+The store subpath also provides [durable JSON queues](docs/store.md#durable-json-queues).
+Use [temp workspaces](docs/temp.md) for scoped scratch files and cleanup policies.
 
 ## Exact file comparison
 
@@ -501,18 +256,10 @@ descriptors' positions and ownership.
 
 ## Secure absolute file reads
 
-Use `readSecureFile()` when the caller gives you an absolute credential path
-instead of a root-relative workspace path. It opens the file first, validates the
-same handle it will read from, checks trusted directories, owner, POSIX mode or
-Windows ACLs, hardlink count, size, and optional timeout, then reads through the
-pinned handle. On Windows, both the bytes and the owner/DACL facts come from that
-handle. In native `auto` or `off` mode, a packaged, readable PowerShell script can
-inspect that borrowed handle when the native capability is unavailable, subject
-to the [Windows security fallback prerequisites](docs/install.md#windows-security-fallback).
-It emits one fallback warning per process for secure reads and adds PowerShell
-startup and compilation overhead per call. Native `require` remains strict, and
-native operation failures are terminal. Neither route reopens the pathname to
-inspect its ACL.
+Use [`readSecureFile()`](docs/secure-file.md) for an absolute credential path.
+It validates permissions, ownership, identity, and size through the opened handle.
+See [Windows fallback prerequisites](docs/install.md#windows-security-fallback)
+when native support is unavailable.
 
 ```ts
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";
@@ -530,10 +277,8 @@ flows where a warning is preferable to refusing the file.
 
 ## Directory walking
 
-[`Root.entries()`](docs/entries.md) observes one directory without descending or
-following child symlinks. It streams in filesystem order by default and supports
-cancellation, entry limits that throw on overflow, and bounded sorted-name
-collection. Use it when the caller owns traversal or symlink validation:
+[`Root.entries()`](docs/entries.md) lists immediate children without following
+child symlinks:
 
 ```ts
 for await (const entry of fs.entries("plugins", { maxEntries: 1_000 })) {
@@ -541,40 +286,11 @@ for await (const entry of fs.entries("plugins", { maxEntries: 1_000 })) {
 }
 ```
 
-`walkDirectory()` and `walkDirectorySync()` replace ad-hoc recursive
-`readdir()` loops with entry and depth budgets, a symlink policy, and stable
-relative paths.
-
-```ts
-import { walkDirectory } from "@openclaw/fs-safe/walk";
-
-const scan = await walkDirectory("/safe/workspace", {
-  maxDepth: 4,
-  maxEntries: 10_000,
-  symlinks: "skip",
-  include: (entry) => entry.kind === "file",
-});
-
-for (const file of scan.entries) {
-  console.log(file.relativePath);
-}
-```
-
-Check `scan.truncated` before treating the result as complete, and `scan.failedDirs` to tell an incomplete scan (a directory that could not be read) from an empty one before pruning state from the listing.
-
-`walkDirectory()` accepts asynchronous `include` and `descend` callbacks through `AsyncWalkDirectoryOptions`, so a marker lookup can prune a directory before its children are read. Decisions remain serial and retain the options object as their `this` receiver; `walkDirectorySync()` and its options remain synchronous. See [Directory walking](docs/walk.md) for callback timing, JavaScript result compatibility, and error handling.
-
-For caller-controlled paths, `Root.walk()` is the root-bounded async iterator.
-It supports entry/depth budgets, including links without following their targets,
-in-root symlink following, cancellation, and a
-truncation marker (or typed error) when a budget is reached. Its `entryFilter`
-accepts `"include"`, `"skip"`, or `"skip-subtree"`, directly or through a Promise.
-After an awaited decision resolves, the walk rechecks cancellation and the
-current listing directory and Root identities before using it. Pending callbacks
-settle before cancellation or iterator disposal completes. Callback failures
-reject the walk. `onDirectoryError: "skip-and-report"` yields typed `"directory-error"` markers
-for directory read or identity-check failures while preserving entries from
-readable subtrees.
+Use `Root.walk()` for root-bounded recursive traversal of caller-controlled
+paths. Standalone `walkDirectory()` and `walkDirectorySync()` provide best-effort
+inventories; inspect `truncated` and `failedDirs` before treating a scan as complete.
+See [Directory walking](docs/walk.md) for budgets, ordering, filtering, and
+cancellation contracts.
 
 ## Archive extraction
 
@@ -605,20 +321,13 @@ Extraction stages into a private directory and merges through the same safe-open
 
 ## Advanced path scopes
 
-For code that already has a trusted absolute path and wants lower-level boundary
-validation without going through `root()`:
-
-```ts
-import { pathScope } from "@openclaw/fs-safe/advanced";
-
-const uploads = pathScope("/safe/uploads", { label: "uploads directory" });
-const files = await uploads.files(["photo.jpg"]);
-const target = await uploads.writable("report.pdf");
-```
+Use [`pathScope()`](docs/path-scope.md) for lower-level boundary validation over
+a trusted absolute path.
 
 ## Errors
 
-Every failure surfaces as an `FsSafeError` with a closed `code` union you can branch on:
+Boundary and policy failures use `FsSafeError` with a closed `code` union.
+Parsing, callbacks, and underlying I/O can also throw other error types:
 
 ```ts
 import { FsSafeError } from "@openclaw/fs-safe/errors";
@@ -633,32 +342,15 @@ try {
 }
 ```
 
-Codes are grouped by category:
-
-```ts
-if (err instanceof FsSafeError) {
-  if (err.category === "policy") {
-    // Unsafe caller input or filesystem state rejected by a safety policy.
-  } else {
-    // Routine filesystem outcome or runtime/environment problem.
-  }
-}
-```
-
-Routine filesystem outcomes such as `not-found`, `not-empty`, and
-`not-removable`, plus runtime failures such as `read-failed`, are operational;
-they do not indicate that a filesystem
-boundary policy was violated.
-
-Current `FsSafeErrorCode` values are `already-exists`, `denied-path`, `device-path`, `hardlink`, `helper-failed`, `helper-unavailable`, `invalid-path`, `insecure-permissions`, `not-empty`, `not-file`, `not-found`, `not-owned`, `not-removable`, `outside-workspace`, `path-alias`, `path-mismatch`, `permission-unverified`, `read-failed`, `secret-exists`, `store-reentrant-update`, `symlink`, `timeout`, `too-large`, and `unsupported-platform`.
+For `FsSafeError`, `category` distinguishes policy rejections from operational
+filesystem or runtime failures. See [Errors](docs/errors.md) for codes, receipts,
+and other error families; check the error type before branching on its code.
 
 ## Safety model
 
-- root-bounded APIs resolve paths against a configured root and reject canonical escapes
-- reads reject known unsafe device paths, open with `O_NOFOLLOW` where available, then verify fd identity matches the path identity before returning the buffer or handle
-- create-only writes, sidecar acquisition, and exclusive publication prefer fd-relative native primitives, with verified guarded JavaScript fallbacks
-- `remove`, `mkdir`, `move`, `stat`, and `list` retain guarded JavaScript implementations with pre/post identity checks
-- archive extraction stages into a private directory and merges through the same boundary checks used by direct writes
+Root operations combine confinement, no-follow opens, and identity checks.
+The [security model](docs/security-model.md) describes guarantees and race limits
+for native and JavaScript mechanisms on each platform.
 
 ## Limitations
 

@@ -1,12 +1,7 @@
 import fs from "node:fs";
 import { pathForWindowsFilesystem } from "./windows-path-alias.js";
 
-/**
- * Returns true when `fs.stat()` can stat the path.
- *
- * This follows stat semantics: broken symlinks return false, while symlinks to
- * existing targets return true.
- */
+/** True if stat succeeds; follows symlinks, so broken links return false. */
 export async function pathExists(filePath: string): Promise<boolean> {
   try {
     fs.statSync(pathForWindowsFilesystem(filePath));
@@ -16,10 +11,7 @@ export async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-/**
- * Synchronous counterpart to `pathExists()`, with the same `fs.statSync()`
- * semantics.
- */
+/** Synchronous {@link pathExists}. */
 export function pathExistsSync(filePath: string): boolean {
   try {
     fs.statSync(pathForWindowsFilesystem(filePath));

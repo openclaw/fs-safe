@@ -226,10 +226,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     }));
   }
   if (!parentGuard) {
-    // mkdirPathComponentsWithGuards may resolve the final component through
-    // an in-root symlink (e.g. a skill-bank layout). Use its returned real
-    // path for the subsequent guard and target path so we don't re-check the
-    // original, possibly-symlinked, lexical path and reject it outright.
+    // Guard the returned real parent; the lexical path may contain an allowed symlink.
     const mkdirParams = {
       rootReal: params.rootPath,
       targetPath: parentPath,
