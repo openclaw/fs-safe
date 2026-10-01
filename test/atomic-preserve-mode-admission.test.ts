@@ -166,6 +166,55 @@ describe("atomic preserved-mode admission", () => {
     expect(replacementTemps(await fs.readdir(root))).toEqual([]);
   });
 
+  it.each([false, true].flatMap(synchronous =>
+    ["isSymbolicLink", "isFile", "mode"].map(member => ({ synchronous, member })),
+  ))("preserves ENOENT from admitted metadata $member (sync=$synchronous)", async ({ synchronous, member }) => {
+    const root = await tempRoot("fs-safe-atomic-preserved-kind-error-");
+    const filePath = path.join(root, "target");
+    await fs.writeFile(filePath, "original");
+    const identity = await fs.lstat(filePath, { bigint: true });
+    const failure = Object.assign(new Error("metadata admission failed"), { code: "ENOENT" });
+    let mutations = 0;
+    const forbidMutation = () => {
+      mutations++;
+      throw new Error("mutation dispatched after failed metadata admission");
+    };
+    const damaged = <T extends fsSync.Stats | fsSync.BigIntStats>(stat: T): T => {
+      Object.defineProperty(stat, member, member === "mode"
+        ? { get() { throw failure; } }
+        : { value() { throw failure; } });
+      return stat;
+    };
+    const run = async () => {
+      const options = { filePath, content: "replacement", preserveExistingMode: true };
+      if (synchronous) {
+        return replaceFileAtomicSync({ ...options, fileSystem: {
+          ...fsSync,
+          lstatSync: ((...args: Parameters<typeof fsSync.lstatSync>) =>
+            damaged(fsSync.lstatSync(...args))) as typeof fsSync.lstatSync,
+          mkdirSync: forbidMutation, openSync: forbidMutation, writeFileSync: forbidMutation,
+          renameSync: forbidMutation, rmSync: forbidMutation, unlinkSync: forbidMutation,
+          copyFileSync: forbidMutation, fchmodSync: forbidMutation,
+        } });
+      }
+      return await replaceFileAtomic({ ...options, fileSystem: { promises: {
+        ...fs,
+        lstat: (async (...args: Parameters<typeof fs.lstat>) =>
+          damaged(await fs.lstat(...args))) as typeof fs.lstat,
+        mkdir: forbidMutation, open: forbidMutation, writeFile: forbidMutation,
+        rename: forbidMutation, rm: forbidMutation, unlink: forbidMutation,
+        copyFile: forbidMutation,
+      } } });
+    };
+
+    await expect(run()).rejects.toBe(failure);
+    expect(mutations).toBe(0);
+    expect(await fs.readFile(filePath, "utf8")).toBe("original");
+    const current = await fs.lstat(filePath, { bigint: true });
+    expect([current.dev, current.ino]).toEqual([identity.dev, identity.ino]);
+    expect(await fs.readdir(root)).toEqual(["target"]);
+  });
+
   itPosix("uses sanitized inherited modes through both copy-fallback policies", async () => {
     const root = await tempRoot("fs-safe-atomic-preserved-fallback-");
     const renameDenied = () => Object.assign(new Error("rename denied"), { code: "EPERM" });

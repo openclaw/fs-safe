@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AtomicIo, runAsync } from "../src/atomic-io.js";
 import { pinNodeDirectoryForMode } from "../src/directory-mode-node.js";
 import { applyDirectoryMode } from "../src/replace-file-descriptor.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -36,7 +37,7 @@ describe.skipIf(process.platform === "win32")("directory mode ownership", () => 
     const hostOpen = vi.spyOn(fs, "open");
     const hostChmod = vi.spyOn(fs, "chmod");
     const hostStatfs = vi.spyOn(fs, "statfs");
-    await applyDirectoryMode({ fsModule: adapter, dirPath: dir, mode: 0o755 });
+    await runAsync(applyDirectoryMode(AtomicIo.async(adapter), { dirPath: dir, mode: 0o755 }));
     expect(descriptorChmod).toHaveBeenCalledExactlyOnceWith(0o755);
     expect(close).toHaveBeenCalledTimes(1);
     expect(hostOpen).not.toHaveBeenCalled();

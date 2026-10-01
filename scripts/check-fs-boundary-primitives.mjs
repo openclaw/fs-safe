@@ -19,6 +19,15 @@ const checks = [
     ],
   },
   {
+    file: "src/atomic-io.ts",
+    forbidden: [
+      {
+        pattern: /\.copyFile(?:Sync)?\s*!?\s*\(/,
+        message: "atomic I/O must copy through admitted file handles or descriptors",
+      },
+    ],
+  },
+  {
     file: "src/move-path.ts",
     forbidden: [
       {
