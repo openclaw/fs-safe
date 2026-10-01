@@ -119,70 +119,34 @@ describe("public ZIP extraction benchmark receipt", () => {
   );
 
   it("rejects missing, duplicate, skipped, mutated, or miscounted rows", () => {
-    const row = validRow();
-    expect(() => validatePublicZipExtractionReport(
-      { results: [] },
-      "extractArchive",
-      20,
-    )).toThrow("row set mismatch");
-    expect(() => validatePublicZipExtractionReport(
-      { results: [row, row] },
-      "extractArchive",
-      20,
-    )).toThrow("row set mismatch");
-    for (const name of ["extractArchive/zip-renamed", "extractArchive/tar"]) {
-      expect(() => validatePublicZipExtractionReport(
-        { results: [{ ...row, name }] },
-        "extractArchive",
-        20,
-      )).toThrow("row set mismatch");
+    const reportCases: Array<[(row: ReturnType<typeof validRow>) => object[], string]> = [
+      [() => [], "row set mismatch"],
+      [(row) => [row, row], "row set mismatch"],
+      [(row) => [{ ...row, name: "extractArchive/zip-renamed" }], "row set mismatch"],
+      [(row) => [{ ...row, name: "extractArchive/tar" }], "row set mismatch"],
+      [(row) => [{ ...row, skipped: "not run" }], "must execute rather than skip"],
+      [(row) => [{ ...row, iterations: 1 }], "iteration count mismatch"],
+    ];
+    for (const [mutate, message] of reportCases) {
+      expect(() => validatePublicZipExtractionReport({ results: mutate(validRow()) }, "extractArchive", 20)).toThrow(message);
     }
-    expect(() => validatePublicZipExtractionReport(
-      { results: [{ ...row, skipped: "not run" }] },
-      "extractArchive",
-      20,
-    )).toThrow("must execute rather than skip");
-    expect(() => validatePublicZipExtractionReport(
-      { results: [{ ...row, iterations: 1 }] },
-      "extractArchive",
-      20,
-    )).toThrow("iteration count mismatch");
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      workloadSemantics: "changed-output",
-    })).toThrow("workload semantics mismatch");
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      workloadSemantics: undefined,
-    })).toThrow("workload semantics mismatch");
     const missingWorkload: Record<string, unknown> = { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD };
     delete missingWorkload.outcome;
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      workloadDetails: missingWorkload,
-    })).toThrow("workload details mismatch");
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      workloadDetails: { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD, outcome: "failure" },
-    })).toThrow("workload details mismatch");
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      workloadDetails: { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD, unexpected: true },
-    })).toThrow("workload details mismatch");
     const missingFixture: Record<string, unknown> = { ...PUBLIC_ZIP_EXTRACTION_FIXTURE };
     delete missingFixture.timed;
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      fixturePlacement: missingFixture,
-    })).toThrow("fixture placement mismatch");
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      fixturePlacement: { ...PUBLIC_ZIP_EXTRACTION_FIXTURE, timed: "setup+call" },
-    })).toThrow("fixture placement mismatch");
-    expect(() => validatePublicZipExtractionWorkloadResult({
-      ...row,
-      fixturePlacement: { ...PUBLIC_ZIP_EXTRACTION_FIXTURE, unexpected: true },
-    })).toThrow("fixture placement mismatch");
+    const workloadCases = [
+      [{ workloadSemantics: "changed-output" }, "workload semantics mismatch"],
+      [{ workloadSemantics: undefined }, "workload semantics mismatch"],
+      [{ workloadDetails: missingWorkload }, "workload details mismatch"],
+      [{ workloadDetails: { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD, outcome: "failure" } }, "workload details mismatch"],
+      [{ workloadDetails: { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD, unexpected: true } }, "workload details mismatch"],
+      [{ fixturePlacement: missingFixture }, "fixture placement mismatch"],
+      [{ fixturePlacement: { ...PUBLIC_ZIP_EXTRACTION_FIXTURE, timed: "setup+call" } }, "fixture placement mismatch"],
+      [{ fixturePlacement: { ...PUBLIC_ZIP_EXTRACTION_FIXTURE, unexpected: true } }, "fixture placement mismatch"],
+    ] as const;
+    for (const [mutation, message] of workloadCases) {
+      expect(() => validatePublicZipExtractionWorkloadResult({ ...validRow(), ...mutation })).toThrow(message);
+    }
   });
 
   it.each(["root", "extractArchive/zip-512"])(
@@ -234,29 +198,16 @@ describe("public ZIP extraction benchmark receipt", () => {
     const { plan, reportPlan, report } = measuredFixture();
     expect(() => validateMeasuredDistribution(plan, reportPlan, report, DIST_HASH)).not.toThrow();
 
-    expect(() => validateMeasuredDistribution(
-      plan,
-      reportPlan,
-      { ...report, results: [ordinaryArchiveRow()] },
-      DIST_HASH,
-    )).toThrow("row set mismatch");
-    expect(() => validateMeasuredDistribution(
-      plan,
-      reportPlan,
-      {
-        ...report,
-        results: [
-          { ...validRow(), workloadDetails: { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD, outcome: "failure" } },
-          ordinaryArchiveRow(),
-        ],
-      },
-      DIST_HASH,
-    )).toThrow("workload details mismatch");
-    expect(() => validateMeasuredDistribution(
-      plan,
-      reportPlan,
-      { ...report, results: [{ ...validRow(), skipped: "not run" }, ordinaryArchiveRow()] },
-      DIST_HASH,
-    )).toThrow("must execute rather than skip");
+    const distributionCases = [
+      [() => [ordinaryArchiveRow()], "row set mismatch"],
+      [() => [
+        { ...validRow(), workloadDetails: { ...PUBLIC_ZIP_EXTRACTION_WORKLOAD, outcome: "failure" } }, ordinaryArchiveRow(),
+      ], "workload details mismatch"],
+      [() => [{ ...validRow(), skipped: "not run" }, ordinaryArchiveRow()], "must execute rather than skip"],
+    ] as const;
+    for (const [results, message] of distributionCases) {
+      const { plan, reportPlan, report } = measuredFixture();
+      expect(() => validateMeasuredDistribution(plan, reportPlan, { ...report, results: results() }, DIST_HASH)).toThrow(message);
+    }
   });
 });
