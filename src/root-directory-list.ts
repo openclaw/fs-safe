@@ -55,25 +55,21 @@ function openDirectoryNames(directory: string): Promise<Dir> {
   return fs.opendir(directory, { bufferSize: 1, encoding: "buffer" as BufferEncoding });
 }
 
-export function pathStatFromStats(stat: Stats | BigIntStats): PathStat {
+export function pathStatFromStats(stat: Stats | BigIntStats): PathStat;
+export function pathStatFromStats(stat: Stats | BigIntStats, name: string): DirEntry;
+export function pathStatFromStats(stat: Stats | BigIntStats, name?: string): PathStat | DirEntry {
   const mtimeMs = typeof stat.mtimeMs === "bigint"
     ? "mtimeNs" in stat && typeof stat.mtimeNs === "bigint"
       ? Number(stat.mtimeNs) / 1_000_000
       : stat.mtime.getTime()
     : stat.mtimeMs;
-  return {
-    dev: Number(stat.dev),
-    gid: Number(stat.gid),
-    ino: Number(stat.ino),
-    isDirectory: stat.isDirectory(),
-    isFile: stat.isFile(),
-    isSymbolicLink: stat.isSymbolicLink(),
-    mode: Number(stat.mode),
-    mtimeMs,
-    nlink: Number(stat.nlink),
-    size: Number(stat.size),
-    uid: Number(stat.uid),
-  };
+  const dev = Number(stat.dev), gid = Number(stat.gid), ino = Number(stat.ino);
+  const isDirectory = stat.isDirectory(), isFile = stat.isFile(), isSymbolicLink = stat.isSymbolicLink();
+  const mode = Number(stat.mode), nlink = Number(stat.nlink), size = Number(stat.size), uid = Number(stat.uid);
+  // Construct named metadata directly, preserving property order without a spread copy.
+  return name === undefined
+    ? { dev, gid, ino, isDirectory, isFile, isSymbolicLink, mode, mtimeMs, nlink, size, uid }
+    : { name, dev, gid, ino, isDirectory, isFile, isSymbolicLink, mode, mtimeMs, nlink, size, uid };
 }
 
 export type RootDirectoryObservationGuard = AsyncDirectoryGuard<BigIntStats>;
@@ -296,10 +292,7 @@ async function listGuardedDirectoryPath(
     if (beforeObservation) await beforeObservation(guard.realPath, withFileTypes);
     const names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName).sort();
     entries = withFileTypes
-      ? names.map(name => ({
-        name,
-        ...pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name))),
-      }))
+      ? names.map(name => pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name)), name))
       : names;
   } catch (error) {
     // Preserve ordinary observation errors only while the admitted directory is
@@ -410,7 +403,7 @@ export async function openRootDirectoryListing(
     preparedIndex = 0;
     while (true) {
       try {
-        const entry = { name, ...pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name))) };
+        const entry = pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name)), name);
         prepared.push(entry);
         // No later sibling can be observed before a possible recursive descent.
         if (entry.isDirectory || entry.isSymbolicLink || prepared.length >= (options.metadataBatchSize ?? METADATA_BATCH_SIZE)) break;
@@ -475,7 +468,7 @@ export async function openRootDirectoryListing(
             throw error;
           }
           await assertCurrent();
-          return { kind: "entry", entry: { name, ...pathStatFromStats(observed.stat) }, identity: observed.identity };
+          return { kind: "entry", entry: pathStatFromStats(observed.stat, name), identity: observed.identity };
         }
     } catch (error) { throw normalizeDirectoryError(error); } },
     [Symbol.asyncDispose]: close,

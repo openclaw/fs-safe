@@ -550,3 +550,23 @@ are included in row names. Contents and directory listings are checked outside
 timing. On Windows, `TEMP`/`TMP` select the ordinary fixture volume; the
 sidecar-path exception above uses the cwd drive only when relative path semantics
 require it. On POSIX use `TMPDIR`.
+
+## Directory metadata projection
+
+`root-entry-projection.mjs` compares complete Root listings and sorted iteration
+with an unchanged stat control. It creates 1-, 100-, and 1,000-entry synthetic
+fixtures outside timing, warms both builds, then interleaves 24 A/B pairs with
+24 identical-baseline A/A pairs in alternating order. Every sample records mean
+microseconds per operation and checks its result count outside timing.
+
+```sh
+FS_SAFE_NATIVE_MODE=off taskset -c 2 node benchmarks/root-entry-projection.mjs /baseline/dist /candidate/dist comparison.json
+FS_SAFE_NATIVE_MODE=require taskset -c 2 node benchmarks/root-entry-projection.mjs /baseline/dist /candidate/dist comparison-native.json
+FS_SAFE_NATIVE_MODE=off taskset -c 2 strace -f -c node benchmarks/root-entry-projection.mjs /baseline/dist /baseline/dist trace.json trace list-1000-metadata
+```
+
+Preserve each build's adjacent package/native layout. Repeat the trace command
+with the candidate in both positions; trace timings are not latency evidence.
+The JSON retains every sample for paired-ratio confidence intervals and A/A
+noise comparisons. `trace` performs ten sample batches without timing warmups;
+its syscall totals include fixture setup, module loading, and cleanup.
