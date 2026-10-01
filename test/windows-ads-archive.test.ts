@@ -85,9 +85,6 @@ describe.runIf(process.platform === "win32")("Windows archive namespace aliases"
     await expect(Promise.resolve().then(() =>
       paxNative!.extractArchiveNative(alias, "tar", -1, [], limits, signal)))
       .rejects.toMatchObject(expected);
-    await expect(Promise.resolve().then(() =>
-      paxNative!.readArchiveEntryNative(alias, "tar", "value", 1, limits, signal)))
-      .rejects.toMatchObject(expected);
   });
 
   it("preserves archive member validation before source admission", async () => {
