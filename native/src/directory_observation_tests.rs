@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::test_support::temp_path;
 
 use super::*;
 
@@ -10,10 +10,7 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(label: &str) -> Self {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "fs-safe-directory-observation-{label}-{}-{nonce}", std::process::id(),
-        ));
+        let path = temp_path(&format!("directory-observation-{label}"));
         fs::create_dir(&path).unwrap();
         Self(fs::canonicalize(path).unwrap())
     }

@@ -155,7 +155,6 @@ describe("caller-owned pathname snapshots", () => {
       lstatSync: () => secureDirStat(),
       accessSync: () => undefined,
       mkdirSync: () => undefined,
-      chmodSync: () => undefined,
       platform: "win32" as const,
       get preferredDir() {
         preferredReads += 1;
@@ -172,7 +171,6 @@ describe("caller-owned pathname snapshots", () => {
       lstatSync: () => secureDirStat(),
       accessSync: () => undefined,
       mkdirSync: () => undefined,
-      chmodSync: () => undefined,
       platform: "win32" as const,
       get tmpdir() {
         tmpdirReads += 1;

@@ -29,7 +29,9 @@ resolved outside the root. `root()` handles were not affected. See the
 
 ## 2. Replace Python helper configuration
 
-Change startup configuration before the first filesystem operation:
+The deprecated `configureFsSafePython()` / `FsSafePythonConfig` bridge and its
+six Python environment variables have been removed in current releases.
+Configure native mode before the first filesystem operation:
 
 ```ts
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
@@ -37,27 +39,15 @@ import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 configureFsSafeNative({ mode: "auto" });
 ```
 
-| Remove from 0.4 | Use in 0.5 |
-|---|---|
-| `configureFsSafePython({ mode })` | `configureFsSafeNative({ mode })` |
-| `FS_SAFE_PYTHON_MODE` | `FS_SAFE_NATIVE_MODE` |
-| `OPENCLAW_FS_SAFE_PYTHON_MODE` | `OPENCLAW_FS_SAFE_NATIVE_MODE` |
-| `pythonPath`, `FS_SAFE_PYTHON`, `OPENCLAW_FS_SAFE_PYTHON`, `OPENCLAW_PINNED_PYTHON`, `OPENCLAW_PINNED_WRITE_PYTHON` | Nothing; prebuilt native binaries do not use an interpreter |
-
-`configureFsSafePython()` and the six legacy environment names above emit one
-`DeprecationWarning` per process with code `FS_SAFE_PYTHON_DEPRECATED`, naming
-the mapped native mode. The function warns when called; legacy environment
-settings warn when configuration is read. Modes map to `auto`, `off`, or `require`.
-A legacy interpreter-path environment setting without a mode maps to `auto`;
-interpreter paths are ignored and Python is never spawned.
-
-Programmatic native configuration takes precedence, then `FS_SAFE_NATIVE_MODE`,
-then `OPENCLAW_FS_SAFE_NATIVE_MODE`, then legacy environment configuration.
-Within legacy settings, `FS_SAFE_PYTHON_MODE` precedes
-`OPENCLAW_FS_SAFE_PYTHON_MODE`. An explicit mode passed to
-`configureFsSafePython()` sets the programmatic native override; a path-only
-call warns with `auto` but does not replace an existing override. Treat the
-bridge as an upgrade diagnostic, not a second helper path.
+Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`, or
+`OPENCLAW_FS_SAFE_PYTHON_MODE` with `OPENCLAW_FS_SAFE_NATIVE_MODE`. Remove
+`pythonPath`, `FS_SAFE_PYTHON`, `OPENCLAW_FS_SAFE_PYTHON`,
+`OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON`; prebuilt native
+binaries need no interpreter. Python environment settings are now ignored
+silently: a deployment that set `FS_SAFE_PYTHON_MODE=require` or `off` runs in
+`auto` after upgrading unless it sets `FS_SAFE_NATIVE_MODE` (or calls
+`configureFsSafeNative`) first. Programmatic native configuration wins, followed by
+`FS_SAFE_NATIVE_MODE`, `OPENCLAW_FS_SAFE_NATIVE_MODE`, and the default `auto`.
 
 Choose the production mode deliberately:
 

@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::test_support::temp_path;
 
 use super::*;
 
@@ -19,14 +19,7 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(label: &str) -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "fs-safe-darwin-acl-{label}-{}-{nonce}",
-            std::process::id(),
-        ));
+        let path = temp_path(&format!("darwin-acl-{label}"));
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         let directory = File::open(&path).unwrap();

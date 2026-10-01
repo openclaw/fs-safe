@@ -1,35 +1,18 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
+import { describe, expect, it, vi } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
+import { __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import * as descriptors from "../src/temp-workspace-descriptor.js";
 import { admitTempWorkspaceRootSync } from "../src/temp-workspace-admission.js";
 import { TempWorkspaceCleanupCapability } from "../src/temp-workspace-owner.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useWorkspaceFixture, observeSyncOpen } from "./helpers/temp-workspace.js";
+import { mockCleanupBinding } from "./helpers/cleanup-binding.js";
 
-const { tempRoot } = useRealTempDirs();
-
-function cleanupBinding(probe: ReturnType<typeof vi.fn>): NativeBinding {
-  return {
-    closeOwnedFd: vi.fn(),
-    renameNoReplace: vi.fn(),
-    removeOwnedTree: vi.fn(),
-    removeOwnedTreeSync: vi.fn(),
-    ownedTreeRemovalAvailable: probe,
-  } as unknown as NativeBinding;
-}
-
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
-afterEach(() => {
-  vi.restoreAllMocks();
-  cleanup.__cleanupRegisteredTempPathsForTest();
-  __resetNativeLoaderForTest();
-  __resetFsSafeNativeConfigForTest();
-});
+const { tempRoot } = useWorkspaceFixture();
 
 for (const variant of ["async", "sync"] as const) {
   describe(`${variant} temp workspace precreation boundary`, () => {
@@ -53,8 +36,8 @@ for (const variant of ["async", "sync"] as const) {
         }
         configureFsSafeNative({ mode: "auto" });
         const probe = vi.fn(() => true);
-        const binding = cleanupBinding(probe);
-        __setNativeLoaderForTest(() => binding);
+        const binding = mockCleanupBinding(probe);
+        __setNativeLoaderForTest(() => binding as unknown as NativeBinding);
 
         const admissionFailure = Object.assign(new Error("parent admission rejected"), { code: "EIO" });
         const closeFailure = Object.assign(new Error("parent close rejected"), { code: "EIO" });
@@ -65,17 +48,14 @@ for (const variant of ["async", "sync"] as const) {
           try { return openParent(...args); }
           finally { openingParent = false; }
         });
-        const open = fsSync.openSync.bind(fsSync);
         const fstat = fsSync.fstatSync.bind(fsSync);
         const close = fsSync.closeSync.bind(fsSync);
         let parentFd: number | undefined;
         let parentOpens = 0;
         let admissionFailures = 0;
         let parentCloses = 0;
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (openingParent) { parentFd = fd; parentOpens += 1; }
-          return fd;
         });
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, ...args) => {
           if (openingParent && fd === parentFd && admissionFailures === 0) {
@@ -141,14 +121,11 @@ for (const variant of ["async", "sync"] as const) {
         const marker = new Error(`prefix ${failurePoint} failed`);
         const retained = new Set<number>();
         let parentOpens = 0;
-        const open = fsSync.openSync.bind(fsSync);
-        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-          const fd = open(...args);
+        observeSyncOpen((args, fd) => {
           if (args[0] === rootDir) {
             parentOpens += 1;
             retained.add(fd);
           }
-          return fd;
         });
         const close = fsSync.closeSync.bind(fsSync);
         vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
@@ -217,7 +194,7 @@ for (const variant of ["async", "sync"] as const) {
           fsSync.chmodSync(ancestor, 0o770);
           return false;
         });
-        __setNativeLoaderForTest(() => cleanupBinding(probe));
+        __setNativeLoaderForTest(() => mockCleanupBinding(probe) as unknown as NativeBinding);
         const mkdtemp = vi.spyOn(fs, "mkdtemp");
         const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
         const register = vi.spyOn(cleanup, "registerTempPathForExit");
@@ -240,7 +217,7 @@ for (const variant of ["async", "sync"] as const) {
         fsSync.mkdirSync(rootDir, { mode: 0o700 });
         return false;
       });
-      __setNativeLoaderForTest(() => cleanupBinding(probe));
+      __setNativeLoaderForTest(() => mockCleanupBinding(probe) as unknown as NativeBinding);
       const mkdtemp = vi.spyOn(fs, "mkdtemp");
       const mkdtempSync = vi.spyOn(fsSync, "mkdtempSync");
       const register = vi.spyOn(cleanup, "registerTempPathForExit");
@@ -253,12 +230,9 @@ for (const variant of ["async", "sync"] as const) {
 
     it("dispatches mkdtemp without yielding after complete parent association", async () => {
       const rootDir = await tempRoot("fs-safe-workspace-parent-turn-");
-      const open = fsSync.openSync.bind(fsSync);
       let parentFd: number | undefined;
-      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-        const fd = open(...args);
+      observeSyncOpen((args, fd) => {
         if (args[0] === rootDir) parentFd = fd;
-        return fd;
       });
       let microtaskRan = false;
       let queued = false;
@@ -295,6 +269,14 @@ for (const variant of ["async", "sync"] as const) {
 }
 
 describe("temp workspace provisional cleanup capability", () => {
+  function probeFixture(rootDir: string) {
+    const admission = admitTempWorkspaceRootSync(rootDir);
+    configureFsSafeNative({ mode: "auto" });
+    const probe = vi.fn(() => true);
+    __setNativeLoaderForTest(() => mockCleanupBinding(probe) as unknown as NativeBinding);
+    return { admission, probe };
+  }
+
   function mismatchedParentFstat(parentFd: () => number | undefined) {
     const fstat = fsSync.fstatSync.bind(fsSync);
     return vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
@@ -310,16 +292,10 @@ describe("temp workspace provisional cleanup capability", () => {
 
   it("rejects provisional association before invoking native code", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-probe-rejection-");
-    const admission = admitTempWorkspaceRootSync(rootDir);
-    configureFsSafeNative({ mode: "auto" });
-    const probe = vi.fn(() => true);
-    __setNativeLoaderForTest(() => cleanupBinding(probe));
-    const open = fsSync.openSync.bind(fsSync);
+    const { admission, probe } = probeFixture(rootDir);
     let parentFd: number | undefined;
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (args[0] === rootDir) parentFd = fd;
-      return fd;
     });
     mismatchedParentFstat(() => parentFd);
     const close = vi.spyOn(fsSync, "closeSync");
@@ -338,16 +314,10 @@ describe("temp workspace provisional cleanup capability", () => {
 
   it("preserves probe-admission and descriptor-close failures", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-probe-close-failure-");
-    const admission = admitTempWorkspaceRootSync(rootDir);
-    configureFsSafeNative({ mode: "auto" });
-    const probe = vi.fn(() => true);
-    __setNativeLoaderForTest(() => cleanupBinding(probe));
-    const open = fsSync.openSync.bind(fsSync);
+    const { admission, probe } = probeFixture(rootDir);
     let parentFd: number | undefined;
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (args[0] === rootDir) parentFd = fd;
-      return fd;
     });
     mismatchedParentFstat(() => parentFd);
     const closeFailure = Object.assign(new Error("close rejected"), { code: "EIO" });
@@ -382,10 +352,7 @@ describe("temp workspace provisional cleanup capability", () => {
 
   it("withholds native cleanup authority until the complete boundary succeeds", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-capability-gate-");
-    const admission = admitTempWorkspaceRootSync(rootDir);
-    configureFsSafeNative({ mode: "auto" });
-    const probe = vi.fn(() => true);
-    __setNativeLoaderForTest(() => cleanupBinding(probe));
+    const { admission, probe } = probeFixture(rootDir);
     const capability = new TempWorkspaceCleanupCapability(rootDir, "compatible", admission, 0o700);
     try {
       expect(probe).toHaveBeenCalledTimes(1);
@@ -400,10 +367,7 @@ describe("temp workspace provisional cleanup capability", () => {
 
   it("replays admitted ancestry for a retry, seals the winner, and does not reprobe", async () => {
     const rootDir = await tempRoot("fs-safe-workspace-capability-replay-");
-    const admission = admitTempWorkspaceRootSync(rootDir);
-    configureFsSafeNative({ mode: "auto" });
-    const probe = vi.fn(() => true);
-    __setNativeLoaderForTest(() => cleanupBinding(probe));
+    const { admission, probe } = probeFixture(rootDir);
     const prepare = vi.spyOn(admission, "prepareChildCreation");
     const replay = vi.spyOn(admission, "associateAncestry");
     const close = vi.spyOn(fsSync, "closeSync");
@@ -436,10 +400,7 @@ describe("temp workspace provisional cleanup capability", () => {
     "makes a failed %s preparation terminal",
     async (failurePoint) => {
       const rootDir = await tempRoot("fs-safe-workspace-capability-terminal-");
-      const admission = admitTempWorkspaceRootSync(rootDir);
-      configureFsSafeNative({ mode: "auto" });
-      const probe = vi.fn(() => true);
-      __setNativeLoaderForTest(() => cleanupBinding(probe));
+      const { admission, probe } = probeFixture(rootDir);
       const capability = new TempWorkspaceCleanupCapability(rootDir, "compatible", admission, 0o700);
       const parentFd = capability.parent?.fd;
       expect(parentFd).toBeDefined();
@@ -471,10 +432,7 @@ describe("temp workspace provisional cleanup capability", () => {
     const rootDir = path.join(base, "root");
     const original = path.join(base, "root-original");
     await fs.mkdir(rootDir, { mode: 0o700 });
-    const admission = admitTempWorkspaceRootSync(rootDir);
-    configureFsSafeNative({ mode: "auto" });
-    const probe = vi.fn(() => true);
-    __setNativeLoaderForTest(() => cleanupBinding(probe));
+    const { admission, probe } = probeFixture(rootDir);
     const capability = new TempWorkspaceCleanupCapability(rootDir, "compatible", admission, 0o700);
     try {
       expect(capability.canRemoveOwnedTree).toBe(false);

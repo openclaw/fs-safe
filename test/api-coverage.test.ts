@@ -283,49 +283,28 @@ describe("root path resolution helpers", () => {
         scopeLabel: "uploads",
       }),
     ).toMatchObject({ ok: false });
-    await expect(
-      rootPaths.resolveWritablePathWithinRoot({
-        rootDir: file,
-        requestedPath: "new.txt",
-        scopeLabel: "uploads",
-      }),
-    ).resolves.toMatchObject({ ok: false });
-    await expect(
-      rootPaths.resolveWritablePathWithinRoot({
-        rootDir: root,
-        requestedPath: "dir",
-        scopeLabel: "uploads",
-      }),
-    ).resolves.toMatchObject({ ok: false });
-    await expect(
-      rootPaths.ensureDirectoryWithinRoot({
-        rootDir: root,
-        requestedPath: "made/nested",
-        scopeLabel: "uploads",
-        mode: 0o700,
-      }),
-    ).resolves.toMatchObject({ ok: true, path: path.join(root, "made", "nested") });
-    await expect(
-      rootPaths.ensureDirectoryWithinRoot({
-        rootDir: root,
-        requestedPath: "file.txt",
-        scopeLabel: "uploads",
-      }),
-    ).resolves.toMatchObject({ ok: false });
-    await expect(
-      rootPaths.resolveExistingPathsWithinRoot({
-        rootDir: path.join(base, "missing-root"),
-        requestedPaths: ["missing.txt"],
-        scopeLabel: "uploads",
-      }),
-    ).resolves.toMatchObject({ ok: true });
-    await expect(
-      rootPaths.resolveStrictExistingPathsWithinRoot({
-        rootDir: root,
-        requestedPaths: ["dir"],
-        scopeLabel: "uploads",
-      }),
-    ).resolves.toMatchObject({ ok: false });
+    for (const [operation, expected] of [
+      [() => rootPaths.resolveWritablePathWithinRoot({
+        rootDir: file, requestedPath: "new.txt", scopeLabel: "uploads",
+      }), { ok: false }],
+      [() => rootPaths.resolveWritablePathWithinRoot({
+        rootDir: root, requestedPath: "dir", scopeLabel: "uploads",
+      }), { ok: false }],
+      [() => rootPaths.ensureDirectoryWithinRoot({
+        rootDir: root, requestedPath: "made/nested", scopeLabel: "uploads", mode: 0o700,
+      }), { ok: true, path: path.join(root, "made", "nested") }],
+      [() => rootPaths.ensureDirectoryWithinRoot({
+        rootDir: root, requestedPath: "file.txt", scopeLabel: "uploads",
+      }), { ok: false }],
+      [() => rootPaths.resolveExistingPathsWithinRoot({
+        rootDir: path.join(base, "missing-root"), requestedPaths: ["missing.txt"], scopeLabel: "uploads",
+      }), { ok: true }],
+      [() => rootPaths.resolveStrictExistingPathsWithinRoot({
+        rootDir: root, requestedPaths: ["dir"], scopeLabel: "uploads",
+      }), { ok: false }],
+    ] as const) {
+      await expect(operation()).resolves.toMatchObject(expected);
+    }
 
     const scope = rootPaths.pathScope(root, { label: "uploads" });
     expect(scope.resolve(" ", { defaultName: "fallback.txt" })).toEqual({
@@ -673,45 +652,20 @@ describe("temporary workspace and symlink parent helpers", () => {
     await fs.symlink(outside, path.join(root, "link"));
     await fs.writeFile(path.join(root, "file.txt"), "x", "utf8");
 
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(root, "missing", "file.txt"),
-      }),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(root, "link", "file.txt"),
-      }),
-    ).rejects.toThrow("symlinked");
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(root, "link", "file.txt"),
-        allowRootChildSymlink: true,
-      }),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(root, "file.txt", "child"),
-        requireDirectories: true,
-      }),
-    ).rejects.toThrow("directories");
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(outside, "file.txt"),
-        allowOutsideRoot: true,
-      }),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(outside, "file.txt"),
-      }),
-    ).rejects.toThrow("must stay");
+    for (const options of [
+      { targetPath: path.join(root, "missing", "file.txt") },
+      { targetPath: path.join(root, "link", "file.txt"), allowRootChildSymlink: true },
+      { targetPath: path.join(outside, "file.txt"), allowOutsideRoot: true },
+    ]) {
+      await expect(assertNoSymlinkParents({ rootDir: root, ...options })).resolves.toBeUndefined();
+    }
+    for (const [options, message] of [
+      [{ targetPath: path.join(root, "link", "file.txt") }, "symlinked"],
+      [{ targetPath: path.join(root, "file.txt", "child"), requireDirectories: true }, "directories"],
+      [{ targetPath: path.join(outside, "file.txt") }, "must stay"],
+    ] as const) {
+      await expect(assertNoSymlinkParents({ rootDir: root, ...options })).rejects.toThrow(message);
+    }
 
     expect(() =>
       assertNoSymlinkParentsSync({
@@ -831,7 +785,7 @@ describe("secret files and temp roots", () => {
     const winFallback = path.win32.join(root, "fallback");
     const winFallbackStat = { isDirectory: () => true, isSymbolicLink: () => false };
     expect(resolveSecureTempRoot({
-      accessSync: vi.fn(), chmodSync: vi.fn(), fallbackPrefix: "fallback",
+      accessSync: vi.fn(), fallbackPrefix: "fallback",
       getuid: () => undefined, lstatSync: vi.fn(() => winFallbackStat), mkdirSync: vi.fn(),
       platform: "win32", preferredDir: secure, skipPreferredOnWindows: true, tmpdir: () => root,
     })).toBe(winFallback);

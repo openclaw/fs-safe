@@ -168,7 +168,6 @@ export async function registerPaths({
   add("configureFsSafeNative", () => a.configureFsSafeNative({ mode: args.mode }), { sync: true });
   add("getFsSafeLockConfig", () => a.getFsSafeLockConfig(), { sync: true, batch: 100 });
   add("configureFsSafeLocks", () => a.configureFsSafeLocks({}), { sync: true });
-  exclude("configureFsSafePython", "Deprecated startup alias of configureFsSafeNative; warning side effect, not an I/O hot path.");
   for (const name of ["__setFsSafeTestHooksForTest", "getFsSafeTestHooks", "drainFileLockManagerForTest", "resetFileLockManagerForTest"]) exclude(name, "Test instrumentation; covered by the test suite, excluded from production timing.");
   const perms = await a.inspectPathPermissions(input);
   add("formatPermissionDetail", () => a.formatPermissionDetail("fixture.json", perms), { sync: true, batch: 100 });

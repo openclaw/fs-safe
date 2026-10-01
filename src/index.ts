@@ -10,7 +10,6 @@ export {
 } from "./root.js";
 export type * from "./root-public-types.js";
 export {
-  configureFsSafePython,
   configureFsSafeNative,
   getFsSafeNativeConfig,
 } from "./native-config.js";

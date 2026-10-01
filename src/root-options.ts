@@ -24,7 +24,6 @@ export type RootDefaults = {
   mkdir?: boolean;
   mode?: number;
   denyMutations?: DenyMutationPolicy;
-  nonBlockingRead?: boolean;
   renameIdentity?: RenameIdentityPolicy;
   symlinks?: SymlinkPolicy;
   mutationSymlinks?: MutationSymlinkPolicy;
@@ -32,7 +31,7 @@ export type RootDefaults = {
 
 export type RootReadOptions = Pick<
   RootDefaults,
-  "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks"
+  "hardlinks" | "maxBytes" | "symlinks"
 >;
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
@@ -96,7 +95,7 @@ export type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "deny
   private?: boolean;
 };
 
-export type RootReadParams = Omit<RootReadOptions, "nonBlockingRead">;
+export type RootReadParams = RootReadOptions;
 
 export function readDefaults(defaults: RootDefaults): RootReadParams {
   return {

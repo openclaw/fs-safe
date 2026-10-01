@@ -85,8 +85,7 @@ Structured ACLs containing only canonical SIDs are classified directly from
 the current-user SID without requiring a separate account-name lookup.
 The advanced options retain `currentUserSid` as an explicit classification
 override and `principalTranslationFailed: true` as an immediate unverified
-result. The optional `principalSids` translation cache is still accepted but
-is no longer needed because the query returns SIDs directly.
+result. The query returns SIDs directly; no translation cache is needed.
 Injected executors must return the same structured success JSON as the built-in
 query: valid `ownerSid` and `currentUserSid` strings, an explicit boolean
 `remote`, and complete DACL facts (`complete`, `daclPresent`, and `aces`).

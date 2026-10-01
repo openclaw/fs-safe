@@ -2,16 +2,11 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { __loadBundledNativeForTest, type NativeBinding } from "../src/native.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import { NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH } from "../src/native-rename-outcome.js";
 import { itWin32, useTempDirs } from "./helpers/vitest.js";
 
-let native: NativeBinding | undefined;
-try {
-  native = __loadBundledNativeForTest();
-} catch {
-  // Native artifacts are exercised only by the dedicated platform jobs.
-}
+const native = loadTestNative("optional");
 
 const { tempRoot } = useTempDirs();
 

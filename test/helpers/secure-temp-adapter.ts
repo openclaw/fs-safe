@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { resolveSecureTempRoot, type ResolveSecureTempRootOptions, type SecureTempRootDescriptorAdapter } from "../../src/secure-temp-dir.js";
@@ -32,11 +33,11 @@ export function secureTempAdapterFixture() {
     return { ...state.named, uid: Number(state.named.uid), mode: Number(state.named.mode) };
   });
   const mkdirSync = vi.fn(() => { state.exists = true; state.named = exactTempStat(17n, state.createdMode); });
-  const chmodSync = vi.fn(() => { throw new Error("deprecated pathname chmod invoked"); });
+  const chmodSync = vi.spyOn(fs, "chmodSync");
   const warn = vi.fn();
   const options: ResolveSecureTempRootOptions = {
     fallbackPrefix: "fixture", tmpdir: () => base, getuid: () => 501, platform: "linux",
-    descriptor, accessSync, lstatSync: legacyLstat, mkdirSync, chmodSync, warn,
+    descriptor, accessSync, lstatSync: legacyLstat, mkdirSync, warn,
   };
   return {
     base, candidate, state, options, descriptor, lstatSync, fstatSync, openSync,

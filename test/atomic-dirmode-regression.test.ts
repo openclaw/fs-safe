@@ -14,8 +14,8 @@ function isDirectoryOpen(flags: string | number): boolean {
 
 
 describe("atomic parent-directory descriptor modes", () => {
-  itPosix("keeps an async directory mode bound to the opened directory across a pathname swap", async () => {
-    const root = await tempRoot("fs-safe-atomic-dirmode-race-");
+  itPosix.each(["async", "sync"] as const)("keeps a %s directory mode bound to the opened directory across a pathname swap", async (mode) => {
+    const root = await tempRoot(`fs-safe-atomic-dirmode-race-${mode}-`);
     const targetDir = path.join(root, "target");
     const displacedDir = path.join(root, "displaced");
     const victimDir = path.join(root, "victim");
@@ -23,50 +23,71 @@ describe("atomic parent-directory descriptor modes", () => {
     await Promise.all([fs.mkdir(targetDir), fs.mkdir(victimDir)]);
     await Promise.all([fs.chmod(targetDir, 0o755), fs.chmod(victimDir, 0o755)]);
     let swapped = false;
-
-    const swap = async () => {
-      await fs.rename(targetDir, displacedDir);
-      await fs.symlink(victimDir, targetDir, "dir");
-      swapped = true;
-    };
-    const restore = async () => {
-      await fs.unlink(targetDir);
-      await fs.rename(displacedDir, targetDir);
-      swapped = false;
-    };
-    const injectedPromises = {
-      ...fs,
-      chmod: async (candidate: fsSync.PathLike, mode: fsSync.Mode) => {
-        if (!swapped && path.resolve(String(candidate)) === targetDir) {
-          await swap();
-        }
-        await fs.chmod(candidate, mode);
-      },
-      open: (async (...args: Parameters<typeof fs.open>) => {
-        const [candidate, flags] = args;
-        if (swapped && flags === "wx") {
-          await restore();
-        }
-        const handle = await fs.open(...args);
-        if (
-          !swapped &&
-          path.resolve(String(candidate)) === targetDir &&
-          isDirectoryOpen(flags)
-        ) {
-          await swap();
-        }
-        return handle;
-      }) as typeof fs.open,
-    };
-
+    const options = { filePath, content: mode, dirMode: 0o751 };
     const previousUmask = process.umask(0o077);
     try {
-      await replaceFileAtomic({
-        filePath,
-        content: "async",
-        dirMode: 0o751,
-        fileSystem: { promises: injectedPromises },
-      });
+      if (mode === "async") {
+        const swap = async () => {
+          await fs.rename(targetDir, displacedDir);
+          await fs.symlink(victimDir, targetDir, "dir");
+          swapped = true;
+        };
+        const restore = async () => {
+          await fs.unlink(targetDir);
+          await fs.rename(displacedDir, targetDir);
+          swapped = false;
+        };
+        const injectedPromises = {
+          ...fs,
+          open: (async (...args: Parameters<typeof fs.open>) => {
+            const [candidate, flags] = args;
+            if (swapped && flags === "wx") {
+              await restore();
+            }
+            const handle = await fs.open(...args);
+            if (
+              !swapped &&
+              path.resolve(String(candidate)) === targetDir &&
+              isDirectoryOpen(flags)
+            ) {
+              await swap();
+            }
+            return handle;
+          }) as typeof fs.open,
+        };
+
+        await replaceFileAtomic({ ...options, fileSystem: { promises: injectedPromises } });
+      } else {
+        const swap = () => {
+          fsSync.renameSync(targetDir, displacedDir);
+          fsSync.symlinkSync(victimDir, targetDir, "dir");
+          swapped = true;
+        };
+        const restore = () => {
+          fsSync.unlinkSync(targetDir);
+          fsSync.renameSync(displacedDir, targetDir);
+          swapped = false;
+        };
+        const injectedFileSystem = {
+          ...fsSync,
+          openSync: ((candidate, flags, mode) => {
+            if (swapped && flags === "wx") {
+              restore();
+            }
+            const fd = fsSync.openSync(candidate, flags, mode);
+            if (
+              !swapped &&
+              path.resolve(String(candidate)) === targetDir &&
+              isDirectoryOpen(flags)
+            ) {
+              swap();
+            }
+            return fd;
+          }) as typeof fsSync.openSync,
+        };
+
+        replaceFileAtomicSync({ ...options, fileSystem: injectedFileSystem });
+      }
     } finally {
       process.umask(previousUmask);
     }
@@ -75,72 +96,7 @@ describe("atomic parent-directory descriptor modes", () => {
       targetMode: (await fs.stat(targetDir)).mode & 0o777,
       victimMode: (await fs.stat(victimDir)).mode & 0o777,
       content: await fs.readFile(filePath, "utf8"),
-    }).toEqual({ targetMode: 0o751, victimMode: 0o755, content: "async" });
-  });
-
-  itPosix("keeps a sync directory mode bound to the opened directory across a pathname swap", async () => {
-    const root = await tempRoot("fs-safe-atomic-dirmode-race-sync-");
-    const targetDir = path.join(root, "target");
-    const displacedDir = path.join(root, "displaced");
-    const victimDir = path.join(root, "victim");
-    const filePath = path.join(targetDir, "state.txt");
-    fsSync.mkdirSync(targetDir);
-    fsSync.mkdirSync(victimDir);
-    fsSync.chmodSync(targetDir, 0o755);
-    fsSync.chmodSync(victimDir, 0o755);
-    let swapped = false;
-
-    const swap = () => {
-      fsSync.renameSync(targetDir, displacedDir);
-      fsSync.symlinkSync(victimDir, targetDir, "dir");
-      swapped = true;
-    };
-    const restore = () => {
-      fsSync.unlinkSync(targetDir);
-      fsSync.renameSync(displacedDir, targetDir);
-      swapped = false;
-    };
-    const injectedFileSystem = {
-      ...fsSync,
-      chmodSync: ((candidate: fsSync.PathLike, mode: fsSync.Mode) => {
-        if (!swapped && path.resolve(String(candidate)) === targetDir) {
-          swap();
-        }
-        fsSync.chmodSync(candidate, mode);
-      }) as typeof fsSync.chmodSync,
-      openSync: ((candidate, flags, mode) => {
-        if (swapped && flags === "wx") {
-          restore();
-        }
-        const fd = fsSync.openSync(candidate, flags, mode);
-        if (
-          !swapped &&
-          path.resolve(String(candidate)) === targetDir &&
-          isDirectoryOpen(flags)
-        ) {
-          swap();
-        }
-        return fd;
-      }) as typeof fsSync.openSync,
-    };
-
-    const previousUmask = process.umask(0o077);
-    try {
-      replaceFileAtomicSync({
-        filePath,
-        content: "sync",
-        dirMode: 0o751,
-        fileSystem: injectedFileSystem,
-      });
-    } finally {
-      process.umask(previousUmask);
-    }
-
-    expect({
-      targetMode: fsSync.statSync(targetDir).mode & 0o777,
-      victimMode: fsSync.statSync(victimDir).mode & 0o777,
-      content: fsSync.readFileSync(filePath, "utf8"),
-    }).toEqual({ targetMode: 0o751, victimMode: 0o755, content: "sync" });
+    }).toEqual({ targetMode: 0o751, victimMode: 0o755, content: mode });
   });
 
   itPosix("accepts a raw stat mode with file-type bits as dirMode", async () => {

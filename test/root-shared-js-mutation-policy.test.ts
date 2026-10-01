@@ -1,14 +1,14 @@
 import fsSync from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DenyMutationPolicy } from "../src/deny-mutations.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest } from "../src/native.js";
 import type { MutationSymlinkPolicy } from "../src/root-symlink-policy.js";
-import * as writeAdmission from "../src/root-write-admission.js";
 import { root, type Root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { captureOpenedHandles, runSelectedTargetScenario } from "./helpers/selected-target-admission.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -91,17 +91,6 @@ const sharedOperations: readonly Operation[] = [
     },
   ] : []),
 ];
-
-function captureOpenedHandles(): FileHandle[] {
-  const handles: FileHandle[] = [];
-  const realOpen = fs.open.bind(fs);
-  vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
-    const handle = await realOpen(...args);
-    handles.push(handle);
-    return handle;
-  });
-  return handles;
-}
 
 describe("shared JavaScript mutation-policy component admission", () => {
   it.each(sharedOperations.flatMap((operation) => [
@@ -324,47 +313,14 @@ describe("shared JavaScript mutation-policy component admission", () => {
       await fs.writeFile(initiallyAllowed, "allowed");
       await fs.symlink(selected, alias, "file");
       await fs.symlink(initiallyAllowed, deniedAlias, "file");
-      const resolveTarget = writeAdmission.resolveGuardedWriteTargetInRoot;
-      let policyRetargeted = false;
-      let selectedAdmissionChecks = 0;
-      vi.spyOn(writeAdmission, "resolveGuardedWriteTargetInRoot").mockImplementation(
-        async (...args) => {
-          const guarded = await resolveTarget(...args);
-          const admission = guarded.selectedTargetAdmission!;
-          expect(admission).toBeDefined();
-          const authorize = admission.authorize.bind(admission);
-          return {
-            ...guarded,
-            selectedTargetAdmission: Object.freeze({
-              ...admission,
-              async authorize(selectedPath: string) {
-                selectedAdmissionChecks += 1;
-                expect(selectedPath).toBe(selected);
-                expect(policyRetargeted).toBe(false);
-                policyRetargeted = true;
-                await fs.unlink(deniedAlias);
-                await fs.symlink(selected, deniedAlias, "file");
-                await authorize(selectedPath);
-              },
-            }),
-          };
-        },
-      );
-      let admissions = 0;
-      __setFsSafeTestHooksForTest({
-        beforePinnedWriteParentAdmission() {
-          admissions += 1;
-          expect(policyRetargeted).toBe(false);
-        },
-      });
-      const callback = vi.fn();
-      const open = vi.spyOn(fs, "open");
-      const safe = await root(directory);
-
-      await expect(operation.run(safe, "alias", {
-        denyMutations: { paths: [deniedAlias] },
-        assertBeforeMutation: callback,
-      })).rejects.toMatchObject({ code: "denied-path" });
+      const { admissions, policyRetargeted, selectedAdmissionChecks, callback, open } =
+        await runSelectedTargetScenario({ boundary: "authorization", selected, deniedAlias }, async callback => {
+          const safe = await root(directory);
+          await operation.run(safe, "alias", {
+            denyMutations: { paths: [deniedAlias] },
+            assertBeforeMutation: callback,
+          });
+        });
 
       expect(admissions).toBe(1);
       expect(policyRetargeted).toBe(true);
@@ -386,22 +342,14 @@ describe("shared JavaScript mutation-policy component admission", () => {
       await fs.writeFile(selected, "original");
       await fs.writeFile(retarget, "other");
       await fs.symlink(selected, alias, "file");
-      const handles = captureOpenedHandles();
-      const callback = vi.fn();
-      let admissions = 0;
-      __setFsSafeTestHooksForTest({
-        async beforePinnedWriteParentAdmission() {
-          if (++admissions !== 2) return;
-          await fs.unlink(alias);
-          await fs.symlink(retarget, alias, "file");
-        },
-      });
-      const safe = await root(directory);
-
-      await expect(operation.run(safe, "alias", {
-        denyMutations: { paths: [path.join(directory, "unrelated")] },
-        assertBeforeMutation: callback,
-      })).rejects.toMatchObject({ code: "path-mismatch" });
+      const { admissions, callback, handles } =
+        await runSelectedTargetScenario({ boundary: "binding", alias, retarget }, async callback => {
+          const safe = await root(directory);
+          await operation.run(safe, "alias", {
+            denyMutations: { paths: [path.join(directory, "unrelated")] },
+            assertBeforeMutation: callback,
+          });
+        });
 
       expect(admissions).toBe(2);
       expect(callback).not.toHaveBeenCalled();
@@ -423,7 +371,7 @@ describe("shared JavaScript mutation-policy component admission", () => {
       const alias = path.join(directory, "alias");
       await fs.writeFile(selected, "original");
       await fs.symlink(selected, alias, "file");
-      const handles = captureOpenedHandles();
+      const { handles } = captureOpenedHandles();
       const safe = await root(directory);
 
       await operation.run(safe, "alias", {

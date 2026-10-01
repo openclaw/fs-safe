@@ -4,15 +4,9 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager, type SidecarLockHandle } from "../src/sidecar-lock.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { deferred } from "./helpers/deferred.js";
+import { rejection } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  return await promise.then(
-    () => { throw new Error("expected acquisition to reject"); },
-    (error: unknown) => error,
-  );
-}
 
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });

@@ -130,7 +130,7 @@ describe("borrowed FileHandle option snapshots", () => {
     await expect(f.target.stat()).resolves.toMatchObject({ size: f.content.length });
   });
 
-  it("retains late spread getter failures without an observer", async () => {
+  it.each(["getter", "descriptor"] as const)("retains a late %s failure without an observer", async (kind) => {
     const f = await fixture("content", "unchanged");
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -140,50 +140,15 @@ describe("borrowed FileHandle option snapshots", () => {
       await release.promise;
       return await stat(...args);
     });
-    const failure = new Error("synthetic late option failure");
+    const failure = new Error(`synthetic late ${kind} failure`);
     const events: string[] = [];
-    const backing = Object.defineProperties({}, {
+    const backing = Object.defineProperties({}, kind === "getter" ? {
       late: {
         enumerable: true,
         get() { events.push("get:late"); throw failure; },
       },
       hidden: { value: true },
-    });
-    const options = new Proxy(backing, {
-      ownKeys(target) {
-        events.push("ownKeys");
-        return Reflect.ownKeys(target);
-      },
-      getOwnPropertyDescriptor(target, key) {
-        events.push(`descriptor:${String(key)}`);
-        return Reflect.getOwnPropertyDescriptor(target, key);
-      },
-    }) as CopyFileHandleOptions;
-    const pending = copyFileHandle(f.source, f.target, options);
-    try {
-      await entered.promise;
-      expect(events).toEqual([]);
-    } finally {
-      release.resolve();
-    }
-    await expect(pending).rejects.toBe(failure);
-    expect(events).toEqual(["ownKeys", "descriptor:late", "get:late"]);
-    expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
-  });
-
-  it("retains late descriptor trap failures for captured option keys", async () => {
-    const f = await fixture("content", "unchanged");
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    const stat = f.target.stat.bind(f.target);
-    vi.spyOn(f.target, "stat").mockImplementation(async (...args) => {
-      entered.resolve();
-      await release.promise;
-      return await stat(...args);
-    });
-    const failure = new Error("synthetic descriptor failure");
-    const events: string[] = [];
-    const backing = Object.defineProperties({}, {
+    } : {
       signal: { value: undefined, enumerable: true, configurable: true },
       ignored: { value: true, enumerable: true, configurable: true },
     });
@@ -194,7 +159,7 @@ describe("borrowed FileHandle option snapshots", () => {
       },
       getOwnPropertyDescriptor(target, key) {
         events.push(`descriptor:${String(key)}`);
-        if (key === "signal") throw failure;
+        if (kind === "descriptor" && key === "signal") throw failure;
         return Reflect.getOwnPropertyDescriptor(target, key);
       },
     }) as CopyFileHandleOptions;
@@ -206,7 +171,8 @@ describe("borrowed FileHandle option snapshots", () => {
       release.resolve();
     }
     await expect(pending).rejects.toBe(failure);
-    expect(events).toEqual(["ownKeys", "descriptor:signal"]);
+    expect(events).toEqual(kind === "getter"
+      ? ["ownKeys", "descriptor:late", "get:late"] : ["ownKeys", "descriptor:signal"]);
     expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
   });
 

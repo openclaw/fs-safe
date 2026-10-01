@@ -13,7 +13,7 @@ const { tempRoot } = useRealTempDirs();
 const exec = promisify(execFile);
 afterEach(() => vi.restoreAllMocks());
 
-itPosix("uses the host descriptor bundle with an inert deprecated chmod option", async () => {
+itPosix("uses the host descriptor bundle to repair broad permissions", async () => {
   const base = await tempRoot("fs-safe-temp-native-repair-");
   const preferredDir = path.join(base, "preferred");
   fs.mkdirSync(preferredDir, { mode: 0o700 });
@@ -21,15 +21,12 @@ itPosix("uses the host descriptor bundle with an inert deprecated chmod option",
   const chmod = vi.spyOn(fs, "chmodSync");
   const fchmod = vi.spyOn(fs, "fchmodSync");
   const close = vi.spyOn(fs, "closeSync");
-  const deprecated = vi.fn(() => { throw new Error("unused property read"); });
   const options = { preferredDir, fallbackPrefix: "fixture", warn: vi.fn() };
-  Object.defineProperty(options, "chmodSync", { get: deprecated });
   expect(resolveSecureTempRoot(options)).toBe(preferredDir);
   expect(fs.lstatSync(preferredDir).mode & 0o7777).toBe(0o700);
   expect(fchmod).toHaveBeenCalledTimes(1);
   expect(close).toHaveBeenCalledTimes(1);
   expect(chmod).not.toHaveBeenCalled();
-  expect(deprecated).not.toHaveBeenCalled();
 });
 
 itPosix("does not open or chmod an already secure host directory", async () => {

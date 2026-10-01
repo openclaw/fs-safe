@@ -915,11 +915,8 @@ mod tar_buffer_tests;
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, Write};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-
-    static TEMP_PATH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn read_tar_buffer(
         bytes: Vec<u8>, format: ArchiveFormat, index: usize, max_bytes: u64,
@@ -958,11 +955,7 @@ mod tests {
     #[test]
     fn buffered_tar_retains_the_input_allocation_across_reader_and_tasks() {
         let raw = fixture_tar();
-        for (format, bytes) in [
-            (ArchiveFormat::Tar, raw.clone()), (ArchiveFormat::Tar, gzip(&raw)),
-            (ArchiveFormat::TarZstd, zstd::stream::encode_all(raw.as_slice(), 1).unwrap()),
-            (ArchiveFormat::TarBzip2, bzip(&raw)),
-        ] {
+        for (format, bytes) in encoded_tar_variants(&raw) {
             let input = Buffer::from(bytes);
             let pointer = input.as_ptr();
             let mut open = OpenTarBufferTask { buffer: Some(input), format, limits: limits(10), cancelled: Arc::new(AtomicBool::new(false)) };
@@ -1001,15 +994,7 @@ mod tests {
     }
 
     fn temp_path(suffix: &str) -> std::path::PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let sequence = TEMP_PATH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "fs-safe-archive-{}-{nonce}-{sequence}.{suffix}",
-            std::process::id()
-        ))
+        crate::test_support::temp_path("archive").with_extension(suffix)
     }
 
     fn limits(max_entries: usize) -> TarMeterLimits {
@@ -1026,6 +1011,15 @@ mod tests {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         encoder.write_all(part).unwrap();
         encoder.finish().unwrap()
+    }
+
+    fn encoded_tar_variants(raw: &[u8]) -> [(ArchiveFormat, Vec<u8>); 4] {
+        [
+            (ArchiveFormat::Tar, raw.to_vec()),
+            (ArchiveFormat::Tar, gzip(raw)),
+            (ArchiveFormat::TarZstd, zstd::stream::encode_all(raw, 1).unwrap()),
+            (ArchiveFormat::TarBzip2, bzip(raw)),
+        ]
     }
 
     fn native_limits(value: f64) -> NativeTarLimits {
@@ -1061,11 +1055,7 @@ mod tests {
                 header.as_old_mut().mode = mode;
                 header.set_cksum();
                 let bytes = [header.as_bytes().as_slice(), &[0; 1024]].concat();
-                for (format, encoded) in [
-                    (ArchiveFormat::Tar, bytes.clone()), (ArchiveFormat::Tar, gzip(&bytes)),
-                    (ArchiveFormat::TarZstd, zstd::stream::encode_all(bytes.as_slice(), 1).unwrap()),
-                    (ArchiveFormat::TarBzip2, bzip(&bytes)),
-                ] {
+                for (format, encoded) in encoded_tar_variants(&bytes) {
                     let path = temp_path("tar-modes");
                     std::fs::write(&path, encoded).unwrap();
                     let result = inspect_tar(path.to_str().unwrap(), format, limits(10), Arc::new(AtomicBool::new(false)));
@@ -1225,46 +1215,29 @@ mod tests {
         }
     }
 
-    fn check_compressed_raw_file_cancellation(format: ArchiveFormat, suffix: &str) {
-        let bytes = compressed_fixture(format);
-        let path = temp_path(suffix);
-        std::fs::write(&path, &bytes).unwrap();
-        check_compressed_raw_cancellation(File::open(&path).unwrap(), format, true);
-        std::fs::remove_file(path).unwrap();
+    macro_rules! compressed_raw_refill_cases {
+        ($($name:ident: $format:ident, $file_backed:literal, $suffix:literal;)+) => {
+            $(#[test]
+            fn $name() {
+                let format = ArchiveFormat::$format;
+                let bytes = compressed_fixture(format);
+                if $file_backed {
+                    let path = temp_path($suffix);
+                    std::fs::write(&path, &bytes).unwrap();
+                    check_compressed_raw_cancellation(File::open(&path).unwrap(), format, true);
+                    std::fs::remove_file(path).unwrap();
+                } else {
+                    check_compressed_raw_cancellation(Cursor::new(bytes), format, false);
+                }
+            })+
+        };
     }
 
-    #[test]
-    fn compressed_raw_refills_zstd_cursor() {
-        check_compressed_raw_cancellation(
-            Cursor::new(compressed_fixture(ArchiveFormat::TarZstd)),
-            ArchiveFormat::TarZstd,
-            false,
-        );
-    }
-
-    #[test]
-    fn compressed_raw_refills_zstd_file() {
-        check_compressed_raw_file_cancellation(
-            ArchiveFormat::TarZstd,
-            "tar-zstd-raw-cancellation",
-        );
-    }
-
-    #[test]
-    fn compressed_raw_refills_bzip2_cursor() {
-        check_compressed_raw_cancellation(
-            Cursor::new(compressed_fixture(ArchiveFormat::TarBzip2)),
-            ArchiveFormat::TarBzip2,
-            false,
-        );
-    }
-
-    #[test]
-    fn compressed_raw_refills_bzip2_file() {
-        check_compressed_raw_file_cancellation(
-            ArchiveFormat::TarBzip2,
-            "tar-bzip2-raw-cancellation",
-        );
+    compressed_raw_refill_cases! {
+        compressed_raw_refills_zstd_cursor: TarZstd, false, "tar-zstd-raw-cancellation";
+        compressed_raw_refills_zstd_file: TarZstd, true, "tar-zstd-raw-cancellation";
+        compressed_raw_refills_bzip2_cursor: TarBzip2, false, "tar-bzip2-raw-cancellation";
+        compressed_raw_refills_bzip2_file: TarBzip2, true, "tar-bzip2-raw-cancellation";
     }
 
     #[test]
@@ -1386,13 +1359,7 @@ mod tests {
         // The first invalid raw header must fail before the later trailer.
         tar[148..156].fill(b'0');
         tar.push(1);
-        let encoded = [
-            (ArchiveFormat::Tar, tar.clone()),
-            (ArchiveFormat::Tar, gzip(&tar)),
-            (ArchiveFormat::TarZstd, zstd::stream::encode_all(tar.as_slice(), 1).unwrap()),
-            (ArchiveFormat::TarBzip2, bzip(&tar)),
-        ];
-        for (format, bytes) in encoded {
+        for (format, bytes) in encoded_tar_variants(&tar) {
             let path = temp_path("tar-framing");
             std::fs::write(&path, bytes).unwrap();
             let error = inspect_tar(path.to_str().unwrap(), format, limits(10), Arc::new(AtomicBool::new(false))).unwrap_err();
@@ -1418,13 +1385,7 @@ mod tests {
         ];
         let code = "archive-entry-count-exceeds-limit";
         for (tar, max_entries) in fixtures {
-            let encoded = [
-                (ArchiveFormat::Tar, tar.clone()),
-                (ArchiveFormat::Tar, gzip(&tar)),
-                (ArchiveFormat::TarZstd, zstd::stream::encode_all(tar.as_slice(), 1).unwrap()),
-                (ArchiveFormat::TarBzip2, bzip(&tar)),
-            ];
-            for (format, bytes) in encoded {
+            for (format, bytes) in encoded_tar_variants(&tar) {
                 let path = temp_path("tar-budget");
                 std::fs::write(&path, bytes).unwrap();
                 let limits = limits(max_entries);
@@ -1445,13 +1406,7 @@ mod tests {
     #[test]
     fn decoded_limit_bounds_every_native_tar_pass_for_all_codecs() {
         let tar = fixture_tar();
-        let encoded = [
-            (ArchiveFormat::Tar, tar.clone()),
-            (ArchiveFormat::Tar, gzip(&tar)),
-            (ArchiveFormat::TarZstd, zstd::stream::encode_all(tar.as_slice(), 1).unwrap()),
-            (ArchiveFormat::TarBzip2, bzip(&tar)),
-        ];
-        for (format, bytes) in encoded {
+        for (format, bytes) in encoded_tar_variants(&tar) {
             let path = temp_path("tar-decoded");
             std::fs::write(&path, bytes).unwrap();
             for ceiling in [511, 1023, 1535] {
@@ -1481,13 +1436,7 @@ mod tests {
             ("truncated later body", canonical[..1536].to_vec(), "archive-header-invalid"),
         ];
         for (label, tar, code) in fixtures {
-            let encoded = [
-                (ArchiveFormat::Tar, tar.clone()),
-                (ArchiveFormat::Tar, gzip(&tar)),
-                (ArchiveFormat::TarZstd, zstd::stream::encode_all(tar.as_slice(), 1).unwrap()),
-                (ArchiveFormat::TarBzip2, bzip(&tar)),
-            ];
-            for (format, bytes) in encoded {
+            for (format, bytes) in encoded_tar_variants(&tar) {
                 let path = temp_path("tar-physical-eof");
                 std::fs::write(&path, bytes).unwrap();
                 let mut limits = limits(10);

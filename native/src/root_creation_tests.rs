@@ -1,17 +1,13 @@
-use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::PathBuf};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt};
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::test_support::temp_path;
 use crate::unix::{mkdir_child_beneath, mkdir_open_child_beneath, open_create_beneath};
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("fs-safe-root-create-{}-{}-{sequence}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let path = temp_path("root-create");
         fs::create_dir_all(path.join("parent")).unwrap();
         fs::create_dir_all(path.join("outside")).unwrap();
         Self(path)

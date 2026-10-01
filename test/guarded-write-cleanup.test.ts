@@ -7,7 +7,6 @@ import { runPinnedWriteHelper } from "../src/pinned-write.js";
 
 const { tempRoot } = useTempDirs();
 
-
 async function replaceParentAfterOpen(params: {
   targetPath: string;
   parentPath: string;
@@ -40,7 +39,7 @@ afterEach(async () => {
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 
 describe("guarded fallback write cleanup", () => {
-  itPosix("closes pinned no-overwrite handles when post guards fail", async () => {
+  itPosix.each(["pinned", "Root"] as const)("closes %s no-overwrite handles when post guards fail", async route => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     configureFsSafeNative({ mode: "off" });
     const base = await tempRoot("fs-safe-pinned-post-guard-");
@@ -58,8 +57,10 @@ describe("guarded fallback write cleanup", () => {
       symlinkTargetPath: outside,
     });
 
-    await expect(
-      runPinnedWriteHelper({
+    const { root: openRoot } = await import("../src/index.js");
+    const operation = route === "Root"
+      ? (await openRoot(base)).create("nested/created.txt", "payload")
+      : runPinnedWriteHelper({
         rootPath: base,
         relativeParentPath: "nested",
         basename: "created.txt",
@@ -67,34 +68,8 @@ describe("guarded fallback write cleanup", () => {
         mode: 0o600,
         overwrite: false,
         input: { kind: "buffer", data: "payload" },
-      }),
-    ).rejects.toBeTruthy();
-
-    assertClosed();
-    await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("outside");
-  });
-
-  itPosix("closes root no-overwrite handles when post guards fail", async () => {
-    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
-    configureFsSafeNative({ mode: "off" });
-    const { root: openRoot } = await import("../src/index.js");
-    const base = await tempRoot("fs-safe-root-post-guard-");
-    const parentPath = path.join(base, "nested");
-    const movedParentPath = path.join(base, "nested-real");
-    const outside = await tempRoot("fs-safe-root-post-guard-outside-");
-    const outsideFile = path.join(outside, "created.txt");
-    await fs.mkdir(parentPath);
-    await fs.writeFile(outsideFile, "outside");
-    const targetPath = path.join(await fs.realpath(parentPath), "created.txt");
-    const assertClosed = await replaceParentAfterOpen({
-      targetPath,
-      parentPath,
-      movedParentPath,
-      symlinkTargetPath: outside,
-    });
-    const scoped = await openRoot(base);
-
-    await expect(scoped.create("nested/created.txt", "payload")).rejects.toBeTruthy();
+      });
+    await expect(operation).rejects.toBeTruthy();
 
     assertClosed();
     await expect(fs.readFile(outsideFile, "utf8")).resolves.toBe("outside");

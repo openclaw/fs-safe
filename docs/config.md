@@ -112,12 +112,12 @@ FS_SAFE_NATIVE_MODE=auto      # auto | off | require | true | false | on | 1 | 0
 
 `OPENCLAW_FS_SAFE_NATIVE_MODE` is accepted as an alias. Programmatic overrides via `configureFsSafeNative` always win.
 
-### Python-helper migration bridge
+### Removed Python-helper configuration
 
-`configureFsSafePython()` and legacy Python environment settings remain a
-deprecated bridge to native modes; Python is never executed. See the
+The deprecated Python configuration bridge and its environment variables have
+been removed. Use `configureFsSafeNative()` or `FS_SAFE_NATIVE_MODE`. See the
 [0.5 migration checklist](migrating-to-0.5.md#2-replace-python-helper-configuration)
-for the complete alias list, warnings, and precedence.
+for the migration path.
 
 ## Related pages
 

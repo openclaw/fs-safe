@@ -1580,19 +1580,12 @@ mod macos {
 mod tests {
     use std::fs::{self, OpenOptions};
     use std::os::fd::{AsRawFd, FromRawFd};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::test_support::temp_path;
 
     use super::*;
 
     fn temp_root(label: &str) -> std::path::PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "fs-safe-native-{label}-{}-{nonce}",
-            std::process::id()
-        ));
+        let path = temp_path(&format!("native-{label}"));
         fs::create_dir(&path).unwrap();
         path
     }
@@ -2519,35 +2512,19 @@ mod tests {
             let root = temp_root("rename-closed-descriptor");
             fs::write(root.join("source"), b"source").unwrap();
             match case.as_str() {
-                "source" => {
-                    let live_target = OpenOptions::new().read(true).open(&root).unwrap();
-                    let closed_source = OpenOptions::new().read(true).open(&root).unwrap();
-                    let closed_source_fd = closed_source.as_raw_fd();
-                    drop(closed_source);
-                    let error = rename_no_replace(
-                        closed_source_fd,
-                        "source",
-                        live_target.as_raw_fd(),
-                        "target",
-                    )
-                    .unwrap_err();
+                "source" | "target" => {
+                    let live = OpenOptions::new().read(true).open(&root).unwrap();
+                    let closed = OpenOptions::new().read(true).open(&root).unwrap();
+                    let closed_fd = closed.as_raw_fd();
+                    drop(closed);
+                    let (source_fd, target_fd) = if case == "source" {
+                        (closed_fd, live.as_raw_fd())
+                    } else {
+                        (live.as_raw_fd(), closed_fd)
+                    };
+                    let error = rename_no_replace(source_fd, "source", target_fd, "target").unwrap_err();
                     assert_eq!(error.status, "EBADF");
-                    assert!(live_target.metadata().unwrap().is_dir());
-                }
-                "target" => {
-                    let live_source = OpenOptions::new().read(true).open(&root).unwrap();
-                    let closed_target = OpenOptions::new().read(true).open(&root).unwrap();
-                    let closed_target_fd = closed_target.as_raw_fd();
-                    drop(closed_target);
-                    let error = rename_no_replace(
-                        live_source.as_raw_fd(),
-                        "source",
-                        closed_target_fd,
-                        "target",
-                    )
-                    .unwrap_err();
-                    assert_eq!(error.status, "EBADF");
-                    assert!(live_source.metadata().unwrap().is_dir());
+                    assert!(live.metadata().unwrap().is_dir());
                 }
                 _ => panic!("unexpected closed descriptor test case: {case}"),
             }
@@ -2558,22 +2535,13 @@ mod tests {
         let root = temp_root("rename-invalid-descriptors");
         fs::write(root.join("source"), b"source").unwrap();
         let live_target = OpenOptions::new().read(true).open(&root).unwrap();
-        let invalid_source = rename_no_replace(
-            i32::MAX,
-            "source",
-            live_target.as_raw_fd(),
-            "target",
-        )
-        .unwrap_err();
-        assert_eq!(invalid_source.status, "EBADF");
-        let invalid_target = rename_no_replace(
-            live_target.as_raw_fd(),
-            "source",
-            i32::MAX,
-            "target",
-        )
-        .unwrap_err();
-        assert_eq!(invalid_target.status, "EBADF");
+        for (source_fd, target_fd) in [
+            (i32::MAX, live_target.as_raw_fd()),
+            (live_target.as_raw_fd(), i32::MAX),
+        ] {
+            let error = rename_no_replace(source_fd, "source", target_fd, "target").unwrap_err();
+            assert_eq!(error.status, "EBADF");
+        }
         assert!(live_target.metadata().unwrap().is_dir());
         fs::remove_dir_all(root).unwrap();
 

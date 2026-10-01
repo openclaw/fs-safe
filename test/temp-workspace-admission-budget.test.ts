@@ -1,8 +1,8 @@
 import fsSync from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
+import { describe, expect, it, vi } from "vitest";
+import { configureFsSafeNative } from "../src/native-config.js";
+import { __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { realpathSync } from "../src/realpath.js";
 import {
   inspectTempWorkspaceDescriptorIdentitySync,
@@ -11,21 +11,13 @@ import {
 } from "../src/temp-workspace-child-admission.js";
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useWorkspaceFixture, tempWorkspaceSyncWithUmask022 } from "./helpers/temp-workspace.js";
+import { mockCleanupBinding } from "./helpers/cleanup-binding.js";
 
-const { tempRoot } = useRealTempDirs();
+const { tempRoot } = useWorkspaceFixture();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 const supportsNumericIdentityReplay =
   process.platform === "linux" || process.platform === "darwin";
-
-function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
-  const previous = process.umask(0o022);
-  try {
-    return tempWorkspaceSync(options);
-  } finally {
-    process.umask(previous);
-  }
-}
 
 function safeIdentityProjector() {
   const identities = new Map<string, Readonly<{ dev: number; ino: number }>>();
@@ -45,14 +37,6 @@ function safeIdentityProjector() {
     stat.ino = typeof stat.ino === "bigint" ? BigInt(identity.ino) : identity.ino;
   };
 }
-
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
-afterEach(() => {
-  vi.restoreAllMocks();
-  cleanup.__cleanupRegisteredTempPathsForTest();
-  __resetNativeLoaderForTest();
-  __resetFsSafeNativeConfigForTest();
-});
 
 for (const variant of ["async", "sync"] as const) {
   describe(`${variant} temp workspace observation budget`, () => {
@@ -75,13 +59,7 @@ for (const variant of ["async", "sync"] as const) {
       const probe = vi.fn(() => false);
       if (nativeProbe) {
         configureFsSafeNative({ mode: "auto" });
-        __setNativeLoaderForTest(() => ({
-          closeOwnedFd: vi.fn(),
-          renameNoReplace: vi.fn(),
-          removeOwnedTree: vi.fn(),
-          removeOwnedTreeSync: vi.fn(),
-          ownedTreeRemovalAvailable: probe,
-        }) as unknown as NativeBinding);
+        __setNativeLoaderForTest(() => mockCleanupBinding(probe) as unknown as NativeBinding);
       }
       let observations = 0;
       let bigintObservations = 0;

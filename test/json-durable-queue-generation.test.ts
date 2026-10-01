@@ -165,24 +165,24 @@ describe("durable queue generation ownership", () => {
     });
   });
 
-  it("does not retire newer processing state for a stale delivered marker", async () => {
+  it.each(["stale", "interrupted"] as const)("batch load preserves the next generation after a %s delivered marker", async marker => {
     const { queueDir, paths } = await queueFixture();
     await writeGeneration(paths.jsonPath, 1);
     await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
-    await fs.copyFile(paths.processingPath!, paths.deliveredPath);
-    await fs.unlink(paths.processingPath!);
+    if (marker === "stale") {
+      await fs.copyFile(paths.processingPath!, paths.deliveredPath);
+      await fs.unlink(paths.processingPath!);
+    } else {
+      await fs.rename(paths.processingPath!, paths.deliveredPath);
+    }
     await writeGeneration(paths.jsonPath, 2);
-    await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
+    if (marker === "stale") await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
 
     await expect(loadPendingJsonDurableQueueEntries<{ generation: number }>({
-      queueDir,
-      tempPrefix: "queue",
+      queueDir, tempPrefix: "queue",
     })).resolves.toEqual([{ generation: 2 }]);
-
     await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain(
-      '"generation": 2',
-    );
+    await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain('"generation": 2');
   });
 
   it("acknowledges current processing after cleaning a stale delivered marker", async () => {
@@ -199,24 +199,6 @@ describe("durable queue generation ownership", () => {
     await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.access(paths.processingPath!)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("completes an interrupted delivered marker before batch loading", async () => {
-    const { queueDir, paths } = await queueFixture();
-    await writeGeneration(paths.jsonPath, 1);
-    await loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" });
-    await fs.rename(paths.processingPath!, paths.deliveredPath);
-    await writeGeneration(paths.jsonPath, 2);
-
-    await expect(loadPendingJsonDurableQueueEntries<{ generation: number }>({
-      queueDir,
-      tempPrefix: "queue",
-    })).resolves.toEqual([{ generation: 2 }]);
-
-    await expect(fs.access(paths.deliveredPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.readFile(paths.processingPath!, "utf8")).resolves.toContain(
-      '"generation": 2',
-    );
   });
 
   it("rejects direct-read acknowledgement without a processing claim", async () => {

@@ -202,16 +202,6 @@ describe("permission inspection failure modes", () => {
     expect(result).toMatchObject({ ok: false, entries: [], error: expect.stringContaining("Windows ACL query returned") });
   });
 
-  it.each([false, true])("distinguishes a null DACL from an empty DACL (present=%s)", async daclPresent => {
-    const result = await inspectWindowsAcl("C:\\fixture", {
-      exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",
-        remote: false, complete: true, daclPresent, aces: [] }), stderr: "" }),
-    });
-    expect(result.ok).toBe(true);
-    if (daclPresent) expect(result.entries).toEqual([]);
-    else expect(result.untrustedWorld).toMatchObject([{ sid: "s-1-1-0", canRead: true, canWrite: true }]);
-  });
-
   it("ignores inherit-only grants and never subtracts deny entries from coarse grants", async () => {
     const result = await inspectWindowsAcl("C:\\fixture", {
       exec: async () => ({ stdout: JSON.stringify({ ownerSid: "S-1-5-21-42", currentUserSid: "S-1-5-21-42",

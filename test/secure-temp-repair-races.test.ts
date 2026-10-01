@@ -1,6 +1,8 @@
-import { describe, expect } from "vitest";
+import { afterEach, describe, expect, vi } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { exactTempStat, secureTempAdapterFixture as createFixture, tempError } from "./helpers/secure-temp-adapter.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 describe.each([
   { label: "positive", dev: 3n, ino: 17n },

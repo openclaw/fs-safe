@@ -16,6 +16,35 @@ import { runWindowsSecurityScript, WINDOWS_SECURITY_SOURCE } from "./helpers/win
 const { tempRoot } = useTempDirs();
 const inspectDescriptor = command.inspectWindowsDescriptorCommand;
 
+function replaceOnce(source: string, needle: string, replacement: string): string {
+  expect(source.split(needle)).toHaveLength(2);
+  return source.replace(needle, replacement);
+}
+
+const localityFailure = { ok: false, code: "EIO", message: "injected locality query failure" };
+
+function faultedBridge(operation: "path" | "descriptor" | "create", failAt: number, targetPath = "", fd?: number) {
+  let source = replaceOnce(WINDOWS_SECURITY_SOURCE,
+    "public static partial class FsSafeWindowsBridge {",
+    "public static partial class FsSafeWindowsBridge { public static int LocalityCalls, CreateCalls; public static string ObservedIdentity;");
+  source = replaceOnce(source,
+    "  static bool IsLocal(SafeFileHandle handle) {",
+    "  static bool IsLocal(SafeFileHandle handle) { LocalityCalls++; if(LocalityCalls==Int32.Parse(Environment.GetEnvironmentVariable(\"FS_SAFE_TEST_LOCALITY_FAIL_AT\"))) throw new Failure(\"EIO\",\"injected locality query failure\"); return IsLocalOriginal(handle); }\n" +
+    "  static bool IsLocalOriginal(SafeFileHandle handle) {");
+  source = replaceOnce(source,
+    "  static SafeFileHandle CreateRelative(SafeFileHandle parent,string name) {",
+    "  static SafeFileHandle CreateRelative(SafeFileHandle parent,string name) { CreateCalls++;");
+  source = replaceOnce(source, "    return info.Volume.ToString(\"x8\")", "    return ObservedIdentity=info.Volume.ToString(\"x8\")");
+  const stdout = runWindowsSecurityScript(source, [
+    "$reply=[FsSafeWindowsBridge]::Execute([Environment]::GetEnvironmentVariable('FS_SAFE_TEST_SECURITY_OPERATION'),[Environment]::GetEnvironmentVariable('FS_SAFE_TEST_SECURITY_PATH'))",
+    "@{reply=$reply;localityCalls=[FsSafeWindowsBridge]::LocalityCalls;createCalls=[FsSafeWindowsBridge]::CreateCalls;identity=[FsSafeWindowsBridge]::ObservedIdentity}|ConvertTo-Json -Depth 8 -Compress",
+  ], {
+    FS_SAFE_TEST_SECURITY_OPERATION: operation,
+    FS_SAFE_TEST_SECURITY_PATH: targetPath, FS_SAFE_TEST_LOCALITY_FAIL_AT: String(failAt),
+  }, fd);
+  return JSON.parse(stdout.trim());
+}
+
 function privateCreationFailureSource(source: string, ntstatus: string): string {
   const normalized = source.replaceAll("\r\n", "\n");
   const syscall = "IoStatus io; SafeFileHandle created;\n" +
@@ -99,10 +128,6 @@ describe.runIf(process.platform === "win32")("Windows built-in security commands
     const sentinel = path.join(directory, "keep");
     await fs.writeFile(sentinel, "parent sentinel");
     const before = await fs.stat(directory, { bigint: true });
-    const replaceOnce = (source: string, needle: string, replacement: string) => {
-      expect(source.split(needle)).toHaveLength(2);
-      return source.replace(needle, replacement);
-    };
     // Substitute the OS locality observation in this child-only source copy.
     // Counters distinguish rejection before creation from create-then-cleanup.
     let source = replaceOnce(WINDOWS_SECURITY_SOURCE,
@@ -228,38 +253,18 @@ describe.runIf(process.platform === "win32")("Windows built-in security commands
     expect(read.permissions).toMatchObject({ source: "windows-acl", ownerTrusted: true, worldReadable: false, groupReadable: false });
   }, 95_000);
 
-  it("rejects a missing package in require mode without starting system commands", async () => {
+  it.each(["package", "capability"] as const)("rejects a missing %s in require mode without commands or reads", async missing => {
     const filePath = await privateFile();
     vi.mocked(process.emitWarning).mockClear();
     configureFsSafeNative({ mode: "require" });
-    __setNativeLoaderForTest(() => { throw new Error("optional addon deliberately unavailable"); });
+    __setNativeLoaderForTest(() => {
+      if (missing === "package") throw new Error("optional addon deliberately unavailable");
+      return { closeOwnedFd: vi.fn() } as unknown as NativeBinding;
+    });
     const inspect = vi.spyOn(command, "inspectWindowsDescriptorCommand");
     const read = vi.spyOn(command, "readWindowsSecurityFactsCommand");
     const create = vi.spyOn(command, "createPrivateWindowsDirectoryCommand");
-    const target = path.join(path.dirname(filePath), "require-native");
-    expect(() => readOwnerAndDacl(filePath)).toThrow(expect.objectContaining({ code: "helper-unavailable" }));
-    await expect(createPrivateDirectory(target)).rejects.toMatchObject({ code: "helper-unavailable" });
-    const watched = watchNextFileReads();
-    await expect(readSecureFile({ filePath })).rejects.toMatchObject({ code: "permission-unverified" });
-    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(inspect).not.toHaveBeenCalled();
-    expect(read).not.toHaveBeenCalled();
-    expect(create).not.toHaveBeenCalled();
-    expect(watched.read()).not.toHaveBeenCalled();
-    expect(watched.readFile()).not.toHaveBeenCalled();
-    expect(watched.close()).toHaveBeenCalledOnce();
-    expect(process.emitWarning).not.toHaveBeenCalled();
-  }, 35_000);
-
-  it("rejects missing native capabilities in require mode before commands or content reads", async () => {
-    const filePath = await privateFile();
-    vi.mocked(process.emitWarning).mockClear();
-    configureFsSafeNative({ mode: "require" });
-    __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
-    const inspect = vi.spyOn(command, "inspectWindowsDescriptorCommand");
-    const read = vi.spyOn(command, "readWindowsSecurityFactsCommand");
-    const create = vi.spyOn(command, "createPrivateWindowsDirectoryCommand");
-    const target = path.join(path.dirname(filePath), "require-capabilities");
+    const target = path.join(path.dirname(filePath), `require-${missing}`);
     expect(() => readOwnerAndDacl(filePath)).toThrow(expect.objectContaining({ code: "helper-unavailable" }));
     await expect(createPrivateDirectory(target)).rejects.toMatchObject({ code: "helper-unavailable" });
     const watched = watchNextFileReads();
@@ -373,4 +378,58 @@ describe.runIf(process.platform === "win32")("Windows built-in security commands
   it("rejects an invalid borrowed descriptor rather than inspecting a pathname", async () => {
     await expect(inspectDescriptor(-1)).rejects.toMatchObject({ code: "permission-unverified" });
   });
+
+  it("returns raw owner and DACL facts with unknown locality", async () => {
+    const directory = await tempRoot("fs-safe-win-raw-locality-");
+    const filePath = path.join(directory, "facts-雪-é-🦀");
+    await fs.writeFile(filePath, "unchanged payload");
+    const expected = command.readWindowsSecurityFactsCommand(filePath);
+    const result = faultedBridge("path", 1, filePath);
+    expect(result).toMatchObject({ localityCalls: 1, createCalls: 0, reply: { ok: true, result: {
+      ownerSid: expected.ownerSid, currentUserSid: expected.currentUserSid, isLocal: false,
+      daclPresent: expected.daclPresent, aceListComplete: expected.aceListComplete,
+      unsupportedAceTypes: expected.unsupportedAceTypes, aces: expected.aces,
+    } } });
+    expect(await fs.readFile(filePath, "utf8")).toBe("unchanged payload");
+  }, 65_000);
+
+  it("rejects a failed query on the borrowed descriptor before reading file contents", async () => {
+    const directory = await tempRoot("fs-safe-win-descriptor-locality-");
+    const filePath = path.join(directory, "secret");
+    await fs.writeFile(filePath, "unread secret");
+    const watched = watchNextFileReads();
+    const inspect = vi.spyOn(command, "inspectWindowsDescriptorCommand").mockImplementationOnce(async fd => {
+      const before = fsSync.fstatSync(fd, { bigint: true });
+      const result = faultedBridge("descriptor", 1, "", fd);
+      expect(result).toEqual({ reply: localityFailure, localityCalls: 1, createCalls: 0,
+        identity: `${before.dev.toString(16).padStart(8, "0")}:${before.ino.toString(16).padStart(16, "0")}` });
+      throw Object.assign(new Error(result.reply.message), { code: result.reply.code });
+    });
+    await expect(readSecureFile({ filePath })).rejects.toMatchObject({
+      code: "permission-unverified", cause: { code: "EIO", message: localityFailure.message },
+    });
+    expect(inspect).toHaveBeenCalledOnce();
+    expect(watched.read()).not.toHaveBeenCalled();
+    expect(watched.readFile()).not.toHaveBeenCalled();
+    expect(watched.close()).toHaveBeenCalledOnce();
+    expect(await fs.readFile(filePath, "utf8")).toBe("unread secret");
+  }, 35_000);
+
+  it.each([
+    { label: "parent admission", failAt: 1, created: 0 },
+    { label: "created child security", failAt: 2, created: 1 },
+  ])("rejects ambiguous locality during $label and preserves the parent", async ({ failAt, created }) => {
+    const directory = await tempRoot("fs-safe-win-private-locality-error-");
+    const filePath = path.join(directory, "keep");
+    const targetPath = path.join(directory, "private");
+    await fs.writeFile(filePath, "parent sentinel");
+    const before = await fs.stat(directory, { bigint: true });
+    const result = faultedBridge("create", failAt, targetPath);
+    expect(result).toMatchObject({ reply: localityFailure, localityCalls: failAt, createCalls: created });
+    await expect(fs.lstat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readdir(directory)).toEqual(["keep"]);
+    expect(await fs.readFile(filePath, "utf8")).toBe("parent sentinel");
+    const after = await fs.stat(directory, { bigint: true });
+    expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+  }, 35_000);
 });

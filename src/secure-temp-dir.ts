@@ -24,8 +24,6 @@ type SecureDirStat = {
 
 export type ResolveSecureTempRootOptions = {
   accessSync?: (path: string, mode?: number) => void;
-  /** @deprecated Unused. Repairs require descriptor-bound chmod. */
-  chmodSync?: (path: string, mode: number) => void;
   descriptor?: SecureTempRootDescriptorAdapter;
   fallbackPrefix: string;
   getuid?: () => number | undefined;

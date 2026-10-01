@@ -132,55 +132,29 @@ describe("durable JSON queue transition durability", () => {
     expect(events.slice(unlinkIndex + 1)).toContain(queueSync);
   });
 
-  queueTest("propagates claim directory-sync failure and recovers the hardlink", async (suiteRoot) => {
-    const { queueDir, paths } = await fixture(suiteRoot);
-    await writeGeneration(paths.jsonPath, 1);
-    failDirectorySyncOnce(
-      queueDir,
-      Object.assign(new Error("claim directory sync failed"), { code: "EIO" }),
-    );
+  for (const [name, message, occurrence] of [
+    ["propagates claim directory-sync failure and recovers the hardlink", "claim directory sync failed", 1],
+    ["retries retirement-root sync failure before source retirement", "retirement root sync failed", 2],
+  ] as const) {
+    queueTest(name, async (suiteRoot) => {
+      const { queueDir, paths } = await fixture(suiteRoot);
+      await writeGeneration(paths.jsonPath, 1);
+      failDirectorySyncOnce(queueDir, Object.assign(new Error(message), { code: "EIO" }), occurrence);
 
-    await expect(loadJsonDurableQueueEntry({
-      paths,
-      tempPrefix: "queue",
-    })).rejects.toThrow("claim directory sync failed");
-    await expect(fs.lstat(paths.processingPath!, { bigint: true })).resolves.toMatchObject({
-      nlink: 2n,
+      await expect(loadJsonDurableQueueEntry({ paths, tempPrefix: "queue" })).rejects.toThrow(message);
+      await expect(fs.lstat(paths.processingPath!, { bigint: true })).resolves.toMatchObject({ nlink: 2n });
+      if (occurrence === 2) {
+        await expect(fs.stat(path.join(queueDir, ".fs-safe-retirements"))).resolves.toMatchObject({});
+      }
+
+      vi.restoreAllMocks();
+      await expect(loadJsonDurableQueueEntry<{ generation: number }>({
+        paths,
+        tempPrefix: "queue",
+      })).resolves.toEqual({ generation: 1 });
+      await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
     });
-
-    vi.restoreAllMocks();
-    await expect(loadJsonDurableQueueEntry<{ generation: number }>({
-      paths,
-      tempPrefix: "queue",
-    })).resolves.toEqual({ generation: 1 });
-    await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  queueTest("retries retirement-root sync failure before source retirement", async (suiteRoot) => {
-    const { queueDir, paths } = await fixture(suiteRoot);
-    await writeGeneration(paths.jsonPath, 1);
-    failDirectorySyncOnce(
-      queueDir,
-      Object.assign(new Error("retirement root sync failed"), { code: "EIO" }),
-      2,
-    );
-
-    await expect(loadJsonDurableQueueEntry({
-      paths,
-      tempPrefix: "queue",
-    })).rejects.toThrow("retirement root sync failed");
-    await expect(fs.lstat(paths.processingPath!, { bigint: true })).resolves.toMatchObject({
-      nlink: 2n,
-    });
-    await expect(fs.stat(path.join(queueDir, ".fs-safe-retirements"))).resolves.toMatchObject({});
-
-    vi.restoreAllMocks();
-    await expect(loadJsonDurableQueueEntry<{ generation: number }>({
-      paths,
-      tempPrefix: "queue",
-    })).resolves.toEqual({ generation: 1 });
-    await expect(fs.access(paths.jsonPath)).rejects.toMatchObject({ code: "ENOENT" });
-  });
+  }
 
   queueTest("resyncs a restored replacement before deleting retirement evidence", async (suiteRoot) => {
     const { queueDir, paths } = await fixture(suiteRoot);

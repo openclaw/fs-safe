@@ -112,7 +112,6 @@ type RootDefaults = {
   maxBytes?: number;
   mkdir?: boolean; // default true for mutation methods
   mode?: number;
-  nonBlockingRead?: boolean;
   renameIdentity?: RenameIdentityPolicy;
   symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root";
   mutationSymlinks?: MutationSymlinkPolicy;
@@ -136,7 +135,7 @@ type RootOptions = {
 ```ts
 import type { CopyCloneMode, RootCopyPublicationReceipt } from "@openclaw/fs-safe";
 
-type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "nonBlockingRead" | "symlinks">;
+type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "symlinks">;
 type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity" | "mutationSymlinks"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;

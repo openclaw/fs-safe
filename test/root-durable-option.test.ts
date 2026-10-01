@@ -7,17 +7,12 @@ import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoad
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import * as verification from "../src/root-write-verification.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 const verifyPublished = verification.verifyAtomicWriteResult;
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const nativeAvailable = Boolean(loadTestNative("required-env"));
 
 afterEach(() => {
   vi.restoreAllMocks();

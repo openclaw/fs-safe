@@ -13,6 +13,7 @@ import {
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { observeSyncOpen } from "./helpers/temp-workspace.js";
 
 let native: NativeBinding | undefined;
 try {
@@ -156,11 +157,8 @@ describe.each(["async", "sync"] as const)("%s compatible cleanup receipt reuse",
     let numericNameObservations = 0;
     let descriptorObservations = 0;
     let parentFd: number | undefined;
-    const open = fsSync.openSync.bind(fsSync);
-    vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-      const fd = open(...args);
+    observeSyncOpen((args, fd) => {
       if (args[0] === admittedRoot) parentFd = fd;
-      return fd;
     });
     const lstat = fsSync.lstatSync.bind(fsSync);
     vi.spyOn(fsSync, "lstatSync").mockImplementation((name, statOptions) => {

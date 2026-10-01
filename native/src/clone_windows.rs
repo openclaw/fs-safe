@@ -600,18 +600,10 @@ mod tests {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_WRITE};
+    use std::time::UNIX_EPOCH;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
     use windows_sys::Win32::System::Ioctl::FSCTL_GET_RETRIEVAL_POINTERS;
-
-    fn directory(path: &Path) -> File {
-        OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(path)
-            .unwrap()
-    }
+    use crate::test_support::{directory, unique_path_in};
 
     fn assert_missing(path: &Path, error: &napi::Error<String>) {
         let missing = fs::symlink_metadata(path)
@@ -623,8 +615,7 @@ mod tests {
         let base = fs::canonicalize(
             std::env::var_os("FS_SAFE_CLONE_TEST_ROOT").map_or_else(std::env::temp_dir, Into::into),
         ).unwrap();
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = base.join(format!("fs-safe-refs-rollback-{label}-{}-{nonce}", std::process::id()));
+        let root = unique_path_in(&base, &format!("refs-rollback-{label}"));
         fs::create_dir(&root).unwrap();
         let parent = directory(&root);
         let target = create_directory(parent.as_raw_handle(), "partial").unwrap();
@@ -734,14 +725,7 @@ mod tests {
             eprintln!("ReFS unavailable; set FS_SAFE_CLONE_TEST_ROOT to exercise the sparse clone");
             return;
         }
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = base.join(format!(
-            "fs-safe-refs-native-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = unique_path_in(&base, "refs-native");
         fs::create_dir(&root).unwrap();
         let owned = fs::canonicalize(&root).unwrap();
         assert_eq!(owned.parent(), Some(base.as_path()));

@@ -76,7 +76,6 @@ describe("secure temp root fallback coverage", () => {
           created = true;
         }
       }),
-      chmodSync: vi.fn(),
       accessSync: vi.fn(),
       tmpdir: () => "/tmp",
       warn: vi.fn(),
@@ -91,7 +90,6 @@ describe("secure temp root fallback coverage", () => {
         getuid: () => 501,
         lstatSync: vi.fn(() => dirStat({ isSymbolicLink: true, uid: 501 })),
         mkdirSync: vi.fn(),
-        chmodSync: vi.fn(),
         accessSync: vi.fn(),
         tmpdir: () => "/tmp",
         unsafeFallbackLabel: "test temp",
@@ -113,9 +111,6 @@ describe("secure temp root fallback coverage", () => {
         return dirStat({ mode: calls < 3 ? 0o40777 : 0o40700, uid: 501 });
       }),
       mkdirSync: vi.fn(),
-      chmodSync: vi.fn(() => {
-        throw nodeError("EPERM");
-      }),
       accessSync: vi.fn(),
       tmpdir: () => "/tmp",
       warn: vi.fn(),
