@@ -33,6 +33,15 @@ function expectNonblocking(flags: string | number): void {
   expect(Number(flags) & fsSync.constants.O_NONBLOCK).toBe(fsSync.constants.O_NONBLOCK);
 }
 
+function swapOnNextOpen(filePath: string): void {
+  const open = fs.open.bind(fs);
+  vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
+    expectNonblocking(flags);
+    await swapForFifo(filePath);
+    return await open(candidate, flags, mode);
+  });
+}
+
 function deadline() {
   const signal = new AbortController().signal;
   return {
@@ -62,12 +71,7 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-secure-fifo-swap-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const open = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
-      expectNonblocking(flags);
-      await swapForFifo(filePath);
-      return await open(candidate, flags, mode);
-    });
+    swapOnNextOpen(filePath);
     await expect(readSecureFile({
       filePath,
       permissions: { allowInsecure: true },
@@ -100,12 +104,7 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-secret-fifo-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const open = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
-      expectNonblocking(flags);
-      await swapForFifo(filePath);
-      return await open(candidate, flags, mode);
-    });
+    swapOnNextOpen(filePath);
     await expect(readSecretFile(filePath, "token", { rejectSymlink: true }))
       .rejects.toMatchObject({ code: "path-mismatch" });
   });
@@ -114,12 +113,7 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-archive-input-fifo-");
     const archivePath = path.join(root, "archive.zip");
     await fs.writeFile(archivePath, "archive");
-    const open = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
-      expectNonblocking(flags);
-      await swapForFifo(archivePath);
-      return await open(candidate, flags, mode);
-    });
+    swapOnNextOpen(archivePath);
     await expect(stageArchiveFileForExtraction({
       archivePath,
       limits: resolveExtractLimits(),
@@ -131,12 +125,7 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-archive-read-fifo-");
     const archivePath = path.join(root, "archive.zip");
     await fs.writeFile(archivePath, "archive");
-    const open = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
-      expectNonblocking(flags);
-      await swapForFifo(archivePath);
-      return await open(candidate, flags, mode);
-    });
+    swapOnNextOpen(archivePath);
     await expect(readArchiveEntry(archivePath, "entry", { maxBytes: 16, kind: "zip" }))
       .rejects.toThrow("archive changed during validation");
   });
@@ -145,12 +134,7 @@ describe("nonblocking regular-file admission", () => {
     const root = await tempRoot("fs-safe-queue-fifo-");
     const filePath = path.join(root, "entry.json");
     await fs.writeFile(filePath, JSON.stringify({ ok: true }));
-    const open = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
-      expectNonblocking(flags);
-      await swapForFifo(filePath);
-      return await open(candidate, flags, mode);
-    });
+    swapOnNextOpen(filePath);
     await expect(readJsonDurableQueueEntry(filePath)).rejects.toThrow("queue entry is not a regular file");
   });
 
@@ -159,12 +143,7 @@ describe("nonblocking regular-file admission", () => {
     const sourcePath = path.join(root, "source");
     const targetPath = path.join(root, "target");
     await fs.writeFile(sourcePath, "source");
-    const open = fs.open.bind(fs);
-    vi.spyOn(fs, "open").mockImplementationOnce(async (candidate, flags, mode) => {
-      expectNonblocking(flags);
-      await swapForFifo(sourcePath);
-      return await open(candidate, flags, mode);
-    });
+    swapOnNextOpen(sourcePath);
     await expect(publishFileExclusive({
       sourcePath,
       targetPath,
