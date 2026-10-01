@@ -82,6 +82,30 @@ async function inspectPermissionFixture(
   return permissionResult("posix");
 }
 
+async function withMockedRegistration(
+  api: { inspectWindowsAcl: typeof inspectWindowsAcl; inspectPathPermissions: typeof inspectPermissionFixture },
+  native: boolean,
+  platform: string,
+  check: (rows: Array<{ name: string; run: () => Promise<unknown>; options: BenchmarkOptions }>) => Promise<void> | void,
+) {
+  const prefix = native ? "fs-safe-owner-caught-native-" : "fs-safe-owner-caught-bench-";
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const cleanups: Array<() => void> = [];
+  const rows: Array<{ name: string; run: () => Promise<unknown>; options: BenchmarkOptions }> = [];
+  try {
+    registerWindowsOwnerCaughtFailure({
+      api, workspace, native, platform, PermissionCommandError,
+      register: (name: string, run: () => Promise<unknown>, options: BenchmarkOptions) =>
+        rows.push({ name, run, options }),
+      onCleanup: (cleanup: () => void) => cleanups.push(cleanup),
+    });
+    await check(rows);
+  } finally {
+    cleanups.reverse().forEach((cleanup) => cleanup());
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
 function measuredRows(iterations = 40) {
   return WINDOWS_OWNER_CAUGHT_FAILURE_NAMES.map((name) => ({
     name,
@@ -101,31 +125,9 @@ function measuredRows(iterations = 40) {
 
 describe("Windows owner caught-failure benchmark contract", () => {
   it("executes every prebuilt cohort and verifies it outside timing", async () => {
-    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-owner-caught-bench-"));
-    const cleanups: Array<() => void> = [];
-    const rows: Array<{
-      name: string;
-      run: () => Promise<unknown>;
-      options: BenchmarkOptions;
-    }> = [];
-    try {
-      registerWindowsOwnerCaughtFailure({
-        api: {
-          inspectWindowsAcl,
-          inspectPathPermissions: inspectPermissionFixture,
-        },
-        workspace,
-        native: false,
-        PermissionCommandError,
-        register: (
-          name: string,
-          run: () => Promise<unknown>,
-          options: BenchmarkOptions,
-        ) => rows.push({ name, run, options }),
-        onCleanup: (cleanup: () => void) => cleanups.push(cleanup),
-        platform: "linux",
-      });
-
+    await withMockedRegistration({
+      inspectWindowsAcl, inspectPathPermissions: inspectPermissionFixture,
+    }, false, "linux", async (rows) => {
       expect(rows.map(({ name }) => name)).toEqual(WINDOWS_OWNER_CAUGHT_FAILURE_NAMES);
       for (const row of rows) {
         expect(row.options.divisor).toBe(windowsOwnerCaughtFailureDivisor(row.name));
@@ -137,80 +139,34 @@ describe("Windows owner caught-failure benchmark contract", () => {
         const result = await row.run();
         expect(() => row.options.after(result)).not.toThrow();
       }
-    } finally {
-      cleanups.reverse().forEach((cleanup) => cleanup());
-      fs.rmSync(workspace, { recursive: true, force: true });
-    }
+    });
   });
 
   it("fails a source cohort when its checked result changes", async () => {
-    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-owner-caught-bench-"));
-    const cleanups: Array<() => void> = [];
-    const rows: Array<{
-      name: string;
-      options: BenchmarkOptions;
-    }> = [];
-    try {
-      registerWindowsOwnerCaughtFailure({
-        api: {
-          inspectWindowsAcl,
-          inspectPathPermissions: inspectPermissionFixture,
-        },
-        workspace,
-        native: false,
-        PermissionCommandError,
-        register: (name: string, _run: () => Promise<unknown>, options: BenchmarkOptions) =>
-          rows.push({ name, options }),
-        onCleanup: (cleanup: () => void) => cleanups.push(cleanup),
-        platform: "linux",
-      });
+    await withMockedRegistration({
+      inspectWindowsAcl, inspectPathPermissions: inspectPermissionFixture,
+    }, false, "linux", (rows) => {
       const ordinary = rows.find(({ name }) => name.endsWith("/ordinary-error"))!;
       ordinary.options.before();
       expect(() => ordinary.options.after({ ok: true })).toThrow();
-    } finally {
-      cleanups.reverse().forEach((cleanup) => cleanup());
-      fs.rmSync(workspace, { recursive: true, force: true });
-    }
+    });
   });
 
   it("unit-checks a native Windows control receipt without consuming the fallback", async () => {
-    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-owner-caught-native-"));
-    const cleanups: Array<() => void> = [];
-    const rows: Array<{
-      name: string;
-      run: () => Promise<unknown>;
-      options: BenchmarkOptions;
-    }> = [];
-    try {
-      registerWindowsOwnerCaughtFailure({
-        api: {
-          inspectWindowsAcl,
-          inspectPathPermissions: async () => ({
-            ...permissionResult("windows-acl"),
-            ownerSid: "s-1-5-21-42",
-            ownerTrusted: true,
-          }),
-        },
-        workspace,
-        native: true,
-        PermissionCommandError,
-        register: (
-          name: string,
-          run: () => Promise<unknown>,
-          options: BenchmarkOptions,
-        ) => rows.push({ name, run, options }),
-        onCleanup: (cleanup: () => void) => cleanups.push(cleanup),
-        platform: "win32",
-      });
+    await withMockedRegistration({
+      inspectWindowsAcl,
+      inspectPathPermissions: async () => ({
+        ...permissionResult("windows-acl"),
+        ownerSid: "s-1-5-21-42",
+        ownerTrusted: true,
+      }),
+    }, true, "win32", async (rows) => {
       const control = rows[0]!;
       expect(control.name).toContain("platform-control");
       control.options.before();
       const result = await control.run();
       expect(() => control.options.after(result)).not.toThrow();
-    } finally {
-      cleanups.reverse().forEach((cleanup) => cleanup());
-      fs.rmSync(workspace, { recursive: true, force: true });
-    }
+    });
   });
 
   itNativeWindowsOwner("executes the private native-require Windows control without fallback", async () => {
@@ -280,106 +236,54 @@ describe("Windows owner caught-failure benchmark contract", () => {
     for (const row of rows) {
       expect(() => validateWindowsOwnerCaughtFailureResult(row)).not.toThrow();
     }
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: rows.slice(1) },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [...rows, rows[0]] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, metadata: { mode: "auto" } },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("native mode mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [{ ...rows[0], iterations: 3 }, ...rows.slice(1)] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("iteration count mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureResult({
-      ...rows[0],
-      skipped: "not run",
-    })).toThrow("must execute rather than skip");
-    expect(() => validateWindowsOwnerCaughtFailureResult({
-      ...rows[0],
-      workloadDetails: {
-        ...rows[0].workloadDetails,
-        hostileCases: "timed",
-      },
-    })).toThrow("workload receipt mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureResult({
-      ...rows[0],
-      fixturePlacement: {
-        ...WINDOWS_OWNER_CAUGHT_FAILURE_FIXTURE,
-        filesystemChecks: "timed",
-      },
-    })).toThrow("fixture receipt mismatch");
+    const reportCases: Array<[(rows: ReturnType<typeof measuredRows>) => object, string]> = [
+      [(rows) => ({ results: rows.slice(1) }), "row set mismatch"],
+      [(rows) => ({ results: [...rows, rows[0]] }), "row set mismatch"],
+      [() => ({ metadata: { mode: "auto" } }), "native mode mismatch"],
+      [(rows) => ({ results: [{ ...rows[0], iterations: 3 }, ...rows.slice(1)] }), "iteration count mismatch"],
+    ];
+    for (const [mutate, message] of reportCases) {
+      expect(() => validateWindowsOwnerCaughtFailureReport(
+        { metadata: { mode: "off" }, results: measuredRows(), ...mutate(measuredRows()) },
+        WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
+        40,
+      )).toThrow(message);
+    }
+    const workloadCases = [
+      [{ skipped: "not run" }, "must execute rather than skip"],
+      [{ workloadDetails: { ...rows[0].workloadDetails, hostileCases: "timed" } }, "workload receipt mismatch"],
+      [{ fixturePlacement: { ...WINDOWS_OWNER_CAUGHT_FAILURE_FIXTURE, filesystemChecks: "timed" } }, "fixture receipt mismatch"],
+    ] as const;
+    for (const [mutation, message] of workloadCases) {
+      expect(() => validateWindowsOwnerCaughtFailureResult({ ...measuredRows()[0], ...mutation })).toThrow(message);
+    }
   });
 
   it("rejects every undeclared row in the reserved namespaces", () => {
     const rows = measuredRows();
-    const unknownAcl = {
-      ...rows[2],
-      name: "inspectWindowsAcl/windows-owner-caught/undeclared",
-    };
-    const unknownControl = {
-      ...rows[0],
-      name: "inspectPathPermissions/windows-owner-caught/undeclared-control",
-    };
-    const exactAclPrefix = {
-      ...rows[2],
-      name: "inspectWindowsAcl/windows-owner-caught",
-    };
-    const exactControlPrefix = {
-      ...rows[0],
-      name: "inspectPathPermissions/windows-owner-caught",
-    };
-    const report = { metadata: { mode: "off" }, results: rows };
-
-    expect(() => validateWindowsOwnerCaughtFailureResult(unknownAcl))
-      .toThrow("not a declared Windows owner caught-failure row");
-    expect(() => validateWindowsOwnerCaughtFailureResult({
-      ...unknownControl,
-      skipped: "unknown row was skipped",
-    })).toThrow("not a declared Windows owner caught-failure row");
-    expect(() => validateWindowsOwnerCaughtFailureResult(exactAclPrefix))
-      .toThrow("not a declared Windows owner caught-failure row");
-    expect(() => validateWindowsOwnerCaughtFailureResult(exactControlPrefix))
-      .toThrow("not a declared Windows owner caught-failure row");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [...rows, unknownAcl] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [...rows, { ...unknownControl, skipped: "unsupported" }] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [unknownAcl, ...rows.slice(1)] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [...rows, exactAclPrefix] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [exactControlPrefix, ...rows.slice(1)] },
-      WINDOWS_OWNER_CAUGHT_FAILURE_FILTER,
-      40,
-    )).toThrow("row set mismatch");
-    expect(() => validateWindowsOwnerCaughtFailureReport(
-      { ...report, results: [unknownAcl] },
-      "windows-owner-caught/undeclared",
-      40,
-    )).toThrow("row set mismatch");
+    const unknownAcl = { ...rows[2], name: "inspectWindowsAcl/windows-owner-caught/undeclared" };
+    const unknownControl = { ...rows[0], name: "inspectPathPermissions/windows-owner-caught/undeclared-control" };
+    const exactAclPrefix = { ...rows[2], name: "inspectWindowsAcl/windows-owner-caught" };
+    const exactControlPrefix = { ...rows[0], name: "inspectPathPermissions/windows-owner-caught" };
+    for (const row of [
+      unknownAcl, { ...unknownControl, skipped: "unknown row was skipped" }, exactAclPrefix, exactControlPrefix,
+    ]) {
+      expect(() => validateWindowsOwnerCaughtFailureResult(row))
+        .toThrow("not a declared Windows owner caught-failure row");
+    }
+    const reportCases: Array<[(rows: ReturnType<typeof measuredRows>) => object[], string]> = [
+      [(rows) => [...rows, unknownAcl], WINDOWS_OWNER_CAUGHT_FAILURE_FILTER],
+      [(rows) => [...rows, { ...unknownControl, skipped: "unsupported" }], WINDOWS_OWNER_CAUGHT_FAILURE_FILTER],
+      [(rows) => [unknownAcl, ...rows.slice(1)], WINDOWS_OWNER_CAUGHT_FAILURE_FILTER],
+      [(rows) => [...rows, exactAclPrefix], WINDOWS_OWNER_CAUGHT_FAILURE_FILTER],
+      [(rows) => [exactControlPrefix, ...rows.slice(1)], WINDOWS_OWNER_CAUGHT_FAILURE_FILTER],
+      [() => [unknownAcl], "windows-owner-caught/undeclared"],
+    ];
+    for (const [mutate, filter] of reportCases) {
+      expect(() => validateWindowsOwnerCaughtFailureReport(
+        { metadata: { mode: "off" }, results: mutate(measuredRows()) }, filter, 40,
+      )).toThrow("row set mismatch");
+    }
   });
 
   it("requires only rows selected by narrower or unrelated filters", () => {

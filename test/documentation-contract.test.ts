@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { documentedImportFailures, markdownFiles } from "../scripts/documented-imports.mjs";
 import { FsSafeError, categorizeFsSafeError, type FsSafeErrorCode } from "../src/errors.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,15 +27,6 @@ function publicPackageSubpaths(): Record<string, PublicApiEntry> {
     packageSubpaths: Record<string, PublicApiEntry>;
   };
   return manifest.packageSubpaths;
-}
-
-function markdownFiles(): string[] {
-  return [
-    "README.md",
-    ...fs.readdirSync(path.join(repoRoot, "docs"))
-      .filter((name) => name.endsWith(".md"))
-      .map((name) => `docs/${name}`),
-  ];
 }
 
 function documentedFsSafeErrorCodes(): string[] {
@@ -65,41 +57,7 @@ describe("documentation contract", () => {
   });
 
   it("only imports names that the documented package subpath exports", () => {
-    const packageSubpaths = publicPackageSubpaths();
-    const failures: string[] = [];
-
-    for (const relativePath of markdownFiles()) {
-      const markdown = readRepoFile(relativePath);
-      for (const block of markdown.matchAll(/```(?:ts|typescript)\n(?<code>[\s\S]*?)```/gu)) {
-        const line = markdown.slice(0, block.index).split("\n").length;
-        for (const statement of block.groups!.code.matchAll(
-          /import\s+(?:type\s+)?\{(?<names>[^}]+)\}\s+from\s+["']@openclaw\/fs-safe(?<subpath>\/[^"']+)?["']/gu,
-        )) {
-          const subpath = statement.groups!.subpath
-            ? `.${statement.groups!.subpath}`
-            : ".";
-          const entry = packageSubpaths[subpath];
-          if (!entry) {
-            failures.push(`${relativePath}:${line}: unknown package subpath ${subpath}`);
-            continue;
-          }
-          const exported = new Set([...(entry.runtime ?? []), ...(entry.types ?? [])]);
-          const imported = statement.groups!.names
-            .replace(/\/\/[^\n]*/gu, "")
-            .split(",")
-            .map((name) => name.trim())
-            .map((name) => name.replace(/^type\s+/u, "").split(/\s+as\s+/u)[0])
-            .filter(Boolean);
-          for (const name of imported) {
-            if (!exported.has(name)) {
-              failures.push(`${relativePath}:${line}: ${name} is not exported from ${subpath}`);
-            }
-          }
-        }
-      }
-    }
-
-    expect(failures).toEqual([]);
+    expect(documentedImportFailures()).toEqual([]);
   });
 
   it("documents every public FsSafeError code in the reference union", () => {

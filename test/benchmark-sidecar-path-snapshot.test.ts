@@ -116,61 +116,41 @@ describe("sidecar path snapshot benchmark", () => {
   });
 
   it("rejects incomplete, duplicate, and improperly skipped sidecar reports", () => {
-    const rows = sidecarPathSnapshotCases({ platform: "linux", cwd: "/work", workspace: "/tmp/fixture" });
-    const results = rows.map((row) => row.skip
-      ? { ...row, skipped: row.skip }
-      : { ...row, iterations: 1, samplesUs: [1], minUs: 1, medianUs: 1, maxUs: 1 });
-    const portableReport = { metadata: { platform: "linux" }, results };
+    const measuredReport = (platform: "linux" | "win32") => {
+      const rows = sidecarPathSnapshotCases(platform === "linux"
+        ? { platform, cwd: "/work", workspace: "/tmp/fixture" }
+        : { platform, cwd: "C:\\work", workspace: "C:\\temp\\fixture" });
+      return {
+        metadata: { platform },
+        results: rows.map((row) => row.skip ? { ...row, skipped: row.skip }
+          : { ...row, iterations: 1, samplesUs: [1], minUs: 1, medianUs: 1, maxUs: 1 }),
+      };
+    };
+    const portableReport = measuredReport("linux");
     expect(() => validateSidecarPathSnapshotReport(portableReport, "", 1)).not.toThrow();
     expect(() => validateSidecarPathSnapshotReport({
-      ...portableReport,
-      results: results.slice(0, -1),
-    })).toThrow("report row set mismatch");
-    expect(() => validateSidecarPathSnapshotReport({
-      ...portableReport,
-      results: [...results, results[0]],
-    })).toThrow("report row set mismatch");
-    expect(() => validateSidecarPathSnapshotReport({
-      ...portableReport,
-      results: results.map((result, index) => index === 0 ? { ...result, skipped: "arbitrary" } : result),
-    })).toThrow("portable sidecar path snapshot row was not measured");
-    expect(() => validateSidecarPathSnapshotReport({
-      ...portableReport,
-      results: results.map((result, index) => index === 0 ? { ...result, iterations: 2 } : result),
-    }, "", 1)).toThrow("iteration count mismatch");
-    expect(() => validateSidecarPathSnapshotReport({
-      metadata: { platform: "linux" },
-      results: results.filter(({ name }) => name.includes("default/relative")),
+      ...portableReport, results: portableReport.results.filter(({ name }) => name.includes("default/relative")),
     }, "default/relative", 1)).not.toThrow();
-
-    const windowsRows = sidecarPathSnapshotCases({
-      platform: "win32",
-      cwd: "C:\\work",
-      workspace: "C:\\temp\\fixture",
-    }).map((row) => ({
-      ...row,
-      iterations: 1,
-      samplesUs: [1],
-      minUs: 1,
-      medianUs: 1,
-      maxUs: 1,
-    }));
-    expect(() => validateSidecarPathSnapshotReport({
-      metadata: { platform: "win32" },
-      results: windowsRows,
-    })).not.toThrow();
-    expect(() => validateSidecarPathSnapshotReport({
-      metadata: { platform: "win32" },
-      results: windowsRows.map((result, index) => index === 5
-        ? { ...result, skipped: "drive mismatch" } : result),
-    })).toThrow("Windows sidecar path snapshot row was not measured");
-    expect(() => validateSidecarPathSnapshotReport({
-      metadata: { platform: "win32" },
-      results: windowsRows.map((result) => ({
-        ...result,
-        fixturePlacement: { ...result.fixturePlacement, sameDrive: false },
-      })),
-    })).toThrow("not verified on the cwd drive");
+    expect(() => validateSidecarPathSnapshotReport(measuredReport("win32"))).not.toThrow();
+    const reportCases: Array<[
+      "linux" | "win32", (rows: ReturnType<typeof measuredReport>["results"]) => object[], string, number?,
+    ]> = [
+      ["linux", (rows) => rows.slice(0, -1), "report row set mismatch"],
+      ["linux", (rows) => [...rows, rows[0]], "report row set mismatch"],
+      ["linux", (rows) => rows.map((row, index) => index === 0 ? { ...row, skipped: "arbitrary" } : row),
+        "portable sidecar path snapshot row was not measured"],
+      ["linux", (rows) => rows.map((row, index) => index === 0 ? { ...row, iterations: 2 } : row), "iteration count mismatch", 1],
+      ["win32", (rows) => rows.map((row, index) => index === 5 ? { ...row, skipped: "drive mismatch" } : row),
+        "Windows sidecar path snapshot row was not measured"],
+      ["win32", (rows) => rows.map((row) => ({
+        ...row, fixturePlacement: { ...row.fixturePlacement, sameDrive: false },
+      })), "not verified on the cwd drive"],
+    ];
+    for (const [platform, mutate, message, iterations] of reportCases) {
+      const report = measuredReport(platform);
+      expect(() => validateSidecarPathSnapshotReport({ ...report, results: mutate(report.results) }, "", iterations))
+        .toThrow(message);
+    }
   });
 
   it("keeps only acquisition timed and wires the existing runner and evidence validator", () => {
