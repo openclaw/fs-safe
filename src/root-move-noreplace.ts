@@ -248,17 +248,14 @@ export async function movePathNative(
   } catch (error) {
     closeErrors.push(error);
   }
-  if (failed) {
-    if (closeErrors.length > 0) {
-      const closeError = closeErrors.length === 1
-        ? closeErrors[0]
-        : new AggregateError(closeErrors, "native move descriptor closes failed");
+  if (closeErrors.length > 0) {
+    const closeError = closeErrors.length === 1
+      ? closeErrors[0]
+      : new AggregateError(closeErrors, "native move descriptor closes failed");
+    if (failed) {
       throw createSuppressedError(closeError, operationError, "native move and descriptor close failed");
     }
-    throw operationError;
+    throw closeError;
   }
-  if (closeErrors.length === 1) throw closeErrors[0];
-  if (closeErrors.length > 1) {
-    throw new AggregateError(closeErrors, "native move descriptor closes failed");
-  }
+  if (failed) throw operationError;
 }

@@ -13,7 +13,7 @@ import {
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
-import { resolvePathWithinRoot } from "./root-paths-lexical.js";
+import { invalidPath, resolvePathWithinRoot } from "./root-paths-lexical.js";
 import { resolvePathWithinNormalizedRoot, type ResolvePathWithinRootParams } from "./path-scope-lexical.js";
 import {
   assertNoSymlinkSegments,
@@ -57,13 +57,6 @@ export type PathScope = {
     options?: PathScopeResolveOptions & { mode?: number },
   ): Promise<DirectoryResult>;
 };
-
-function invalidPath(scopeLabel: string): InvalidPathResult {
-  return {
-    ok: false,
-    error: `Invalid path: must stay within ${scopeLabel}`,
-  };
-}
 
 const INVALID_REAL_PATH = Symbol("invalid-real-path");
 
