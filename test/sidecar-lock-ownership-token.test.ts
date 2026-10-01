@@ -20,6 +20,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+async function rawLockFixture(name: string, prefix = `fs-safe-sidecar-${name}-`) {
+  const base = await tempRoot(prefix);
+  const targetPath = path.join(base, "state.json");
+  const lockPath = `${targetPath}.lock`;
+  const manager = createSidecarLockManager(`fs-safe-${name}-${Date.now()}`);
+  const acquire = () => manager.acquire({
+    targetPath,
+    lockPath,
+    staleMs: 1,
+    payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
+  });
+  return { base, lockPath, manager, acquire };
+}
+
 describe("sidecar lock ownership tokens", () => {
   it("round-trips a token without changing the parsed payload", async () => {
     const base = await tempRoot("fs-safe-sidecar-token-round-trip-");
@@ -40,16 +54,8 @@ describe("sidecar lock ownership tokens", () => {
   });
 
   it("releases its sidecar when descriptor and pathname identity drift", async () => {
-    const base = await tempRoot("fs-safe-sidecar-identity-drift-");
-    const targetPath = path.join(base, "state.json");
-    const lockPath = `${targetPath}.lock`;
-    const manager = createSidecarLockManager(`fs-safe-identity-drift-${Date.now()}`);
-    const lock = await manager.acquire({
-      targetPath,
-      lockPath,
-      staleMs: 1,
-      payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
-    });
+    const { lockPath, acquire } = await rawLockFixture("identity-drift");
+    const lock = await acquire();
     const realLstat = fsSync.lstatSync.bind(fsSync);
     vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
       const stat = realLstat(...args);
@@ -67,19 +73,11 @@ describe("sidecar lock ownership tokens", () => {
   });
 
   it("releases its sidecar on process-exit cleanup with known descriptor/path identity drift", async () => {
-    const base = await tempRoot("fs-safe-sidecar-sync-identity-drift-");
-    const targetPath = path.join(base, "state.json");
-    const lockPath = `${targetPath}.lock`;
-    const manager = createSidecarLockManager(`fs-safe-sync-identity-drift-${Date.now()}`);
+    const { lockPath, manager, acquire } = await rawLockFixture("sync-identity-drift");
     let exitListener: (() => void) | undefined;
 
     try {
-      await manager.acquire({
-        targetPath,
-        lockPath,
-        staleMs: 1,
-        payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
-      });
+      await acquire();
       const canonicalLock = fsSync.realpathSync(lockPath);
       const observesLock = (seen: unknown) => {
         const value = String(seen);
@@ -117,20 +115,14 @@ describe("sidecar lock ownership tokens", () => {
   it.skipIf(process.platform === "win32")(
     "rejects non-regular exit-time replacements before reading them",
     async () => {
-      const base = await tempRoot("fs-safe-sync-non-regular-replacement-");
-      const targetPath = path.join(base, "state.json");
-      const lockPath = `${targetPath}.lock`;
+      const { base, lockPath, manager, acquire } = await rawLockFixture(
+        "sync-non-regular", "fs-safe-sync-non-regular-replacement-",
+      );
       const replacementPath = path.join(base, "replacement.lock");
-      const manager = createSidecarLockManager(`fs-safe-sync-non-regular-${Date.now()}`);
       let exitListener: (() => void) | undefined;
 
       try {
-        await manager.acquire({
-          targetPath,
-          lockPath,
-          staleMs: 1,
-          payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
-        });
+        await acquire();
         const raw = await fsp.readFile(lockPath, "utf8");
         await fsp.rm(lockPath);
         await fsp.writeFile(replacementPath, raw, "utf8");
@@ -184,16 +176,8 @@ describe("sidecar lock ownership tokens", () => {
   });
 
   it("keeps a sidecar whose internal ownership token was trimmed", async () => {
-    const base = await tempRoot("fs-safe-sidecar-trimmed-token-");
-    const targetPath = path.join(base, "state.json");
-    const lockPath = `${targetPath}.lock`;
-    const manager = createSidecarLockManager(`fs-safe-trimmed-token-${Date.now()}`);
-    const lock = await manager.acquire({
-      targetPath,
-      lockPath,
-      staleMs: 1,
-      payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
-    });
+    const { lockPath, acquire } = await rawLockFixture("trimmed-token");
+    const lock = await acquire();
     const raw = await fsp.readFile(lockPath, "utf8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     await fsp.writeFile(lockPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
@@ -208,17 +192,9 @@ describe("sidecar lock ownership tokens", () => {
   it.skipIf(process.platform === "win32")(
     "keeps a symlink replacement even when its target contains the owned bytes",
     async () => {
-      const base = await tempRoot("fs-safe-sidecar-symlink-replacement-");
-      const targetPath = path.join(base, "state.json");
-      const lockPath = `${targetPath}.lock`;
+      const { base, lockPath, acquire } = await rawLockFixture("symlink-replacement");
       const replacementPath = path.join(base, "replacement.lock");
-      const manager = createSidecarLockManager(`fs-safe-symlink-replacement-${Date.now()}`);
-      const lock = await manager.acquire({
-        targetPath,
-        lockPath,
-        staleMs: 1,
-        payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
-      });
+      const lock = await acquire();
       const raw = await fsp.readFile(lockPath, "utf8");
       await fsp.rm(lockPath);
       await fsp.writeFile(replacementPath, raw, "utf8");
@@ -282,10 +258,7 @@ describe("sidecar lock ownership tokens", () => {
 
   it("cleans a partial sidecar left by a failed write", async () => {
     configureFsSafeNative({ mode: "off" });
-    const base = await tempRoot("fs-safe-sidecar-partial-write-");
-    const targetPath = path.join(base, "state.json");
-    const lockPath = `${targetPath}.lock`;
-    const manager = createSidecarLockManager(`fs-safe-partial-write-${Date.now()}`);
+    const { lockPath, acquire } = await rawLockFixture("partial-write");
     const realOpen = fsp.open.bind(fsp);
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
@@ -298,14 +271,7 @@ describe("sidecar lock ownership tokens", () => {
       return handle;
     });
 
-    await expect(
-      manager.acquire({
-        targetPath,
-        lockPath,
-        staleMs: 1,
-        payload: async () => ({ createdAt: new Date().toISOString(), owner: "caller" }),
-      }),
-    ).rejects.toMatchObject({ code: "EIO" });
+    await expect(acquire()).rejects.toMatchObject({ code: "EIO" });
     await expect(fsp.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

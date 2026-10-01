@@ -14,6 +14,70 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function directoryReplacement(
+  original: string,
+  moved: string,
+  observed: string,
+  observedPath: string,
+  linkName?: string,
+) {
+  let armed = false;
+  let observations = 0;
+  let observation: { mockRestore(): void } | undefined;
+  let observedCreated = false;
+  let originalMoved = false;
+  let replacementCreated = false;
+  let linkCreated = false;
+  return {
+    prepare() {
+      if (process.platform !== "win32") return;
+      // Windows pins the directory with the owned sidecar fd; change only its observed identity.
+      fs.mkdirSync(observed);
+      observedCreated = true;
+      const originalIdentity = fs.lstatSync(original, { bigint: true });
+      const replacementIdentity = fs.lstatSync(observed, { bigint: true });
+      expect([replacementIdentity.dev, replacementIdentity.ino])
+        .not.toEqual([originalIdentity.dev, originalIdentity.ino]);
+      const lstat = fs.lstatSync.bind(fs);
+      observation = vi.spyOn(fs, "lstatSync").mockImplementation(
+        ((...args: Parameters<typeof fs.lstatSync>) => {
+          if (armed && args[1]?.bigint === true && String(args[0]) === pathForWindowsFilesystem(observedPath)) {
+            observations += 1;
+            return replacementIdentity;
+          }
+          return lstat(...args);
+        }) as typeof fs.lstatSync,
+      );
+    },
+    replace() {
+      if (process.platform === "win32") {
+        armed = true;
+        return;
+      }
+      fs.renameSync(original, moved);
+      originalMoved = true;
+      fs.mkdirSync(original);
+      replacementCreated = true;
+      if (linkName) {
+        fs.linkSync(path.join(moved, linkName), path.join(original, linkName));
+        linkCreated = true;
+      }
+    },
+    get observations() { return observations; },
+    get linkedReplacement() { return originalMoved && replacementCreated && linkCreated; },
+    restore() {
+      armed = false;
+      observation?.mockRestore();
+      if (observedCreated && fs.existsSync(observed)) fs.rmdirSync(observed);
+      if (linkCreated && linkName && fs.existsSync(path.join(original, linkName))) {
+        fs.unlinkSync(path.join(original, linkName));
+      }
+      if (replacementCreated && fs.existsSync(original)) fs.rmdirSync(original);
+      if (originalMoved && fs.existsSync(moved) && !fs.existsSync(original)) fs.renameSync(moved, original);
+    },
+  };
+}
+
 describe("synchronous Root-backed file-lock replacement authority", () => {
   it("rejects Root replacement before reentrant reuse, verification, and release", async () => {
     const directory = await tempRoot("fs-safe-sync-root-replaced-");
@@ -31,67 +95,36 @@ describe("synchronous Root-backed file-lock replacement authority", () => {
     };
     const lock = acquireFileLockSync(path.join(original, "state.json"), options);
     let reentrant: ReturnType<typeof acquireFileLockSync> | undefined;
-    let observationArmed = false;
-    let rootObservations = 0;
-    let observation: { mockRestore(): void } | undefined;
-    let observationDirectoryCreated = false;
-    let originalMoved = false;
-    let replacementCreated = false;
+    const replacement = directoryReplacement(original, moved, observedReplacement, lockRoot.rootReal);
     try {
       const reused = acquireFileLockSync(path.join(original, "state.json"), options);
       reentrant = reused;
       const sidecarBytes = fs.readFileSync(lock.lockPath);
       const sidecarIdentity = fs.lstatSync(lock.lockPath, { bigint: true });
-      if (process.platform === "win32") {
-        // Windows correctly keeps a directory containing the owned sidecar fd
-        // immovable. Model only the Root identity observation with another real
-        // directory so the descriptor-bound sidecar and validator stay real.
-        fs.mkdirSync(observedReplacement);
-        observationDirectoryCreated = true;
-        const originalIdentity = fs.lstatSync(original, { bigint: true });
-        const replacementIdentity = fs.lstatSync(observedReplacement, { bigint: true });
-        expect([replacementIdentity.dev, replacementIdentity.ino])
-          .not.toEqual([originalIdentity.dev, originalIdentity.ino]);
-        const lstat = fs.lstatSync.bind(fs);
-        observation = vi.spyOn(fs, "lstatSync").mockImplementation(
-          ((...args: Parameters<typeof fs.lstatSync>) => {
-            if (observationArmed && args[1]?.bigint === true &&
-              String(args[0]) === pathForWindowsFilesystem(lockRoot.rootReal)) {
-              rootObservations += 1;
-              return replacementIdentity;
-            }
-            return lstat(...args);
-          }) as typeof fs.lstatSync,
-        );
-        observationArmed = true;
-      } else {
-        fs.renameSync(original, moved);
-        originalMoved = true;
-        fs.mkdirSync(original);
-        replacementCreated = true;
-      }
+      replacement.prepare();
+      replacement.replace();
       payload.mockClear();
-      let observationsBefore = rootObservations;
+      let observationsBefore = replacement.observations;
       expect(() => acquireFileLockSync(path.join(original, "state.json"), options))
         .toThrow(expect.objectContaining({ code: "path-mismatch" }));
       if (process.platform === "win32") {
-        expect(rootObservations).toBeGreaterThan(observationsBefore);
+        expect(replacement.observations).toBeGreaterThan(observationsBefore);
       }
       expect(payload).not.toHaveBeenCalled();
-      observationsBefore = rootObservations;
+      observationsBefore = replacement.observations;
       expect(() => lock.verifyStillHeld()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
       if (process.platform === "win32") {
-        expect(rootObservations).toBeGreaterThan(observationsBefore);
+        expect(replacement.observations).toBeGreaterThan(observationsBefore);
       }
-      observationsBefore = rootObservations;
+      observationsBefore = replacement.observations;
       expect(() => reused.release()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
       if (process.platform === "win32") {
-        expect(rootObservations).toBeGreaterThan(observationsBefore);
+        expect(replacement.observations).toBeGreaterThan(observationsBefore);
       }
-      observationsBefore = rootObservations;
+      observationsBefore = replacement.observations;
       expect(() => lock.release()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
       if (process.platform === "win32") {
-        expect(rootObservations).toBeGreaterThan(observationsBefore);
+        expect(replacement.observations).toBeGreaterThan(observationsBefore);
         expect(fs.readFileSync(lock.lockPath)).toEqual(sidecarBytes);
         const currentIdentity = fs.lstatSync(lock.lockPath, { bigint: true });
         expect([currentIdentity.dev, currentIdentity.ino])
@@ -101,15 +134,7 @@ describe("synchronous Root-backed file-lock replacement authority", () => {
         expect(fs.existsSync(path.join(original, "state.json.lock"))).toBe(false);
       }
     } finally {
-      observationArmed = false;
-      observation?.mockRestore();
-      if (observationDirectoryCreated && fs.existsSync(observedReplacement)) {
-        fs.rmdirSync(observedReplacement);
-      }
-      if (replacementCreated && fs.existsSync(original)) fs.rmdirSync(original);
-      if (originalMoved && fs.existsSync(moved) && !fs.existsSync(original)) {
-        fs.renameSync(moved, original);
-      }
+      replacement.restore();
       try {
         reentrant?.release();
       } finally {
@@ -132,56 +157,23 @@ describe("synchronous Root-backed file-lock replacement authority", () => {
       payload,
     });
     const observedReplacement = path.join(directory, "observed-parent");
-    let observationArmed = false;
-    let parentObservations = 0;
-    let observation: { mockRestore(): void } | undefined;
-    let observationDirectoryCreated = false;
-    let parentMoved = false;
-    let replacementParentCreated = false;
-    let replacementLinkCreated = false;
+    const replacement = directoryReplacement(parent, movedParent, observedReplacement, parent, "state.lock");
     try {
       const sidecarBytes = fs.readFileSync(lockPath);
       const sidecarIdentity = fs.lstatSync(lockPath, { bigint: true });
-      if (process.platform === "win32") {
-        // Keep the owned sidecar open and real; replace only the retained-parent
-        // observation with the exact identity of another physical directory.
-        fs.mkdirSync(observedReplacement);
-        observationDirectoryCreated = true;
-        const parentIdentity = fs.lstatSync(parent, { bigint: true });
-        const replacementIdentity = fs.lstatSync(observedReplacement, { bigint: true });
-        expect([replacementIdentity.dev, replacementIdentity.ino])
-          .not.toEqual([parentIdentity.dev, parentIdentity.ino]);
-        const lstat = fs.lstatSync.bind(fs);
-        observation = vi.spyOn(fs, "lstatSync").mockImplementation(
-          ((...args: Parameters<typeof fs.lstatSync>) => {
-            if (observationArmed && args[1]?.bigint === true &&
-              String(args[0]) === pathForWindowsFilesystem(parent)) {
-              parentObservations += 1;
-              return replacementIdentity;
-            }
-            return lstat(...args);
-          }) as typeof fs.lstatSync,
-        );
-        observationArmed = true;
-      } else {
-        fs.renameSync(parent, movedParent);
-        parentMoved = true;
-        fs.mkdirSync(parent);
-        replacementParentCreated = true;
-        fs.linkSync(path.join(movedParent, "state.lock"), lockPath);
-        replacementLinkCreated = true;
-      }
-      let observationsBefore = parentObservations;
+      replacement.prepare();
+      replacement.replace();
+      let observationsBefore = replacement.observations;
       expect(() => lock.verifyStillHeld())
         .toThrow(expect.objectContaining({ code: "path-mismatch" }));
       if (process.platform === "win32") {
-        expect(parentObservations).toBeGreaterThan(observationsBefore);
+        expect(replacement.observations).toBeGreaterThan(observationsBefore);
       }
-      observationsBefore = parentObservations;
+      observationsBefore = replacement.observations;
       expect(() => lock.release())
         .toThrow(expect.objectContaining({ code: "path-mismatch" }));
       if (process.platform === "win32") {
-        expect(parentObservations).toBeGreaterThan(observationsBefore);
+        expect(replacement.observations).toBeGreaterThan(observationsBefore);
       }
       expect(payload).toHaveBeenCalledTimes(1);
       expect(fs.readFileSync(lockPath)).toEqual(sidecarBytes);
@@ -192,16 +184,7 @@ describe("synchronous Root-backed file-lock replacement authority", () => {
         expect(fs.existsSync(path.join(movedParent, "state.lock"))).toBe(true);
       }
     } finally {
-      observationArmed = false;
-      observation?.mockRestore();
-      if (observationDirectoryCreated && fs.existsSync(observedReplacement)) {
-        fs.rmdirSync(observedReplacement);
-      }
-      if (replacementLinkCreated && fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-      if (replacementParentCreated && fs.existsSync(parent)) fs.rmdirSync(parent);
-      if (parentMoved && fs.existsSync(movedParent) && !fs.existsSync(parent)) {
-        fs.renameSync(movedParent, parent);
-      }
+      replacement.restore();
       lock.release();
     }
   });
@@ -214,25 +197,11 @@ describe("synchronous Root-backed file-lock replacement authority", () => {
     const lockPath = path.join(parent, "state.lock");
     const lockRoot = await root(directory, { hardlinks: "allow" });
     const observedReplacement = path.join(directory, "observed-parent");
-    let observationArmed = false;
-    let parentObservations = 0;
-    let observation: { mockRestore(): void } | undefined;
-    let observationDirectoryCreated = false;
-    let parentMoved = false;
-    let replacementParentCreated = false;
-    let replacementLinkCreated = false;
+    const replacement = directoryReplacement(parent, movedParent, observedReplacement, parent, "state.lock");
     const payload = vi.fn(() => ({ owner: "test" }));
     const parsePayload = vi.fn((raw: string) => {
-      if (process.platform === "win32") {
-        observationArmed = true;
-      } else {
-        fs.renameSync(parent, movedParent);
-        parentMoved = true;
-        fs.mkdirSync(parent);
-        replacementParentCreated = true;
-        fs.linkSync(path.join(movedParent, "state.lock"), lockPath);
-        replacementLinkCreated = true;
-      }
+      // Arm only after the first snapshot so the post-parser identity fence rejects it.
+      replacement.replace();
       return JSON.parse(raw) as unknown;
     });
     const lock = acquireFileLockSync(path.join(directory, "state.json"), {
@@ -244,48 +213,19 @@ describe("synchronous Root-backed file-lock replacement authority", () => {
     try {
       const sidecarBytes = fs.readFileSync(lockPath);
       const sidecarIdentity = fs.lstatSync(lockPath, { bigint: true });
-      if (process.platform === "win32") {
-        // The parser arms this observation after the first descriptor-bound
-        // snapshot, leaving the post-callback validator as the failing fence.
-        fs.mkdirSync(observedReplacement);
-        observationDirectoryCreated = true;
-        const parentIdentity = fs.lstatSync(parent, { bigint: true });
-        const replacementIdentity = fs.lstatSync(observedReplacement, { bigint: true });
-        expect([replacementIdentity.dev, replacementIdentity.ino])
-          .not.toEqual([parentIdentity.dev, parentIdentity.ino]);
-        const lstat = fs.lstatSync.bind(fs);
-        observation = vi.spyOn(fs, "lstatSync").mockImplementation(
-          ((...args: Parameters<typeof fs.lstatSync>) => {
-            if (observationArmed && args[1]?.bigint === true &&
-              String(args[0]) === pathForWindowsFilesystem(parent)) {
-              parentObservations += 1;
-              return replacementIdentity;
-            }
-            return lstat(...args);
-          }) as typeof fs.lstatSync,
-        );
-      }
+      replacement.prepare();
       expect(() => lock.verifyStillHeld())
         .toThrow(expect.objectContaining({ code: "path-mismatch" }));
       expect(parsePayload).toHaveBeenCalledTimes(1);
       expect(payload).toHaveBeenCalledTimes(1);
-      if (process.platform === "win32") expect(parentObservations).toBeGreaterThan(0);
-      else expect(parentMoved && replacementParentCreated && replacementLinkCreated).toBe(true);
+      if (process.platform === "win32") expect(replacement.observations).toBeGreaterThan(0);
+      else expect(replacement.linkedReplacement).toBe(true);
       expect(fs.readFileSync(lockPath)).toEqual(sidecarBytes);
       const currentIdentity = fs.lstatSync(lockPath, { bigint: true });
       expect([currentIdentity.dev, currentIdentity.ino])
         .toEqual([sidecarIdentity.dev, sidecarIdentity.ino]);
     } finally {
-      observationArmed = false;
-      observation?.mockRestore();
-      if (observationDirectoryCreated && fs.existsSync(observedReplacement)) {
-        fs.rmdirSync(observedReplacement);
-      }
-      if (replacementLinkCreated && fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-      if (replacementParentCreated && fs.existsSync(parent)) fs.rmdirSync(parent);
-      if (parentMoved && fs.existsSync(movedParent) && !fs.existsSync(parent)) {
-        fs.renameSync(movedParent, parent);
-      }
+      replacement.restore();
       lock.release();
     }
   });
