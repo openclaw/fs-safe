@@ -301,3 +301,24 @@ replay one with `--replay <failure.json>`. Event mode requires a working native
 binding and never silently falls back to polling. The small
 `test/watch-model.test.ts` corpus runs in ordinary CI; native-event cases also run
 when `FS_SAFE_TEST_WATCH_EVENTS=1`. Keep fixtures on normal `os.tmpdir()` storage.
+
+Add `--transitions` to exercise a finite state corpus before each random sequence.
+It varies `maxPendingPaths` from 2 through 8, creates missing tree descendants
+beside concurrent sibling churn, uses filesystem-proven case and Unicode aliases,
+and covers atomic-save names, excluded subtrees, Linux undecodable siblings,
+directory chmod/rename/deletion, scope replacement, and subscription retirement.
+A separate quiet subscription must remain unaffected. The checker records genuine
+backend loss and rejects overflow without that loss or a selected diff exceeding
+the configured budget. Each checkpoint permits at most four guarded passes and
+refreshes the consumer cache only in response to invalidation.
+
+```sh
+node scripts/watch-stress/model-runner.mjs --transitions --seeds 500 --mode both --output watch-transition-results.json
+```
+
+For transport diagnosis, add `--native-only`: event-mode checkpoints then wait up
+to 400 intervals of 25 ms without calling `reconcile()`. This stronger diagnostic
+depends on native event delivery; it is separate from the periodic-reconciliation
+guarantee and must not turn an unavailable transport into a passing run. Transition
+failures retain their seed and mode in the report; replay them with `--seed N
+--seeds 1 --mode events --transitions` and the same diagnostic options.

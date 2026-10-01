@@ -38,6 +38,9 @@ pub struct WatchBatch {
 #[path = "watch_callback.rs"]
 mod callback;
 use callback::Callback;
+#[cfg(test)]
+#[path = "watch_property_tests.rs"]
+mod property_tests;
 #[path = "watch_memory.rs"]
 mod memory;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
