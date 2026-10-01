@@ -1,4 +1,4 @@
-import fsSync, { type BigIntStats } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,33 +11,21 @@ import {
   __cleanupRegisteredTempPathForTest,
   __cleanupRegisteredTempPathsForTest,
 } from "../src/temp-cleanup.js";
+import {
+  FAILURE_VALUES, captureAsync, captureSync, consumeRetainedRegistration,
+  expectReturned, thrownValue, expectNormalizedCleanup, expectCleanupWrapper,
+  expectAggregate, type Captured,
+} from "./helpers/atomic-settlement.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 
-type FailureValue = Readonly<{ label: string; value: unknown }>;
 type FailureCombination = Readonly<{
   label: string;
   operation: boolean;
   cleanup: boolean;
   close: boolean;
 }>;
-type Captured =
-  | Readonly<{ kind: "returned" }>
-  | Readonly<{ kind: "threw"; error: unknown }>;
-
-const FAILURE_VALUES: readonly FailureValue[] = [
-  { label: "undefined", value: undefined },
-  { label: "null", value: null },
-  { label: "false", value: false },
-  { label: "+0", value: 0 },
-  { label: "-0", value: -0 },
-  { label: "0n", value: 0n },
-  { label: "empty string", value: "" },
-  { label: "NaN", value: Number.NaN },
-  { label: "Error", value: new Error("control failure") },
-];
-
 const FAILURE_COMBINATIONS: readonly FailureCombination[] = [
   { label: "none", operation: false, cleanup: false, close: false },
   { label: "P", operation: true, cleanup: false, close: false },
@@ -67,79 +55,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   __cleanupRegisteredTempPathsForTest();
 });
-
-async function captureAsync(run: () => Promise<unknown>): Promise<Captured> {
-  try {
-    await run();
-    return { kind: "returned" };
-  } catch (error) {
-    return { kind: "threw", error };
-  }
-}
-
-function captureSync(run: () => unknown): Captured {
-  try {
-    run();
-    return { kind: "returned" };
-  } catch (error) {
-    return { kind: "threw", error };
-  }
-}
-
-function consumeRetainedRegistration(pathname: string): void {
-  const lstat = vi.spyOn(fsSync, "lstatSync");
-  try {
-    __cleanupRegisteredTempPathForTest(pathname);
-    expect(lstat).toHaveBeenCalledWith(pathname, { bigint: true });
-  } finally {
-    lstat.mockRestore();
-    fsSync.rmSync(pathname, { force: true });
-  }
-}
-
-function expectReturned(outcome: Captured): void {
-  expect(outcome.kind).toBe("returned");
-}
-
-function thrownValue(outcome: Captured): unknown {
-  expect(outcome.kind).toBe("threw");
-  if (outcome.kind !== "threw") throw new Error("Expected a thrown settlement");
-  return outcome.error;
-}
-
-function expectNormalizedCleanup(actual: unknown, cleanup: unknown): void {
-  if (cleanup instanceof Error) {
-    expect(Object.is(actual, cleanup)).toBe(true);
-    return;
-  }
-  expect(actual).toBeInstanceOf(Error);
-  expect((actual as Error).message).toBe(String(cleanup));
-}
-
-function expectCleanupWrapper(actual: unknown, operation: unknown, cleanup: unknown): void {
-  expect(actual).toBeInstanceOf(Error);
-  expect(actual).not.toBeInstanceOf(AggregateError);
-  const wrapped = actual as Error & { cause?: unknown };
-  expect(Object.hasOwn(wrapped, "cause")).toBe(true);
-  expect(Object.is(wrapped.cause, operation)).toBe(true);
-  expect(wrapped.message).toBe(
-    `Atomic file replace failed (${String(operation)}); cleanup also failed (${String(cleanup)})`,
-  );
-}
-
-function expectAggregate(
-  actual: unknown,
-  message: string,
-  assertFirst: (value: unknown) => void,
-  second: unknown,
-): void {
-  expect(actual).toBeInstanceOf(AggregateError);
-  const aggregate = actual as AggregateError;
-  expect(aggregate.message).toBe(message);
-  expect(aggregate.errors).toHaveLength(2);
-  assertFirst(aggregate.errors[0]);
-  expect(Object.is(aggregate.errors[1], second)).toBe(true);
-}
 
 function expectSettlement(
   outcome: Captured,
@@ -183,6 +98,31 @@ function expectSettlement(
   expectReturned(outcome);
 }
 
+async function finishOwner(params: {
+  variant: "async" | "sync";
+  pathname: string;
+  identity: BigIntStats;
+  unlink(): void;
+  close(): void;
+  originalFailure?: AtomicTempFailure;
+  reportCleanup: boolean;
+}): Promise<Captured> {
+  const { variant, pathname, identity, unlink, close, originalFailure, reportCleanup } = params;
+  const io = variant === "async"
+    ? AtomicIo.async({ lstat: async () => identity, unlink: async () => unlink() } as never)
+    : AtomicIo.sync({ lstatSync: () => identity, unlinkSync: unlink, closeSync: close } as never);
+  const owner = new AtomicTempOwner(pathname, io);
+  owner.start();
+  owner.adopt({
+    identity,
+    file: variant === "async" ? io.wrap({ close: async () => close() } as FileHandle) : io.wrap(47),
+  });
+  const finish = () => owner.finish({ originalFailure, throwOnCleanupError: reportCleanup });
+  return variant === "async"
+    ? await captureAsync(() => runAsync(finish()))
+    : captureSync(() => runSync(finish()));
+}
+
 async function settleOwner(params: {
   variant: "async" | "sync";
   combination: FailureCombination;
@@ -193,57 +133,22 @@ async function settleOwner(params: {
     process.cwd(),
     `.fs-safe-settlement-${process.pid}-${syntheticPathIndex++}.tmp`,
   );
-  const originalFailure: AtomicTempFailure | undefined = params.combination.operation
-    ? { error: params.value }
-    : undefined;
   let cleanupAttempts = 0;
   let closeAttempts = 0;
-
-  if (params.variant === "async") {
-    const io = AtomicIo.async({
-      lstat: async () => OWNED_IDENTITY,
-      unlink: async () => {
-        cleanupAttempts += 1;
-        if (params.combination.cleanup) throw params.value;
-      },
-    } as never);
-    const owner = new AtomicTempOwner(pathname, io);
-    owner.start();
-    owner.adopt({
-      identity: OWNED_IDENTITY,
-      file: io.wrap({
-        close: async () => {
-          closeAttempts += 1;
-          if (params.combination.close) throw params.value;
-        },
-      } as FileHandle),
-    });
-    const outcome = await captureAsync(async () => await runAsync(owner.finish({
-      originalFailure,
-      throwOnCleanupError: params.reportCleanup,
-    })));
-    __cleanupRegisteredTempPathForTest(pathname);
-    return { outcome, cleanupAttempts, closeAttempts };
-  }
-
-  const io = AtomicIo.sync({
-    lstatSync: () => OWNED_IDENTITY,
-    unlinkSync: () => {
+  const outcome = await finishOwner({
+    ...params,
+    pathname,
+    identity: OWNED_IDENTITY,
+    originalFailure: params.combination.operation ? { error: params.value } : undefined,
+    unlink() {
       cleanupAttempts += 1;
       if (params.combination.cleanup) throw params.value;
     },
-    closeSync: () => {
+    close() {
       closeAttempts += 1;
       if (params.combination.close) throw params.value;
     },
-  } as never);
-  const owner = new AtomicTempOwner(pathname, io);
-  owner.start();
-  owner.adopt({ file: io.wrap(47), identity: OWNED_IDENTITY });
-  const outcome = captureSync(() => runSync(owner.finish({
-    originalFailure,
-    throwOnCleanupError: params.reportCleanup,
-  })));
+  });
   __cleanupRegisteredTempPathForTest(pathname);
   return { outcome, cleanupAttempts, closeAttempts };
 }
@@ -276,45 +181,11 @@ describe.each(["async", "sync"] as const)("%s atomic temp registration", (varian
       const identity = await fs.lstat(pathname, { bigint: true });
       const cleanupFailure = new Error("cleanup denied");
       let closeAttempts = 0;
-      let outcome: Captured;
-
-      if (variant === "async") {
-        const io = AtomicIo.async({
-          lstat: async () => identity,
-          unlink: async () => {
-            throw cleanupFailure;
-          },
-        } as never);
-        const owner = new AtomicTempOwner(pathname, io);
-        owner.start();
-        owner.adopt({
-          identity,
-          file: io.wrap({
-            close: async () => {
-              closeAttempts += 1;
-            },
-          } as FileHandle),
-        });
-        outcome = await captureAsync(async () => await runAsync(owner.finish({
-          throwOnCleanupError: reportCleanup,
-        })));
-      } else {
-        const io = AtomicIo.sync({
-          lstatSync: () => identity,
-          unlinkSync: () => {
-            throw cleanupFailure;
-          },
-          closeSync: () => {
-            closeAttempts += 1;
-          },
-        } as never);
-        const owner = new AtomicTempOwner(pathname, io);
-        owner.start();
-        owner.adopt({ file: io.wrap(53), identity });
-        outcome = captureSync(() => runSync(owner.finish({
-          throwOnCleanupError: reportCleanup,
-        })));
-      }
+      const outcome = await finishOwner({
+        variant, pathname, identity, reportCleanup,
+        unlink() { throw cleanupFailure; },
+        close() { closeAttempts += 1; },
+      });
 
       if (reportCleanup) {
         expect(Object.is(thrownValue(outcome), cleanupFailure)).toBe(true);

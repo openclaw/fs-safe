@@ -1,27 +1,17 @@
 import fsSync from "node:fs";
-import fsp, { type FileHandle } from "node:fs/promises";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
-import { copyTree } from "../src/copy.js";
+import { copyTree, createCloneSource, probeTreeClone } from "../src/copy.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import {
-  __resetNativeLoaderForTest,
-  __setNativeLoaderForTest,
-  type NativeBinding,
-} from "../src/native.js";
+  FALSY_FAILURES, noFailure, fails, pathKey, capture, expectFailure,
+  observeFileHandles, observeDirectoryCloses, portableRoles, fakeNative,
+} from "./helpers/copy-close-precedence.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-const FALSY_FAILURES = [undefined, null, false, 0, -0, 0n, "", Number.NaN] as const;
-
-type Failure = { enabled: true; value: unknown } | { enabled: false };
-type Settlement = { failed: true; value: unknown } | { failed: false };
-type FileOperation =
-  | { kind: "identity" }
-  | { kind: "write" | "metadata"; value: unknown };
-
-const noFailure: Failure = { enabled: false };
-const fails = (value: unknown): Failure => ({ enabled: true, value });
 
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
 afterEach(() => {
@@ -29,35 +19,6 @@ afterEach(() => {
   __resetNativeLoaderForTest();
   configureFsSafeNative({ mode: "auto" });
 });
-
-function pathKey(value: fsSync.PathLike): string {
-  const resolved = path.resolve(String(value));
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function bindHandle(handle: FileHandle, overrides: Partial<FileHandle>): FileHandle {
-  return new Proxy(handle, {
-    get(target, property) {
-      if (property in overrides) return overrides[property as keyof FileHandle];
-      const value = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
-
-async function capture(run: () => Promise<unknown>): Promise<Settlement> {
-  try {
-    await run();
-    return { failed: false };
-  } catch (value) {
-    return { failed: true, value };
-  }
-}
-
-function expectFailure(settlement: Settlement, expected: unknown): void {
-  expect(settlement.failed).toBe(true);
-  if (settlement.failed) expect(Object.is(settlement.value, expected)).toBe(true);
-}
 
 async function fixture(label: string, names = ["payload"]) {
   const directory = await tempRoot(`fs-safe-copy-close-${label}-`);
@@ -68,137 +29,6 @@ async function fixture(label: string, names = ["payload"]) {
     await fsp.writeFile(path.join(source, name), Buffer.alloc(4097 + index, index + 1));
   }
   return { directory, source, destination };
-}
-
-type FilePlan = {
-  path: string;
-  operation?: FileOperation;
-  closeFailure?: Failure | (() => Failure);
-  beforeClose?(): Promise<void>;
-  onCloseStart?(): void;
-  onClosed?(): void;
-};
-
-function observeFileHandles(plans: FilePlan[]) {
-  const byPath = new Map(plans.map(plan => [pathKey(plan.path), plan]));
-  const attempts = new Map<string, number>();
-  const events: string[] = [];
-  const open = fsp.open.bind(fsp);
-  vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-    const handle = await open(...args);
-    const plan = byPath.get(pathKey(args[0]));
-    if (!plan) return handle;
-    const overrides: Partial<FileHandle> = {};
-    const operation = plan.operation;
-    if (operation?.kind === "identity") {
-      overrides.stat = (async () => {
-        const stat = await handle.stat({ bigint: true });
-        return new Proxy(stat, {
-          get(target, property) {
-            if (property === "ino") return target.ino + 1n;
-            const value = Reflect.get(target, property, target);
-            return typeof value === "function" ? value.bind(target) : value;
-          },
-        });
-      }) as FileHandle["stat"];
-    } else if (operation?.kind === "write") {
-      overrides.write = (async () => {
-        throw operation.value;
-      }) as FileHandle["write"];
-    } else if (operation?.kind === "metadata") {
-      overrides.utimes = async () => {
-        throw operation.value;
-      };
-    }
-    overrides.close = async () => {
-      const key = pathKey(plan.path);
-      attempts.set(key, (attempts.get(key) ?? 0) + 1);
-      events.push(key);
-      plan.onCloseStart?.();
-      await plan.beforeClose?.();
-      await handle.close();
-      plan.onClosed?.();
-      const configuredFailure = plan.closeFailure;
-      const failure = typeof configuredFailure === "function"
-        ? configuredFailure()
-        : configuredFailure ?? noFailure;
-      if (failure.enabled) throw failure.value;
-    };
-    return bindHandle(handle, overrides);
-  });
-  return {
-    attempts: (filename: string) => attempts.get(pathKey(filename)) ?? 0,
-    events,
-  };
-}
-
-type DirectoryRole = {
-  label: string;
-  path: string;
-  occurrence: number;
-  failure?: Failure;
-};
-
-function observeDirectoryCloses(roles: DirectoryRole[]) {
-  const open = fsSync.openSync.bind(fsSync);
-  const close = fsSync.closeSync.bind(fsSync);
-  const occurrences = new Map<string, number>();
-  const descriptors = new Map<number, DirectoryRole>();
-  const attempts = new Map<string, number>();
-  const events: string[] = [];
-  vi.spyOn(fsSync, "openSync").mockImplementation(((...args) => {
-    const fd = open(...args);
-    descriptors.delete(fd);
-    const key = pathKey(args[0]);
-    const matching = roles.filter(role => pathKey(role.path) === key);
-    if (matching.length > 0) {
-      const occurrence = (occurrences.get(key) ?? 0) + 1;
-      occurrences.set(key, occurrence);
-      const role = matching.find(candidate => candidate.occurrence === occurrence);
-      if (role) descriptors.set(fd, role);
-    }
-    return fd;
-  }) as typeof fsSync.openSync);
-  vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
-    const role = descriptors.get(fd);
-    if (role) {
-      attempts.set(role.label, (attempts.get(role.label) ?? 0) + 1);
-      events.push(role.label);
-    }
-    close(fd);
-    if (!role) return;
-    const failure = role.failure ?? noFailure;
-    if (failure.enabled) throw failure.value;
-  });
-  return {
-    attempts: (label: string) => attempts.get(label) ?? 0,
-    events,
-  };
-}
-
-function portableRoles(
-  directory: string,
-  source: string,
-  destination: string,
-  failures: Partial<Record<string, Failure>> = {},
-): DirectoryRole[] {
-  return [
-    { label: "parent", path: directory, occurrence: 1, failure: failures.parent },
-    { label: "wrapper-original", path: source, occurrence: 1, failure: failures["wrapper-original"] },
-    { label: "portable-target", path: destination, occurrence: 1, failure: failures["portable-target"] },
-    { label: "portable-original", path: source, occurrence: 2, failure: failures["portable-original"] },
-  ];
-}
-
-function fakeNative(
-  probe: NativeBinding["probeTreeClone"],
-  clone: NativeBinding["cloneTree"],
-): NativeBinding {
-  return {
-    closeOwnedFd() {},
-    probeTreeClone: probe,
-    cloneTree: clone,
-  } as NativeBinding;
 }
 
 describe("copyTree close precedence", () => {
@@ -493,5 +323,77 @@ describe("copyTree close precedence", () => {
     for (const label of ["portable-original", "portable-target", "wrapper-original", "parent"]) {
       expect(directories.attempts(label)).toBe(1);
     }
+  });
+
+  describe("wrapper close precedence", () => {
+    it("preserves every falsy native copy failure over wrapper closes", async () => {
+      for (const [index, operationFailure] of FALSY_FAILURES.entries()) {
+        const directory = await tempRoot(`fs-safe-falsy-native-${index}-`);
+        const source = path.join(directory, "source");
+        const destination = path.join(directory, "destination");
+        await fsp.mkdir(source);
+        __setNativeLoaderForTest(() => fakeNative(() => "xfs", async () => {
+          throw operationFailure;
+        }));
+        configureFsSafeNative({ mode: "auto" });
+        const closes = observeDirectoryCloses([
+          { label: "parent", path: directory, failure: fails(new Error("parent close failed")) },
+          { label: "original", path: source, failure: fails(new Error("original close failed")) },
+        ]);
+        const settlement = await capture(() => copyTree(source, destination, { clone: "always" }));
+        expectFailure(settlement, operationFailure);
+        expect(closes.events).toEqual(["original", "parent"]);
+        vi.restoreAllMocks();
+        __resetNativeLoaderForTest();
+      }
+    });
+
+    it.each([
+      { label: "falsy close failures", rows: FALSY_FAILURES.map(value => ({ operation: noFailure, close: value })) },
+      { label: "Error success/failure controls", rows: [noFailure, fails(Object.assign(new Error("clone-source operation failed"), { code: "ECLONE" }))]
+        .map(operation => ({ operation, close: Object.assign(new Error("clone-source parent close failed"), { code: "ECLOSE" }) })) },
+    ])("settles clone-source creation with $label", async ({ rows }) => {
+      for (const [index, { operation, close }] of rows.entries()) {
+        const directory = await tempRoot(`fs-safe-clone-source-close-${index}-`);
+        const destination = path.join(directory, "source");
+        __setNativeLoaderForTest(() => fakeNative(() => "xfs", async () => {
+          if (operation.enabled) throw operation.value;
+          await fsp.mkdir(destination);
+        }));
+        configureFsSafeNative({ mode: "auto" });
+        const closes = observeDirectoryCloses([
+          { label: "parent", path: directory, failure: fails(close) },
+        ]);
+        const settlement = await capture(() => createCloneSource(destination));
+        expectFailure(settlement, operation.enabled ? operation.value : close);
+        expect(closes.attempts("parent")).toBe(1);
+        expect(fsSync.existsSync(destination)).toBe(!operation.enabled);
+        vi.restoreAllMocks();
+        __resetNativeLoaderForTest();
+      }
+    });
+
+    it.each([
+      { label: "Error success/failure controls", rows: [noFailure, fails(Object.assign(new Error("probe failed"), { code: "EPROBE" }))],
+        close: Object.assign(new Error("probe close failed"), { code: "ECLOSE" }) },
+      { label: "falsy operation failures", rows: FALSY_FAILURES.map(fails), close: new Error("probe close failed") },
+    ])("settles probeTreeClone with $label", async ({ rows, close }) => {
+      for (const [index, operation] of rows.entries()) {
+        const directory = await tempRoot(`fs-safe-probe-close-${index}-`);
+        __setNativeLoaderForTest(() => fakeNative(() => {
+          if (operation.enabled) throw operation.value;
+          return "xfs";
+        }, async () => {}));
+        configureFsSafeNative({ mode: "auto" });
+        const closes = observeDirectoryCloses([
+          { label: "parent", path: directory, failure: fails(close) },
+        ]);
+        const settlement = await capture(async () => probeTreeClone(directory));
+        expectFailure(settlement, operation.enabled ? operation.value : close);
+        expect(closes.attempts("parent")).toBe(1);
+        vi.restoreAllMocks();
+        __resetNativeLoaderForTest();
+      }
+    });
   });
 });
