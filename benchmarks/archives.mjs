@@ -6,6 +6,7 @@ import * as tar from "tar";
 import { registerDirectoryModeOwnerBenchmark } from "./directory-mode-owner.mjs";
 import { registerNativeArchives } from "./native-archives.mjs";
 import { registerZipCountSearch } from "./zip-count-search.mjs";
+import { createZipEndScanFixture } from "./zip-end-scan-fixtures.mjs";
 import { registerZipNameAdmission } from "./zip-name-admission.mjs";
 import { registerTarMemberPaths } from "./tar-member-paths.mjs";
 import {
@@ -82,12 +83,7 @@ export async function registerArchives(context) {
   add("createTarEntryPreflightChecker/call", (check) => check({ path: "entry.json", type: "File", size: 11 }), { sync: true, before: () => a.createTarEntryPreflightChecker({ rootDir: destination }) });
   add("loadZipArchiveWithPreflight", () => a.loadZipArchiveWithPreflight(zipBytes));
   for (const shape of ["payload", "comment", "dense-payload"]) {
-    const tailZip = new JSZip();
-    const payload = shape === "comment" ? Buffer.from("payload") : Buffer.alloc(64 * 1024,
-      shape === "dense-payload" ? Buffer.from([0x50, 0x4b, 0x05, 0x06]) : 0x61);
-    tailZip.file("payload.bin", payload);
-    if (shape === "comment") tailZip.comment = "a".repeat(65_535);
-    const bytes = await tailZip.generateAsync({ type: "nodebuffer", compression: "STORE" });
+    const bytes = await createZipEndScanFixture(shape);
     add(`loadZipArchiveWithPreflight/zip-end-scan-${shape}`, () => a.loadZipArchiveWithPreflight(bytes), {
       verify: result => {
         assert.deepEqual(Object.keys(result.files), ["payload.bin"]);

@@ -1,8 +1,7 @@
-import fsSync, { type BigIntStats } from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
+import { inspectAtomicIdentity, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { FsSafeError } from "./errors.js";
-import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { AtomicMutation } from "./replace-file-mutation.js";
 
 function regular(stat: BigIntStats, pathname: string, rejectHardlinks: boolean): BigIntStats {
@@ -15,101 +14,81 @@ function regular(stat: BigIntStats, pathname: string, rejectHardlinks: boolean):
   return stat;
 }
 
-/** Borrow the writer's descriptor; never adopt an identity from a later pathname open. */
-export async function captureAtomicDestination(
-  fsModule: Pick<typeof fs, "lstat">,
-  handle: FileHandle,
-  pathname: string,
-  mutation: AtomicMutation,
-  rejectHardlinks: boolean,
-) {
-  const inspect = () => fsModule === fs
-    ? fsSync.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true });
-  const identity = await inspectFileIdentity(inspect);
-  regular(identity, pathname, rejectHardlinks);
-  let writing = false;
-  let restoreDescriptorOnly = false;
-  const verifyDescriptor = async () => {
-    await inspectFileIdentity(async () => regular(await inspect(), pathname, rejectHardlinks), identity);
-  };
-  const verify = async () => {
+/** Borrows the writer's descriptor; no later pathname open can replace it. */
+export class AtomicDestination {
+  #writing = false;
+  #restoreDescriptorOnly = false;
+
+  constructor(
+    readonly io: AtomicIo,
+    readonly file: AtomicFile,
+    readonly pathname: string,
+    readonly mutation: AtomicMutation,
+    readonly rejectHardlinks: boolean,
+    readonly identity: BigIntStats,
+  ) {}
+
+  *verify(restore = false): Procedure<void> {
     let metadataFailure = false;
-    const observe = async (read: () => BigIntStats | Promise<BigIntStats>) => {
-      try { return await read(); }
-      catch (error) { metadataFailure = hasErrorCode(error, "EIO"); throw error; }
-    };
+    const descriptorOnly = restore && this.#restoreDescriptorOnly;
+    const owner = this;
+    function readFailure(error: unknown): never {
+      metadataFailure = hasErrorCode(error, "EIO");
+      throw error;
+    }
+    function read(pathname: boolean): BigIntStats | Promise<BigIntStats> {
+      try {
+        const stat = pathname
+          ? owner.io.lstatExact(owner.pathname, false) : owner.file.statExact();
+        return owner.io.asynchronous ? Promise.resolve(stat).catch(readFailure) : stat;
+      } catch (error) {
+        return readFailure(error);
+      }
+    }
+    const admit = (stat: BigIntStats) => regular(stat, owner.pathname, owner.rejectHardlinks);
     try {
-      await inspectFileIdentity(async () => regular(await observe(inspect), pathname, rejectHardlinks), identity);
-      await inspectFileIdentity(async () => regular(await observe(() => fsModule.lstat(pathname, { bigint: true })), pathname, rejectHardlinks), identity);
+      const descriptorInspection = inspectAtomicIdentity(this.io, () => read(false), this.identity, false, admit);
+      if (this.io.asynchronous) yield descriptorInspection;
+      if (!descriptorOnly) {
+        const pathnameInspection = inspectAtomicIdentity(this.io, () => read(true), this.identity, false, admit);
+        if (this.io.asynchronous) yield pathnameInspection;
+      }
     } catch (error) {
-      if (writing && metadataFailure) {
-        // A metadata observation failed, but the already-owned descriptor can
-        // still restore its bytes after fresh exact descriptor verification.
-        restoreDescriptorOnly = true;
+      if (!descriptorOnly && this.#writing && metadataFailure) {
+        // Restore through the retained descriptor after a fresh exact check.
+        this.#restoreDescriptorOnly = true;
         throw error;
       }
-      mutation.refuse(error);
+      this.mutation.refuse(error);
     }
-  };
-  const verifyRestore = async () => {
-    if (!restoreDescriptorOnly) return await verify();
-    try { await verifyDescriptor(); }
-    catch (error) { mutation.refuse(error); }
-  };
-  return {
-    verify,
-    writing: () => { writing = true; mutation.destination("writing", pathname, identity); },
-    beforeWrite: async () => {
-      mutation.assert();
-      await verify();
-    },
-    beforeRestore: async () => { mutation.assert(); await verifyRestore(); },
-    verifyRestore,
-    assertBeforeMutation: () => mutation.assert(),
-    published: () => mutation.destination("published", pathname, identity),
-  };
+  }
+
+  *beforeWrite(restore: boolean): Procedure<void> {
+    this.mutation.assert();
+    yield* this.verify(restore);
+    // Async identity observations may revoke authority before dispatch resumes.
+    if (this.io.asynchronous) this.mutation.assert();
+  }
+
+  writing(): void {
+    this.#writing = true;
+    this.mutation.destination("writing", this.pathname, this.identity);
+  }
+
+  published(): void {
+    this.mutation.destination("published", this.pathname, this.identity);
+  }
 }
 
-export function captureAtomicDestinationSync(
-  fsModule: Pick<typeof fsSync, "lstatSync" | "fstatSync">,
-  fd: number,
+export function* captureAtomicDestination(
+  io: AtomicIo,
+  file: AtomicFile,
   pathname: string,
   mutation: AtomicMutation,
   rejectHardlinks: boolean,
-) {
-  const identity = inspectFileIdentitySync(() => fsModule.fstatSync(fd, { bigint: true }));
+): Procedure<AtomicDestination> {
+  const inspection = inspectAtomicIdentity(io, () => file.statExact());
+  const identity = (io.asynchronous ? (yield inspection) : inspection) as BigIntStats;
   regular(identity, pathname, rejectHardlinks);
-  let writing = false;
-  let restoreDescriptorOnly = false;
-  const verify = () => {
-    let metadataFailure = false;
-    const observe = (read: () => BigIntStats) => {
-      try { return read(); }
-      catch (error) { metadataFailure = hasErrorCode(error, "EIO"); throw error; }
-    };
-    try {
-      inspectFileIdentitySync(() => regular(observe(() => fsModule.fstatSync(fd, { bigint: true })), pathname, rejectHardlinks), identity);
-      inspectFileIdentitySync(() => regular(observe(() => fsModule.lstatSync(pathname, { bigint: true })), pathname, rejectHardlinks), identity);
-    } catch (error) {
-      if (writing && metadataFailure) { restoreDescriptorOnly = true; throw error; }
-      mutation.refuse(error);
-    }
-  };
-  const verifyRestore = () => {
-    if (!restoreDescriptorOnly) return verify();
-    try {
-      inspectFileIdentitySync(() => regular(fsModule.fstatSync(fd, { bigint: true }), pathname, rejectHardlinks), identity);
-    } catch (error) { mutation.refuse(error); }
-  };
-  return {
-    verify,
-    writing: () => { writing = true; mutation.destination("writing", pathname, identity); },
-    beforeWrite: () => {
-      mutation.assert();
-      verify();
-    },
-    beforeRestore: () => { mutation.assert(); verifyRestore(); },
-    verifyRestore,
-    published: () => mutation.destination("published", pathname, identity),
-  };
+  return new AtomicDestination(io, file, pathname, mutation, rejectHardlinks, identity);
 }
