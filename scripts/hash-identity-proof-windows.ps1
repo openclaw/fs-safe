@@ -189,8 +189,11 @@ try {
     $plainArguments = @('run', 'test') + $tests + @('--maxWorkers=1', '--no-file-parallelism')
     $plain = Invoke-Pnpm 'focused-tests-plain' $plainArguments
     $reports = Join-Path $Work 'focused-coverage'
+    # Repo-wide thresholds do not apply to this one-file run; the audit below gates it.
     $coverageArguments = @('run', 'test:coverage') + $tests + @('--maxWorkers=1', '--no-file-parallelism',
-        '--coverage.include=src/file-hash.ts', '--coverage.reporter=json-summary', "--coverage.reportsDirectory=$reports")
+        '--coverage.include=src/file-hash.ts', '--coverage.reporter=json-summary', "--coverage.reportsDirectory=$reports",
+        '--coverage.thresholds.lines=0', '--coverage.thresholds.functions=0',
+        '--coverage.thresholds.statements=0', '--coverage.thresholds.branches=0')
     $covered = Invoke-Pnpm 'focused-tests-coverage' $coverageArguments
     $gate = @{ label = 'focused-coverage-audit'; passed = $false; scope = 'src/file-hash.ts only, not repo-wide'
         required = @{ lines = 85; functions = 84.9; statements = 85; branches = 76 }
@@ -210,13 +213,13 @@ try {
                     [double]::IsNaN([double]$value.pct) -or $value.pct -lt $gate.required[$metric]) { $gate.passed = $false }
             }
         }
-        # Audit the unchanged config as well as measured coverage: no lowered configured thresholds.
+        # Audit the config as well as measured coverage: configured thresholds may rise, never fall below this floor.
         $config = Get-Content -LiteralPath (Join-Path $PatchedRepo 'vitest.config.ts') -Raw
         $block = [regex]::Match($config, '(?s)thresholds:\s*\{([^}]+)\}')
         if (-not $block.Success) { $gate.passed = $false }
         foreach ($metric in $gate.required.Keys) {
             $match = [regex]::Match($block.Groups[1].Value, "\b${metric}:\s*([0-9.]+)\s*,")
-            if (-not $match.Success -or [double]::Parse($match.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture) -ne
+            if (-not $match.Success -or [double]::Parse($match.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture) -lt
                 $gate.required[$metric]) { $gate.passed = $false }
         }
     } catch { $gate.passed = $false; $gate.error = $_.Exception.Message }
