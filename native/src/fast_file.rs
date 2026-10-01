@@ -151,7 +151,7 @@ mod tests {
         use std::io::{Read, Seek, SeekFrom, Write};
         use std::os::fd::AsRawFd;
         use std::path::PathBuf;
-        use std::time::{SystemTime, UNIX_EPOCH};
+        use crate::test_support::temp_path;
 
         struct Fixture {
             file: File,
@@ -162,14 +162,7 @@ mod tests {
                 let _ = fs::remove_file(&self.path);
             }
         }
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "fs-safe-native-hash-{}-{nonce}",
-            std::process::id()
-        ));
+        let path = temp_path("native-hash");
         let file = OpenOptions::new()
             .read(true)
             .write(true)

@@ -27,6 +27,12 @@ import {
 
 const { tempRoot } = useTempDirs();
 
+async function byteFixture(prefix: string, bytes: Buffer) {
+  const archivePath = path.join(await tempRoot(prefix), "fixture.tar");
+  await fs.writeFile(archivePath, bytes);
+  return archivePath;
+}
+
 function rawHeader(type = "0", size = 0): Buffer {
   return tarFixture([{ path: "entry", type, body: Buffer.alloc(size) }], false).subarray(0, 512);
 }
@@ -69,92 +75,64 @@ describe("TAR metadata preflight boundaries", () => {
       });
   });
 
-  it("rejects truncated headers and entry bodies distinctly", async () => {
-    const root = await tempRoot("fs-safe-tar-truncated-");
-    const headerPath = path.join(root, "header.tar");
-    const entryPath = path.join(root, "entry.tar");
-    await fs.writeFile(headerPath, Buffer.alloc(511));
-    await fs.writeFile(entryPath, tarFixture([{ path: "value", body: "payload" }], false).subarray(0, 513));
-
-    await expect(inspectTar({ archivePath: headerPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("truncated TAR header");
-    await expect(inspectTar({ archivePath: entryPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+  it("rejects truncated entry bodies", async () => {
+    const archivePath = await byteFixture("fs-safe-tar-truncated-",
+      tarFixture([{ path: "value", body: "payload" }], false).subarray(0, 513));
+    await expect(inspectTar({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
       .rejects.toThrow("truncated TAR entry");
   });
 
   it("rejects malformed octal and unsafe base-256 sizes", async () => {
-    const root = await tempRoot("fs-safe-tar-size-");
-    const malformedPath = path.join(root, "malformed.tar");
-    const highBitsPath = path.join(root, "high-bits.tar");
-    const paddingPath = path.join(root, "padding.tar");
-    const malformed = rawHeader();
-    malformed.fill(0x20, 124, 136);
-    malformed.write("00000000008\0", 124, "ascii");
-    const highBits = rawHeader();
-    highBits.fill(0, 124, 136);
-    highBits[124] = 0x80;
-    highBits[125] = 1;
-    const padding = rawHeader();
-    padding.fill(0, 124, 136);
-    padding[124] = 0x80;
-    padding.writeBigUInt64BE(BigInt(Number.MAX_SAFE_INTEGER), 128);
-    const negative = rawHeader();
-    negative.fill(0xff, 124, 136);
-    for (const header of [malformed, highBits, padding, negative]) updateTarChecksum(header);
-    await fs.writeFile(malformedPath, malformed);
-    await fs.writeFile(highBitsPath, highBits);
-    await fs.writeFile(paddingPath, padding);
-
-    await expect(inspectTar({ archivePath: malformedPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("size is not valid octal");
-    await expect(inspectTar({ archivePath: highBitsPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("base-256 size is negative or overflows u64");
-    await expect(inspectTar({ archivePath: paddingPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("entry padding exceeds the safe integer range");
-    await fs.writeFile(paddingPath, negative);
-    await expect(inspectTar({ archivePath: paddingPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("base-256 size is negative or overflows u64");
+    const rows: Array<{ mutate(header: Buffer): void; message: string }> = [
+      { mutate(header) {
+        header.fill(0x20, 124, 136);
+        header.write("00000000008\0", 124, "ascii");
+      }, message: "size is not valid octal" },
+      { mutate(header) {
+        header.fill(0, 124, 136); header[124] = 0x80; header[125] = 1;
+      }, message: "base-256 size is negative or overflows u64" },
+      { mutate(header) {
+        header.fill(0, 124, 136); header[124] = 0x80;
+        header.writeBigUInt64BE(BigInt(Number.MAX_SAFE_INTEGER), 128);
+      }, message: "entry padding exceeds the safe integer range" },
+      { mutate(header) { header.fill(0xff, 124, 136); }, message: "base-256 size is negative or overflows u64" },
+    ];
+    for (const { mutate, message } of rows) {
+      const header = rawHeader();
+      mutate(header);
+      updateTarChecksum(header);
+      const archivePath = await byteFixture("fs-safe-tar-size-", header);
+      await expect(inspectTar({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
+        .rejects.toThrow(message);
+    }
   });
 
   it("rejects dangling PAX and malformed GNU sparse metadata", async () => {
-    const root = await tempRoot("fs-safe-tar-meta-malformed-");
-    const paxPath = path.join(root, "pax.tar");
-    const sparseFlagPath = path.join(root, "sparse-flag.tar");
-    const sparseExtensionPath = path.join(root, "sparse-extension.tar");
-    const sparseLimitPath = path.join(root, "sparse-limit.tar");
-    const sparseUnsupportedPath = path.join(root, "sparse-unsupported.tar");
-    await fs.writeFile(paxPath, tarFixture([{ path: "pax", type: "x", body: "9 path=a\n" }]));
     const sparseFlag = rawHeader("S");
     sparseFlag[482] = 2;
     updateTarChecksum(sparseFlag);
-    await fs.writeFile(sparseFlagPath, sparseFlag);
     const sparseExtension = rawHeader("S");
     sparseExtension[482] = 1;
     updateTarChecksum(sparseExtension);
     const invalidExtension = Buffer.alloc(512);
     invalidExtension[504] = 2;
-    await fs.writeFile(sparseExtensionPath, Buffer.concat([sparseExtension, invalidExtension]));
     const repeatedExtension = Buffer.alloc(512);
     repeatedExtension[504] = 1;
-    await fs.writeFile(sparseLimitPath, Buffer.concat([sparseExtension, repeatedExtension]));
     const finalExtension = Buffer.alloc(512);
-    await fs.writeFile(
-      sparseUnsupportedPath,
-      Buffer.concat([sparseExtension, repeatedExtension, finalExtension]),
-    );
-
-    await expect(inspectTar({ archivePath: paxPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("dangling PAX metadata");
-    await expect(inspectTar({ archivePath: sparseFlagPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("GNU sparse extension flag is not 0 or 1");
-    await expect(inspectTar({ archivePath: sparseExtensionPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("GNU sparse extension flag is not 0 or 1");
-    await expect(inspectTar({ archivePath: sparseLimitPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 511 }) }))
-      .rejects.toMatchObject({
-        code: ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT,
-      });
-    await expect(inspectTar({ archivePath: sparseUnsupportedPath, limits: resolveTarMeterLimits({ maxMetaEntryBytes: 1024 }) }))
-      .rejects.toThrow("GNU sparse entries are not supported");
+    const rows = [
+      { bytes: tarFixture([{ path: "pax", type: "x", body: "9 path=a\n" }]), maxMetaEntryBytes: 1024, expected: "dangling PAX metadata" },
+      { bytes: sparseFlag, maxMetaEntryBytes: 1024, expected: "GNU sparse extension flag is not 0 or 1" },
+      { bytes: Buffer.concat([sparseExtension, invalidExtension]), maxMetaEntryBytes: 1024, expected: "GNU sparse extension flag is not 0 or 1" },
+      { bytes: Buffer.concat([sparseExtension, repeatedExtension]), maxMetaEntryBytes: 511,
+        expected: { code: ARCHIVE_LIMIT_ERROR_CODE.META_ENTRY_SIZE_EXCEEDS_LIMIT } },
+      { bytes: Buffer.concat([sparseExtension, repeatedExtension, finalExtension]), maxMetaEntryBytes: 1024, expected: "GNU sparse entries are not supported" },
+    ];
+    for (const { bytes, maxMetaEntryBytes, expected } of rows) {
+      const archivePath = await byteFixture("fs-safe-tar-meta-malformed-", bytes);
+      const operation = inspectTar({ archivePath, limits: resolveTarMeterLimits({ maxMetaEntryBytes }) });
+      if (typeof expected === "string") await expect(operation).rejects.toThrow(expected);
+      else await expect(operation).rejects.toMatchObject(expected);
+    }
   });
 
   it("accepts an octal size field that occupies all twelve bytes", async () => {
@@ -202,9 +180,7 @@ describe("TAR metadata preflight boundaries", () => {
   });
 
   it("destroys the archive stream after a pipeline failure", async () => {
-    const root = await tempRoot("fs-safe-tar-preflight-pipeline-");
-    const archivePath = path.join(root, "truncated.tar");
-    await fs.writeFile(archivePath, Buffer.alloc(511));
+    const archivePath = await byteFixture("fs-safe-tar-preflight-pipeline-", Buffer.alloc(511));
     const realCreateReadStream = fsSync.createReadStream;
     const streams: fsSync.ReadStream[] = [];
     vi.spyOn(fsSync, "createReadStream").mockImplementation(((...args: unknown[]) => {
@@ -368,27 +344,15 @@ describe("bounded archive reads", () => {
     manifest = [regular, { ...regular, index: 1 }];
     await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
       .rejects.toMatchObject({ name: "ArchiveSecurityError", code: "entry-path" });
-    manifest = [{ ...regular, kind: "directory" }];
-    await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
-      .rejects.toMatchObject({
-        name: "ArchiveFormatError",
-        code: "archive-header-invalid",
-        message: "ZIP decoder disagrees with admitted directory metadata",
-      });
-    manifest = [{ ...regular, path: "other.txt" }];
-    await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
-      .rejects.toMatchObject({
-        name: "ArchiveFormatError",
-        code: "archive-header-invalid",
-        message: "ZIP decoder disagrees with admitted directory metadata",
-      });
-    manifest = [{ ...regular, path: "../escape" }];
-    await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
-      .rejects.toMatchObject({
-        name: "ArchiveFormatError",
-        code: "archive-header-invalid",
-        message: "ZIP decoder disagrees with admitted directory metadata",
-      });
+    for (const disagreement of [{ kind: "directory" }, { path: "other.txt" }, { path: "../escape" }]) {
+      manifest = [{ ...regular, ...disagreement }];
+      await expect(readArchiveEntry(archivePath, "value.txt", { maxBytes: 5 }))
+        .rejects.toMatchObject({
+          name: "ArchiveFormatError",
+          code: "archive-header-invalid",
+          message: "ZIP decoder disagrees with admitted directory metadata",
+        });
+    }
     expect(readEntry).not.toHaveBeenCalled();
     manifest = [{ ...regular, path: "./value.txt" }];
     readError = new Error(ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT);

@@ -48,37 +48,8 @@ await fs.remove("notes/archive/today.txt");
 
 ## What you get
 
-| Surface | Use it for |
-|---|---|
-| [`root()`](root.md) | One boundary for read/write/move/remove and bounded recursive walking inside a trusted directory. |
-| [`@openclaw/fs-safe/config`](config.md) | Process-global native helper and lock-option defaults. |
-| [`@openclaw/fs-safe/guest`](guest.md) | Python filesystem source for caller-owned guest transports, with admitted roots and descriptor-relative operations. |
-| [Native helper policy](native-helper.md) | Choose `auto`, `off`, or `require` for platform-native primitives. |
-| [Native architecture](native.md) | Understand the thin syscall layer, beneath model, platform mechanisms, and fallback boundary. |
-| [`replaceFileAtomic`](atomic.md) | Sibling-temp + rename, fsync hooks, mode preservation, copy fallback. |
-| [`@openclaw/fs-safe/durability`](durability.md) | Pinned directory identities, durable creation, exclusive publication, streaming SHA-256, provenance receipts, and sync-failure policy. |
-| [`writeExternalFileWithinRoot`](output.md) | Stage external-library file output in private temp storage, then finalize under a root. |
-| [`writeJson` / `readJson*`](json.md) | JSON state files with strict and lenient read variants. |
-| [`@openclaw/fs-safe/store`](store.md) | Overview of `fileStore`, `fileStoreSync`, and `jsonStore`. |
-| [`jsonStore`](json-store.md) | Single JSON state file with explicit fallback, atomic writes, and optional locking. |
-| [`fileStore`](file-store.md) | Managed multi-file/blob store with modes, stream writes, copy-in, pruning, and private mode. |
-| [Private file-store mode](private-file-store.md) | `fileStore({ private: true })` for private JSON/text state at 0600 under 0700 dirs. |
-| [`tempWorkspace`](temp.md) | 0700 scratch dir with auto-cleanup. |
-| [`readSecureFile`](secure-file.md) | Absolute file reads with fd pinning, permissions, owner, size, and timeout checks. |
-| [`watch`](watch.md) | Guarded filesystem observation with advisory native hints and polling. |
-| [`walkDirectory` / `Root.walk`](walk.md) | Standalone inventories plus root-bounded pruning, budgets, and partial-error reporting. |
-| [`Root.entries`](entries.md) | Guarded nonrecursive entries, bounded name collection, and caller-owned symlink validation. |
-| [`extractArchive`](archive.md) | Policy-driven ZIP/TAR extraction with clamp/filter, metadata/path-depth, link, count, and byte limits. |
-| [Secret files](secret-file.md) | Mode-0600 credentials with size and TOCTOU defense. |
-| [Permissions](permissions.md) | POSIX mode helpers plus Windows ACL inspection, raw owner/ACE facts, remediation, and private-directory creation. |
-| [`acquireFileLock`](sidecar-lock.md) | Cross-process file lock with retry and fail-closed stale-lock handling. |
-| [`FsSafeError`](errors.md) | Closed code union (with `policy` / `operational` category) you can branch on. |
-| [Public API inventory](public-api.md) | Complete runtime/type export cross-check against the generated declarations. |
-| [`pathScope()`](path-scope.md) | Lower-level absolute-path boundary helper; lives behind `@openclaw/fs-safe/advanced`. |
-| [`@openclaw/fs-safe/advanced`](advanced.md) | Directory of lower-level composition helpers (path scopes, regular-file I/O, install paths, sibling-temp writes, …). |
-| [`@openclaw/fs-safe/test-hooks`](test-hooks.md) | Test-only injection hooks for reproducing open/lstat races. |
-| [Migrating to 0.5](migrating-to-0.5.md) | End-to-end checklist for Python removal and 0.4 API behavior changes. |
-| [Migrating to 0.6](migrating-to-0.6.md) | Installer-policy checklist for the platform-native package split. |
+Browse the [subpath catalogue](install.md#subpath-exports) for entry points and
+the [public API inventory](public-api.md) for individual runtime and type exports.
 
 ## Status
 

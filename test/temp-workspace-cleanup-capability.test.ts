@@ -15,6 +15,7 @@ import { tempWorkspace, tempWorkspaceSync, withTempWorkspace, withTempWorkspaceS
 import * as cleanup from "../src/temp-cleanup.js";
 import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { mockCleanupBinding } from "./helpers/cleanup-binding.js";
 
 let native: NativeBinding | undefined;
 try {
@@ -31,18 +32,12 @@ function canonicalizeFixtureRoot(pathname: string) {
 }
 
 function unavailableCleanupBinding(result: "missing" | "false" | "throws") {
-  return {
-    closeOwnedFd: vi.fn(),
-    canonicalizePath: canonicalizeFixtureRoot,
-    renameNoReplace: vi.fn(),
-    removeOwnedTree: vi.fn(),
-    removeOwnedTreeSync: vi.fn(),
-    ownedTreeRemovalAvailable: result === "missing" ? undefined : vi.fn((fd: number) => {
-      expect(fsSync.fstatSync(fd).isDirectory()).toBe(true);
-      if (result === "throws") throw Object.assign(new Error("probe denied"), { code: "EPERM" });
-      return false;
-    }),
-  };
+  const probe = result === "missing" ? undefined : vi.fn((fd: number) => {
+    expect(fsSync.fstatSync(fd).isDirectory()).toBe(true);
+    if (result === "throws") throw Object.assign(new Error("probe denied"), { code: "EPERM" });
+    return false;
+  });
+  return { ...mockCleanupBinding(probe), canonicalizePath: canonicalizeFixtureRoot };
 }
 
 afterEach(() => {
@@ -252,12 +247,8 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
         const rootDir = await tempRoot("fs-safe-workspace-mode-required-");
         configureFsSafeNative({ mode: "auto" });
         const binding = {
-          closeOwnedFd: vi.fn(),
+          ...mockCleanupBinding(vi.fn(() => true)),
           canonicalizePath: vi.fn(canonicalizeFixtureRoot),
-          renameNoReplace: vi.fn(),
-          removeOwnedTree: vi.fn(),
-          removeOwnedTreeSync: vi.fn(),
-          ownedTreeRemovalAvailable: vi.fn(() => true),
         };
         const loader = vi.fn(() => binding as unknown as NativeBinding);
         __setNativeLoaderForTest(loader);
@@ -327,12 +318,8 @@ for (const variant of ["async", "sync", "with-async", "with-sync"] as const) {
       const rootDir = await tempRoot("fs-safe-workspace-parent-unavailable-");
       configureFsSafeNative({ mode: "auto" });
       __setNativeLoaderForTest(() => ({
-        closeOwnedFd: vi.fn(),
+        ...mockCleanupBinding(vi.fn(() => true)),
         canonicalizePath: canonicalizeFixtureRoot,
-        renameNoReplace: vi.fn(),
-        removeOwnedTree: vi.fn(),
-        removeOwnedTreeSync: vi.fn(),
-        ownedTreeRemovalAvailable: vi.fn(() => true),
       }) as unknown as NativeBinding);
       const open = fsSync.openSync;
       vi.spyOn(fsSync, "openSync").mockImplementation((name, ...args) => {
@@ -359,12 +346,8 @@ for (const variant of ["async", "sync"] as const) {
   describe(`${variant} workspace final-mode cleanup authority`, () => {
     function availableCleanupBinding() {
       return {
-        closeOwnedFd: vi.fn(),
+        ...mockCleanupBinding(vi.fn(() => true)),
         canonicalizePath: canonicalizeFixtureRoot,
-        renameNoReplace: vi.fn(),
-        removeOwnedTree: vi.fn(),
-        removeOwnedTreeSync: vi.fn(),
-        ownedTreeRemovalAvailable: vi.fn(() => true),
       };
     }
 

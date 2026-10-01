@@ -5,26 +5,19 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { registerNativeCreateContentionTests } from "./helpers/native-create-contention.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import { itWin32, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import {
-  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
-  type NativeBinding,
 } from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 
-let native: NativeBinding | undefined;
-try {
-  native = __loadBundledNativeForTest();
-} catch {
-  // Native artifacts are built by dedicated platform jobs. The ordinary JS
-  // matrix deliberately proves that installation without them still works.
-}
+const native = loadTestNative("optional");
 
 const { tempRoot } = useTempDirs();
 

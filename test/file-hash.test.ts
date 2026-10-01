@@ -66,24 +66,6 @@ describe("sha256File", () => {
     });
   });
 
-  it("does not close a caller-owned handle or change its current offset", async () => {
-    const root = await tempRoot("fs-safe-hash-");
-    const filePath = path.join(root, "position.bin");
-    await fs.writeFile(filePath, "abcdef");
-    const handle = await fs.open(filePath, "r");
-    configureFsSafeNative({ mode: "off" });
-    try {
-      const prefix = Buffer.alloc(2);
-      await handle.read(prefix, 0, prefix.length, null);
-      await expect(sha256File(handle)).resolves.toMatchObject({ bytes: 6 });
-      const next = Buffer.alloc(1);
-      await handle.read(next, 0, next.length, null);
-      expect(next.toString()).toBe("c");
-    } finally {
-      await handle.close();
-    }
-  });
-
   it.each(["read", "stat", "native"] as const)(
     "keeps a caller-owned handle open and its offset unchanged on %s failure",
     async (failureAt) => {

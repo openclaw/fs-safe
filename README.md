@@ -159,30 +159,7 @@ and error exports. Prefer focused subpaths when a consumer needs a narrower
 contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are grouped under
 `@openclaw/fs-safe/advanced` instead of being separate public leaf contracts.
 
-| Subpath | Contents |
-|---|---|
-| `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, and root-bounded walking with pruning/error markers |
-| `@openclaw/fs-safe/config` | process-global native helper and lock defaults |
-| `@openclaw/fs-safe/path` | canonical path checks: `isPathInside`, `safeRealpathSync`, `isNotFoundPathError`, `isSymlinkOpenError` |
-| `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants |
-| `@openclaw/fs-safe/output` | `writeExternalFileWithinRoot` for external libraries that need a temp output path |
-| `@openclaw/fs-safe/store` | `fileStore`, `fileStoreSync`, and `jsonStore` |
-| `@openclaw/fs-safe/secret` | sync/async strict and try-style secret reads, atomic replace, and create-only secret writes |
-| `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `replaceFileAtomicSync`, `replaceDirectoryAtomic`, `movePathWithCopyFallback` |
-| `@openclaw/fs-safe/durability` | pinned directory identities, strict directory sync, durable nested-directory creation, exclusive publication, streaming and synchronous SHA-256, provenance receipts, and sync-failure policy |
-| `@openclaw/fs-safe/temp` | `tempWorkspace`, `tempWorkspaceSync`, `withTempWorkspace`, `resolveSecureTempRoot` |
-| `@openclaw/fs-safe/secure-file` | fd-pinned absolute file reads with owner, mode, ACL, trusted-dir, size, and timeout checks |
-| `@openclaw/fs-safe/file-lock` | async/sync sidecar locks, root-bounded sidecars, ownership verification, and stale policy |
-| `@openclaw/fs-safe/permissions` | POSIX mode and Windows ACL inspection, raw owner/ACE facts, private-directory creation, and remediation helpers |
-| [`@openclaw/fs-safe/watch`](docs/watch.md) | Guarded observation with native event hints, bounded scans, and joined close |
-| `@openclaw/fs-safe/walk` | budget-bounded directory walking with symlink policy, filters, and truncation accounting; not root-bounded |
-| `@openclaw/fs-safe/copy` | directory copying with `clone: "auto"`, `"always"`, or `"never"`; native APFS, Btrfs, ReFS, XFS, and ZFS cloning, portable byte copying, and clone metadata; see [directory copying](docs/copy.md) |
-| `@openclaw/fs-safe/archive` | policy-driven ZIP/TAR extraction, clamp/filter policy, metadata/path-depth limits, gzip/zstd/bzip2 support, and bounded entry reads |
-| `@openclaw/fs-safe/advanced` | lower-level composition helpers such as path scopes, root-file open, bounded descriptor reads, [borrowed-handle and descriptor copying](docs/copy.md#borrowed-filehandle-transfers), [complete byte-window writes](docs/advanced.md#borrowed-handle-writes), [exact directory identity](docs/directory-identity.md), [case probing](docs/path-case.md), [suffix-alias probing](docs/path-suffix-aliases.md), [in-place writes](docs/in-place-write.md), [versioned install-ID encoding](docs/install-path.md#safepathsegmenthashedv2), filename sanitizing, temp-file targets, sibling-temp writes, local-root readers, regular-file helpers, `pathExists`, and `withTimeout`; less stable than focused public subpaths |
-| `@openclaw/fs-safe/errors` | `FsSafeError`, closed codes/categories, causes, and operation-specific details receipts |
-| `@openclaw/fs-safe/types` | shared types: `DirEntry`, `PathStat`, … |
-| `@openclaw/fs-safe/test-hooks` | hooks the test suite uses to inject races; registration requires `NODE_ENV=test` or `VITEST=true` |
-| `@openclaw/fs-safe/guest` | Python source and exit constants for caller-launched filesystem operations in Linux/macOS guests without Node; see the [guest protocol and trust boundary](docs/guest.md) |
+See the [complete subpath catalogue](docs/install.md#subpath-exports) for every entry point and its contents.
 
 ## Failure semantics in the name
 

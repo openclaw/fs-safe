@@ -20,6 +20,14 @@ import { readSecureFile } from "../src/secure-file.js";
 const tempDirs: string[] = [];
 const itSimulatedWindows = it.skipIf(process.platform === "win32");
 
+async function secretFile(prefix: string, contents = "{}") {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  const target = path.join(dir, "secret.json");
+  await fs.writeFile(target, contents, { mode: 0o600 });
+  return target;
+}
+
 function incompleteDescriptorExec() {
   return vi.fn(async () => ({
     stdout: JSON.stringify({
@@ -119,11 +127,8 @@ describe("Windows permission command execution", () => {
   });
 
   itSimulatedWindows.each(["structured", "raw"])("preserves a %s owner timeout through a simulated Windows secure read", async (kind) => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-owner-detail-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
     const secret = "SECRET_FILE_CONTENT_MUST_NOT_APPEAR";
-    await fs.writeFile(target, secret, { mode: 0o600 });
+    const target = await secretFile("fs-safe-permission-owner-detail-", secret);
     const original = Object.assign(new Error("owner query timed out"), {
       killed: true, signal: "SIGKILL", code: null, stderr: "owner inspection stalled\n",
     });
@@ -161,11 +166,8 @@ describe("Windows permission command execution", () => {
   });
 
   itSimulatedWindows("preserves structured-query stderr and exit status through a simulated Windows secure read", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-acl-detail-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
     const secret = "SECRET_FILE_CONTENT_MUST_NOT_APPEAR";
-    await fs.writeFile(target, secret, { mode: 0o600 });
+    const target = await secretFile("fs-safe-permission-acl-detail-", secret);
     const original = Object.assign(new Error(`ACL query denied\n${"x".repeat(500)}`), {
       code: 5, signal: null, killed: false,
       stderr: `\u001b[31mACL access denied\n${"x".repeat(500)}`,
@@ -214,43 +216,31 @@ describe("Windows permission command execution", () => {
     expect(performance.now() - startedAt).toBeGreaterThanOrEqual(delayMs);
   });
 
-  it("fails closed without starting an ACL query when owner inspection fails", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-timeout-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
-    const exec = vi.fn().mockRejectedValue(new Error("owner query timed out"));
-
-    const result = await inspectPathPermissions(target, {
-      platform: "win32",
-      env: { SystemRoot: "C:\\Windows" },
-      exec,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      source: "unknown",
-      ownerError: "Error: owner query timed out",
-      error: expect.stringContaining("Windows owner inspection failed"),
-    });
-    expect(exec).toHaveBeenCalledTimes(1);
-  });
-
   it.each([
-    { label: "undefined", value: undefined },
-    { label: "null", value: null },
-    { label: "false", value: false },
-    { label: "+0", value: 0 },
-    { label: "-0", value: -0 },
-    { label: "0n", value: 0n },
-    { label: "empty string", value: "" },
-    { label: "NaN", value: Number.NaN },
-  ])("preserves a rejected $label owner-query diagnostic", async ({ value }) => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-falsy-owner-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
-    const exec = vi.fn().mockRejectedValue(value);
+    {
+      name: "fails closed without starting an ACL query when owner inspection fails",
+      prefix: "fs-safe-permission-timeout-", value: new Error("owner query timed out"), synchronous: false,
+    },
+    ...[
+      { label: "undefined", value: undefined },
+      { label: "null", value: null },
+      { label: "false", value: false },
+      { label: "+0", value: 0 },
+      { label: "-0", value: -0 },
+      { label: "0n", value: 0n },
+      { label: "empty string", value: "" },
+      { label: "NaN", value: Number.NaN },
+    ].map(({ label, value }) => ({
+      name: `preserves a rejected ${label} owner-query diagnostic`,
+      prefix: "fs-safe-permission-falsy-owner-", value, synchronous: false,
+    })),
+    {
+      name: "preserves a synchronously thrown empty owner-query diagnostic",
+      prefix: "fs-safe-permission-empty-owner-", value: "", synchronous: true,
+    },
+  ])("$name", async ({ prefix, value, synchronous }) => {
+    const target = await secretFile(prefix);
+    const exec = synchronous ? vi.fn(() => { throw value; }) : vi.fn().mockRejectedValue(value);
 
     const result = await inspectPathPermissions(target, {
       platform: "win32",
@@ -267,37 +257,8 @@ describe("Windows permission command execution", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves a synchronously thrown empty owner-query diagnostic", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-owner-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
-    const exec = vi.fn(() => {
-      throw "";
-    });
-
-    const result = await inspectPathPermissions(target, {
-      platform: "win32",
-      env: { SystemRoot: "C:\\Windows" },
-      exec,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      source: "unknown",
-      ownerError: "",
-      error: "Windows owner inspection failed: ",
-    });
-    expect(Object.hasOwn(result, "errorCause")).toBe(true);
-    expect(result.errorCause).toBe("");
-    expect(exec).toHaveBeenCalledTimes(1);
-  });
-
   it("reports unverified permissions when a successful query yields incomplete descriptor facts", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-empty-acl-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
+    const target = await secretFile("fs-safe-permission-empty-acl-");
     const exec = incompleteDescriptorExec();
 
     await expect(
@@ -314,10 +275,7 @@ describe("Windows permission command execution", () => {
   });
 
   itSimulatedWindows("rejects a simulated Windows secure read with incomplete pathname-query facts", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-incomplete-read-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
+    const target = await secretFile("fs-safe-permission-incomplete-read-");
     await expectFsSafeError(readSecureFile({
       filePath: target,
       inject: {
@@ -329,10 +287,7 @@ describe("Windows permission command execution", () => {
   });
 
   itSimulatedWindows("inspects permissions once for one simulated Windows secure read", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-permission-count-"));
-    tempDirs.push(dir);
-    const target = path.join(dir, "secret.json");
-    await fs.writeFile(target, "{}", { mode: 0o600 });
+    const target = await secretFile("fs-safe-permission-count-");
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (command.toLowerCase().endsWith("powershell.exe")) {
         return {

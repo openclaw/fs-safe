@@ -9,36 +9,19 @@ import {
 } from "../src/sidecar-lock.js";
 import type { HeldSidecarLock } from "../src/sidecar-lock-acquire.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { managerState, rejection } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
-
-type ManagerState = {
-  admissions: Map<string, object>;
-  held: Map<string, HeldSidecarLock>;
-};
 
 type LockSettlement =
   | { status: "fulfilled"; handle: SidecarLockHandle }
   | { status: "rejected"; reason: unknown };
-
-function managerState(key: string): ManagerState {
-  const managers = Reflect.get(globalThis, managersKey) as Map<string, ManagerState>;
-  return managers.get(key)!;
-}
 
 function deferred(): { promise: Promise<void>; reject(error: unknown): void; resolve(): void } {
   let reject!: (error: unknown) => void;
   let resolve!: () => void;
   const promise = new Promise<void>((done, fail) => { resolve = done; reject = fail; });
   return { promise, reject, resolve };
-}
-
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  return await promise.then(
-    () => { throw new Error("expected acquisition to reject"); },
-    (error: unknown) => error,
-  );
 }
 
 function expectedTarget(directory: string, targetPath: string): string {
@@ -95,13 +78,13 @@ describe("async sidecar admission callback ancestry", () => {
           normalizedTargetPath: expectedTarget(directory, targetPath),
         });
         expect(nestedPayload).not.toHaveBeenCalled();
-        expect(managerState(key).admissions.size).toBe(0);
-        expect(managerState(key).held.size).toBe(1);
+        expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(key).held.size).toBe(1);
       } finally {
         await outer?.release().catch(() => undefined);
         await manager.drain();
       }
-      expect(managerState(key).held.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).held.size).toBe(0);
     },
   );
 
@@ -163,8 +146,8 @@ describe("async sidecar admission callback ancestry", () => {
           });
         }
         expect(nestedPayload).not.toHaveBeenCalled();
-        expect(managerState(key).admissions.size).toBe(0);
-        expect(managerState(key).held.size).toBe(1);
+        expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(key).held.size).toBe(1);
       } finally {
         const nestedSettlement = nested === undefined ? undefined : await nested;
         if (nestedSettlement?.status === "fulfilled") {
@@ -173,7 +156,7 @@ describe("async sidecar admission callback ancestry", () => {
         await outer?.release().catch(() => undefined);
         await manager.drain();
       }
-      expect(managerState(key).held.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).held.size).toBe(0);
     },
   );
 
@@ -225,7 +208,7 @@ describe("async sidecar admission callback ancestry", () => {
       resumeChild.resolve();
       expect(await rejection(nested!)).toMatchObject({ code: "file_lock_timeout" });
       expect(nestedPayload).not.toHaveBeenCalled();
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
     } finally {
       resumeChild.resolve();
       await nested?.catch(() => undefined);
@@ -270,7 +253,7 @@ describe("async sidecar admission callback ancestry", () => {
       });
       expect(innermostError).toMatchObject({ code: "file_lock_timeout" });
       expect(innermostPayload).not.toHaveBeenCalled();
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
     } finally {
       await outer?.release().catch(() => undefined);
       await manager.drain();
@@ -310,7 +293,7 @@ describe("async sidecar admission callback ancestry", () => {
           },
         });
         expect(nestedPayload).toHaveBeenCalledOnce();
-        expect(managerState(outerKey).admissions.size).toBe(0);
+        expect(managerState<HeldSidecarLock>(outerKey).admissions.size).toBe(0);
       } finally {
         await outer?.release().catch(() => undefined);
         await outerManager.drain();
@@ -395,7 +378,7 @@ describe("async sidecar admission callback ancestry", () => {
       });
       expect(nestedError).toMatchObject({ code: "file_lock_timeout" });
       expect(nestedPayload).not.toHaveBeenCalled();
-      expect(managerState(key).admissions.size).toBe(0);
+      expect(managerState<HeldSidecarLock>(key).admissions.size).toBe(0);
     } finally {
       await outer?.release().catch(() => undefined);
       await first.drain();
@@ -449,7 +432,7 @@ describe("async sidecar admission callback ancestry", () => {
       reentrantOwner: "holder",
       payload: async () => ({ owner: "holder" }),
     });
-    const state = managerState(key);
+    const state = managerState<HeldSidecarLock>(key);
     const held = state.held.get(holder.normalizedTargetPath)!;
     const releaseGate = deferred();
     void releaseGate.promise.catch(() => undefined);

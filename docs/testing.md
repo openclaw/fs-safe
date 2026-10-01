@@ -28,6 +28,23 @@ Percentages complement behavioral gates: mutation-policy proof, nightly watch
 stress, and platform lanes are equally important. High coverage cannot establish
 root confinement, race safety, event delivery, or bounded resource retirement.
 
+## Hosted mutation-policy proof
+
+The [hosted workflow](https://github.com/openclaw/fs-safe/blob/main/.github/workflows/mutation-policy-proof.yml)
+builds the event-head package and host addon on Node 24 Linux, macOS, and Windows.
+The [harness](https://github.com/openclaw/fs-safe/blob/main/scripts/mutation-policy-proof.mjs)
+runs isolated temporary fixtures and binds sources, built modules, and the addon
+to the tested revision. Its [receipt contract](https://github.com/openclaw/fs-safe/blob/main/test/mutation-policy-proof-contract.test.ts)
+and [case contract](https://github.com/openclaw/fs-safe/blob/main/test/mutation-policy-proof-cases-contract.test.ts)
+define the executable inventory and bounds.
+
+Receipts describe representative observations: final listings and sentinels
+neither count native syscalls nor exclude transient effects. Windows compatibility
+payload writes remain JavaScript even when native-required sidecar publication
+uses `Root.create`. Hosted cases complement internal interleaving tests; they
+are neither exhaustive race proof nor performance clearance. Inspect exact
+hosted artifacts before relying on a receipt's claims.
+
 ## Watch stress campaign
 
 Build from the exact revision being qualified with `pnpm install --frozen-lockfile`,
@@ -154,20 +171,6 @@ requires the same openat2/NO_XDEV primitive and runs in the ordinary Linux
 lanes. Bun's full compatibility
 suite remains in the normal native lanes, because it includes bounded cleanup.
 
-`@openclaw/fs-safe/test-hooks` exposes test-only injection points. Registration
-is allowed only when `process.env.NODE_ENV === "test"` or
-`process.env.VITEST === "true"`; registering a non-empty hook set elsewhere
-throws. Production code must not import this subpath.
-
-```ts
-import {
-  __setFsSafeTestHooksForTest,
-  type FsSafeTestHooks,
-} from "@openclaw/fs-safe/test-hooks";
-```
-
-The double-underscore prefix is a deliberate "hands off" signal: production code should never import this module. ESLint or your equivalent linter should flag it.
-
 ## When to reach for hooks
 
 - Reproduce a TOCTOU race deterministically: simulate a symlink swap between resolve and open, or between write and rename.
@@ -178,30 +181,71 @@ If you don't need to inject a race, you don't need hooks — most tests should d
 
 ## Hooks API
 
-```ts
-type FsSafeTestHooks = {
-  afterPreOpenLstat?: (filePath: string) => Promise<void> | void;
-  beforeOpen?: (filePath: string, flags: number) => Promise<void> | void;
-  afterOpen?: (filePath: string, handle: import("node:fs/promises").FileHandle) => Promise<void> | void;
-  afterPublishTargetCreated?: (method, targetPath, identity) => Promise<void> | void;
-  beforePublishDirectorySync?: (method, targetPath, identity) => Promise<void> | void;
-  // Additional archive, store, root-fallback, temp, and trash race hooks are
-  // documented on the focused Test hooks reference page.
-};
+`@openclaw/fs-safe/test-hooks` exposes injection points for downstream tests,
+not a supported runtime API. Production code must not import it; enforce that
+with your linter. New optional fields may appear between minor versions.
 
+```ts
+import {
+  getFsSafeTestHooks,
+  __setFsSafeTestHooksForTest,
+  type FsSafeTestHooks,
+} from "@openclaw/fs-safe/test-hooks";
+```
+
+```ts
 function __setFsSafeTestHooksForTest(hooks?: FsSafeTestHooks): void;
 function getFsSafeTestHooks(): FsSafeTestHooks | undefined;
 ```
 
-Hooks are called at well-defined points in the library's hot paths:
+Registering any truthy hook set (including `{}`) requires
+`process.env.NODE_ENV === "test"` or `process.env.VITEST === "true"`; otherwise
+the setter throws. Clearing with `undefined` is allowed in any environment.
+The getter returns the registered set, or `undefined` when none is registered;
+changing the environment does not erase registered hooks.
 
-- **`afterPreOpenLstat`** — runs after the pre-open `lstat`. A common use is to swap the path's target via `fs.symlink`/`fs.unlink` to drive a TOCTOU race.
-- **`beforeOpen`** — runs before `fs.open` with the exact flags the root read path will use.
-- **`afterOpen`** — runs after the file handle is opened. Useful to wrap handle methods or inject a size race before a stream is consumed.
-- **`afterPublishTargetCreated`** — runs after exclusive publication created a target but before its final fences.
-- **`beforePublishDirectorySync`** — runs after target verification and immediately before strict parent sync; useful for exercising `onSyncFailure`.
+All fields are optional. Callbacks return `Promise<void> | void` and are awaited
+unless marked **sync**, which requires `void` and must not return a promise.
+Path arguments are strings, `flags` is a number, `withFileTypes` is a boolean,
+and `handle` is a Node `FileHandle`. Publication `method` is `"hardlink"`,
+`"exclusive-copy"`, or `"rename-noreplace"`; `identity` carries `dev` and `ino`
+as numbers or bigints.
 
-`__setFsSafeTestHooksForTest(undefined)` clears all hooks. Always clean up between tests.
+| Hook | Callback arguments | Timing |
+|---|---|---|
+| `beforeWatchRegistration` | `path` | Before a scanned directory's registration step, including when its existing registration is reused. |
+| `afterWatchRegistration` | `path` | After that registration step, before recording a newly acquired registration. |
+| `afterWatchBackendOverflow` (**sync**) | `root, phase` (`"received"` or `"reconciled"`) | On an overflow hint, and after a noninitial reconciliation produces an overflow invalidation. |
+| `afterWatchBackendCreated` (**sync**) | `root, emit, nativeEvent?` | After creating/configuring the backend, before scanning. `emit(batch)` injects a native watch batch; `nativeEvent(path, flags)` injects a decoder event. |
+| `afterPreOpenLstat` | `filePath` | After pre-open `lstat`, before opening the file. |
+| `beforeOpen` | `filePath, flags` | Immediately before the guarded file open. |
+| `afterOpen` | `filePath, handle` | After open, before the post-open identity check. |
+| `afterOpenedPathIdentityCheck` | `filePath, handle` | A standalone local-file or absolute copy-source descriptor matches its pathname, before the generic opened-path resolver. Root reads use final admission hooks instead. |
+| `afterRootReadPathResolution` | `filePath` | After Root read path resolution, before local-file open admission. |
+| `beforeRootReadFinalFence` | `filePath, handle` | After descriptor identity and hardlink checks, before the final root/path/canonical-path/root admission fence. |
+| `afterRootReadFinalPathIdentityCheck` (**sync**) | `filePath, handle` | After the final pathname-to-descriptor comparison, before the second root check. |
+| `beforeArchiveOutputMutation` | `operation` (`"mkdir"` or `"chmod"`), `targetPath` | Before archive staging creates a directory or applies a mode. |
+| `beforeFileStorePruneDescend` | `dirPath` | Before file-store pruning descends into a directory. |
+| `beforeFileStoreSyncPrivateWrite` (**sync**) | `filePath` | Before a synchronous private-store write mutates its target. |
+| `beforeRootFallbackMutation` | `operation` (`"mkdir"`, `"move"`, or `"remove"`), `targetPath` | Before a guarded JavaScript Root fallback mutation. |
+| `beforePinnedWriteParentAdmission` | `targetPath` | After pinned-write policy preflight, before parent admission; also before refreshing retained JavaScript write authority and parent checks. |
+| `beforeRootStatObservation` | `targetPath` | After `Root.stat()` admits the target and parent, before collecting returned metadata. |
+| `beforeRootStatInitialObservation` | `targetPath` | After `Root.stat()` admits the parent, before its first target inspection. |
+| `beforeRootListObservation` | `directoryPath, withFileTypes` | After `Root.list()` admits the selected directory, before collecting names and optional metadata. |
+| `afterPinnedWriteFallbackRename` | `targetPath` | After fallback rename commits, before post-commit identity checks. |
+| `beforeSiblingTempWrite` | `tempPath` | Before the `writeViaSiblingTempPath` producer runs, with its selected output pathname still absent. |
+| `beforeSidecarLockSnapshotOpen` | `lockPath` | After sidecar inspection, before opening it for a bounded snapshot read. |
+| `beforeRegularFileAppendOpen` | `filePath` | After append preflight and the initial size-budget check, before async open. |
+| `beforeRegularFileAppendOpenSync` (**sync**) | `filePath` | The corresponding sync append point, before `openSync`. |
+| `beforeTempWorkspaceNativeRemoval` | `quarantinePath` | After workspace quarantine admission, immediately before native owned-tree removal. |
+| `beforeTempWorkspaceNativeRemovalSync` (**sync**) | `quarantinePath` | The corresponding sync native-removal point. |
+| `beforeTrashMove` (**sync**) | `targetPath, destPath` | Before trash handling moves the target. |
+| `afterPublishTargetCreated` | `method, targetPath, identity` | After exclusive publication creates the target, before final fences. |
+| `beforePublishDirectorySync` | `method, targetPath, identity` | After publication verifies the target, immediately before strict parent sync. |
+
+The watch `emit` callback accepts `{ hints, overflow, error? }`: `overflow` is
+boolean, `error` is a string, and each hint has string `directory` and `name`
+fields plus an `event` of `"rename"`, `"change"`, or `"children"`.
 
 ## Example: simulate a TOCTOU swap
 
@@ -268,18 +312,9 @@ it("runs without the native helper", async () => {
 
 Hooks set by `__setFsSafeTestHooksForTest` persist across tests until explicitly cleared. Always clear in `afterEach` (or your test framework's equivalent) — leaked hooks will silently change behavior in unrelated tests and cause maddening intermittent failures.
 
-```ts
-import { afterEach } from "vitest";
-import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
-
-afterEach(() => {
-  __setFsSafeTestHooksForTest(undefined);
-});
-```
-
-A global hook clear in your test setup file is a good safety net.
-
-See the [complete Test hooks reference](test-hooks.md) for every optional hook.
+Use `__setFsSafeTestHooksForTest(undefined)` as in the TOCTOU example above.
+A global hook clear in your test setup file is a good safety net; the
+[Hooks API](#hooks-api) lists every optional hook.
 
 ## Patterns for testing fs-safe-using code
 
@@ -348,20 +383,12 @@ workspace reads that bypass pinned file descriptors.
 
 The original soak rule rejected more than 64 MiB RSS growth after minute five.
 That outcome remains in `memory.legacyRss`, with its original limit and pass/fail
-value; it is no longer the soak pass criterion. Static guarded poll scans alone
-reproduced growth from 72 to 181 MiB RSS while collected heap stayed near 7–8 MiB:
-V8 expanded its almost-empty young generation to 128 MiB, with 103 MiB physically
-committed. A diagnostic run limiting that space ended at 85 MiB RSS with the
-same live heap. The normal harness keeps Node's default nursery sizing.
-
-The 60-minute qualification separates this capacity warm-up from the later RSS
-trend. The measured Linux event run had under 1 MiB collected-heap drift and a
-0.55 MiB/minute second-half RSS slope; its final ten-minute RSS range was 1.60 MiB.
-The 8 MiB live-memory allowance and 1 MiB/minute RSS slope leave measurement
-margin while rejecting retained growth and continued rapid RSS growth. The
-512 MiB peak ceiling is unchanged. Native allocation leaks need independent
-accounting/profiling too: the investigation found a much smaller cleanup-hook
-context leak even when registrations, pending sets, and TSFN counters retired.
+value; it is no longer the soak pass criterion. V8 capacity expansion and
+allocator retention can raise RSS while collected live memory stays flat.
+The normal harness keeps Node's default nursery sizing and separates warm-up
+from later RSS growth with the [current stress gates](#watch-stress-campaign).
+Native allocation leaks still need independent accounting/profiling, even when
+registrations, pending sets, and thread-safe function counters retire.
 
 Build the native addon and package from the same revision, then run each control
 in a fresh Node process on a disposable machine:

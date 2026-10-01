@@ -57,16 +57,14 @@ pub fn root_removal_unlink(env: Env, parent: i32, name: String, dev: BigInt, ino
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::windows::{fs::OpenOptionsExt, io::AsRawHandle}, time::{SystemTime, UNIX_EPOCH}};
-    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    use std::{fs, os::windows::io::AsRawHandle};
+    use crate::test_support::{directory, temp_path};
 
     #[test]
     fn removes_exact_files_and_empty_directories_and_preserves_replacements() {
-        let base = std::env::temp_dir().join(format!("fs-safe-root-remove-{}-{}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let base = temp_path("root-remove");
         fs::create_dir(&base).unwrap();
-        let parent = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).open(&base).unwrap();
+        let parent = directory(&base);
         let handle = parent.as_raw_handle() as HANDLE;
         fs::write(base.join("file"), b"original").unwrap();
         let identity = { let child = open(handle, "file", 0).unwrap(); inspect(child.0).unwrap().0 };
@@ -88,11 +86,9 @@ mod tests {
 
     #[test]
     fn preserves_nonempty_directory_with_typed_error() {
-        let base = std::env::temp_dir().join(format!("fs-safe-root-remove-nonempty-{}-{}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let base = temp_path("root-remove-nonempty");
         fs::create_dir(&base).unwrap();
-        let parent = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).open(&base).unwrap();
+        let parent = directory(&base);
         let handle = parent.as_raw_handle() as HANDLE;
         let directory = base.join("full");
         fs::create_dir(&directory).unwrap();

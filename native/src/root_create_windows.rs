@@ -34,18 +34,16 @@ pub fn remove_staged_file(env: Env, parent: i32, name: String, file: i32) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::windows::{fs::OpenOptionsExt, io::AsRawHandle}, time::{SystemTime, UNIX_EPOCH}};
-    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_GENERIC_READ, FILE_GENERIC_WRITE};
+    use std::{fs, os::windows::io::AsRawHandle};
+    use crate::test_support::{directory, temp_path};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_GENERIC_WRITE};
     use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
 
     #[test]
     fn cleanup_retains_the_parent_and_preserves_a_replacement_file() {
-        let base = std::env::temp_dir().join(format!("fs-safe-create-cleanup-{}-{}", std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let base = temp_path("create-cleanup");
         fs::create_dir_all(base.join("parent")).unwrap();
-        let sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-        let parent = fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .share_mode(sharing).open(base.join("parent")).unwrap();
+        let parent = directory(&base.join("parent"));
         // Win32 may refuse to rename a directory containing open files. Swap
         // the empty parent first, then create and clean through its retained handle.
         fs::rename(base.join("parent"), base.join("held")).unwrap();

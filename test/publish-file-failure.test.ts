@@ -31,13 +31,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function fixture(prefix: string, bytes: string) {
+  const root = await tempRoot(prefix);
+  const source = path.join(root, "source");
+  const target = path.join(root, "target");
+  await fs.writeFile(source, bytes);
+  return { root, source, target };
+}
+
 describe("exclusive publication failure fencing", () => {
   itPosix("rejects source directories and symlinks before creating a target", async () => {
-    const root = await tempRoot("fs-safe-publish-source-refusal-");
-    const source = path.join(root, "source");
+    const { root, source, target } = await fixture("fs-safe-publish-source-refusal-", "content");
     const link = path.join(root, "link");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
     await fs.symlink(source, link);
 
     await expect(
@@ -50,11 +55,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it("rejects a mismatched parent receipt and expected source identity", async () => {
-    const root = await tempRoot("fs-safe-publish-receipt-");
-    const source = path.join(root, "source");
+    const { root, source, target } = await fixture("fs-safe-publish-receipt-", "source");
     const other = path.join(root, "other");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "source");
     await fs.writeFile(other, "other");
 
     await expect(
@@ -76,38 +78,40 @@ describe("exclusive publication failure fencing", () => {
     await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("preserves an attacker replacement discovered after hardlink creation", async () => {
+  it.each([
+    { strategy: "link-required", method: "hardlink", phase: "hardlink-verify", bytes: "source", prefix: "fs-safe-publish-target-swap-" },
+    { strategy: "link-or-copy", method: "exclusive-copy", phase: "copy-verify", bytes: "copy source", prefix: "fs-safe-publish-copy-swap-" },
+  ] as const)("preserves a replacement discovered after $method creation", async ({ strategy, method, phase, bytes, prefix }) => {
     configureFsSafeNative({ mode: "off" });
-    const root = await tempRoot("fs-safe-publish-target-swap-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
+    const { root, source, target } = await fixture(prefix, bytes);
     const created = path.join(root, "created");
-    await fs.writeFile(source, "source");
+    if (method === "exclusive-copy") {
+      vi.spyOn(fs, "link").mockRejectedValueOnce(
+        Object.assign(new Error("cross-device"), { code: "EXDEV" }),
+      );
+    }
     __setFsSafeTestHooksForTest({
-      async afterPublishTargetCreated(method) {
-        expect(method).toBe("hardlink");
+      async afterPublishTargetCreated(actual) {
+        expect(actual).toBe(method);
         await fs.rename(target, created);
         await fs.writeFile(target, "replacement");
       },
     });
 
     await expect(
-      publishFileExclusive({ sourcePath: source, targetPath: target, strategy: "link-required" }),
+      publishFileExclusive({ sourcePath: source, targetPath: target, strategy }),
     ).rejects.toMatchObject({
       code: "path-mismatch",
-      details: { phase: "hardlink-verify", cleanup: "preserved", targetCreated: true },
+      details: { phase, cleanup: "preserved", targetCreated: true },
     });
     await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement");
-    await expect(fs.readFile(created, "utf8")).resolves.toBe("source");
+    await expect(fs.readFile(created, "utf8")).resolves.toBe(bytes);
   });
 
   it("rolls back a hardlink if the pinned source path changes after creation", async () => {
     configureFsSafeNative({ mode: "off" });
-    const root = await tempRoot("fs-safe-publish-source-swap-");
-    const source = path.join(root, "source");
+    const { root, source, target } = await fixture("fs-safe-publish-source-swap-", "source");
     const oldSource = path.join(root, "old-source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "source");
     __setFsSafeTestHooksForTest({
       async afterPublishTargetCreated() {
         await fs.rename(source, oldSource);
@@ -126,40 +130,10 @@ describe("exclusive publication failure fencing", () => {
     await expect(fs.readFile(oldSource, "utf8")).resolves.toBe("source");
   });
 
-  it("preserves a replacement discovered during exclusive-copy verification", async () => {
-    configureFsSafeNative({ mode: "off" });
-    const root = await tempRoot("fs-safe-publish-copy-swap-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    const created = path.join(root, "created");
-    await fs.writeFile(source, "copy source");
-    vi.spyOn(fs, "link").mockRejectedValueOnce(
-      Object.assign(new Error("cross-device"), { code: "EXDEV" }),
-    );
-    __setFsSafeTestHooksForTest({
-      async afterPublishTargetCreated(method) {
-        expect(method).toBe("exclusive-copy");
-        await fs.rename(target, created);
-        await fs.writeFile(target, "replacement");
-      },
-    });
-
-    await expect(
-      publishFileExclusive({ sourcePath: source, targetPath: target, strategy: "link-or-copy" }),
-    ).rejects.toMatchObject({
-      code: "path-mismatch",
-      details: { phase: "copy-verify", cleanup: "preserved", targetCreated: true },
-    });
-    await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement");
-    await expect(fs.readFile(created, "utf8")).resolves.toBe("copy source");
-  });
-
   it("rolls back an exclusive-copy target when the post-create hook fails", async () => {
     configureFsSafeNative({ mode: "off" });
-    const root = await tempRoot("fs-safe-publish-copy-hook-failure-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "copy source");
+    const { source, target } = await fixture("fs-safe-publish-copy-hook-failure-", "copy source");
+
     vi.spyOn(fs, "link").mockRejectedValueOnce(
       Object.assign(new Error("cross-device"), { code: "EXDEV" }),
     );
@@ -180,10 +154,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("preserves the only remaining name after a post-rename verification failure", async () => {
-    const root = await tempRoot("fs-safe-publish-rename-failure-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-rename-failure-", "content");
+
     __setFsSafeTestHooksForTest({
       afterPublishTargetCreated(method) {
         expect(method).toBe("rename-noreplace");
@@ -202,11 +174,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("preserves a replacement target detected after native rename", async () => {
-    const root = await tempRoot("fs-safe-publish-rename-swap-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
+    const { root, source, target } = await fixture("fs-safe-publish-rename-swap-", "content");
     const renamed = path.join(root, "renamed");
-    await fs.writeFile(source, "content");
     __setFsSafeTestHooksForTest({
       async afterPublishTargetCreated() {
         await fs.rename(target, renamed);
@@ -224,10 +193,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("fails if the source name unexpectedly survives native rename", async () => {
-    const root = await tempRoot("fs-safe-publish-rename-source-survives-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-rename-source-survives-", "content");
+
     __setFsSafeTestHooksForTest({
       async afterPublishTargetCreated() {
         await fs.writeFile(source, "replacement");
@@ -244,10 +211,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("falls through both classified native-copy failures to the fenced JS copy", async () => {
-    const root = await tempRoot("fs-safe-publish-native-fallbacks-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-native-fallbacks-", "content");
+
     __setNativeLoaderForTest(() => ({
       ...native!,
       linkBeneath() {
@@ -268,10 +233,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("propagates an unclassified native clone failure without leaving a target", async () => {
-    const root = await tempRoot("fs-safe-publish-native-failure-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-native-failure-", "content");
+
     __setNativeLoaderForTest(() => ({
       ...native!,
       linkBeneath() {
@@ -290,10 +253,8 @@ describe("exclusive publication failure fencing", () => {
 
   it("rolls back when JavaScript copy mode normalization fails", async () => {
     configureFsSafeNative({ mode: "off" });
-    const root = await tempRoot("fs-safe-publish-copy-mode-failure-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-copy-mode-failure-", "content");
+
     vi.spyOn(fs, "link").mockRejectedValueOnce(
       Object.assign(new Error("force copy"), { code: "EXDEV" }),
     );
@@ -318,10 +279,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("rolls back when native copy mode normalization fails", async () => {
-    const root = await tempRoot("fs-safe-publish-native-mode-failure-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-native-mode-failure-", "content");
+
     let targetFd: number | undefined;
     __setNativeLoaderForTest(() => ({
       ...native!,
@@ -358,10 +317,8 @@ describe("exclusive publication failure fencing", () => {
 
   it("rolls back when an exclusive copy cannot make write progress", async () => {
     configureFsSafeNative({ mode: "off" });
-    const root = await tempRoot("fs-safe-publish-copy-no-progress-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
-    await fs.writeFile(source, "content");
+    const { source, target } = await fixture("fs-safe-publish-copy-no-progress-", "content");
+
     vi.spyOn(fs, "link").mockRejectedValueOnce(Object.assign(new Error("force copy"), { code: "EXDEV" }));
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -378,11 +335,8 @@ describe("exclusive publication failure fencing", () => {
   });
 
   it.runIf(Boolean(native))("closes a native clone descriptor when target identity verification fails", async () => {
-    const root = await tempRoot("fs-safe-publish-native-target-swap-");
-    const source = path.join(root, "source");
-    const target = path.join(root, "target");
+    const { root, source, target } = await fixture("fs-safe-publish-native-target-swap-", "content");
     const created = path.join(root, "created");
-    await fs.writeFile(source, "content");
     __setNativeLoaderForTest(() => ({
       ...native!,
       linkBeneath() {

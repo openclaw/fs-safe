@@ -98,6 +98,8 @@ Use the main entry for the common surface, or the focused subpaths when you want
 |---|---|
 | `@openclaw/fs-safe` | Common root, config, output, lock, native-mode, and error exports. |
 | `@openclaw/fs-safe/root` | `root()`, `Root`, `RootDefaults`, and root-walk types. |
+| `@openclaw/fs-safe/copy` | [Directory copying and cloning](copy.md), clone-source creation, filesystem probes, and clone metadata. |
+| `@openclaw/fs-safe/guest` | [Guest filesystem protocol](guest.md): Python source and exit constants for caller-owned transports. |
 | `@openclaw/fs-safe/config` | Process-global native helper and lock defaults. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
 | `@openclaw/fs-safe/output` | Guarded staging/finalization for libraries that require an absolute output path. |
@@ -107,15 +109,17 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe/atomic` | `replaceFileAtomic`, `writeTextAtomic`, `replaceDirectoryAtomic`, `movePathWithCopyFallback`. |
 | `@openclaw/fs-safe/durability` | Pinned directories, strict sync, durable directory creation, exclusive publication, and streaming SHA-256. |
 | `@openclaw/fs-safe/temp` | `tempWorkspace`, `withTempWorkspace`, sync variants, `resolveSecureTempRoot`. |
+| `@openclaw/fs-safe/secure-temp-root` | [Secure temp root](temp.md#secure-temp-root) resolution without workspace/store imports. |
 | `@openclaw/fs-safe/secure-file` | `readSecureFile` for pinned absolute file reads with permissions checks. |
 | `@openclaw/fs-safe/file-lock` | `acquireFileLock`, `withFileLock`, `createFileLockManager`, and related lock types. |
+| `@openclaw/fs-safe/watch` | [Guarded filesystem observation](watch.md) with advisory native hints and polling. |
 | `@openclaw/fs-safe/permissions` | POSIX mode helpers, Windows ACL inspection/remediation, raw owner/ACE facts, and private-directory creation. |
 | `@openclaw/fs-safe/walk` | `walkDirectory`, `walkDirectorySync`, related types. Budget-bounded, not root-bounded. |
 | `@openclaw/fs-safe/archive` | `extractArchive`, `readArchiveEntry`, kind resolution, policy types, limits, and preflight helpers. |
 | `@openclaw/fs-safe/advanced` | Lower-level composition helpers: path scopes, root-file open, install paths, local-root readers, temp-file targets, sibling-temp writes, regular-file helpers, `pathExists`, `withTimeout`, and related advanced types. This surface is less stable than the focused public subpaths. |
 | `@openclaw/fs-safe/errors` | `FsSafeError`, `FsSafeErrorCode`. |
 | `@openclaw/fs-safe/types` | Shared types: `DirEntry`, `PathStat`, `BasePathOptions`, … |
-| `@openclaw/fs-safe/test-hooks` | Test-only hooks for injecting races. Active under `NODE_ENV=test`. |
+| `@openclaw/fs-safe/test-hooks` | [Test-only hooks](testing.md#hooks-api) for injecting races; registration requires `NODE_ENV=test` or `VITEST=true`. |
 
 ## Runtime dependencies
 

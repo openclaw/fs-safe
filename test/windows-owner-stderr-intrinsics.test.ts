@@ -5,27 +5,16 @@ import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
 } from "../src/native-config.js";
-import { inspectPathPermissions } from "../src/permissions.js";
-import { inspectWindowsAcl } from "../src/permissions-windows.js";
-import { readSecureFile } from "../src/secure-file.js";
+import {
+  createTrapCounter,
+  expectSecureReadRefusal,
+  inspectThroughBothPublicRoutes,
+} from "./helpers/windows-owner-diagnostics.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
-const ENV = { SystemRoot: "C:\\Windows" };
 const { tempRoot } = useRealTempDirs();
 
-function trapCounter(): {
-  count(): number;
-  trap(): never;
-} {
-  let calls = 0;
-  return {
-    count: () => calls,
-    trap: () => {
-      calls += 1;
-      throw new Error("hostile stderr hook executed");
-    },
-  };
-}
+const trapCounter = () => createTrapCounter("hostile stderr hook executed");
 
 async function targetFixture(prefix: string): Promise<string> {
   const root = await tempRoot(prefix);
@@ -42,14 +31,7 @@ async function inspectStderrThroughBothRoutes(target: string, stderr: unknown) {
     stderr,
     stdout: "PRIVATE_STDOUT",
   });
-  const exec = vi.fn(async () => { throw cause; });
-  const advanced = await inspectWindowsAcl("C:\\fixture", { env: ENV, exec });
-  const pathname = await inspectPathPermissions(target, {
-    platform: "win32",
-    env: ENV,
-    exec,
-  });
-  return { advanced, pathname, cause, exec };
+  return { ...await inspectThroughBothPublicRoutes(target, cause), cause };
 }
 
 function expectStderrResult(
@@ -257,41 +239,8 @@ describe("Windows owner stderr intrinsic snapshots", () => {
       signal: null,
       stderr,
     });
-    const actualOpen = fs.open.bind(fs);
-    let close: ReturnType<typeof vi.spyOn> | undefined;
-    let read: ReturnType<typeof vi.spyOn> | undefined;
-    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
-      const handle = await actualOpen(...args);
-      close = vi.spyOn(handle, "close");
-      read = vi.spyOn(handle, "readFile");
-      return handle;
-    });
-
-    const failure = await readSecureFile({
-      filePath: target,
-      inject: {
-        platform: "win32",
-        env: ENV,
-        exec: async () => { throw cause; },
-      },
-    }).catch((error: unknown) => error) as Error & {
-      cause?: unknown;
-      category?: string;
-      code?: string;
-      details?: { stderr?: string };
-    };
-
-    expect(failure.code).toBe("permission-unverified");
-    expect(failure.category).toBe("operational");
-    expect(failure.cause).toBe(cause);
+    const failure = await expectSecureReadRefusal(target, cause, "PRIVATE_FILE_CONTENT");
     expect(failure.details?.stderr).toBe("secure read denied\\u000a");
-    expect(read).toBeDefined();
-    expect(close).toBeDefined();
-    expect(read!).not.toHaveBeenCalled();
-    expect(close!).toHaveBeenCalledTimes(1);
-    expect(`${failure.message}${JSON.stringify(failure.details)}`).not.toContain(
-      "PRIVATE_FILE_CONTENT",
-    );
     expect(counter.count()).toBe(0);
   });
 });

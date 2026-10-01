@@ -1,16 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { __loadBundledNativeForTest } from "../src/native.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
-let hasNative = false;
-try {
-  __loadBundledNativeForTest();
-  hasNative = true;
-} catch {
-  // JavaScript-only jobs intentionally have no host binding. Native CI runs
-  // the actual regression in a fresh child, independently of this probe.
-}
+const hasNative = Boolean(loadTestNative("optional"));
 
 it.runIf(hasNative)("does not retain the first native caller's async context", () => {
   const output = execFileSync(process.execPath, [

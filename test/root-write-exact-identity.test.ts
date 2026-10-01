@@ -12,19 +12,14 @@ import { resolveRootContext } from "../src/root-context.js";
 import * as verification from "../src/root-write-verification.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const verify = verification.verifyAtomicWriteResult;
 const inode = 9007199254740993n;
 const device = 9007199254740995n;
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const nativeAvailable = Boolean(loadTestNative("required-env"));
 
 afterEach(() => {
   vi.restoreAllMocks();

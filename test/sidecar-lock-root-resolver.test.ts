@@ -19,6 +19,31 @@ afterEach(() => {
   Object.defineProperty(process, "platform", platform);
 });
 
+function interceptFinalResolution(
+  lockPath: string,
+  resolve: (handle: FileHandle) => string,
+  active = () => true,
+) {
+  const realpath = realpathSync.native;
+  let armed = false, descriptor: FileHandle | undefined;
+  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+    if (armed && String(args[0]) === lockPath) {
+      armed = false;
+      return resolve(descriptor!);
+    }
+    return realpath(...args);
+  });
+  __setFsSafeTestHooksForTest({
+    afterOpen(candidate, handle) {
+      if (candidate === lockPath && active()) descriptor = handle;
+    },
+    beforeRootReadFinalFence(candidate) {
+      if (candidate === lockPath && active()) armed = true;
+    },
+  });
+  return { get descriptor() { return descriptor; } };
+}
+
 it.each(["EPERM", "EBADF"])("does not brand a final canonical identity %s as a resolver failure", async (code) => {
   const capability = await root(await tempRoot("sidecar-canonical-identity-failure-"));
   const lockPath = path.join(capability.rootReal, "state.lock");
@@ -61,22 +86,17 @@ it.each(finalResolverOutcomes)("retries a final %s resolution failure only with 
   const waiterManager = createFileLockManager(`final-containment-waiter:${target}`);
   const owner = await ownerManager.acquire(target, { lockRoot: capability, payload: () => ({ owner: 1 }) });
   const outsidePath = path.join(path.dirname(capability.rootReal), "delete-pending.lock");
-  const realpath = realpathSync.native;
-  let armed = false, injected = false, descriptor: FileHandle | undefined;
-  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
-    if (armed && String(args[0]) === lockPath) {
-      armed = false;
-      injected = true;
-      fsSync.unlinkSync(lockPath);
-      expect(fsSync.fstatSync(descriptor!.fd, { bigint: true }).nlink).toBe(0n);
-      if (outcome !== "outside") {
-        Object.defineProperty(process, "platform", { value: "win32" });
-        throw Object.assign(new Error("final resolver failure"), { code: outcome });
-      }
-      return outsidePath;
+  let injected = false;
+  const probe = interceptFinalResolution(lockPath, (descriptor) => {
+    injected = true;
+    fsSync.unlinkSync(lockPath);
+    expect(fsSync.fstatSync(descriptor.fd, { bigint: true }).nlink).toBe(0n);
+    if (outcome !== "outside") {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      throw Object.assign(new Error("final resolver failure"), { code: outcome });
     }
-    return realpath(...args);
-  });
+    return outsidePath;
+  }, () => !injected);
   const open = capability.open.bind(capability);
   vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
     try {
@@ -85,14 +105,6 @@ it.each(finalResolverOutcomes)("retries a final %s resolution failure only with 
       Object.defineProperty(process, "platform", platform);
     }
   });
-  __setFsSafeTestHooksForTest({
-    afterOpen(candidate, handle) {
-      if (candidate === lockPath && !injected) descriptor = handle;
-    },
-    beforeRootReadFinalFence(candidate) {
-      if (candidate === lockPath && !injected) armed = true;
-    },
-  });
   const parsePayload = vi.fn(JSON.parse);
   const waiter = await waiterManager.acquire(target, {
     lockRoot: capability, payload: () => ({ owner: 2 }), parsePayload,
@@ -100,7 +112,7 @@ it.each(finalResolverOutcomes)("retries a final %s resolution failure only with 
   });
   expect(injected).toBe(true);
   expect(parsePayload).not.toHaveBeenCalled();
-  expect(descriptor?.fd).toBe(-1);
+  expect(probe.descriptor?.fd).toBe(-1);
   await expect(waiter.verifyStillHeld()).resolves.toBe(true);
   await waiter.release();
   await owner.release();
@@ -117,32 +129,26 @@ it.each(finalResolverOutcomes.flatMap(
     const lockPath = path.join(capability.rootReal, "state.lock");
     await capability.create("state.lock", "{}");
     const outsidePath = path.join(path.dirname(capability.rootReal), "outside.lock");
-    const realpath = realpathSync.native;
-    let armed = false, descriptor: FileHandle | undefined;
-    vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
-      if (armed && String(args[0]) === lockPath) {
-        armed = false;
-        if (control !== "linked") {
-          fsSync.unlinkSync(lockPath);
-          Object.defineProperty(process, "platform", { value: "win32" });
-          const fstat = fsSync.fstatSync.bind(fsSync);
-          vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
-            const value = fstat(fd, options);
-            if (fd === descriptor!.fd && options?.bigint) {
-              (value as fsSync.BigIntStats).ino = control === "unknown"
-                ? 0n
-                : BigInt(value.ino) + 1n;
-            }
-            return value;
-          });
-        }
-        if (outcome !== "outside") {
-          Object.defineProperty(process, "platform", { value: "win32" });
-          throw Object.assign(new Error("final resolver failure"), { code: outcome });
-        }
-        return outsidePath;
+    const probe = interceptFinalResolution(lockPath, (descriptor) => {
+      if (control !== "linked") {
+        fsSync.unlinkSync(lockPath);
+        Object.defineProperty(process, "platform", { value: "win32" });
+        const fstat = fsSync.fstatSync.bind(fsSync);
+        vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
+          const value = fstat(fd, options);
+          if (fd === descriptor.fd && options?.bigint) {
+            (value as fsSync.BigIntStats).ino = control === "unknown"
+              ? 0n
+              : BigInt(value.ino) + 1n;
+          }
+          return value;
+        });
       }
-      return realpath(...args);
+      if (outcome !== "outside") {
+        Object.defineProperty(process, "platform", { value: "win32" });
+        throw Object.assign(new Error("final resolver failure"), { code: outcome });
+      }
+      return outsidePath;
     });
     const open = capability.open.bind(capability);
     vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
@@ -152,19 +158,11 @@ it.each(finalResolverOutcomes.flatMap(
         Object.defineProperty(process, "platform", platform);
       }
     });
-    __setFsSafeTestHooksForTest({
-      afterOpen(candidate, handle) {
-        if (candidate === lockPath) descriptor = handle;
-      },
-      beforeRootReadFinalFence(candidate) {
-        if (candidate === lockPath) armed = true;
-      },
-    });
 
     await expect(readSidecarLockSnapshot(lockPath, {
       lockRoot: capability, discardObservation: "unlinked",
     })).rejects.toMatchObject({ code: outcome === "outside" ? "outside-workspace" : outcome });
-    expect(descriptor?.fd).toBe(-1);
+    expect(probe.descriptor?.fd).toBe(-1);
   },
 );
 
@@ -176,31 +174,17 @@ it.skipIf(process.platform === "win32")(
     const parent = path.dirname(lockPath), displaced = `${parent}.old`;
     await capability.create(relative, "{}");
     const outsidePath = path.join(path.dirname(capability.rootReal), "outside.lock");
-    const realpath = realpathSync.native;
-    let armed = false, descriptor: FileHandle | undefined;
-    vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
-      if (armed && String(args[0]) === lockPath) {
-        armed = false;
-        fsSync.unlinkSync(lockPath);
-        fsSync.renameSync(parent, displaced);
-        fsSync.mkdirSync(parent);
-        return outsidePath;
-      }
-      return realpath(...args);
-    });
-    __setFsSafeTestHooksForTest({
-      afterOpen(candidate, handle) {
-        if (candidate === lockPath) descriptor = handle;
-      },
-      beforeRootReadFinalFence(candidate) {
-        if (candidate === lockPath) armed = true;
-      },
+    const probe = interceptFinalResolution(lockPath, () => {
+      fsSync.unlinkSync(lockPath);
+      fsSync.renameSync(parent, displaced);
+      fsSync.mkdirSync(parent);
+      return outsidePath;
     });
 
     await expect(readSidecarLockSnapshot(lockPath, {
       lockRoot: capability, discardObservation: "unlinked",
     })).rejects.toMatchObject({ code: "outside-workspace" });
-    expect(descriptor?.fd).toBe(-1);
+    expect(probe.descriptor?.fd).toBe(-1);
   },
 );
 
@@ -209,27 +193,13 @@ it.each(finalResolverOutcomes)("ordinary Root.open preserves a final %s rejectio
   const lockPath = path.join(capability.rootReal, "state.lock");
   await capability.create("state.lock", "{}");
   const outsidePath = path.join(path.dirname(capability.rootReal), "outside.lock");
-  const realpath = realpathSync.native;
-  let armed = false, descriptor: FileHandle | undefined;
-  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
-    if (armed && String(args[0]) === lockPath) {
-      armed = false;
-      fsSync.unlinkSync(lockPath);
-      if (outcome !== "outside") {
-        Object.defineProperty(process, "platform", { value: "win32" });
-        throw Object.assign(new Error("final resolver failure"), { code: outcome });
-      }
-      return outsidePath;
+  const probe = interceptFinalResolution(lockPath, () => {
+    fsSync.unlinkSync(lockPath);
+    if (outcome !== "outside") {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      throw Object.assign(new Error("final resolver failure"), { code: outcome });
     }
-    return realpath(...args);
-  });
-  __setFsSafeTestHooksForTest({
-    afterOpen(candidate, handle) {
-      if (candidate === lockPath) descriptor = handle;
-    },
-    beforeRootReadFinalFence(candidate) {
-      if (candidate === lockPath) armed = true;
-    },
+    return outsidePath;
   });
 
   try {
@@ -239,7 +209,7 @@ it.each(finalResolverOutcomes)("ordinary Root.open preserves a final %s rejectio
   } finally {
     Object.defineProperty(process, "platform", platform);
   }
-  expect(descriptor?.fd).toBe(-1);
+  expect(probe.descriptor?.fd).toBe(-1);
 });
 
 it.each(["numeric", "unknown", "closed", "changed", "linked", "multiple-links"])(

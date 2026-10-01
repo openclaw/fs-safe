@@ -6,19 +6,10 @@ import { root } from "../src/root.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { managerState as state, requiredNativeMode } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
-const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
 type Authority = "raw" | "root";
-type ManagerState = { admissions: Map<string, object>; held: Map<string, unknown> };
-
-function requiredNativeMode(): "off" | "require" {
-  return process.env.FS_SAFE_NATIVE_MODE === "require" ? "require" : "off";
-}
-
-function state(key: string): ManagerState {
-  return (Reflect.get(globalThis, managersKey) as Map<string, ManagerState>).get(key)!;
-}
 
 function zeroDelay(): void {
   vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, _delay, ...args) => {

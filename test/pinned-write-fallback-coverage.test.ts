@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7,33 +6,10 @@ import { afterEach, describe, expect, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, itWin32, useTempDirs } from "./helpers/vitest.js";
 
-vi.mock(import("node:child_process"), async (importOriginal) => {
-  return {
-    ...await importOriginal(),
-    spawn: () => {
-      const child = new EventEmitter() as EventEmitter & {
-        kill(signal?: NodeJS.Signals): void;
-        stdout: EventEmitter & { setEncoding: () => void };
-        stderr: EventEmitter & { setEncoding: () => void };
-      };
-      child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => undefined });
-      child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => undefined });
-      child.kill = () => undefined;
-      queueMicrotask(() => child.emit("close", 0, null));
-      return child;
-    },
-  };
-});
-
 const { tempRoot } = useTempDirs();
-const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
-
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  if (originalPlatform) {
-    Object.defineProperty(process, "platform", originalPlatform);
-  }
 });
 
 describe("pinned write fallback coverage", () => {

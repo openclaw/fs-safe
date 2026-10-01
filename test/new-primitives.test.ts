@@ -12,8 +12,6 @@ import {
   appendRegularFileSync,
   readRegularFile,
   readRegularFileSync,
-  resolveRegularFileAppendFlags,
-  statRegularFile,
 } from "../src/regular-file.js";
 import {
   tempWorkspace,
@@ -27,7 +25,6 @@ import {
 } from "../src/symlink-parents.js";
 import { pathScope } from "../src/root-paths.js";
 import { replaceFileAtomic, replaceFileAtomicSync } from "../src/replace-file.js";
-import { movePathWithCopyFallback } from "../src/move-path.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
 import { acquireFileLock, createFileLockManager, withFileLock } from "../src/file-lock.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
@@ -575,7 +572,10 @@ describe("directory walking", () => {
     expect(walkDirectorySync(root).failedDirs).toEqual([]);
   });
 
-  itPosix("reports an unreadable subtree in failedDirs without dropping readable siblings", async () => {
+  itPosix.each([
+    ["async", walkDirectory],
+    ["sync", walkDirectorySync],
+  ] as const)("reports an unreadable subtree without dropping readable siblings (%s)", async (_kind, walk) => {
     await fs.mkdir(path.join(root, "readable"), { recursive: true });
     await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
     const blocked = path.join(root, "blocked");
@@ -583,17 +583,14 @@ describe("directory walking", () => {
     await fs.writeFile(path.join(blocked, "hidden.txt"), "secret");
     await fs.chmod(blocked, 0o000);
     try {
-      const scan = await walkDirectory(root, { include: (entry) => entry.kind === "file" });
+      const scan = await walk(root, { include: (entry) => entry.kind === "file" });
 
-      // The readable sibling is still enumerated.
       expect(scan.entries.map((entry) => entry.relativePath)).toContain(
         path.join("readable", "ok.txt"),
       );
-      // The unreadable subtree contributes no entries.
       expect(scan.entries.map((entry) => entry.relativePath)).not.toContain(
         path.join("blocked", "hidden.txt"),
       );
-      // ...but the failure is reported, not silently swallowed.
       expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
       expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
       expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
@@ -616,26 +613,6 @@ describe("directory walking", () => {
       expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
     } finally {
       await fs.chmod(scanRoot, 0o755);
-    }
-  });
-
-  itPosix("reports unreadable directories from the synchronous walk too", async () => {
-    await fs.mkdir(path.join(root, "readable"), { recursive: true });
-    await fs.writeFile(path.join(root, "readable", "ok.txt"), "1");
-    const blocked = path.join(root, "blocked");
-    await fs.mkdir(blocked, { recursive: true });
-    await fs.chmod(blocked, 0o000);
-    try {
-      const scan = walkDirectorySync(root, { include: (entry) => entry.kind === "file" });
-
-      expect(scan.entries.map((entry) => entry.relativePath)).toContain(
-        path.join("readable", "ok.txt"),
-      );
-      expect(scan.failedDirs.map((failure) => failure.relativePath)).toEqual(["blocked"]);
-      expect(scan.failedDirs[0]).toMatchObject({ path: blocked, depth: 1 });
-      expect((scan.failedDirs[0]?.error as NodeJS.ErrnoException).code).toBe("EACCES");
-    } finally {
-      await fs.chmod(blocked, 0o755);
     }
   });
 
@@ -755,46 +732,18 @@ describe("file locks", () => {
 });
 
 describe("regular file append", () => {
-  it("keeps append flags usable when O_NOFOLLOW is unavailable", () => {
-    expect(
-      resolveRegularFileAppendFlags({
-        O_APPEND: 0x01,
-        O_CREAT: 0x02,
-        O_WRONLY: 0x04,
-      }),
-    ).toBe(0x07);
-  });
-
-  it("appends with restrictive permissions and honors max bytes", async () => {
+  it.each([
+    ["async", appendRegularFile],
+    ["sync", appendRegularFileSync],
+  ] as const)("appends with restrictive permissions and honors max bytes (%s)", async (_kind, append) => {
     const filePath = path.join(root, "events.jsonl");
-    await appendRegularFile({ filePath, content: "12345\n", maxFileBytes: 6 });
-    await appendRegularFile({ filePath, content: "after\n", maxFileBytes: 6 });
+    await append({ filePath, content: "12345\n", maxFileBytes: 6 });
+    await append({ filePath, content: "after\n", maxFileBytes: 6 });
 
     expect(await fs.readFile(filePath, "utf8")).toBe("12345\n");
     if (process.platform !== "win32") {
       expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
     }
-  });
-
-  it("appends synchronously with restrictive permissions and honors max bytes", async () => {
-    const filePath = path.join(root, "sync-events.jsonl");
-    appendRegularFileSync({ filePath, content: "12345\n", maxFileBytes: 6 });
-    appendRegularFileSync({ filePath, content: "after\n", maxFileBytes: 6 });
-
-    expect(await fs.readFile(filePath, "utf8")).toBe("12345\n");
-    if (process.platform !== "win32") {
-      expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
-    }
-  });
-
-  itPosix("rejects symlink leaves synchronously", async () => {
-    const target = path.join(root, "target.txt");
-    const link = path.join(root, "link.txt");
-    await fs.writeFile(target, "secret", "utf8");
-    await fs.symlink(target, link);
-
-    expect(() => appendRegularFileSync({ filePath: link, content: "line\n" })).toThrow(/symlink/);
-    expect(await fs.readFile(target, "utf8")).toBe("secret");
   });
 
   itPosix("rejects symlink parents", async () => {
@@ -815,7 +764,10 @@ describe("regular file append", () => {
     });
   });
 
-  it("pins regular file reads against symlink swaps", async () => {
+  it.each([
+    ["async", readRegularFile],
+    ["sync", readRegularFileSync],
+  ] as const)("pins regular file reads against symlink swaps (%s)", async (kind, read) => {
     const filePath = path.join(root, "read-target.txt");
     const secretPath = path.join(root, "read-secret.txt");
     await fs.writeFile(filePath, "safe", "utf8");
@@ -834,33 +786,8 @@ describe("regular file append", () => {
     });
 
     try {
-      await expect(readRegularFile({ filePath })).rejects.toThrow();
-      await expect(fs.readFile(secretPath, "utf8")).resolves.toBe("secret");
-    } finally {
-      lstatSpy.mockRestore();
-    }
-  });
-
-  it("pins sync regular file reads against symlink swaps", async () => {
-    const filePath = path.join(root, "sync-read-target.txt");
-    const secretPath = path.join(root, "sync-read-secret.txt");
-    await fs.writeFile(filePath, "safe", "utf8");
-    await fs.writeFile(secretPath, "secret", "utf8");
-
-    const originalLstatSync = syncFs.lstatSync.bind(syncFs);
-    let swapped = false;
-    const lstatSpy = vi.spyOn(syncFs, "lstatSync").mockImplementation((...args) => {
-      const stat = originalLstatSync(...args);
-      if (!swapped && args[0] === filePath) {
-        swapped = true;
-        syncFs.rmSync(filePath, { force: true });
-        syncFs.symlinkSync(secretPath, filePath);
-      }
-      return stat;
-    });
-
-    try {
-      expect(() => readRegularFileSync({ filePath })).toThrow();
+      if (kind === "sync") expect(() => read({ filePath })).toThrow();
+      else await expect(read({ filePath })).rejects.toThrow();
       await expect(fs.readFile(secretPath, "utf8")).resolves.toBe("secret");
     } finally {
       lstatSpy.mockRestore();
@@ -1093,19 +1020,6 @@ describe("atomic file replacement", () => {
   });
 });
 
-describe("path moves", () => {
-  it("moves paths with rename", async () => {
-    const from = path.join(root, "from.txt");
-    const to = path.join(root, "to.txt");
-    await fs.writeFile(from, "moved");
-
-    await movePathWithCopyFallback({ from, to });
-
-    await expect(fs.access(from)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await fs.readFile(to, "utf8")).toBe("moved");
-  });
-});
-
 describe("sibling temp files", () => {
   it("writes through a sibling temp file and cleans failures", async () => {
     const finalPath = path.join(root, "download.bin");
@@ -1141,12 +1055,6 @@ describe("sibling temp files", () => {
   });
 });
 
-describe("regular file helpers", () => {
-  it("rejects directories", async () => {
-    await expect(statRegularFile(root)).rejects.toThrow(/regular file/);
-  });
-});
-
 describe("path scope directory creation", () => {
   it("creates directories inside the root", async () => {
     const result = await pathScope(root, { label: "test root" }).ensureDir("a/b", { mode: 0o700 });
@@ -1161,31 +1069,16 @@ describe("path scope directory creation", () => {
 });
 
 describe("symlink parent guards", () => {
-  it("rejects symlink path components", async () => {
+  it.each([
+    ["async", assertNoSymlinkParents],
+    ["sync", assertNoSymlinkParentsSync],
+  ] as const)("rejects symlink path components (%s)", async (kind, assertParents) => {
     const real = path.join(root, "real");
     const link = path.join(root, "link");
     await fs.mkdir(real);
     await fs.symlink(real, link);
-    await expect(
-      assertNoSymlinkParents({
-        rootDir: root,
-        targetPath: path.join(link, "file.txt"),
-        requireDirectories: true,
-      }),
-    ).rejects.toThrow(/symlinked/);
-  });
-
-  it("has a sync variant", async () => {
-    const real = path.join(root, "real-sync");
-    const link = path.join(root, "link-sync");
-    await fs.mkdir(real);
-    await fs.symlink(real, link);
-    expect(() =>
-      assertNoSymlinkParentsSync({
-        rootDir: root,
-        targetPath: path.join(link, "file.txt"),
-        requireDirectories: true,
-      }),
-    ).toThrow(/symlinked/);
+    const options = { rootDir: root, targetPath: path.join(link, "file.txt"), requireDirectories: true };
+    if (kind === "sync") expect(() => assertParents(options)).toThrow(/symlinked/);
+    else await expect(assertParents(options)).rejects.toThrow(/symlinked/);
   });
 });

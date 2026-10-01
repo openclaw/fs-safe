@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError, type FsSafeErrorCode } from "../src/errors.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
@@ -213,94 +213,48 @@ describe("sync and async public contracts", () => {
     }
   });
 
-  it("reports temp-workspace directory reads as not-file", async () => {
-    const root = await tempRoot("fs-safe-workspace-directory-read-");
-    const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
-    const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
-    try {
-      await fs.mkdir(asyncWorkspace.path("directory"));
-      fsSync.mkdirSync(syncWorkspace.path("directory"));
+  describe.each(["sync", "async"] as const)("%s temp-workspace reads", kind => {
+    let workspace: ReturnType<typeof tempWorkspaceSync> | Awaited<ReturnType<typeof tempWorkspace>>;
+    beforeEach(async () => {
+      const root = await tempRoot("fs-safe-workspace-contract-");
+      workspace = kind === "sync"
+        ? tempWorkspaceSync({ rootDir: root, prefix: "sync-" })
+        : await tempWorkspace({ rootDir: root, prefix: "async-" });
+    });
+    afterEach(async () => { await workspace?.cleanup(); });
+    const failureFrom = (name: string) => kind === "sync"
+      ? captureThrown(() => workspace.read(name))
+      : captureRejected(workspace.read(name) as Promise<Buffer>);
 
-      const asyncError = await captureRejected(asyncWorkspace.read("directory"));
-      const syncError = captureThrown(() => syncWorkspace.read("directory"));
+    it.each([
+      ["directory", "not-file"],
+      ["missing", "not-found"],
+    ] as const)("classifies %s as %s", async (name, code) => {
+      if (name === "directory") fsSync.mkdirSync(workspace.path(name));
+      expectFsSafeCode(await failureFrom(name), code);
+    });
 
-      for (const error of [asyncError, syncError]) {
-        expectFsSafeCode(error, "not-file");
+    it("reports operational read failures with their original cause", async () => {
+      await workspace.writeText("value", "content");
+      const failure = Object.assign(new Error("read failed"), { code: "EIO" });
+      if (kind === "sync") {
+        vi.spyOn(fsSync, "openSync").mockImplementationOnce(() => { throw failure; });
+      } else {
+        vi.spyOn(fs, "open").mockRejectedValueOnce(failure);
       }
-    } finally {
-      await asyncWorkspace.cleanup();
-      syncWorkspace.cleanup();
-    }
-  });
+      const error = await failureFrom("value");
+      expectFsSafeCode(error, "read-failed");
+      expect(error).toMatchObject({ category: "operational", cause: failure });
+    });
 
-  it("reports missing temp-workspace reads as not-found", async () => {
-    const root = await tempRoot("fs-safe-workspace-missing-read-");
-    const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
-    const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
-    try {
-      const asyncError = await captureRejected(asyncWorkspace.read("missing"));
-      const syncError = captureThrown(() => syncWorkspace.read("missing"));
-
-      for (const error of [asyncError, syncError]) {
-        expectFsSafeCode(error, "not-found");
+    itPosix("preserves hardlink and symlink validation codes", async () => {
+      await workspace.writeText("target", "content");
+      fsSync.linkSync(workspace.path("target"), workspace.path("hardlink"));
+      fsSync.symlinkSync(workspace.path("target"), workspace.path("symlink"));
+      for (const [key, code] of [["hardlink", "hardlink"], ["symlink", "symlink"]] as const) {
+        expectFsSafeCode(await failureFrom(key), code);
       }
-    } finally {
-      await asyncWorkspace.cleanup();
-      syncWorkspace.cleanup();
-    }
-  });
-
-  it("reports temp-workspace I/O failures as operational read failures", async () => {
-    const root = await tempRoot("fs-safe-workspace-read-io-");
-    const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
-    const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
-    const failure = Object.assign(new Error("read failed"), { code: "EIO" });
-    try {
-      await asyncWorkspace.writeText("value", "content");
-      syncWorkspace.writeText("value", "content");
-
-      vi.spyOn(fs, "open").mockRejectedValueOnce(failure);
-      const asyncError = await captureRejected(asyncWorkspace.read("value"));
-      vi.spyOn(fsSync, "openSync").mockImplementationOnce(() => {
-        throw failure;
-      });
-      const syncError = captureThrown(() => syncWorkspace.read("value"));
-
-      for (const error of [asyncError, syncError]) {
-        expectFsSafeCode(error, "read-failed");
-        expect(error).toMatchObject({ category: "operational", cause: failure });
-      }
-    } finally {
-      await asyncWorkspace.cleanup();
-      syncWorkspace.cleanup();
-    }
-  });
-
-  itPosix("preserves temp-workspace hardlink and symlink validation codes", async () => {
-    const root = await tempRoot("fs-safe-workspace-link-read-");
-    const asyncWorkspace = await tempWorkspace({ rootDir: root, prefix: "async-" });
-    const syncWorkspace = tempWorkspaceSync({ rootDir: root, prefix: "sync-" });
-    try {
-      await asyncWorkspace.writeText("target", "content");
-      syncWorkspace.writeText("target", "content");
-      await fs.link(asyncWorkspace.path("target"), asyncWorkspace.path("hardlink"));
-      fsSync.linkSync(syncWorkspace.path("target"), syncWorkspace.path("hardlink"));
-      await fs.symlink(asyncWorkspace.path("target"), asyncWorkspace.path("symlink"));
-      fsSync.symlinkSync(syncWorkspace.path("target"), syncWorkspace.path("symlink"));
-
-      for (const [key, code] of [
-        ["hardlink", "hardlink"],
-        ["symlink", "symlink"],
-      ] as const) {
-        const asyncError = await captureRejected(asyncWorkspace.read(key));
-        const syncError = captureThrown(() => syncWorkspace.read(key));
-        expectFsSafeCode(asyncError, code);
-        expectFsSafeCode(syncError, code);
-      }
-    } finally {
-      await asyncWorkspace.cleanup();
-      syncWorkspace.cleanup();
-    }
+    });
   });
 
   it("reports a non-directory ancestor as not-file instead of an allowed missing suffix", async () => {

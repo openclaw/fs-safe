@@ -92,23 +92,21 @@ function runSyncFallbackOrderProbe(root: string): {
 }
 
 describe("atomic descriptor modes", () => {
-  itPosix("does not chmod an async destination swapped for a symlink after rename", async () => {
-    const root = await tempRoot("fs-safe-atomic-chmod-race-");
+  itPosix.each(["async", "sync"] as const)("does not chmod a %s destination swapped for a symlink after rename", async (mode) => {
+    const root = await tempRoot(`fs-safe-atomic-chmod-race-${mode}-`);
     const filePath = path.join(root, "state.txt");
     const victimPath = path.join(root, "victim.txt");
     let publishedMode: number | undefined;
     await fs.writeFile(victimPath, "victim", { mode: 0o644 });
     await fs.chmod(victimPath, 0o644);
-    const chmod = vi.spyOn(fs, "chmod");
-
+    const chmod = mode === "async" ? vi.spyOn(fs, "chmod") : vi.spyOn(fsSync, "chmodSync");
+    const options = { filePath, content: "new", mode: 0o600 };
     const previousUmask = process.umask(0o077);
     try {
-      await expect(replaceFileAtomic({
-        filePath,
-        content: "new",
-        mode: 0o600,
-        fileSystem: {
-          promises: {
+      if (mode === "async") {
+        await expect(replaceFileAtomic({
+          ...options,
+          fileSystem: { promises: {
             ...fs,
             rename: async (source, destination) => {
               await fs.rename(source, destination);
@@ -116,9 +114,22 @@ describe("atomic descriptor modes", () => {
               await fs.unlink(destination);
               await fs.symlink(victimPath, destination);
             },
+          } },
+        })).rejects.toMatchObject({ code: "symlink" });
+      } else {
+        expect(() => replaceFileAtomicSync({
+          ...options,
+          fileSystem: {
+            ...fsSync,
+            renameSync: (source, destination) => {
+              fsSync.renameSync(source, destination);
+              publishedMode = fsSync.statSync(destination).mode & 0o777;
+              fsSync.unlinkSync(destination);
+              fsSync.symlinkSync(victimPath, destination);
+            },
           },
-        },
-      })).rejects.toMatchObject({ code: "symlink" });
+        })).toThrow(expect.objectContaining({ code: "symlink" }));
+      }
     } finally {
       process.umask(previousUmask);
     }
@@ -129,44 +140,6 @@ describe("atomic descriptor modes", () => {
     }).toEqual({ publishedMode: 0o600, victimMode: 0o644 });
     expect(chmod).not.toHaveBeenCalled();
     expect((await fs.lstat(filePath)).isSymbolicLink()).toBe(true);
-  });
-
-  itPosix("does not chmod a sync destination swapped for a symlink after rename", async () => {
-    const root = await tempRoot("fs-safe-atomic-chmod-race-sync-");
-    const filePath = path.join(root, "state.txt");
-    const victimPath = path.join(root, "victim.txt");
-    let publishedMode: number | undefined;
-    await fs.writeFile(victimPath, "victim", { mode: 0o644 });
-    await fs.chmod(victimPath, 0o644);
-    const chmod = vi.spyOn(fsSync, "chmodSync");
-    const fileSystem = {
-      ...fsSync,
-      renameSync: ((source: fsSync.PathLike, destination: fsSync.PathLike) => {
-        fsSync.renameSync(source, destination);
-        publishedMode = fsSync.statSync(destination).mode & 0o777;
-        fsSync.unlinkSync(destination);
-        fsSync.symlinkSync(victimPath, destination);
-      }) as typeof fsSync.renameSync,
-    };
-
-    const previousUmask = process.umask(0o077);
-    try {
-      expect(() => replaceFileAtomicSync({
-        filePath,
-        content: "new",
-        mode: 0o600,
-        fileSystem,
-      })).toThrow(expect.objectContaining({ code: "symlink" }));
-    } finally {
-      process.umask(previousUmask);
-    }
-
-    expect({
-      publishedMode,
-      victimMode: fsSync.statSync(victimPath).mode & 0o777,
-    }).toEqual({ publishedMode: 0o600, victimMode: 0o644 });
-    expect(chmod).not.toHaveBeenCalled();
-    expect(fsSync.lstatSync(filePath).isSymbolicLink()).toBe(true);
   });
 
   itPosix("applies exact async and sync modes through temp descriptors despite umask", async () => {

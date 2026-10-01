@@ -6,23 +6,11 @@ import { acquireFileLockSync } from "../src/file-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { managerState as asyncState } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
 const syncHeldKey = Symbol.for("fsSafe.syncSidecarLocks");
 const syncAdmissionsKey = Symbol.for("fsSafe.syncSidecarLockAdmissions");
-
-type ManagerState = {
-  held: Map<string, unknown>;
-  admissions: Map<string, object>;
-};
-
-function asyncState(key: string): ManagerState {
-  const managers = Reflect.get(globalThis, Symbol.for("fsSafe.sidecarLockManagers")) as Map<
-    string,
-    ManagerState
-  >;
-  return managers.get(key)!;
-}
 
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });

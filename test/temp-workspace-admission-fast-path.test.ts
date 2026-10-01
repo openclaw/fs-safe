@@ -1,34 +1,15 @@
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
-import { __resetNativeLoaderForTest } from "../src/native.js";
+import { describe, expect, it, vi } from "vitest";
 import { tempWorkspace, tempWorkspaceSync, type TempWorkspaceOptions } from "../src/temp.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { TempWorkspaceRetainedChild } from "../src/temp-workspace-descriptor.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useWorkspaceFixture, observeSyncOpen, tempWorkspaceSyncWithUmask022 } from "./helpers/temp-workspace.js";
 
-const { tempRoot } = useRealTempDirs();
+const { tempRoot } = useWorkspaceFixture();
 const supportsDirectRequestedMode = process.platform === "linux" || process.platform === "darwin";
 const supportsNumericIdentityReplay = supportsDirectRequestedMode;
-
-function tempWorkspaceSyncWithUmask022(options: Parameters<typeof tempWorkspaceSync>[0]) {
-  const previous = process.umask(0o022);
-  try {
-    return tempWorkspaceSync(options);
-  } finally {
-    process.umask(previous);
-  }
-}
-
-beforeEach(() => configureFsSafeNative({ mode: "off" }));
-afterEach(() => {
-  vi.restoreAllMocks();
-  cleanup.__cleanupRegisteredTempPathsForTest();
-  __resetNativeLoaderForTest();
-  __resetFsSafeNativeConfigForTest();
-});
 
 for (const variant of ["async", "sync"] as const) {
   describe(`${variant} temp workspace fast admission`, () => {
@@ -70,14 +51,11 @@ for (const variant of ["async", "sync"] as const) {
         stat.dev = typeof stat.dev === "bigint" ? 701n : 701;
         stat.ino = typeof stat.ino === "bigint" ? 1701n : 1701;
       };
-      const openSync = fsSync.openSync.bind(fsSync);
-      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-        const fd = openSync(...args);
+      observeSyncOpen((args, fd) => {
         if (isWorkspaceChild(rootDir, args[0])) {
           opens += 1;
           childFds.add(fd);
         }
-        return fd;
       });
       const lstat = fsSync.lstatSync.bind(fsSync);
       vi.spyOn(fsSync, "lstatSync").mockImplementation((name, options) => {
@@ -466,12 +444,9 @@ it("keeps an opened child untransferable until final admission and closes it onc
   const child = path.join(rootDir, "child");
   await fs.mkdir(child, { mode: 0o700 });
   const identity = fsSync.lstatSync(child, { bigint: true });
-  const open = fsSync.openSync.bind(fsSync);
   let retainedFd: number | undefined;
-  vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
-    const fd = open(...args);
+  observeSyncOpen((args, fd) => {
     if (args[0] === child) retainedFd = fd;
-    return fd;
   });
   const fstat = vi.spyOn(fsSync, "fstatSync");
   const close = vi.spyOn(fsSync, "closeSync");

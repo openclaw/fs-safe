@@ -167,7 +167,7 @@ mod tests {
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::test_support::{temp_path, unique_path_in};
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_STANDARD_INFO, FileStandardInfo, GetFileInformationByHandleEx,
     };
@@ -193,14 +193,7 @@ mod tests {
             std::env::var_os("FS_SAFE_CLONE_TEST_ROOT").map_or_else(std::env::temp_dir, Into::into),
         )
         .unwrap();
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = base.join(format!(
-            "fs-safe-sparse-copy-{}-{nonce}",
-            std::process::id()
-        ));
+        let root = unique_path_in(&base, "sparse-copy");
         fs::create_dir(&root).unwrap();
         let owned = fs::canonicalize(&root).unwrap();
         assert_eq!(owned.parent(), Some(base.as_path()));
@@ -295,11 +288,7 @@ mod tests {
     #[test]
     fn copies_zero_bytes_over_existing_contents_and_preserves_target_tail() {
         let base = fs::canonicalize(std::env::temp_dir()).unwrap();
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = base.join(format!("fs-safe-copy-tail-{}-{nonce}", std::process::id()));
+        let root = unique_path_in(&base, "copy-tail");
         fs::create_dir(&root).unwrap();
         let owned = fs::canonicalize(&root).unwrap();
         assert_eq!(owned.parent(), Some(base.as_path()));
@@ -339,12 +328,7 @@ mod tests {
 
     #[test]
     fn copies_empty_and_multichunk_files_without_moving_caller_offsets() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir()
-            .join(format!("fs-safe-copy-{}-{nonce}", std::process::id()));
+        let root = temp_path("copy");
         fs::create_dir(&root).unwrap();
         for size in [0, 1, 4095, 4096, 4097, 65_537, 1024 * 1024 + 17] {
             let source_path = root.join(format!("source-{size}"));

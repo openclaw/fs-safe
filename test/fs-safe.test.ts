@@ -430,18 +430,6 @@ describe("@openclaw/fs-safe", () => {
     });
   });
 
-  it("opens a file handle for fast reads when kernel fd path validation is available", async () => {
-    const root = await openRoot(await tempRoot("fs-safe-open-"));
-    await root.write("file.txt", "fast");
-
-    const opened = await root.open("file.txt");
-    try {
-      await expect(opened.handle.readFile("utf8")).resolves.toBe("fast");
-    } finally {
-      await opened.handle.close();
-    }
-  });
-
   it("supports await using for escaped read and write handles", async () => {
     const rootPath = await tempRoot("fs-safe-dispose-");
     const root = await openRoot(rootPath);
@@ -469,26 +457,12 @@ describe("@openclaw/fs-safe", () => {
     );
   });
 
-  itPosix("honors mode on root text and JSON writes", async () => {
+  itPosix.each(["root default", "per call"] as const)("honors %s mode on text and JSON writes", async source => {
     const rootPath = await tempRoot("fs-safe-write-mode-");
-    const root = await openRoot(rootPath);
-
-    await root.write("secret.txt", "secret", { mode: 0o640 });
-    await root.writeJson("secret.json", { ok: true }, { mode: 0o640 });
-
-    await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
-      .toBe(0o640);
-    await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves
-      .toBe(0o640);
-  });
-
-  itPosix("honors default mode on root writes", async () => {
-    const rootPath = await tempRoot("fs-safe-default-write-mode-");
-    const root = await openRoot(rootPath, { mode: 0o640 });
-
-    await root.write("secret.txt", "secret");
-    await root.writeJson("secret.json", { ok: true });
-
+    const root = await openRoot(rootPath, source === "root default" ? { mode: 0o640 } : undefined);
+    const options = source === "per call" ? { mode: 0o640 } : undefined;
+    await root.write("secret.txt", "secret", options);
+    await root.writeJson("secret.json", { ok: true }, options);
     await expect(stat(path.join(rootPath, "secret.txt")).then((s) => s.mode & 0o777)).resolves
       .toBe(0o640);
     await expect(stat(path.join(rootPath, "secret.json")).then((s) => s.mode & 0o777)).resolves

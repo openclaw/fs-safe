@@ -7,6 +7,7 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { deferred } from "./helpers/deferred.js";
+import { managerState } from "./helpers/sidecar-lock-admission.js";
 
 const { tempRoot } = useRealTempDirs();
 const syncHeldKey = Symbol.for("fsSafe.syncSidecarLocks");
@@ -14,19 +15,6 @@ const syncAdmissionsKey = Symbol.for("fsSafe.syncSidecarLockAdmissions");
 const syncCleanupKey = Symbol.for("fsSafe.syncSidecarLockCleanupRegistered");
 const syncCleanupHandlerKey = Symbol.for("fsSafe.syncSidecarLockCleanupHandler");
 const syncCleanupRegistrationKey = Symbol.for("fsSafe.syncSidecarLockCleanupRegistration");
-
-type ManagerState = {
-  held: Map<string, unknown>;
-  admissions: Map<string, object>;
-};
-
-function managerState(key: string): ManagerState {
-  const managers = Reflect.get(globalThis, Symbol.for("fsSafe.sidecarLockManagers")) as Map<
-    string,
-    ManagerState
-  >;
-  return managers.get(key)!;
-}
 
 function syncAdmissions(): Map<string, object> {
   return Reflect.get(globalThis, syncAdmissionsKey) as Map<string, object>;

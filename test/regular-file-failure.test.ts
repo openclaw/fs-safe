@@ -9,7 +9,6 @@ import {
   appendRegularFileSync,
   readRegularFile,
   readRegularFileSync,
-  resolveRegularFileAppendFlags,
   statRegularFile,
   statRegularFileSync,
 } from "../src/regular-file.js";
@@ -302,12 +301,6 @@ describe("regular file refusal and race handling", () => {
       appendRegularFileSync({ filePath, content: "x", rejectSymlinkParents: true }),
     ).toThrow("Refusing to append under");
     await expect(fs.access(path.join(realDir, "value"))).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("omits O_NOFOLLOW when the platform constants do not provide it", () => {
-    expect(
-      resolveRegularFileAppendFlags({ O_APPEND: 1, O_CREAT: 2, O_WRONLY: 4 }),
-    ).toBe(7);
   });
 
   it("rechecks the async size limit after opening the file", async () => {

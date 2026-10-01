@@ -194,25 +194,52 @@ describe("synchronous Root-backed release continuity", () => {
     }
   });
 
-  it("restores a pending original release without borrowing its retained successor", async () => {
-    const directory = await tempRoot("fs-safe-sync-root-exit-pending-successor-");
+  it.each([
+    { name: "retained successor", scoped: "none", repeatBefore: false, repeatAfter: false },
+    { name: "repeated pending release", scoped: "none", repeatBefore: false, repeatAfter: true },
+    { name: "scoped return", scoped: "return", repeatBefore: true, repeatAfter: false },
+    { name: "scoped throw", scoped: "throw", repeatBefore: false, repeatAfter: false },
+  ] as const)("preserves ownership after $name", async ({ scoped, repeatBefore, repeatAfter }) => {
+    const directory = await tempRoot("fs-safe-sync-root-exit-settlement-");
     const target = path.join(directory, "state.json");
     const owner = "same-owner";
+    const callbackFailure = new Error("scoped callback failed");
     let armed = false;
-    let mutationAssertions = 0;
+    let authorityCallbacks = 0;
+    let scopedRuns = 0;
+    let scopedResult: string | undefined;
+    let observedFailure: unknown;
     let original: ReturnType<typeof acquireFileLockSync> | undefined;
-    let nested: ReturnType<typeof acquireFileLockSync> | undefined;
+    let retained: ReturnType<typeof acquireFileLockSync> | undefined;
     const lockRoot = await root(directory, {
       assertBeforeMutation: () => {
-        mutationAssertions += 1;
+        authorityCallbacks += 1;
         if (!armed) return;
         armed = false;
         original!.release();
-        nested = acquireFileLockSync(target, {
+        if (repeatBefore) original!.release();
+        if (scoped !== "none") {
+          try {
+            scopedResult = withFileLockSync(target, {
+              lockRoot,
+              payload: () => ({ owner: "scoped" }),
+              reentrantOwner: owner,
+            }, () => {
+              scopedRuns += 1;
+              if (scoped === "throw") throw callbackFailure;
+              return "scoped-result";
+            });
+          } catch (error) {
+            observedFailure = error;
+          }
+          if (scoped === "return") original!.release();
+        }
+        retained = acquireFileLockSync(target, {
           lockRoot,
-          payload: () => ({ owner: "nested" }),
+          payload: () => ({ owner: "retained" }),
           reentrantOwner: owner,
         });
+        if (repeatAfter) original!.release();
       },
     });
     original = acquireFileLockSync(target, {
@@ -228,107 +255,47 @@ describe("synchronous Root-backed release continuity", () => {
     const held = heldLocks.get(original.normalizedTargetPath);
     if (!held) throw new Error("expected held Root lock entry");
     const initialRevision = held.revision;
-    const assertionBaseline = mutationAssertions;
+    const callbackBaseline = authorityCallbacks;
     const open = vi.spyOn(fs, "openSync");
     const close = vi.spyOn(fs, "closeSync");
     try {
       armed = true;
       cleanup();
-      // One callback belongs to removal; the other is the nested Root
-      // admission that reuses the held entry. A cleanup retry would add one.
-      expect(mutationAssertions - assertionBaseline).toBe(2);
+      expect(authorityCallbacks - callbackBaseline).toBe(scoped === "none" ? 2 : 3);
+      expect(scopedRuns).toBe(scoped === "none" ? 0 : 1);
+      expect(scopedResult).toBe(scoped === "return" ? "scoped-result" : undefined);
+      expect(observedFailure).toBe(scoped === "throw" ? callbackFailure : undefined);
       expect(heldLocks.get(original.normalizedTargetPath)).toBe(held);
       expect(held).toMatchObject({
         deferredExitReleases: undefined,
         fd: undefined,
         refCount: 2,
         releaseState: "active",
-        revision: initialRevision + 4,
+        revision: initialRevision + (scoped === "none" ? 4 : 6),
       });
       expect(close.mock.calls.length - open.mock.calls.length).toBe(1);
       expect(fs.existsSync(original.lockPath)).toBe(true);
-
       const ioCallsBeforeOriginalRetry = open.mock.calls.length;
       original.release();
+      const revisionAfterOriginal = held.revision;
       expect(held.refCount).toBe(1);
       expect(heldLocks.get(original.normalizedTargetPath)).toBe(held);
       expect(fs.existsSync(original.lockPath)).toBe(true);
       expect(open).toHaveBeenCalledTimes(ioCallsBeforeOriginalRetry);
-      expect(nested!.verifyStillHeld()).toBe(true);
+      if (scoped === "return") {
+        original.release();
+        expect(held.refCount).toBe(1);
+        expect(held.revision).toBe(revisionAfterOriginal);
+      }
+      expect(retained!.verifyStillHeld()).toBe(true);
       expect(close.mock.calls.length - open.mock.calls.length).toBe(1);
-
-      nested!.release();
+      retained!.release();
       expect(heldLocks.has(original.normalizedTargetPath)).toBe(false);
       expect(fs.existsSync(original.lockPath)).toBe(false);
       expect(close.mock.calls.length - open.mock.calls.length).toBe(1);
     } finally {
       armed = false;
-      nested?.release();
-      original.release();
-      if (fs.existsSync(original.lockPath)) fs.unlinkSync(original.lockPath);
-    }
-  });
-
-  it("does not let repeated pending release calls consume a nested successor", async () => {
-    const directory = await tempRoot("fs-safe-sync-root-exit-pending-repeat-");
-    const target = path.join(directory, "state.json");
-    const owner = "same-owner";
-    let armed = false;
-    let mutationAssertions = 0;
-    let original: ReturnType<typeof acquireFileLockSync> | undefined;
-    let nested: ReturnType<typeof acquireFileLockSync> | undefined;
-    const lockRoot = await root(directory, {
-      assertBeforeMutation: () => {
-        mutationAssertions += 1;
-        if (!armed) return;
-        armed = false;
-        original!.release();
-        nested = acquireFileLockSync(target, {
-          lockRoot,
-          payload: () => ({ owner: "nested" }),
-          reentrantOwner: owner,
-        });
-        original!.release();
-      },
-    });
-    original = acquireFileLockSync(target, {
-      lockRoot,
-      payload: () => ({ owner: "original" }),
-      reentrantOwner: owner,
-    });
-    const cleanup = Reflect.get(
-      globalThis,
-      Symbol.for("fsSafe.syncRootSidecarLockCleanupHandler.v1"),
-    ) as () => void;
-    const heldLocks = rootSyncHeldLocks();
-    const held = heldLocks.get(original.normalizedTargetPath);
-    if (!held) throw new Error("expected held Root lock entry");
-    const initialRevision = held.revision;
-    const assertionBaseline = mutationAssertions;
-    try {
-      armed = true;
-      cleanup();
-      expect(mutationAssertions - assertionBaseline).toBe(2);
-      expect(heldLocks.get(original.normalizedTargetPath)).toBe(held);
-      expect(held).toMatchObject({
-        deferredExitReleases: undefined,
-        fd: undefined,
-        refCount: 2,
-        releaseState: "active",
-        revision: initialRevision + 4,
-      });
-      expect(fs.existsSync(original.lockPath)).toBe(true);
-
-      original.release();
-      expect(held.refCount).toBe(1);
-      expect(fs.existsSync(original.lockPath)).toBe(true);
-      expect(nested!.verifyStillHeld()).toBe(true);
-      nested!.release();
-      expect(heldLocks.has(original.normalizedTargetPath)).toBe(false);
-      expect(fs.existsSync(original.lockPath)).toBe(false);
-    } finally {
-      armed = false;
-      nested?.release();
+      retained?.release();
       original.release();
       if (fs.existsSync(original.lockPath)) fs.unlinkSync(original.lockPath);
     }
