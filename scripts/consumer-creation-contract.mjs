@@ -9,7 +9,7 @@ export const creationProbeFiles = [
   "consumer-creation-probe.mjs", "consumer-creation-contract.mjs",
   "consumer-creation-observer.mjs", "consumer-creation-acl.ps1",
 ];
-export const creationScenarios = [
+const creationScenarios = [
   "root-private-directory", "root-private-file", "root-private-json",
   "root-atomic-buffer", "root-atomic-json", "root-stream-publication",
   "advanced-directory-async", "advanced-directory-sync", "advanced-file-descriptor",
@@ -43,7 +43,7 @@ export function creationScenarioNames({ omitted, mode, platform }) {
       : ["advanced-directory-async", "advanced-directory-sync", "advanced-file-descriptor"])];
 }
 
-export function creationHash(file) {
+function creationHash(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 

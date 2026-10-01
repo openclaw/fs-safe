@@ -5,16 +5,16 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostNativeTarget, nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
+import { resolveNpmCli } from "./npm-cli.mjs";
 import { consumerInstallSmoke, isolatedConsumerEnv, resolvePnpmCommand } from "./consumer-install-smoke.mjs";
 import { packageProofSource } from "./consumer-proof-metadata.mjs";
 
@@ -26,26 +26,6 @@ mkdirSync(outputDir, { recursive: true });
 const npmCli = resolveNpmCli();
 const packingConfig = mkdtempSync(join(tmpdir(), "fs-safe-pack-config-"));
 const npmEnv = isolatedConsumerEnv(packingConfig);
-
-function resolveNpmCli() {
-  const candidates = [
-    process.env.npm_execpath,
-    join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-    join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
-  ];
-  if (process.platform !== "win32") {
-    try {
-      candidates.push(realpathSync(execFileSync("which", ["npm"], { encoding: "utf8" }).trim()));
-    } catch {
-      // The standard bundled paths remain valid on supported non-Windows installations.
-    }
-  }
-  const resolved = candidates.find(
-    (candidate) => candidate && basename(candidate) === "npm-cli.js" && existsSync(candidate),
-  );
-  if (!resolved) throw new Error("could not resolve npm-cli.js from the current Node installation");
-  return resolved;
-}
 
 function runNpm(args, options) {
   return execFileSync(process.execPath, [npmCli, ...args], {
