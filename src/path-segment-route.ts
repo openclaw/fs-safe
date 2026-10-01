@@ -1,5 +1,9 @@
 import path from "node:path";
 
+export function sameAbsolutePath(left: string, right: string): boolean {
+  return path.relative(path.resolve(left), path.resolve(right)) === "";
+}
+
 export type PathSegmentRoute = Readonly<{
   joined: string;
   offsets: readonly number[];

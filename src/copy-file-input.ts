@@ -55,7 +55,6 @@ export async function createNativeCopyFile(
   parentFd: number,
   basename: string,
   maxBytes: number | undefined,
-  sync: boolean,
 ): Promise<NativeFileCopyResult | undefined> {
   input.signal?.throwIfAborted();
   if (!native.copyFileExclusive) {
@@ -71,7 +70,7 @@ export async function createNativeCopyFile(
     return await native.copyFileExclusive(
       input.handle.fd, parentFd, basename, input.clone,
       maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined,
-      nativeSignal, sync,
+      nativeSignal, false,
     );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;

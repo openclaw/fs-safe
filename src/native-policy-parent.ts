@@ -40,7 +40,7 @@ import {
   checkedMutationDirectory,
   type MutationDirectoryObservation,
 } from "./pinned-mutation-observation.js";
-import { createPathSegmentRoute, joinPathSegmentRoute } from "./path-segment-route.js";
+import { createPathSegmentRoute, joinPathSegmentRoute, sameAbsolutePath } from "./path-segment-route.js";
 import { canReuseParentWithMutationAssertion } from "./root-write-lock-binding.js";
 
 export type NativePolicyParent = {
@@ -50,10 +50,6 @@ export type NativePolicyParent = {
   stagedDirectory?: ReturnType<typeof describeStagedDirectory>;
   policyDirectory?: PolicyStagedDirectory;
 };
-
-function sameAbsolutePath(left: string, right: string): boolean {
-  return path.relative(path.resolve(left), path.resolve(right)) === "";
-}
 
 function mkdirPosixPolicyChild(
   binding: NativeBinding,

@@ -62,8 +62,6 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-type RemovalDirectoryReceipt = RemovalDirectoryAssertion;
-
 type NonrecursiveRemovalAdmission = Readonly<{
   parentIdentity: Readonly<Pick<BigIntStats, "dev" | "ino">>;
   assertAfterMutation(): void;
@@ -80,7 +78,7 @@ function sameCanonicalDirectory(left: string, right: string): boolean {
 
 function assertExactRemovalReceiptPrefixCurrent(
   rootGuard: AsyncDirectoryGuard<BigIntStats>,
-  intermediates: readonly RemovalDirectoryReceipt[],
+  intermediates: readonly RemovalDirectoryAssertion[],
 ): void {
   try {
     assertSyncDirectoryGuard(rootGuard);
@@ -95,7 +93,7 @@ function assertExactRemovalReceiptPrefixCurrent(
 
 async function assertMissingRemovalPrefixCurrent(
   rootGuard: AsyncDirectoryGuard<BigIntStats>,
-  intermediates: readonly RemovalDirectoryReceipt[],
+  intermediates: readonly RemovalDirectoryAssertion[],
 ): Promise<void> {
   if (intermediates.length === 0) {
     assertExactRemovalReceiptPrefixCurrent(rootGuard, intermediates);
@@ -165,7 +163,7 @@ export async function captureNonrecursiveRemovalAdmission(
     });
   }
 
-  const intermediates: RemovalDirectoryReceipt[] = [];
+  const intermediates: RemovalDirectoryAssertion[] = [];
   const retainedDirectories = retained?.directories;
   const freshSegments = retainedDirectories
     ? undefined

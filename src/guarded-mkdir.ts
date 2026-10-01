@@ -27,6 +27,7 @@ import type {
 import {
   createPathSegmentRoute,
   joinPathSegmentRoute,
+  sameAbsolutePath,
   type PathSegmentRoute,
 } from "./path-segment-route.js";
 
@@ -83,10 +84,6 @@ function createdDirectoryEvidence(
     // Failed optional evidence leaves the existing ordered admission in charge.
     return undefined;
   }
-}
-
-function sameAbsolutePath(left: string, right: string): boolean {
-  return path.relative(path.resolve(left), path.resolve(right)) === "";
 }
 
 type ExactRootIdentity = Readonly<{ dev: bigint; ino: bigint }>;

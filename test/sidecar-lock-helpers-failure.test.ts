@@ -2,14 +2,13 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pauseSidecarSnapshotOpen } from "./helpers/sidecar-snapshot.js";
+import { pauseSidecarSnapshotOpen, readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { FsSafeError } from "../src/errors.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import {
   parseSidecarLockPayload,
-  readSidecarLockSnapshot,
   readSidecarLockSnapshotSync,
   removeSidecarLockIfUnchanged,
   removeSidecarLockIfUnchangedSync,

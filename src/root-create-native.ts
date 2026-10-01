@@ -67,7 +67,7 @@ type Creation = {
   originalPath?: string;
 };
 
-function unavailable(): undefined {
+function unavailable(): never {
   throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
 }
 
@@ -75,7 +75,7 @@ async function withNativeDirectory<T>(
   params: Creation,
   operation: (binding: NativeBinding, fd: number, assertCurrent: () => void) => Promise<T>,
   discard?: (value: T) => Promise<void>,
-): Promise<{ value: T } | undefined> {
+): Promise<T> {
   const binding = getNativeBinding();
   if (!binding?.openBeneath || !binding.mkdirChildBeneath || (params.private && process.platform === "win32")) return unavailable();
   const directoryTarget = params.directory === params.target;
@@ -142,7 +142,7 @@ async function withNativeDirectory<T>(
       guards.push(parent.guard);
       assertCurrent();
       pending = { value: await operation(binding, parent.fd, assertCurrent) };
-      return pending;
+      return pending.value;
     }
     for (const segment of path.relative(currentPath, params.directory).split(path.sep).filter(Boolean)) {
       const childPath = path.join(currentPath, segment);
@@ -176,7 +176,7 @@ async function withNativeDirectory<T>(
     await authorize(params.target);
     if (params.private) { await assertPrivateDirectory(currentPath); assertCurrent(); }
     pending = { value: await operation(binding, current, assertCurrent) };
-    return pending;
+    return pending.value;
   } catch (error) {
     if (pending && discard) {
       try { await discard(pending.value); } catch (cleanupError) {
@@ -191,14 +191,14 @@ export async function tryMkdirRootNative(params: Creation): Promise<boolean> {
   // The protected Windows creator already verifies the admitted parent identity
   // and uses handle-relative NtCreateFile with its protected security descriptor.
   if (params.private && process.platform === "win32") return false;
-  return Boolean(await withNativeDirectory(params, async (_binding, _fd, assertCurrent) => { assertCurrent(); }));
+  return await withNativeDirectory(params, async (_binding, _fd, assertCurrent) => { assertCurrent(); return true; });
 }
 
 export async function tryOpenCreateRootNative(params: Creation & {
   flags: number;
   existingFlags: number;
   mode: number;
-}): Promise<{ handle: FileHandle; cleanupCreated(): Promise<void>; releaseCreationParent(): void } | undefined> {
+}): Promise<{ handle: FileHandle; cleanupCreated(): Promise<void>; releaseCreationParent(): void }> {
   const binding = getNativeBinding();
   if (!binding?.removeStagedFile || !binding.openCreateBeneath) return unavailable();
   const access = (params.existingFlags & fs.constants.O_RDWR) ? 0o600 : 0o200;
@@ -213,7 +213,7 @@ export async function tryOpenCreateRootNative(params: Creation & {
   };
   // A public FileHandle reopen must not require widening creation permissions.
   if (creationMode() === undefined) return unavailable();
-  const opened = await withNativeDirectory(params, async (binding, parent, assertCurrent) => {
+  return await withNativeDirectory(params, async (binding, parent, assertCurrent) => {
     params.assertBeforeMutation?.();
     assertCurrent();
     const mode = creationMode();
@@ -270,5 +270,4 @@ export async function tryOpenCreateRootNative(params: Creation & {
     using parent = { [Symbol.dispose]: created.releaseCreationParent };
     await created.cleanupCreated();
   });
-  return opened?.value;
 }
