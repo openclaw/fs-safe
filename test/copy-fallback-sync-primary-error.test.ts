@@ -128,30 +128,6 @@ describe("synchronous copy-fallback destination admission cleanup", () => {
     await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
   });
 
-  it.each(FALSY_ADMISSION_FAILURES)(
-    "preserves a direct $label admission failure by exact identity",
-    async ({ value }) => {
-      const root = await tempRoot("fs-safe-sync-admission-falsy-helper-");
-      const dest = path.join(root, "dest");
-      const other = path.join(root, "other");
-      await fs.writeFile(dest, "original");
-      await fs.mkdir(other);
-      const adapter = destinationAdapter({
-        dest,
-        other,
-        mismatch: false,
-        admissionFailure: { value },
-      });
-
-      const error = captureFailure(() =>
-        runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(adapter.fileSystem), dest, "reject")));
-
-      expect(Object.is(error, value)).toBe(true);
-      expect(adapter.destinationCloseCalls()).toBe(1);
-      await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
-    },
-  );
-
   it("still reports a lone close failure after successful helper admission", async () => {
     const root = await tempRoot("fs-safe-sync-admission-close-");
     const dest = path.join(root, "dest");
@@ -168,32 +144,55 @@ describe("synchronous copy-fallback destination admission cleanup", () => {
     await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
   });
 
-  it("preserves the public pre-rename admission failure and cleans its stage", async () => {
+  const publicRoutes = [
+    {
+      route: "pre-rename",
+      options: { destinationHardlinks: "reject" },
+      forceCopyFallback: false,
+      code: "path-mismatch",
+      message: "Atomic replace destination changed while opening",
+    },
+    {
+      route: "pinned copy-fallback",
+      options: {
+        copyFallbackOnPermissionError: true,
+        copyFallbackRestore: "restore-original",
+        maxRestoreBytes: 64,
+      },
+      forceCopyFallback: true,
+      code: "not-file",
+      message: "Copy fallback destination must be a regular file",
+    },
+  ] as const;
+
+  it.each(publicRoutes)("preserves the public $route admission failure and cleans its stage", async (route) => {
     const root = await tempRoot("fs-safe-sync-admission-public-");
     const dest = path.join(root, "dest");
     const other = path.join(root, "other");
     await fs.writeFile(dest, "original");
     await fs.mkdir(other);
-    const adapter = destinationAdapter({ dest, other, mismatch: true });
+    const adapter = destinationAdapter({ dest, other, mismatch: true, forceCopyFallback: route.forceCopyFallback });
 
     const error = captureFailure(() => replaceFileAtomicSync({
       filePath: dest,
       content: "replacement",
       fileSystem: adapter.fileSystem,
-      destinationHardlinks: "reject",
+      ...route.options,
     }));
 
-    expectPrimary(error, "path-mismatch", `Atomic replace destination changed while opening: ${dest}`);
+    expectPrimary(error, route.code, `${route.message}: ${dest}`);
     expect(error).not.toBe(adapter.closeError);
     expect(adapter.destinationCloseCalls()).toBe(1);
     await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
     expectNoAtomicTemps(root);
   });
 
-  it.each(FALSY_ADMISSION_FAILURES)(
-    "preserves a public pre-rename $label admission failure by exact identity",
-    async ({ value }) => {
-      const root = await tempRoot("fs-safe-sync-admission-falsy-public-");
+  describe.each([
+    { route: "helper", forceCopyFallback: false, options: undefined },
+    ...publicRoutes,
+  ])("$route falsy failures", (route) => {
+    it.each(FALSY_ADMISSION_FAILURES)("preserves $label admission failure by exact identity", async ({ value }) => {
+      const root = await tempRoot("fs-safe-sync-admission-falsy-");
       const dest = path.join(root, "dest");
       const other = path.join(root, "other");
       await fs.writeFile(dest, "original");
@@ -202,81 +201,23 @@ describe("synchronous copy-fallback destination admission cleanup", () => {
         dest,
         other,
         mismatch: false,
+        forceCopyFallback: route.forceCopyFallback,
         admissionFailure: { value },
       });
 
-      const error = captureFailure(() => replaceFileAtomicSync({
-        filePath: dest,
-        content: "replacement",
-        fileSystem: adapter.fileSystem,
-        destinationHardlinks: "reject",
-      }));
+      const error = captureFailure(() => route.options
+        ? replaceFileAtomicSync({
+          filePath: dest,
+          content: "replacement",
+          fileSystem: adapter.fileSystem,
+          ...route.options,
+        })
+        : runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(adapter.fileSystem), dest, "reject")));
 
       expect(Object.is(error, value)).toBe(true);
       expect(adapter.destinationCloseCalls()).toBe(1);
       await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
-      expectNoAtomicTemps(root);
-    },
-  );
-
-  it("preserves pinned copy-fallback admission failure through the public adapter", async () => {
-    const root = await tempRoot("fs-safe-sync-pinned-public-");
-    const dest = path.join(root, "dest");
-    const other = path.join(root, "other");
-    await fs.writeFile(dest, "original");
-    await fs.mkdir(other);
-    const adapter = destinationAdapter({
-      dest,
-      other,
-      mismatch: true,
-      forceCopyFallback: true,
+      if (route.options) expectNoAtomicTemps(root);
     });
-
-    const error = captureFailure(() => replaceFileAtomicSync({
-      filePath: dest,
-      content: "replacement",
-      fileSystem: adapter.fileSystem,
-      copyFallbackOnPermissionError: true,
-      copyFallbackRestore: "restore-original",
-      maxRestoreBytes: 64,
-    }));
-
-    expectPrimary(error, "not-file", `Copy fallback destination must be a regular file: ${dest}`);
-    expect(error).not.toBe(adapter.closeError);
-    expect(adapter.destinationCloseCalls()).toBe(1);
-    await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
-    expectNoAtomicTemps(root);
   });
-
-  it.each(FALSY_ADMISSION_FAILURES)(
-    "preserves a public pinned copy-fallback $label admission failure by exact identity",
-    async ({ value }) => {
-      const root = await tempRoot("fs-safe-sync-pinned-falsy-public-");
-      const dest = path.join(root, "dest");
-      const other = path.join(root, "other");
-      await fs.writeFile(dest, "original");
-      await fs.mkdir(other);
-      const adapter = destinationAdapter({
-        dest,
-        other,
-        mismatch: false,
-        forceCopyFallback: true,
-        admissionFailure: { value },
-      });
-
-      const error = captureFailure(() => replaceFileAtomicSync({
-        filePath: dest,
-        content: "replacement",
-        fileSystem: adapter.fileSystem,
-        copyFallbackOnPermissionError: true,
-        copyFallbackRestore: "restore-original",
-        maxRestoreBytes: 64,
-      }));
-
-      expect(Object.is(error, value)).toBe(true);
-      expect(adapter.destinationCloseCalls()).toBe(1);
-      await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
-      expectNoAtomicTemps(root);
-    },
-  );
 });

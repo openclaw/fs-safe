@@ -2,7 +2,10 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { replaceFileAtomic, replaceFileAtomicSync } from "../src/atomic.js";
+import {
+  replaceFileAtomic, replaceFileAtomicSync,
+  type ReplaceFileAtomicOptions, type ReplaceFileAtomicSyncOptions,
+} from "../src/atomic.js";
 import { __cleanupRegisteredTempPathsForTest } from "../src/temp-cleanup.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
@@ -53,182 +56,119 @@ function installSyncSubstitute(params: {
   if (params.substitute === "hardlink") fsSync.linkSync(params.outsidePath, params.tempPath);
 }
 
-async function expectAsyncSubstitutePreserved(substitute: Substitute): Promise<void> {
-  const root = await tempRoot(`fs-safe-atomic-hook-${substitute}-`);
-  const filePath = path.join(root, "target");
-  const outsidePath = path.join(root, "outside");
-  await fs.writeFile(filePath, "old");
-  await fs.writeFile(outsidePath, "outside");
-  let tempPath = "";
-  let movedPath = "";
-
-  await expect(replaceFileAtomic({
-    filePath,
-    content: "new",
-    beforeRename: async ({ tempPath: candidate }) => {
-      tempPath = candidate;
-      movedPath = `${candidate}.owned`;
-      await installAsyncSubstitute({ substitute, tempPath, movedPath, outsidePath });
+type VariantOptions = { async: ReplaceFileAtomicOptions; sync: ReplaceFileAtomicSyncOptions };
+const variants = [
+  {
+    name: "async",
+    reject: async (options: VariantOptions, code: string) => {
+      await expect(replaceFileAtomic(options.async)).rejects.toMatchObject({ code });
     },
-  })).rejects.toMatchObject({ code: expectedCode(substitute) });
-
-  expect(await fs.readFile(filePath, "utf8")).toBe("old");
-  expect(await fs.readFile(movedPath, "utf8")).toBe("new");
-  __cleanupRegisteredTempPathsForTest();
-  if (substitute === "missing") {
-    await expect(fs.lstat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
-  } else if (substitute === "directory") {
-    expect(await fs.readFile(path.join(tempPath, "sentinel"), "utf8")).toBe("keep");
-  } else if (substitute === "symlink") {
-    expect((await fs.lstat(tempPath)).isSymbolicLink()).toBe(true);
-    expect(await fs.readFile(outsidePath, "utf8")).toBe("outside");
-  } else {
-    expect(await fs.readFile(tempPath, "utf8")).toBe(substitute === "file" ? "replacement" : "outside");
-  }
-}
-
-async function expectSyncSubstitutePreserved(substitute: Substitute): Promise<void> {
-  const root = await tempRoot(`fs-safe-atomic-hook-sync-${substitute}-`);
-  const filePath = path.join(root, "target");
-  const outsidePath = path.join(root, "outside");
-  fsSync.writeFileSync(filePath, "old");
-  fsSync.writeFileSync(outsidePath, "outside");
-  let tempPath = "";
-  let movedPath = "";
-
-  expect(() => replaceFileAtomicSync({
-    filePath,
-    content: "new",
-    beforeRename: ({ tempPath: candidate }) => {
-      tempPath = candidate;
-      movedPath = `${candidate}.owned`;
-      installSyncSubstitute({ substitute, tempPath, movedPath, outsidePath });
+  },
+  {
+    name: "sync",
+    reject: (options: VariantOptions, code: string) => {
+      expect(() => replaceFileAtomicSync(options.sync)).toThrow(expect.objectContaining({ code }));
     },
-  })).toThrow(expect.objectContaining({ code: expectedCode(substitute) }));
+  },
+] as const;
 
-  expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
-  expect(fsSync.readFileSync(movedPath, "utf8")).toBe("new");
-  __cleanupRegisteredTempPathsForTest();
-  if (substitute === "missing") {
-    expect(() => fsSync.lstatSync(tempPath)).toThrow(expect.objectContaining({ code: "ENOENT" }));
-  } else if (substitute === "directory") {
-    expect(fsSync.readFileSync(path.join(tempPath, "sentinel"), "utf8")).toBe("keep");
-  } else if (substitute === "symlink") {
-    expect(fsSync.lstatSync(tempPath).isSymbolicLink()).toBe(true);
-    expect(fsSync.readFileSync(outsidePath, "utf8")).toBe("outside");
-  } else {
-    expect(fsSync.readFileSync(tempPath, "utf8")).toBe(substitute === "file" ? "replacement" : "outside");
+describe.each(variants)("atomic beforeRename ownership ($name)", ({ name, reject }) => {
+  async function expectSubstitutePreserved(substitute: Substitute): Promise<void> {
+    const root = await tempRoot(`fs-safe-atomic-hook-${name}-${substitute}-`);
+    const filePath = path.join(root, "target");
+    const outsidePath = path.join(root, "outside");
+    await fs.writeFile(filePath, "old");
+    await fs.writeFile(outsidePath, "outside");
+    let tempPath = "";
+    let movedPath = "";
+    const options = { filePath, content: "new" };
+
+    await reject({
+      async: { ...options, beforeRename: async ({ tempPath: candidate }) => {
+        tempPath = candidate;
+        movedPath = `${candidate}.owned`;
+        await installAsyncSubstitute({ substitute, tempPath, movedPath, outsidePath });
+      } },
+      sync: { ...options, beforeRename: ({ tempPath: candidate }) => {
+        tempPath = candidate;
+        movedPath = `${candidate}.owned`;
+        installSyncSubstitute({ substitute, tempPath, movedPath, outsidePath });
+      } },
+    }, expectedCode(substitute));
+
+    expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    expect(await fs.readFile(movedPath, "utf8")).toBe("new");
+    __cleanupRegisteredTempPathsForTest();
+    if (substitute === "missing") {
+      await expect(fs.lstat(tempPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } else if (substitute === "directory") {
+      expect(await fs.readFile(path.join(tempPath, "sentinel"), "utf8")).toBe("keep");
+    } else if (substitute === "symlink") {
+      expect((await fs.lstat(tempPath)).isSymbolicLink()).toBe(true);
+      expect(await fs.readFile(outsidePath, "utf8")).toBe("outside");
+    } else {
+      expect(await fs.readFile(tempPath, "utf8")).toBe(substitute === "file" ? "replacement" : "outside");
+    }
   }
-}
 
-describe("atomic beforeRename ownership", () => {
-  it.each(["file", "directory", "missing"] as const)(
-    "rejects and preserves an async %s substitution",
-    expectAsyncSubstitutePreserved,
-  );
-  itPosix.each(["symlink", "hardlink"] as const)(
-    "rejects and preserves an async %s substitution",
-    expectAsyncSubstitutePreserved,
-  );
-  it.each(["file", "directory", "missing"] as const)(
-    "rejects and preserves a sync %s substitution",
-    expectSyncSubstitutePreserved,
-  );
-  itPosix.each(["symlink", "hardlink"] as const)(
-    "rejects and preserves a sync %s substitution",
-    expectSyncSubstitutePreserved,
-  );
+  it.each(["file", "directory", "missing"] as const)("rejects and preserves a %s substitution", expectSubstitutePreserved);
+  itPosix.each(["symlink", "hardlink"] as const)("rejects and preserves a %s substitution", expectSubstitutePreserved);
 
-  it("detects an async final-name replacement after rename without rollback", async () => {
-    const root = await tempRoot("fs-safe-atomic-published-async-");
+  it("detects a final-name replacement after rename without rollback", async () => {
+    const root = await tempRoot(`fs-safe-atomic-published-${name}-`);
     const filePath = path.join(root, "target");
     const movedPath = path.join(root, "moved");
     await fs.writeFile(filePath, "old");
-    await expect(replaceFileAtomic({
-      filePath,
-      content: "new",
-      fileSystem: {
-        promises: {
-          ...fs,
-          rename: async (source, destination) => {
-            await fs.rename(source, destination);
-            await fs.rename(destination, movedPath);
-            await fs.writeFile(destination, "replacement");
-          },
+    const options = { filePath, content: "new" };
+    await reject({
+      async: { ...options, fileSystem: { promises: {
+        ...fs,
+        rename: async (source, destination) => {
+          await fs.rename(source, destination);
+          await fs.rename(destination, movedPath);
+          await fs.writeFile(destination, "replacement");
         },
-      },
-    })).rejects.toMatchObject({ code: "path-mismatch" });
-    expect(await fs.readFile(filePath, "utf8")).toBe("replacement");
-    expect(await fs.readFile(movedPath, "utf8")).toBe("new");
-  });
-
-  it("detects a sync final-name replacement after rename without rollback", async () => {
-    const root = await tempRoot("fs-safe-atomic-published-sync-");
-    const filePath = path.join(root, "target");
-    const movedPath = path.join(root, "moved");
-    fsSync.writeFileSync(filePath, "old");
-    expect(() => replaceFileAtomicSync({
-      filePath,
-      content: "new",
-      fileSystem: {
+      } } },
+      sync: { ...options, fileSystem: {
         ...fsSync,
         renameSync: (source, destination) => {
           fsSync.renameSync(source, destination);
           fsSync.renameSync(destination, movedPath);
           fsSync.writeFileSync(destination, "replacement");
         },
-      },
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("replacement");
-    expect(fsSync.readFileSync(movedPath, "utf8")).toBe("new");
-  });
-
-  it("rechecks the async final name after parent sync", async () => {
-    const root = await tempRoot("fs-safe-atomic-parent-sync-async-");
-    const filePath = path.join(root, "target");
-    const movedPath = path.join(root, "moved");
-    await fs.writeFile(filePath, "old");
-    let swapped = false;
-    await expect(replaceFileAtomic({
-      filePath,
-      content: "new",
-      syncParentDir: true,
-      fileSystem: {
-        promises: {
-          ...fs,
-          open: async (...args) => {
-            const handle = await fs.open(...args);
-            if (args[0] === root) {
-              const sync = handle.sync.bind(handle);
-              handle.sync = async () => {
-                if (!swapped) {
-                  swapped = true;
-                  await fs.rename(filePath, movedPath);
-                  await fs.writeFile(filePath, "replacement");
-                }
-                await sync();
-              };
-            }
-            return handle;
-          },
-        },
-      },
-    })).rejects.toMatchObject({ code: "path-mismatch" });
+      } },
+    }, "path-mismatch");
     expect(await fs.readFile(filePath, "utf8")).toBe("replacement");
     expect(await fs.readFile(movedPath, "utf8")).toBe("new");
   });
 
-  it("rechecks the sync final name after parent sync", async () => {
-    const root = await tempRoot("fs-safe-atomic-parent-sync-sync-");
+  it("rechecks the final name after parent sync", async () => {
+    const root = await tempRoot(`fs-safe-atomic-parent-sync-${name}-`);
     const filePath = path.join(root, "target");
     const movedPath = path.join(root, "moved");
-    fsSync.writeFileSync(filePath, "old");
+    await fs.writeFile(filePath, "old");
     let swapped = false;
-    expect(() => replaceFileAtomicSync({
-      filePath,
-      content: "new",
-      syncParentDir: true,
-      fileSystem: {
+    const options = { filePath, content: "new", syncParentDir: true };
+    await reject({
+      async: { ...options, fileSystem: { promises: {
+        ...fs,
+        open: async (...args) => {
+          const handle = await fs.open(...args);
+          if (args[0] === root) {
+            const sync = handle.sync.bind(handle);
+            handle.sync = async () => {
+              if (!swapped) {
+                swapped = true;
+                await fs.rename(filePath, movedPath);
+                await fs.writeFile(filePath, "replacement");
+              }
+              await sync();
+            };
+          }
+          return handle;
+        },
+      } } },
+      sync: { ...options, fileSystem: {
         ...fsSync,
         fsyncSync: (fd) => {
           if (!swapped) {
@@ -238,96 +178,129 @@ describe("atomic beforeRename ownership", () => {
           }
           fsSync.fsyncSync(fd);
         },
-      },
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("replacement");
-    expect(fsSync.readFileSync(movedPath, "utf8")).toBe("new");
+      } },
+    }, "path-mismatch");
+    expect(await fs.readFile(filePath, "utf8")).toBe("replacement");
+    expect(await fs.readFile(movedPath, "utf8")).toBe("new");
   });
 
-  it("keeps strict async identity checks on rename-unstable filesystems", async () => {
-    const root = await tempRoot("fs-safe-atomic-fuse-strict-async-");
+  const renameUnstableAsync = { promises: {
+    ...fs,
+    rename: async (source: fsSync.PathLike, destination: fsSync.PathLike) => {
+      await fs.copyFile(source, destination);
+      await fs.unlink(source);
+    },
+  } } satisfies NonNullable<ReplaceFileAtomicOptions["fileSystem"]>;
+  const renameUnstableSync = {
+    ...fsSync,
+    renameSync: (source: fsSync.PathLike, destination: fsSync.PathLike) => {
+      fsSync.copyFileSync(source, destination);
+      fsSync.unlinkSync(source);
+    },
+  } satisfies NonNullable<ReplaceFileAtomicSyncOptions["fileSystem"]>;
+
+  it("keeps strict identity checks on rename-unstable filesystems", async () => {
+    const root = await tempRoot(`fs-safe-atomic-fuse-strict-${name}-`);
     const filePath = path.join(root, "target");
     await fs.writeFile(filePath, "old");
-    await expect(replaceFileAtomic({
-      filePath,
-      content: "new",
-      fileSystem: {
-        promises: {
-          ...fs,
-          rename: async (source, destination) => {
-            await fs.copyFile(source, destination);
-            await fs.unlink(source);
-          },
-        },
-      },
-    })).rejects.toMatchObject({ code: "path-mismatch" });
+    const options = { filePath, content: "new" };
+    await reject({
+      async: { ...options, fileSystem: renameUnstableAsync },
+      sync: { ...options, fileSystem: renameUnstableSync },
+    }, "path-mismatch");
     expect(await fs.readFile(filePath, "utf8")).toBe("new");
   });
 
-  it("keeps strict sync identity checks on rename-unstable filesystems", async () => {
-    const root = await tempRoot("fs-safe-atomic-fuse-strict-sync-");
-    const filePath = path.join(root, "target");
-    fsSync.writeFileSync(filePath, "old");
-    expect(() => replaceFileAtomicSync({
-      filePath,
-      content: "new",
-      fileSystem: {
-        ...fsSync,
-        renameSync: (source, destination) => {
-          fsSync.copyFileSync(source, destination);
-          fsSync.unlinkSync(source);
-        },
-      },
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
-  });
-
-  it("accepts async rename-unstable publication only with locked content verification", async () => {
-    const root = await tempRoot("fs-safe-atomic-fuse-async-");
+  it("accepts rename-unstable publication only with locked content verification", async () => {
+    const root = await tempRoot(`fs-safe-atomic-fuse-${name}-`);
     const filePath = path.join(root, "target");
     await fs.writeFile(filePath, "old");
-    await expect(replaceFileAtomic({
-      filePath,
-      content: "new",
-      renameIdentity: "verify-content-with-lock",
-      syncParentDir: true,
-      fileSystem: {
-        promises: {
+    const options = { filePath, content: "new", renameIdentity: "verify-content-with-lock", syncParentDir: true } as const;
+    if (name === "async") {
+      await expect(replaceFileAtomic({ ...options, fileSystem: renameUnstableAsync })).resolves.toEqual({ method: "rename" });
+    } else {
+      expect(replaceFileAtomicSync({ ...options, fileSystem: renameUnstableSync })).toEqual({ method: "rename" });
+    }
+    expect(await fs.readFile(filePath, "utf8")).toBe("new");
+    expect((await fs.readdir(root)).filter((entry) => entry.startsWith(".fs-safe-atomic-"))).toEqual([]);
+  });
+
+  it("rejects a source replacement entering copy fallback", async () => {
+    const root = await tempRoot(`fs-safe-atomic-fallback-source-${name}-`);
+    const filePath = path.join(root, "target");
+    await fs.writeFile(filePath, "old");
+    let tempPath = "";
+    const movedPath = path.join(root, "moved");
+    const options = { filePath, content: "new", copyFallbackOnPermissionError: true };
+    await reject({
+      async: { ...options,
+        beforeRename: async ({ tempPath: candidate }) => { tempPath = candidate; },
+        fileSystem: { promises: {
           ...fs,
-          rename: async (source, destination) => {
-            await fs.copyFile(source, destination);
-            await fs.unlink(source);
+          rename: async () => {
+            await fs.rename(tempPath, movedPath);
+            await fs.writeFile(tempPath, "replacement");
+            throw Object.assign(new Error("rename denied"), { code: "EPERM" });
+          },
+        } },
+      },
+      sync: { ...options,
+        beforeRename: ({ tempPath: candidate }) => { tempPath = candidate; },
+        fileSystem: {
+          ...fsSync,
+          renameSync: () => {
+            fsSync.renameSync(tempPath, movedPath);
+            fsSync.writeFileSync(tempPath, "replacement");
+            throw Object.assign(new Error("rename denied"), { code: "EPERM" });
           },
         },
       },
-    })).resolves.toEqual({ method: "rename" });
-    expect(await fs.readFile(filePath, "utf8")).toBe("new");
-    expect((await fs.readdir(root)).filter((name) => name.startsWith(".fs-safe-atomic-")))
-      .toEqual([]);
+    }, "path-mismatch");
+    expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    expect(await fs.readFile(tempPath, "utf8")).toBe("replacement");
+    expect(await fs.readFile(movedPath, "utf8")).toBe("new");
   });
 
-  it("accepts sync rename-unstable publication only with locked content verification", async () => {
-    const root = await tempRoot("fs-safe-atomic-fuse-sync-");
+  it("rechecks ownership before a rename retry", async () => {
+    const root = await tempRoot(`fs-safe-atomic-retry-source-${name}-`);
     const filePath = path.join(root, "target");
-    fsSync.writeFileSync(filePath, "old");
-    expect(replaceFileAtomicSync({
-      filePath,
-      content: "new",
-      renameIdentity: "verify-content-with-lock",
-      syncParentDir: true,
-      fileSystem: {
-        ...fsSync,
-        renameSync: (source, destination) => {
-          fsSync.copyFileSync(source, destination);
-          fsSync.unlinkSync(source);
+    await fs.writeFile(filePath, "old");
+    let tempPath = "";
+    let renames = 0;
+    const options = { filePath, content: "new", renameMaxRetries: 1, renameRetryBaseDelayMs: 0 };
+    await reject({
+      async: { ...options,
+        beforeRename: async ({ tempPath: candidate }) => { tempPath = candidate; },
+        fileSystem: { promises: {
+          ...fs,
+          rename: async () => {
+            renames += 1;
+            await fs.rename(tempPath, `${tempPath}.owned`);
+            await fs.writeFile(tempPath, "replacement");
+            throw Object.assign(new Error("busy"), { code: "EBUSY" });
+          },
+        } },
+      },
+      sync: { ...options,
+        beforeRename: ({ tempPath: candidate }) => { tempPath = candidate; },
+        fileSystem: {
+          ...fsSync,
+          renameSync: () => {
+            renames += 1;
+            fsSync.renameSync(tempPath, `${tempPath}.owned`);
+            fsSync.writeFileSync(tempPath, "replacement");
+            throw Object.assign(new Error("busy"), { code: "EBUSY" });
+          },
         },
       },
-    })).toEqual({ method: "rename" });
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("new");
-    expect(fsSync.readdirSync(root).filter((name) => name.startsWith(".fs-safe-atomic-")))
-      .toEqual([]);
+    }, "path-mismatch");
+    expect(renames).toBe(1);
+    expect(await fs.readFile(filePath, "utf8")).toBe("old");
+    expect(await fs.readFile(tempPath, "utf8")).toBe("replacement");
   });
+});
 
+describe("atomic beforeRename ownership (async policy validation)", () => {
   it("rejects mismatched content under the rename-unstable compatibility policy", async () => {
     const root = await tempRoot("fs-safe-atomic-fuse-tampered-");
     const filePath = path.join(root, "target");
@@ -362,119 +335,4 @@ describe("atomic beforeRename ownership", () => {
     await expect(fs.lstat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects an async source replacement entering copy fallback", async () => {
-    const root = await tempRoot("fs-safe-atomic-fallback-source-async-");
-    const filePath = path.join(root, "target");
-    await fs.writeFile(filePath, "old");
-    let tempPath = "";
-    const movedPath = path.join(root, "moved");
-    await expect(replaceFileAtomic({
-      filePath,
-      content: "new",
-      copyFallbackOnPermissionError: true,
-      beforeRename: async ({ tempPath: candidate }) => {
-        tempPath = candidate;
-      },
-      fileSystem: {
-        promises: {
-          ...fs,
-          rename: async () => {
-            await fs.rename(tempPath, movedPath);
-            await fs.writeFile(tempPath, "replacement");
-            throw Object.assign(new Error("rename denied"), { code: "EPERM" });
-          },
-        },
-      },
-    })).rejects.toMatchObject({ code: "path-mismatch" });
-    expect(await fs.readFile(filePath, "utf8")).toBe("old");
-    expect(await fs.readFile(tempPath, "utf8")).toBe("replacement");
-    expect(await fs.readFile(movedPath, "utf8")).toBe("new");
-  });
-
-  it("rejects a sync source replacement entering copy fallback", async () => {
-    const root = await tempRoot("fs-safe-atomic-fallback-source-sync-");
-    const filePath = path.join(root, "target");
-    fsSync.writeFileSync(filePath, "old");
-    let tempPath = "";
-    const movedPath = path.join(root, "moved");
-    expect(() => replaceFileAtomicSync({
-      filePath,
-      content: "new",
-      copyFallbackOnPermissionError: true,
-      beforeRename: ({ tempPath: candidate }) => {
-        tempPath = candidate;
-      },
-      fileSystem: {
-        ...fsSync,
-        renameSync: () => {
-          fsSync.renameSync(tempPath, movedPath);
-          fsSync.writeFileSync(tempPath, "replacement");
-          throw Object.assign(new Error("rename denied"), { code: "EPERM" });
-        },
-      },
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
-    expect(fsSync.readFileSync(tempPath, "utf8")).toBe("replacement");
-    expect(fsSync.readFileSync(movedPath, "utf8")).toBe("new");
-  });
-
-  it("rechecks async ownership before a rename retry", async () => {
-    const root = await tempRoot("fs-safe-atomic-retry-source-async-");
-    const filePath = path.join(root, "target");
-    await fs.writeFile(filePath, "old");
-    let tempPath = "";
-    let renames = 0;
-    await expect(replaceFileAtomic({
-      filePath,
-      content: "new",
-      renameMaxRetries: 1,
-      renameRetryBaseDelayMs: 0,
-      beforeRename: async ({ tempPath: candidate }) => {
-        tempPath = candidate;
-      },
-      fileSystem: {
-        promises: {
-          ...fs,
-          rename: async () => {
-            renames += 1;
-            await fs.rename(tempPath, `${tempPath}.owned`);
-            await fs.writeFile(tempPath, "replacement");
-            throw Object.assign(new Error("busy"), { code: "EBUSY" });
-          },
-        },
-      },
-    })).rejects.toMatchObject({ code: "path-mismatch" });
-    expect(renames).toBe(1);
-    expect(await fs.readFile(filePath, "utf8")).toBe("old");
-    expect(await fs.readFile(tempPath, "utf8")).toBe("replacement");
-  });
-
-  it("rechecks sync ownership before a rename retry", async () => {
-    const root = await tempRoot("fs-safe-atomic-retry-source-sync-");
-    const filePath = path.join(root, "target");
-    fsSync.writeFileSync(filePath, "old");
-    let tempPath = "";
-    let renames = 0;
-    expect(() => replaceFileAtomicSync({
-      filePath,
-      content: "new",
-      renameMaxRetries: 1,
-      renameRetryBaseDelayMs: 0,
-      beforeRename: ({ tempPath: candidate }) => {
-        tempPath = candidate;
-      },
-      fileSystem: {
-        ...fsSync,
-        renameSync: () => {
-          renames += 1;
-          fsSync.renameSync(tempPath, `${tempPath}.owned`);
-          fsSync.writeFileSync(tempPath, "replacement");
-          throw Object.assign(new Error("busy"), { code: "EBUSY" });
-        },
-      },
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
-    expect(renames).toBe(1);
-    expect(fsSync.readFileSync(filePath, "utf8")).toBe("old");
-    expect(fsSync.readFileSync(tempPath, "utf8")).toBe("replacement");
-  });
 });

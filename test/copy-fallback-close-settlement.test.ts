@@ -115,136 +115,62 @@ function expectFailure(settlement: Settlement, expected: unknown): void {
   if (settlement.failed) expect(Object.is(settlement.value, expected)).toBe(true);
 }
 
-describe("unsynchronized copy-fallback destination close settlement", () => {
-  it("surfaces an Error and every falsy async close rejection for absent and existing destinations", async () => {
-    const root = await tempRoot("fs-safe-copy-close-async-");
-    for (const [failureIndex, closeFailure] of CLOSE_FAILURES.entries()) {
+describe.each(["async", "sync"] as const)("unsynchronized %s copy-fallback destination close settlement", (mode) => {
+  it.each([
+    { scenario: "close-only failure", failures: CLOSE_FAILURES, earlierFailure: false },
+    { scenario: "earlier operation failure", failures: FALSY_FAILURES, earlierFailure: true },
+  ])("preserves exact $scenario settlement across destination layouts", async ({ failures, earlierFailure }) => {
+    const root = await tempRoot(`fs-safe-copy-close-${mode}-`);
+    let executions = 0;
+    for (const [failureIndex, failure] of failures.entries()) {
       for (const [layout, restore] of [
         ["absent", "none"], ["existing", "none"], ["absent-restore", "restore-original"],
       ] as const) {
         const dest = path.join(root, `${failureIndex}-${layout}`);
         if (layout === "existing") await fs.writeFile(dest, "original");
-        const adapter = asyncAdapter({ dest, closeFailure, operationFailure: noFailure });
-        let tempPath: string | undefined;
-        const settlement = await captureAsync(() => replaceFileAtomic({
-          filePath: dest,
-          content: "replacement",
-          fileSystem: adapter.fileSystem,
-          copyFallbackOnPermissionError: true,
-          copyFallbackRestore: restore,
-          maxRestoreBytes: 64,
-          syncTempFile: false,
-          syncParentDir: false,
-          beforeRename: async (receipt) => { tempPath = receipt.tempPath; },
-        }));
-
-        expectFailure(settlement, closeFailure);
-        expect(adapter.closeAttempts()).toBe(1);
-        await expect(fs.readFile(dest, "utf8")).resolves.toBe("replacement");
-        expect(tempPath).toBeDefined();
-        expect(fsSync.existsSync(tempPath!)).toBe(false);
-      }
-    }
-  });
-
-  it("surfaces an Error and every falsy sync close throw for absent and existing destinations", async () => {
-    const root = await tempRoot("fs-safe-copy-close-sync-");
-    for (const [failureIndex, closeFailure] of CLOSE_FAILURES.entries()) {
-      for (const [layout, restore] of [
-        ["absent", "none"], ["existing", "none"], ["absent-restore", "restore-original"],
-      ] as const) {
-        const dest = path.join(root, `${failureIndex}-${layout}`);
-        if (layout === "existing") fsSync.writeFileSync(dest, "original");
-        const adapter = syncAdapter({ dest, closeFailure, operationFailure: noFailure });
-        let tempPath: string | undefined;
-        const settlement = captureSync(() => replaceFileAtomicSync({
-          filePath: dest,
-          content: "replacement",
-          fileSystem: adapter.fileSystem,
-          copyFallbackOnPermissionError: true,
-          copyFallbackRestore: restore,
-          maxRestoreBytes: 64,
-          syncTempFile: false,
-          syncParentDir: false,
-          beforeRename: (receipt) => { tempPath = receipt.tempPath; },
-        }));
-
-        expectFailure(settlement, closeFailure);
-        expect(adapter.closeAttempts()).toBe(1);
-        expect(fsSync.readFileSync(dest, "utf8")).toBe("replacement");
-        expect(tempPath).toBeDefined();
-        expect(fsSync.existsSync(tempPath!)).toBe(false);
-      }
-    }
-  });
-
-  it("preserves every earlier falsy async failure when destination close also rejects", async () => {
-    const root = await tempRoot("fs-safe-copy-double-async-");
-    for (const [failureIndex, operationFailure] of FALSY_FAILURES.entries()) {
-      for (const [layout, restore] of [
-        ["absent", "none"], ["existing", "none"], ["absent-restore", "restore-original"],
-      ] as const) {
-        const dest = path.join(root, `${failureIndex}-${layout}`);
-        if (layout === "existing") await fs.writeFile(dest, "original");
-        const adapter = asyncAdapter({
+        const params = {
           dest,
-          closeFailure: new Error("close failed"),
-          operationFailure: { enabled: true, value: operationFailure },
-        });
+          closeFailure: earlierFailure ? new Error("close failed") : failure,
+          operationFailure: earlierFailure ? { enabled: true, value: failure } as const : noFailure,
+        };
         let tempPath: string | undefined;
-        const settlement = await captureAsync(() => replaceFileAtomic({
+        const options = {
           filePath: dest,
           content: "replacement",
-          fileSystem: adapter.fileSystem,
           copyFallbackOnPermissionError: true,
           copyFallbackRestore: restore,
           maxRestoreBytes: 64,
           syncTempFile: false,
           syncParentDir: false,
-          beforeRename: async (receipt) => { tempPath = receipt.tempPath; },
-        }));
+        };
+        let settlement: Settlement;
+        let closeAttempts: () => number;
+        if (mode === "async") {
+          const adapter = asyncAdapter(params);
+          closeAttempts = adapter.closeAttempts;
+          settlement = await captureAsync(() => replaceFileAtomic({
+            ...options,
+            fileSystem: adapter.fileSystem,
+            beforeRename: async (receipt) => { tempPath = receipt.tempPath; },
+          }));
+        } else {
+          const adapter = syncAdapter(params);
+          closeAttempts = adapter.closeAttempts;
+          settlement = captureSync(() => replaceFileAtomicSync({
+            ...options,
+            fileSystem: adapter.fileSystem,
+            beforeRename: (receipt) => { tempPath = receipt.tempPath; },
+          }));
+        }
+        executions += 1;
 
-        expectFailure(settlement, operationFailure);
-        expect(adapter.closeAttempts()).toBe(1);
-        await expect(fs.readFile(dest)).resolves.toHaveLength(0);
+        expectFailure(settlement, failure);
+        expect(closeAttempts()).toBe(1);
+        await expect(fs.readFile(dest, "utf8")).resolves.toBe(earlierFailure ? "" : "replacement");
         expect(tempPath).toBeDefined();
         expect(fsSync.existsSync(tempPath!)).toBe(false);
       }
     }
-  });
-
-  it("preserves every earlier falsy sync failure when destination close also throws", async () => {
-    const root = await tempRoot("fs-safe-copy-double-sync-");
-    for (const [failureIndex, operationFailure] of FALSY_FAILURES.entries()) {
-      for (const [layout, restore] of [
-        ["absent", "none"], ["existing", "none"], ["absent-restore", "restore-original"],
-      ] as const) {
-        const dest = path.join(root, `${failureIndex}-${layout}`);
-        if (layout === "existing") fsSync.writeFileSync(dest, "original");
-        const adapter = syncAdapter({
-          dest,
-          closeFailure: new Error("close failed"),
-          operationFailure: { enabled: true, value: operationFailure },
-        });
-        let tempPath: string | undefined;
-        const settlement = captureSync(() => replaceFileAtomicSync({
-          filePath: dest,
-          content: "replacement",
-          fileSystem: adapter.fileSystem,
-          copyFallbackOnPermissionError: true,
-          copyFallbackRestore: restore,
-          maxRestoreBytes: 64,
-          syncTempFile: false,
-          syncParentDir: false,
-          beforeRename: (receipt) => { tempPath = receipt.tempPath; },
-        }));
-
-        expectFailure(settlement, operationFailure);
-        expect(adapter.closeAttempts()).toBe(1);
-        expect(fsSync.readFileSync(dest)).toHaveLength(0);
-        expect(tempPath).toBeDefined();
-        expect(fsSync.existsSync(tempPath!)).toBe(false);
-      }
-    }
+    expect(executions).toBe(earlierFailure ? 24 : 27);
   });
 });
