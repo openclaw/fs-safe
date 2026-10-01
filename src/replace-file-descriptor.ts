@@ -1,55 +1,27 @@
-import { syncFileBestEffort, syncFileBestEffortSync } from "./file-sync.js";
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
-import fs, { type FileHandle } from "node:fs/promises";
+import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-node.js";
 import type { AtomicMutation } from "./replace-file-mutation.js";
+import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
+export type { SyncFchmod } from "./atomic-io.js";
 
-type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open" | "writeFile">;
-type SyncTempFileSystem = Pick<
-  typeof syncFs,
-  "closeSync" | "fstatSync" | "fsyncSync" | "lstatSync" | "openSync" | "writeFileSync"
->;
+type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open">;
 
-export type SyncFchmod = (fd: number, mode: number) => void;
-
-export async function syncDirectoryBestEffort(
-  fsModule: Pick<typeof fs, "open">,
-  dirPath: string,
-): Promise<void> {
-  let handle: FileHandle | undefined;
+export function* syncDirectoryBestEffort(io: AtomicIo, dirPath: string): Procedure<void> {
+  let file: AtomicFile | undefined;
   try {
-    handle = await fsModule.open(dirPath, "r");
-    await handle.sync();
+    file = yield* io.open(dirPath, "r");
+    yield* file.sync();
   } catch {
-    // Best-effort on platforms/filesystems that do not support directory fsync.
+    // Directory synchronization and close remain best-effort.
   } finally {
     try {
-      await handle?.close();
+      const closing = file?.close();
+      if (file && io.asynchronous) yield closing;
     } catch {
-      // Best-effort close also covers synchronous adapter throws.
-    }
-  }
-}
-
-export function syncDirectoryBestEffortSync(
-  fsModule: Pick<typeof syncFs, "openSync" | "fsyncSync" | "closeSync">,
-  dirPath: string,
-): void {
-  let fd: number | undefined;
-  try {
-    fd = fsModule.openSync(dirPath, "r");
-    fsModule.fsyncSync(fd);
-  } catch {
-    // Best-effort on platforms/filesystems that do not support directory fsync.
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fsModule.closeSync(fd);
-      } catch {
-        // Best-effort close after directory fsync.
-      }
+      // Preserve the operation's best-effort contract.
     }
   }
 }
@@ -70,7 +42,7 @@ function assertDirectory<T extends Stats | BigIntStats>(identity: T, dirPath: st
   return identity;
 }
 
-export async function pinDirectoryForMode(params: {
+async function pinDirectoryForMode(params: {
   fsModule: AsyncTempFileSystem;
   dirPath: string;
   /** Compatibility for best-effort directory modes; admission and close still fail closed. */
@@ -111,98 +83,65 @@ export async function pinDirectoryForMode(params: {
   }
 }
 
-export async function applyDirectoryMode(params: Parameters<typeof pinDirectoryForMode>[0] & {
-  mode: number;
-}): Promise<void> {
-  const owner = await pinDirectoryForMode(params);
-  try {
-    await owner?.apply(params.mode);
-  } finally {
-    await owner?.close();
-  }
-}
-
-export function applyDirectoryModeSync(params: {
-  fsModule: SyncTempFileSystem;
+export function* applyDirectoryMode(io: AtomicIo, params: {
   dirPath: string;
   mode: number;
-  fchmodSync?: SyncFchmod;
+  ignoreChmodError?: boolean;
   mutation?: AtomicMutation;
-}): void {
-  if (process.platform === "win32") {
+}): Procedure<void> {
+  if (io.asynchronous) {
+    const owner = yield* wait(pinDirectoryForMode({
+      ...params,
+      fsModule: io.asyncFs as AsyncTempFileSystem,
+    }));
+    try {
+      if (owner) yield* wait(owner.apply(params.mode));
+    } finally {
+      if (owner) yield* wait(owner.close());
+    }
     return;
   }
-
-  const expected = inspectFileIdentitySync(() => assertDirectory(params.fsModule.lstatSync(params.dirPath, { bigint: true }), params.dirPath));
-  const fd = params.fsModule.openSync(params.dirPath, directoryOpenFlags());
+  if (process.platform === "win32") return;
+  const admit = (stat: BigIntStats) => assertDirectory(stat, params.dirPath);
+  const expected = inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
+    undefined, false, admit) as BigIntStats;
+  const file = yield* io.open(params.dirPath, directoryOpenFlags());
   try {
-    inspectFileIdentitySync(() => assertDirectory(params.fsModule.fstatSync(fd, { bigint: true }), params.dirPath), expected);
-    // chmod ignores file-type bits; mask so raw stat modes are tolerated.
+    inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
     params.mutation?.assert();
-    params.fchmodSync?.(fd, params.mode & 0o7777);
+    file.chmod(params.mode & 0o7777);
   } finally {
-    params.fsModule.closeSync(fd);
+    file.close();
   }
 }
 
-export async function writeTempFile(params: {
-  fsModule: AsyncTempFileSystem;
+export function* writeTempFile(io: AtomicIo, params: {
   tempPath: string;
   content: string | Uint8Array;
   mode: number;
   sync: boolean;
   onIdentity?: (identity: BigIntStats) => void;
   mutation?: AtomicMutation;
-}): Promise<{ handle: FileHandle; identity: BigIntStats }> {
+}): Procedure<{ file: AtomicFile; identity: BigIntStats }> {
   params.mutation?.assert();
-  const handle = await params.fsModule.open(params.tempPath, "wx", params.mode);
+  const file = yield* io.open(params.tempPath, "wx", params.mode);
   try {
-    // Custom adapters retain their async-only metadata contract.
-    const inspect = () => params.fsModule === fs
-      ? syncFs.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true });
-    const identity = await inspectFileIdentity(inspect);
+    const openedInspection = inspectAtomicIdentity(io, () => file.statExact());
+    const identity = (io.asynchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
     params.onIdentity?.(identity);
     params.mutation?.assert();
-    await params.fsModule.writeFile(handle, params.content);
-    await handle.chmod(params.mode);
-    if (params.sync) {
-      await syncFileBestEffort(handle);
-    }
-    await inspectFileIdentity(inspect, identity);
-    return { handle, identity };
+    const writing = file.writeFile(params.content, true);
+    if (io.asynchronous) yield writing;
+    const chmod = file.chmod(params.mode);
+    if (io.asynchronous) yield chmod;
+    if (params.sync) yield* file.syncBestEffort();
+    const currentInspection = inspectAtomicIdentity(io, () => file.statExact(), identity);
+    if (io.asynchronous) yield currentInspection;
+    return { file, identity };
   } catch (error) {
     try {
-      await handle.close();
-    } catch (closeError) {
-      throw new AggregateError([error, closeError], "Atomic temp write and close failed");
-    }
-    throw error;
-  }
-}
-
-export function writeTempFileSync(params: Omit<
-  Parameters<typeof writeTempFile>[0],
-  "fsModule"
-> & {
-  fsModule: SyncTempFileSystem;
-  fchmodSync?: SyncFchmod;
-}): { fd: number; identity: BigIntStats } {
-  params.mutation?.assert();
-  const fd = params.fsModule.openSync(params.tempPath, "wx", params.mode);
-  try {
-    const identity = inspectFileIdentitySync(() => params.fsModule.fstatSync(fd, { bigint: true }));
-    params.onIdentity?.(identity);
-    params.mutation?.assert();
-    params.fsModule.writeFileSync(fd, params.content);
-    params.fchmodSync?.(fd, params.mode);
-    if (params.sync) {
-      syncFileBestEffortSync(fd, params.fsModule);
-    }
-    inspectFileIdentitySync(() => params.fsModule.fstatSync(fd, { bigint: true }), identity);
-    return { fd, identity };
-  } catch (error) {
-    try {
-      params.fsModule.closeSync(fd);
+      const closing = file.close();
+      if (io.asynchronous) yield closing;
     } catch (closeError) {
       throw new AggregateError([error, closeError], "Atomic temp write and close failed");
     }

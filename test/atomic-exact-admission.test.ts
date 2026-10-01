@@ -2,9 +2,10 @@ import fs from "node:fs";
 import fsp, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertDestinationHardlinkPolicy, assertDestinationHardlinkPolicySync, copyFallbackReplace, copyFallbackReplaceSync } from "../src/replace-file-copy-fallback.js";
-import { readOwnedCopySource, readOwnedCopySourceSync } from "../src/replace-file-copy-source.js";
-import { applyDirectoryMode, applyDirectoryModeSync } from "../src/replace-file-descriptor.js";
+import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
+import { assertDestinationHardlinkPolicy, copyFallbackReplace } from "../src/replace-file-copy-fallback.js";
+import { readOwnedCopySource } from "../src/replace-file-copy-source.js";
+import { applyDirectoryMode } from "../src/replace-file-descriptor.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -80,9 +81,10 @@ for (const synchronous of [false, true]) {
       const source = path.join(directory, "source"), other = path.join(directory, "other");
       fs.writeFileSync(source, "payload"); fs.writeFileSync(other, "unrelated");
       const adapter = collisionAdapter(source, other, false);
+      const io = synchronous ? AtomicIo.sync(adapter.sync) : AtomicIo.async(adapter.async);
       const options = { src: source, expectedIdentity: owned ? adapter.expectedIdentity : undefined };
-      const result = synchronous ? readOwnedCopySourceSync({ ...options, fsModule: adapter.sync })
-        : await readOwnedCopySource({ ...options, fsModule: adapter.async });
+      const procedure = readOwnedCopySource(io, options);
+      const result = synchronous ? runSync(procedure) : await runAsync(procedure);
       expect(result.replacement.toString()).toBe("payload");
       expect(adapter.counts()).toMatchObject({ pathObservations: 2, fdObservations: 1, opens: 1, closes: 1 });
     });
@@ -92,6 +94,7 @@ for (const synchronous of [false, true]) {
       const dest = path.join(directory, "dest"), other = path.join(directory, "other"), source = path.join(directory, "source");
       fs.writeFileSync(dest, "original"); fs.writeFileSync(other, "unrelated"); fs.writeFileSync(source, "replacement");
       const adapter = collisionAdapter(dest, other, false);
+      const io = synchronous ? AtomicIo.sync(adapter.sync) : AtomicIo.async(adapter.async);
       let observations = 0;
       const damage = (stat: fs.Stats | fs.BigIntStats) => {
         if (typeof stat.ino !== "bigint" || stat.ino !== firstInode) return stat;
@@ -118,8 +121,8 @@ for (const synchronous of [false, true]) {
       Object.defineProperty(process, "platform", { value: "win32" });
       try {
         const options = { src: source, dest, restore: "restore-original" as const, maxRestoreBytes: 64, sync: false };
-        const run = async () => synchronous ? copyFallbackReplaceSync({ ...options, fsModule: adapter.sync })
-          : await copyFallbackReplace({ ...options, fsModule: adapter.async });
+        const run = async () => synchronous ? runSync(copyFallbackReplace(io, options))
+          : await runAsync(copyFallbackReplace(io, options));
         if (fault === "transient") await run();
         else await expect(run()).rejects.toMatchObject({ code: "path-mismatch" });
       } finally { Object.defineProperty(process, "platform", platform); }
@@ -143,20 +146,21 @@ for (const synchronous of [false, true]) {
             fs.writeFileSync(selected, "original"); fs.writeFileSync(other, "unrelated");
           }
           const adapter = collisionAdapter(selected, other, redirect);
+          const io = synchronous ? AtomicIo.sync(adapter.sync) : AtomicIo.async(adapter.async);
           const run = async () => {
             if (operation === "source") return synchronous
-              ? readOwnedCopySourceSync({ fsModule: adapter.sync, src: selected })
-              : await readOwnedCopySource({ fsModule: adapter.async, src: selected });
+              ? runSync(readOwnedCopySource(io, { src: selected }))
+              : await runAsync(readOwnedCopySource(io, { src: selected }));
             if (operation === "hardlinks") return synchronous
-              ? assertDestinationHardlinkPolicySync(adapter.sync, selected, "reject")
-              : await assertDestinationHardlinkPolicy(adapter.async, selected, "reject");
+              ? runSync(assertDestinationHardlinkPolicy(io, selected, "reject"))
+              : await runAsync(assertDestinationHardlinkPolicy(io, selected, "reject"));
             if (operation === "parent") return synchronous
-              ? applyDirectoryModeSync({ fsModule: adapter.sync, dirPath: selected, mode: 0o700, fchmodSync: adapter.sync.fchmodSync })
-              : await applyDirectoryMode({ fsModule: adapter.async, dirPath: selected, mode: 0o700 });
+              ? runSync(applyDirectoryMode(AtomicIo.sync(adapter.sync, adapter.sync.fchmodSync), { dirPath: selected, mode: 0o700 }))
+              : await runAsync(applyDirectoryMode(io, { dirPath: selected, mode: 0o700 }));
             const source = path.join(directory, "source"); fs.writeFileSync(source, "replacement");
             const options = { src: source, dest: selected, restore: "restore-original" as const, maxRestoreBytes: 64, sync: false };
-            return synchronous ? copyFallbackReplaceSync({ ...options, fsModule: adapter.sync })
-              : await copyFallbackReplace({ ...options, fsModule: adapter.async });
+            return synchronous ? runSync(copyFallbackReplace(io, options))
+              : await runAsync(copyFallbackReplace(io, options));
           };
           if (redirect) await expect(run()).rejects.toMatchObject({ code: "path-mismatch" });
           else await run();

@@ -7,8 +7,9 @@ import { stringifyJsonDocument } from "./json-stringify.js";
 import { readRegularFile, readRegularFileSync, statRegularFile } from "./regular-file.js";
 import { openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
-import { writeTempFileSync } from "./replace-file-descriptor.js";
-import { SyncAtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
+import { writeTempFile, syncDirectoryBestEffort } from "./replace-file-descriptor.js";
+import { AtomicIo, runSync } from "./atomic-io.js";
+import { AtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-owner.js";
 import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { writeTextAtomic, type WriteTextAtomicOptions } from "./text-atomic.js";
 import { sleep } from "./timing.js";
@@ -68,35 +69,17 @@ function trySetSecureMode(fd: number): void {
   }
 }
 
-function trySyncDirectory(pathname: string) {
-  let fd: number | undefined;
-  try {
-    fd = fsSync.openSync(path.dirname(pathname), "r");
-    fsSync.fsyncSync(fd);
-  } catch {
-    // best-effort; some platforms/filesystems do not support syncing directories.
-  } finally {
-    if (fd !== undefined) {
-      try {
-        fsSync.closeSync(fd);
-      } catch {
-        // best-effort cleanup
-      }
-    }
-  }
-}
-
-function renameJsonFileWithFallback(owner: SyncAtomicTempOwner, pathname: string) {
-  owner.assertCurrent(fsSync);
+function renameJsonFileWithFallback(owner: AtomicTempOwner, pathname: string) {
+  runSync(owner.assertCurrent());
   try {
     fsSync.renameSync(owner.pathname, pathname);
     return;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
     if (code === "EPERM" || code === "EEXIST") {
-      owner.assertCurrent(fsSync);
+      runSync(owner.assertCurrent());
       fsSync.rmSync(pathname, { force: true });
-      owner.assertCurrent(fsSync);
+      runSync(owner.assertCurrent());
       fsSync.renameSync(owner.pathname, pathname);
       return;
     }
@@ -130,29 +113,30 @@ export function writeJsonSync(pathname: string, data: unknown) {
   const payload = `${stringifyJsonDocument(data, null, 2)}\n`;
 
   fsSync.mkdirSync(recursiveMkdirPath(path.dirname(filePath)), { recursive: true, mode: JSON_DIR_MODE });
-  const owner = new SyncAtomicTempOwner(tmpPath);
+  const io = AtomicIo.sync(fsSync);
+  const owner = new AtomicTempOwner(tmpPath, io);
   let originalFailure: AtomicTempFailure | undefined;
   try {
     owner.start();
-    const temp = writeTempFileSync({
-      fsModule: fsSync, tempPath: tmpPath, content: payload, mode: JSON_FILE_MODE,
+    const temp = runSync(writeTempFile(io, {
+      tempPath: tmpPath, content: payload, mode: JSON_FILE_MODE,
       sync: false, onIdentity: owner.onIdentity,
-    });
+    }));
     owner.adopt(temp);
-    owner.assertCurrent(fsSync);
-    trySetSecureMode(temp.fd);
-    fsSync.fsyncSync(temp.fd);
+    runSync(owner.assertCurrent());
+    trySetSecureMode(temp.file.fd);
+    fsSync.fsyncSync(temp.file.fd);
     renameJsonFileWithFallback(owner, filePath);
     owner.markRenamed();
-    owner.assertPublished(fsSync, filePath);
-    trySetSecureMode(temp.fd);
-    trySyncDirectory(filePath);
-    owner.assertPublished(fsSync, filePath);
+    runSync(owner.assertPublished(filePath));
+    trySetSecureMode(temp.file.fd);
+    runSync(syncDirectoryBestEffort(io, path.dirname(filePath)));
+    runSync(owner.assertPublished(filePath));
   } catch (error) {
     originalFailure = { error };
     throw error;
   } finally {
-    owner.finish({ fsModule: fsSync, originalFailure, throwOnCleanupError: false });
+    runSync(owner.finish({ originalFailure, throwOnCleanupError: false }));
   }
 }
 

@@ -2,9 +2,9 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
 import {
-  AsyncAtomicTempOwner,
-  SyncAtomicTempOwner,
+  AtomicTempOwner,
   type AtomicTempFailure,
 } from "../src/replace-file-temp-owner.js";
 import {
@@ -200,50 +200,50 @@ async function settleOwner(params: {
   let closeAttempts = 0;
 
   if (params.variant === "async") {
-    const owner = new AsyncAtomicTempOwner(pathname);
+    const io = AtomicIo.async({
+      lstat: async () => OWNED_IDENTITY,
+      unlink: async () => {
+        cleanupAttempts += 1;
+        if (params.combination.cleanup) throw params.value;
+      },
+    } as never);
+    const owner = new AtomicTempOwner(pathname, io);
     owner.start();
     owner.adopt({
       identity: OWNED_IDENTITY,
-      handle: {
+      file: io.wrap({
         close: async () => {
           closeAttempts += 1;
           if (params.combination.close) throw params.value;
         },
-      } as FileHandle,
+      } as FileHandle),
     });
-    const outcome = await captureAsync(async () => await owner.finish({
-      fsModule: {
-        lstat: async () => OWNED_IDENTITY,
-        unlink: async () => {
-          cleanupAttempts += 1;
-          if (params.combination.cleanup) throw params.value;
-        },
-      } as never,
+    const outcome = await captureAsync(async () => await runAsync(owner.finish({
       originalFailure,
       throwOnCleanupError: params.reportCleanup,
-    }));
+    })));
     __cleanupRegisteredTempPathForTest(pathname);
     return { outcome, cleanupAttempts, closeAttempts };
   }
 
-  const owner = new SyncAtomicTempOwner(pathname);
+  const io = AtomicIo.sync({
+    lstatSync: () => OWNED_IDENTITY,
+    unlinkSync: () => {
+      cleanupAttempts += 1;
+      if (params.combination.cleanup) throw params.value;
+    },
+    closeSync: () => {
+      closeAttempts += 1;
+      if (params.combination.close) throw params.value;
+    },
+  } as never);
+  const owner = new AtomicTempOwner(pathname, io);
   owner.start();
-  owner.adopt({ fd: 47, identity: OWNED_IDENTITY });
-  const outcome = captureSync(() => owner.finish({
-    fsModule: {
-      lstatSync: () => OWNED_IDENTITY,
-      unlinkSync: () => {
-        cleanupAttempts += 1;
-        if (params.combination.cleanup) throw params.value;
-      },
-      closeSync: () => {
-        closeAttempts += 1;
-        if (params.combination.close) throw params.value;
-      },
-    } as never,
+  owner.adopt({ file: io.wrap(47), identity: OWNED_IDENTITY });
+  const outcome = captureSync(() => runSync(owner.finish({
     originalFailure,
     throwOnCleanupError: params.reportCleanup,
-  }));
+  })));
   __cleanupRegisteredTempPathForTest(pathname);
   return { outcome, cleanupAttempts, closeAttempts };
 }
@@ -279,41 +279,41 @@ describe.each(["async", "sync"] as const)("%s atomic temp registration", (varian
       let outcome: Captured;
 
       if (variant === "async") {
-        const owner = new AsyncAtomicTempOwner(pathname);
+        const io = AtomicIo.async({
+          lstat: async () => identity,
+          unlink: async () => {
+            throw cleanupFailure;
+          },
+        } as never);
+        const owner = new AtomicTempOwner(pathname, io);
         owner.start();
         owner.adopt({
           identity,
-          handle: {
+          file: io.wrap({
             close: async () => {
               closeAttempts += 1;
             },
-          } as FileHandle,
+          } as FileHandle),
         });
-        outcome = await captureAsync(async () => await owner.finish({
-          fsModule: {
-            lstat: async () => identity,
-            unlink: async () => {
-              throw cleanupFailure;
-            },
-          } as never,
+        outcome = await captureAsync(async () => await runAsync(owner.finish({
           throwOnCleanupError: reportCleanup,
-        }));
+        })));
       } else {
-        const owner = new SyncAtomicTempOwner(pathname);
+        const io = AtomicIo.sync({
+          lstatSync: () => identity,
+          unlinkSync: () => {
+            throw cleanupFailure;
+          },
+          closeSync: () => {
+            closeAttempts += 1;
+          },
+        } as never);
+        const owner = new AtomicTempOwner(pathname, io);
         owner.start();
-        owner.adopt({ fd: 53, identity });
-        outcome = captureSync(() => owner.finish({
-          fsModule: {
-            lstatSync: () => identity,
-            unlinkSync: () => {
-              throw cleanupFailure;
-            },
-            closeSync: () => {
-              closeAttempts += 1;
-            },
-          } as never,
+        owner.adopt({ file: io.wrap(53), identity });
+        outcome = captureSync(() => runSync(owner.finish({
           throwOnCleanupError: reportCleanup,
-        }));
+        })));
       }
 
       if (reportCleanup) {
