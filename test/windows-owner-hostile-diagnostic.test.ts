@@ -9,9 +9,12 @@ import {
   __resetFsSafeNativeConfigForTest,
   configureFsSafeNative,
 } from "../src/native-config.js";
-import { inspectPathPermissions } from "../src/permissions.js";
 import { inspectWindowsAcl } from "../src/permissions-windows.js";
-import { readSecureFile } from "../src/secure-file.js";
+import {
+  createTrapCounter,
+  expectSecureReadRefusal,
+  inspectThroughBothPublicRoutes,
+} from "./helpers/windows-owner-diagnostics.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const ENV = { SystemRoot: "C:\\Windows" };
@@ -22,19 +25,7 @@ type HostileFailure = {
   create(): { value: unknown; untouched?(): void };
 };
 
-function trapCounter(): {
-  count: () => number;
-  trap: () => never;
-} {
-  let calls = 0;
-  return {
-    count: () => calls,
-    trap: () => {
-      calls += 1;
-      throw new Error("hostile diagnostic hook executed");
-    },
-  };
-}
+const trapCounter = () => createTrapCounter("hostile diagnostic hook executed");
 
 const HOSTILE_FAILURES: HostileFailure[] = [
   {
@@ -112,17 +103,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
 });
-
-async function inspectThroughBothPublicRoutes(target: string, value: unknown) {
-  const exec = vi.fn(async () => { throw value; });
-  const advanced = await inspectWindowsAcl("C:\\fixture", { env: ENV, exec });
-  const pathname = await inspectPathPermissions(target, {
-    platform: "win32",
-    env: ENV,
-    exec,
-  });
-  return { advanced, pathname, exec };
-}
 
 function expectBoundedFailure(result: {
   error?: string;
@@ -379,38 +359,7 @@ describe("Windows owner caught-failure diagnostics", () => {
       has: traps.trap,
       ownKeys: traps.trap,
     });
-    const actualOpen = fs.open.bind(fs);
-    let close: ReturnType<typeof vi.spyOn> | undefined;
-    let read: ReturnType<typeof vi.spyOn> | undefined;
-    vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
-      const handle = await actualOpen(...args);
-      close = vi.spyOn(handle, "close");
-      read = vi.spyOn(handle, "readFile");
-      return handle;
-    });
-
-    const failure = await readSecureFile({
-      filePath: target,
-      inject: {
-        platform: "win32",
-        env: ENV,
-        exec: async () => { throw cause; },
-      },
-    }).catch((error: unknown) => error) as Error & {
-      cause?: unknown;
-      category?: string;
-      code?: string;
-      details?: Record<string, unknown>;
-    };
-
-    expect(failure.code).toBe("permission-unverified");
-    expect(failure.category).toBe("operational");
-    expect(failure.cause).toBe(cause);
-    expect(read).toBeDefined();
-    expect(close).toBeDefined();
-    expect(read!).not.toHaveBeenCalled();
-    expect(close!).toHaveBeenCalledTimes(1);
-    expect(`${failure.message}${JSON.stringify(failure.details)}`).not.toContain(secret);
+    await expectSecureReadRefusal(target, cause, secret);
     expect(traps.count()).toBe(0);
   });
 });

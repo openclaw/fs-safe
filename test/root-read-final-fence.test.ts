@@ -1,11 +1,11 @@
 import fsSync from "node:fs";
-import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, vi } from "vitest";
 import { realpathSync } from "../src/realpath.js";
 import { root, type Root, type SymlinkPolicy } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { expectClosedWithoutReading, observeOpenedHandle } from "./helpers/root-read-observer.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -56,34 +56,6 @@ async function replacementFixture(prefix: string, relativePath = "value") {
   };
 }
 
-function observeOpenedHandle(filePath: string) {
-  let handle: FileHandle | undefined;
-  let close: ReturnType<typeof vi.spyOn> | undefined;
-  let read: ReturnType<typeof vi.spyOn> | undefined;
-  let readFile: ReturnType<typeof vi.spyOn> | undefined;
-  return {
-    hook(candidate: string, opened: FileHandle) {
-      if (candidate !== filePath) return;
-      handle = opened;
-      close = vi.spyOn(opened, "close");
-      read = vi.spyOn(opened, "read");
-      readFile = vi.spyOn(opened, "readFile");
-    },
-    get handle() {
-      return handle;
-    },
-    get close() {
-      return close;
-    },
-    get read() {
-      return read;
-    },
-    get readFile() {
-      return readFile;
-    },
-  };
-}
-
 async function invoke(
   fixture: Awaited<ReturnType<typeof replacementFixture>>,
   operation: Operation,
@@ -109,66 +81,69 @@ function invokeAlias(
   return scoped.reader({ symlinks })(absolutePath);
 }
 
-itPosix.each(operations)(
-  "%s rejects a persistent replacement root before reading or handing off the handle",
-  async (operation) => {
-    const fixture = await replacementFixture(`fs-safe-root-read-persistent-${operation}-`);
+const replacementScenarios = [
+  {
+    scenario: "persistent replacement",
+    replaceAt: "afterRootReadPathResolution",
+    restoreBeforeFence: false,
+    state: "replacement", original: "displaced", replacement: "active",
+  },
+  {
+    scenario: "replacement restored before the final fence",
+    replaceAt: "afterRootReadPathResolution",
+    restoreBeforeFence: true,
+    state: "original", original: "active", replacement: "successor",
+  },
+  {
+    scenario: "replacement after the final pathname identity observation",
+    replaceAt: "afterRootReadFinalPathIdentityCheck",
+    restoreBeforeFence: false,
+    state: "replacement", original: "displaced", replacement: "active",
+  },
+] as const;
+
+itPosix.each(replacementScenarios.flatMap(scenario => operations.map(operation => ({ ...scenario, operation }))))(
+  "$operation rejects $scenario before reading or handing off the handle",
+  async ({ scenario, replaceAt, restoreBeforeFence, state, original, replacement, operation }) => {
+    const fixture = await replacementFixture(`fs-safe-root-read-${operation}-`);
     const observed = observeOpenedHandle(fixture.filePath);
     const afterFile = vi.fn();
     __setFsSafeTestHooksForTest({
-      afterRootReadPathResolution(candidate) {
+      afterOpen: observed.hook,
+      [replaceAt](candidate: string) {
         if (candidate === fixture.filePath) fixture.replace();
       },
-      afterOpen: observed.hook,
-      afterRootReadFinalPathIdentityCheck: afterFile,
+      ...(restoreBeforeFence ? {
+        beforeRootReadFinalFence(candidate: string) {
+          if (candidate === fixture.filePath) fixture.restore();
+        },
+      } : {}),
+      ...(scenario === "persistent replacement" ? { afterRootReadFinalPathIdentityCheck: afterFile } : {}),
     });
 
     await expect(invoke(fixture, operation)).rejects.toMatchObject({ code: "path-mismatch" });
 
-    expect(fixture.state).toBe("replacement");
-    expect(observed.handle?.fd).toBe(-1);
-    expect(observed.close).toHaveBeenCalledTimes(1);
-    expect(observed.read).not.toHaveBeenCalled();
-    expect(observed.readFile).not.toHaveBeenCalled();
-    expect(afterFile).not.toHaveBeenCalled();
-    await expect(fs.readFile(path.join(fixture.displaced, "value"), "utf8")).resolves.toBe("original");
-    await expect(fs.readFile(fixture.filePath, "utf8")).resolves.toBe("replacement");
+    expect(fixture.state).toBe(state);
+    expectClosedWithoutReading(observed);
+    if (scenario === "persistent replacement") expect(afterFile).not.toHaveBeenCalled();
+    await expect(fs.readFile(path.join(fixture[original], "value"), "utf8")).resolves.toBe("original");
+    await expect(fs.readFile(path.join(fixture[replacement], "value"), "utf8")).resolves.toBe("replacement");
   },
 );
 
-itPosix.each(operations)(
-  "%s rejects replacement bytes after the original root is restored before the final fence",
-  async (operation) => {
-    const fixture = await replacementFixture(`fs-safe-root-read-aba-${operation}-`);
+const escapingAliases = [
+  { kind: "leaf", relativePath: "value", aliasPath: "value", savedPath: "original-value",
+    originalFile: "original-value", symlinks: "follow-within-root", stat: fsSync.statSync, type: "file" },
+  { kind: "parent", relativePath: path.join("parent", "value"), aliasPath: "parent", savedPath: "original-parent",
+    originalFile: path.join("original-parent", "value"), symlinks: "reject", stat: fsSync.lstatSync, type: "dir" },
+] as const;
+
+itPosix.each(escapingAliases.flatMap(alias => aliasOperations.map(operation => ({ ...alias, operation }))))(
+  "$operation rejects a $kind alias to the matching opened file outside the restored root",
+  async ({ kind, relativePath, aliasPath, savedPath, originalFile, symlinks, stat, type, operation }) => {
+    const fixture = await replacementFixture(`fs-safe-root-read-${kind}-alias-${operation}-`, relativePath);
     const observed = observeOpenedHandle(fixture.filePath);
-    __setFsSafeTestHooksForTest({
-      afterRootReadPathResolution(candidate) {
-        if (candidate === fixture.filePath) fixture.replace();
-      },
-      afterOpen: observed.hook,
-      beforeRootReadFinalFence(candidate) {
-        if (candidate === fixture.filePath) fixture.restore();
-      },
-    });
-
-    await expect(invoke(fixture, operation)).rejects.toMatchObject({ code: "path-mismatch" });
-
-    expect(fixture.state).toBe("original");
-    expect(observed.handle?.fd).toBe(-1);
-    expect(observed.close).toHaveBeenCalledTimes(1);
-    expect(observed.read).not.toHaveBeenCalled();
-    expect(observed.readFile).not.toHaveBeenCalled();
-    await expect(fs.readFile(fixture.filePath, "utf8")).resolves.toBe("original");
-    await expect(fs.readFile(path.join(fixture.successor, "value"), "utf8")).resolves.toBe("replacement");
-  },
-);
-
-itPosix.each(aliasOperations)(
-  "%s rejects a followed leaf alias to the matching opened file outside the restored root",
-  async (operation) => {
-    const fixture = await replacementFixture(`fs-safe-root-read-leaf-alias-${operation}-`);
-    const observed = observeOpenedHandle(fixture.filePath);
-    const originalPath = path.join(fixture.active, "original-value");
+    const alias = path.join(fixture.active, aliasPath);
     __setFsSafeTestHooksForTest({
       afterRootReadPathResolution(candidate) {
         if (candidate === fixture.filePath) fixture.replace();
@@ -177,9 +152,9 @@ itPosix.each(aliasOperations)(
       beforeRootReadFinalFence(candidate, handle) {
         if (candidate !== fixture.filePath) return;
         fixture.restore();
-        fsSync.renameSync(fixture.filePath, originalPath);
-        fsSync.symlinkSync(path.join(fixture.successor, "value"), fixture.filePath, "file");
-        const pathStat = fsSync.statSync(candidate, { bigint: true });
+        fsSync.renameSync(alias, path.join(fixture.active, savedPath));
+        fsSync.symlinkSync(path.join(fixture.successor, aliasPath), alias, type);
+        const pathStat = stat(candidate, { bigint: true });
         const handleStat = fsSync.fstatSync(handle.fd, { bigint: true });
         expect({ dev: pathStat.dev, ino: pathStat.ino })
           .toEqual({ dev: handleStat.dev, ino: handleStat.ino });
@@ -187,58 +162,13 @@ itPosix.each(aliasOperations)(
     });
 
     await expect(invokeAlias(
-      fixture.scoped, operation, fixture.relativePath, fixture.filePath, "follow-within-root",
+      fixture.scoped, operation, fixture.relativePath, fixture.filePath, symlinks,
     )).rejects.toMatchObject({ code: "outside-workspace" });
 
-    expect(observed.handle?.fd).toBe(-1);
-    expect(observed.close).toHaveBeenCalledTimes(1);
-    expect(observed.read).not.toHaveBeenCalled();
-    expect(observed.readFile).not.toHaveBeenCalled();
-    expect((await fs.lstat(fixture.filePath)).isSymbolicLink()).toBe(true);
-    await expect(fs.readFile(originalPath, "utf8")).resolves.toBe("original");
-    await expect(fs.readFile(path.join(fixture.successor, "value"), "utf8")).resolves.toBe("replacement");
-  },
-);
-
-itPosix.each(aliasOperations)(
-  "%s rejects a parent alias to the matching opened file outside the restored root",
-  async (operation) => {
-    const fixture = await replacementFixture(
-      `fs-safe-root-read-parent-alias-${operation}-`,
-      path.join("parent", "value"),
-    );
-    const observed = observeOpenedHandle(fixture.filePath);
-    const parentPath = path.dirname(fixture.filePath);
-    const originalParent = path.join(fixture.active, "original-parent");
-    __setFsSafeTestHooksForTest({
-      afterRootReadPathResolution(candidate) {
-        if (candidate === fixture.filePath) fixture.replace();
-      },
-      afterOpen: observed.hook,
-      beforeRootReadFinalFence(candidate, handle) {
-        if (candidate !== fixture.filePath) return;
-        fixture.restore();
-        fsSync.renameSync(parentPath, originalParent);
-        fsSync.symlinkSync(path.join(fixture.successor, "parent"), parentPath, "dir");
-        const pathStat = fsSync.lstatSync(candidate, { bigint: true });
-        const handleStat = fsSync.fstatSync(handle.fd, { bigint: true });
-        expect({ dev: pathStat.dev, ino: pathStat.ino })
-          .toEqual({ dev: handleStat.dev, ino: handleStat.ino });
-      },
-    });
-
-    await expect(invokeAlias(
-      fixture.scoped, operation, fixture.relativePath, fixture.filePath, "reject",
-    )).rejects.toMatchObject({ code: "outside-workspace" });
-
-    expect(observed.handle?.fd).toBe(-1);
-    expect(observed.close).toHaveBeenCalledTimes(1);
-    expect(observed.read).not.toHaveBeenCalled();
-    expect(observed.readFile).not.toHaveBeenCalled();
-    expect((await fs.lstat(parentPath)).isSymbolicLink()).toBe(true);
-    await expect(fs.readFile(path.join(originalParent, "value"), "utf8")).resolves.toBe("original");
-    await expect(fs.readFile(path.join(fixture.successor, "parent", "value"), "utf8"))
-      .resolves.toBe("replacement");
+    expectClosedWithoutReading(observed);
+    expect((await fs.lstat(alias)).isSymbolicLink()).toBe(true);
+    await expect(fs.readFile(path.join(fixture.active, originalFile), "utf8")).resolves.toBe("original");
+    await expect(fs.readFile(path.join(fixture.successor, relativePath), "utf8")).resolves.toBe("replacement");
   },
 );
 
@@ -296,10 +226,7 @@ itPosix("closes without reading when the fresh canonical target disappears", asy
   });
 
   await expect(fixture.scoped.readText(fixture.relativePath)).rejects.toMatchObject({ code: "not-found" });
-  expect(observed.handle?.fd).toBe(-1);
-  expect(observed.close).toHaveBeenCalledTimes(1);
-  expect(observed.read).not.toHaveBeenCalled();
-  expect(observed.readFile).not.toHaveBeenCalled();
+  expectClosedWithoutReading(observed);
 });
 
 itPosix("preserves a fresh canonical failure when descriptor close also fails", async () => {
@@ -366,35 +293,8 @@ itPosix("rejects a persistently unknown Windows identity at the fresh canonical 
   Object.defineProperty(process, "platform", { value: "win32" });
 
   await expect(fixture.scoped.readText(fixture.relativePath)).rejects.toMatchObject({ code: "path-mismatch" });
-  expect(observed.handle?.fd).toBe(-1);
-  expect(observed.close).toHaveBeenCalledTimes(1);
-  expect(observed.read).not.toHaveBeenCalled();
-  expect(observed.readFile).not.toHaveBeenCalled();
+  expectClosedWithoutReading(observed);
 });
-
-itPosix.each(operations)(
-  "%s rejects a root replacement after the final pathname identity observation",
-  async (operation) => {
-    const fixture = await replacementFixture(`fs-safe-root-read-tail-${operation}-`);
-    const observed = observeOpenedHandle(fixture.filePath);
-    __setFsSafeTestHooksForTest({
-      afterOpen: observed.hook,
-      afterRootReadFinalPathIdentityCheck(candidate) {
-        if (candidate === fixture.filePath) fixture.replace();
-      },
-    });
-
-    await expect(invoke(fixture, operation)).rejects.toMatchObject({ code: "path-mismatch" });
-
-    expect(fixture.state).toBe("replacement");
-    expect(observed.handle?.fd).toBe(-1);
-    expect(observed.close).toHaveBeenCalledTimes(1);
-    expect(observed.read).not.toHaveBeenCalled();
-    expect(observed.readFile).not.toHaveBeenCalled();
-    await expect(fs.readFile(path.join(fixture.displaced, "value"), "utf8")).resolves.toBe("original");
-    await expect(fs.readFile(fixture.filePath, "utf8")).resolves.toBe("replacement");
-  },
-);
 
 itPosix.each(operations)("%s preserves unchanged reads and descriptor handoff", async (operation) => {
   const fixture = await replacementFixture(`fs-safe-root-read-control-${operation}-`);
@@ -460,8 +360,5 @@ itPosix("rejects a namespace alias from final Root canonicalization before looku
   });
   expect(finalFence).toBe(true);
   expect(aliasLookups).toBe(0);
-  expect(observed.handle?.fd).toBe(-1);
-  expect(observed.close).toHaveBeenCalledTimes(1);
-  expect(observed.read).not.toHaveBeenCalled();
-  expect(observed.readFile).not.toHaveBeenCalled();
+  expectClosedWithoutReading(observed);
 });

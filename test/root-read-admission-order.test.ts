@@ -1,11 +1,11 @@
 import fsSync from "node:fs";
-import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, vi } from "vitest";
 import { realpathSync } from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+import { expectClosedWithoutReading, observeOpenedHandle } from "./helpers/root-read-observer.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -24,34 +24,6 @@ async function admissionFixture(prefix: string) {
   await fs.writeFile(filePath, "original");
   const scoped = await root(active);
   return { active, filePath, relativePath, scoped };
-}
-
-function observeOpenedHandle(filePath: string) {
-  let handle: FileHandle | undefined;
-  let close: ReturnType<typeof vi.spyOn> | undefined;
-  let read: ReturnType<typeof vi.spyOn> | undefined;
-  let readFile: ReturnType<typeof vi.spyOn> | undefined;
-  return {
-    hook(candidate: string, opened: FileHandle) {
-      if (candidate !== filePath) return;
-      handle = opened;
-      close = vi.spyOn(opened, "close");
-      read = vi.spyOn(opened, "read");
-      readFile = vi.spyOn(opened, "readFile");
-    },
-    get handle() {
-      return handle;
-    },
-    get close() {
-      return close;
-    },
-    get read() {
-      return read;
-    },
-    get readFile() {
-      return readFile;
-    },
-  };
 }
 
 itPosix.each(["reject", "follow-parents-within-root", "follow-within-root"] as const)(
@@ -138,9 +110,6 @@ itPosix.each(["beforeRootReadFinalFence", "afterRootReadFinalPathIdentityCheck"]
     });
 
     await expect(fixture.scoped.readText(fixture.relativePath)).rejects.toBe(failure);
-    expect(observed.handle?.fd).toBe(-1);
-    expect(observed.close).toHaveBeenCalledTimes(1);
-    expect(observed.read).not.toHaveBeenCalled();
-    expect(observed.readFile).not.toHaveBeenCalled();
+    expectClosedWithoutReading(observed);
   },
 );

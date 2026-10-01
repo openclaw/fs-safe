@@ -23,12 +23,35 @@ async function makeTempLayout(prefix: string) {
   return await makeSecurityTempLayout(prefix, tempDirs);
 }
 
-async function closeIfOpen(value: unknown): Promise<void> {
-  if (typeof value === "object" && value !== null && "handle" in value) {
-    const handle = (value as { handle?: { close(): Promise<void> } }).handle;
-    if (handle) {
-      await handle.close();
-    }
+type RootRejection = readonly [
+  operation: "read" | "open" | "stat" | "list",
+  pathname: string,
+  codes: readonly string[],
+  allowUnsupportedPlatformOnWindows: boolean,
+];
+
+async function expectRootRejections(safeRoot: Awaited<ReturnType<typeof openRoot>>, rows: readonly RootRejection[]) {
+  for (const [operation, pathname, codes, allowUnsupportedPlatformOnWindows] of rows) {
+    await expect(safeRoot[operation](pathname), `${operation}(${pathname})`).rejects.toSatisfy((error: unknown) => {
+      expectFsSafeCode(error, codes, { allowUnsupportedPlatformOnWindows });
+      return true;
+    });
+  }
+}
+
+async function expectDirectRootRejections(rootPath: string, absolutePath: string) {
+  const options = { absolutePath, boundaryLabel: "root", rootPath, rootRealPath: await fsp.realpath(rootPath) };
+  const syncOpened = openRootFileSync(options);
+  try {
+    expect(syncOpened.ok).toBe(false);
+  } finally {
+    if (syncOpened.ok) fs.closeSync(syncOpened.fd);
+  }
+  const asyncOpened = await openRootFile(options);
+  try {
+    expect(asyncOpened.ok).toBe(false);
+  } finally {
+    if (asyncOpened.ok) await asyncOpened.handle.close();
   }
 }
 
@@ -61,32 +84,31 @@ describe("read boundary bypass attempts", () => {
     }
   });
 
-  it("rejects traversal across root read, open, stat, list, and path scope APIs", async () => {
+  const traversalCodes = ["outside-workspace", "invalid-path", "path-alias"];
+  it.each([
+    {
+      scenario: "across root read, open, stat, list, and path scope APIs",
+      rows: [
+        ["read", "../secret.txt", traversalCodes, false],
+        ["open", "../secret.txt", traversalCodes, false],
+        ["stat", "../secret.txt", traversalCodes, true],
+        ["list", "..", traversalCodes, true],
+      ],
+      checkScope: true,
+    },
+    {
+      scenario: "to ../outside/secret.txt without returning outside bytes",
+      rows: [["read", "../outside/secret.txt", traversalCodes, false]],
+      checkScope: false,
+    },
+  ] as const)("rejects traversal $scenario", async ({ rows, checkScope }) => {
     const layout = await makeTempLayout("fs-safe-read-traversal");
     const safeRoot = await openRoot(layout.root);
-    const scope = pathScope(layout.root, { label: "test root" });
-
-    await expect(safeRoot.read("../secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"]);
-      return true;
-    });
-    await expect(safeRoot.open("../secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"]);
-      return true;
-    });
-    await expect(safeRoot.stat("../secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"], {
-        allowUnsupportedPlatformOnWindows: true,
-      });
-      return true;
-    });
-    await expect(safeRoot.list(".." as string)).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "invalid-path", "path-alias"], {
-        allowUnsupportedPlatformOnWindows: true,
-      });
-      return true;
-    });
-    await expect(scope.files(["../secret.txt"])).resolves.toMatchObject({ ok: false });
+    await expectRootRejections(safeRoot, rows);
+    if (checkScope) {
+      const scope = pathScope(layout.root, { label: "test root" });
+      await expect(scope.files(["../secret.txt"])).resolves.toMatchObject({ ok: false });
+    }
   });
 
   it("rejects symlink parents across root read/open/stat/list APIs", async () => {
@@ -94,26 +116,13 @@ describe("read boundary bypass attempts", () => {
     await fsp.symlink(layout.outside, path.join(layout.root, "link"), "dir");
     const safeRoot = await openRoot(layout.root);
 
-    await expect(safeRoot.read("link/secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
-      return true;
-    });
-    await expect(safeRoot.open("link/secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
-      return true;
-    });
-    await expect(safeRoot.stat("link/secret.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"], {
-        allowUnsupportedPlatformOnWindows: true,
-      });
-      return true;
-    });
-    await expect(safeRoot.list("link")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"], {
-        allowUnsupportedPlatformOnWindows: true,
-      });
-      return true;
-    });
+    const codes = ["outside-workspace", "path-alias", "symlink"];
+    await expectRootRejections(safeRoot, [
+      ["read", "link/secret.txt", codes, false],
+      ["open", "link/secret.txt", codes, false],
+      ["stat", "link/secret.txt", codes, true],
+      ["list", "link", codes, true],
+    ]);
   });
 
   it("rejects final symlink leaves for root read/open/stat and direct root-file APIs", async () => {
@@ -122,43 +131,13 @@ describe("read boundary bypass attempts", () => {
     await fsp.symlink(layout.outsideFile, linkPath, "file");
     const safeRoot = await openRoot(layout.root);
 
-    await expect(safeRoot.read("secret-link.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
-      return true;
-    });
-    await expect(safeRoot.open("secret-link.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"]);
-      return true;
-    });
-    await expect(safeRoot.stat("secret-link.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "symlink"], {
-        allowUnsupportedPlatformOnWindows: true,
-      });
-      return true;
-    });
-
-    const rootRealPath = await fsp.realpath(layout.root);
-    const syncOpened = openRootFileSync({
-      absolutePath: linkPath,
-      boundaryLabel: "root",
-      rootPath: layout.root,
-      rootRealPath,
-    });
-    expect(syncOpened.ok).toBe(false);
-    if (syncOpened.ok) {
-      fs.closeSync(syncOpened.fd);
-    }
-
-    const asyncOpened = await openRootFile({
-      absolutePath: linkPath,
-      boundaryLabel: "root",
-      rootPath: layout.root,
-      rootRealPath,
-    });
-    expect(asyncOpened.ok).toBe(false);
-    if (asyncOpened.ok) {
-      await asyncOpened.handle.close();
-    }
+    const codes = ["outside-workspace", "path-alias", "symlink"];
+    await expectRootRejections(safeRoot, [
+      ["read", "secret-link.txt", codes, false],
+      ["open", "secret-link.txt", codes, false],
+      ["stat", "secret-link.txt", codes, true],
+    ]);
+    await expectDirectRootRejections(layout.root, linkPath);
 
     const pinnedOpened = openPinnedFileSync({ filePath: linkPath, rejectPathSymlink: true });
     expect(pinnedOpened.ok).toBe(false);
@@ -170,44 +149,13 @@ describe("read boundary bypass attempts", () => {
   it("rejects absolute outside files across root read, open, stat, and direct root-file APIs", async () => {
     const layout = await makeTempLayout("fs-safe-absolute-outside");
     const safeRoot = await openRoot(layout.root);
-    const rootRealPath = await fsp.realpath(layout.root);
-
-    await expect(safeRoot.read(layout.outsideFile)).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "invalid-path"]);
-      return true;
-    });
-    await expect(safeRoot.open(layout.outsideFile)).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "invalid-path"]);
-      return true;
-    });
-    await expect(safeRoot.stat(layout.outsideFile)).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["outside-workspace", "path-alias", "invalid-path"], {
-        allowUnsupportedPlatformOnWindows: true,
-      });
-      return true;
-    });
-
-    const syncOpened = openRootFileSync({
-      absolutePath: layout.outsideFile,
-      boundaryLabel: "root",
-      rootPath: layout.root,
-      rootRealPath,
-    });
-    expect(syncOpened.ok).toBe(false);
-    if (syncOpened.ok) {
-      fs.closeSync(syncOpened.fd);
-    }
-
-    const asyncOpened = await openRootFile({
-      absolutePath: layout.outsideFile,
-      boundaryLabel: "root",
-      rootPath: layout.root,
-      rootRealPath,
-    });
-    expect(asyncOpened.ok).toBe(false);
-    if (asyncOpened.ok) {
-      await asyncOpened.handle.close();
-    }
+    const codes = ["outside-workspace", "path-alias", "invalid-path"];
+    await expectRootRejections(safeRoot, [
+      ["read", layout.outsideFile, codes, false],
+      ["open", layout.outsideFile, codes, false],
+      ["stat", layout.outsideFile, codes, true],
+    ]);
+    await expectDirectRootRejections(layout.root, layout.outsideFile);
   });
 
   it("rejects hardlinked read targets when hardlink rejection is enabled", async () => {
@@ -218,14 +166,11 @@ describe("read boundary bypass attempts", () => {
     await fsp.link(source, hardlink);
     const safeRoot = await openRoot(layout.root, { hardlinks: "reject" });
 
-    await expect(safeRoot.read("hardlink.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["hardlink", "invalid-path"]);
-      return true;
-    });
-    await expect(safeRoot.open("hardlink.txt")).rejects.toSatisfy((error: unknown) => {
-      expectFsSafeCode(error, ["hardlink", "invalid-path"]);
-      return true;
-    });
+    const codes = ["hardlink", "invalid-path"];
+    await expectRootRejections(safeRoot, [
+      ["read", "hardlink.txt", codes, false],
+      ["open", "hardlink.txt", codes, false],
+    ]);
   });
 
   it("rejects absolute read paths that traverse symlinks by default", async () => {
@@ -257,28 +202,6 @@ describe("read boundary bypass attempts", () => {
       await expect(scope.files(["safe.txt", payload]), `pathScope.files(${payload})`).resolves.toMatchObject({
         ok: false,
       });
-    }
-  });
-
-  it("does not return outside bytes when root read APIs reject unsafe paths", async () => {
-    const layout = await makeTempLayout("fs-safe-read-no-leak");
-    await fsp.symlink(layout.outside, path.join(layout.root, "link"), "dir");
-    const safeRoot = await openRoot(layout.root);
-
-    for (const attempt of [
-      () => safeRoot.read("../outside/secret.txt"),
-      () => safeRoot.read("link/secret.txt"),
-      () => safeRoot.open("link/secret.txt"),
-    ]) {
-      let opened: unknown;
-      try {
-        opened = await attempt();
-        await closeIfOpen(opened);
-        throw new Error("unsafe read unexpectedly succeeded");
-      } catch (error) {
-        await closeIfOpen(opened);
-        expect(error).not.toMatchObject({ message: "unsafe read unexpectedly succeeded" });
-      }
     }
   });
 });
