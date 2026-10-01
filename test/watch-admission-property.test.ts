@@ -1,31 +1,32 @@
 import path from "node:path";
 import fc from "fast-check";
-import { expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RootContext } from "../src/root-context.js";
 import type { WatchSnapshot } from "../src/watch-scan.js";
+import * as rootContext from "../src/root-context.js";
+import * as listing from "../src/root-directory-list.js";
+import * as entries from "../src/root-directory-entry.js";
+import { admittedNativeChanges } from "../src/watch-alias.js";
 
-const fake = vi.hoisted(() => ({ directories: new Map<string, bigint>(), entries: new Map<string, { ino: bigint; directory: boolean }>() }));
-vi.mock("../src/root-context.js", () => ({
-  assertRootIdentityCurrent: async () => {},
-  resolvePathInRoot: async (_: unknown, name: string) => ({ resolved: name === "." ? "" : name.slice(2) }),
-}));
-vi.mock("../src/root-directory-list.js", () => ({
-  createRootDirectoryObservationGuard: async (_: unknown, name: string) => {
+const fake = { directories: new Map<string, bigint>(), entries: new Map<string, { ino: bigint; directory: boolean }>() };
+beforeEach(() => {
+  vi.spyOn(rootContext, "assertRootIdentityCurrent").mockResolvedValue(undefined);
+  vi.spyOn(rootContext, "resolvePathInRoot").mockImplementation(async (_, name) =>
+    ({ resolved: name === "." ? "" : name.slice(2) }) as Awaited<ReturnType<typeof rootContext.resolvePathInRoot>>);
+  vi.spyOn(listing, "createRootDirectoryObservationGuard").mockImplementation(async (_, name) => {
     if (!fake.directories.has(name)) throw Object.assign(new Error("missing parent"), { code: "ENOENT" });
-    return { realPath: name, stat: { dev: 1n, ino: fake.directories.get(name) } };
-  },
-  assertRootDirectoryObservationGuard: async () => {},
-}));
-vi.mock("../src/root-directory-entry.js", () => ({
-  lookupRootDirectoryEntry: async (_: unknown, guard: { realPath: string }, name: string) => {
+    return { realPath: name, stat: { dev: 1n, ino: fake.directories.get(name) } } as Awaited<ReturnType<typeof listing.createRootDirectoryObservationGuard>>;
+  });
+  vi.spyOn(listing, "assertRootDirectoryObservationGuard").mockResolvedValue(undefined);
+  vi.spyOn(entries, "lookupRootDirectoryEntry").mockImplementation(async (_, guard, name) => {
     const parent = guard.realPath === "ALIAS" ? "selected" : guard.realPath;
     const entry = fake.entries.get(parent ? path.join(parent, name) : name);
     return entry && { identity: { dev: 1n, ino: entry.ino }, entry: {
       name, isFile: !entry.directory, isDirectory: entry.directory, isSymbolicLink: false, nlink: 1,
-    } };
-  },
-}));
-import { admittedNativeChanges } from "../src/watch-alias.js";
+    } } as Awaited<ReturnType<typeof entries.lookupRootDirectoryEntry>>;
+  });
+});
+afterEach(() => { vi.restoreAllMocks(); });
 
 it("never dismisses selected activity in random alias/folded streams with a fake Root", async () => {
   const hint = fc.record({ directory: fc.constantFrom("selected", "ALIAS", "unrelated"),
