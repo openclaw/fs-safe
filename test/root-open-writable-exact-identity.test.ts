@@ -64,69 +64,45 @@ function mockOpenedIdentity(params: {
   };
 }
 
+async function existingFile() {
+  const directory = await tempRoot("fs-safe-open-writable-identity-");
+  const target = path.join(directory, "target");
+  await fs.writeFile(target, "ORIGINAL");
+  const capability = await root(directory);
+  return { directory, target, capability };
+}
+
 describe("Root.openWritable exact identity admission", () => {
-  it.each(["replace", "update", "append"] as const)(
-    "rejects a rounded pathname collision before %s access",
-    async (writeMode) => {
-      const directory = await tempRoot("fs-safe-open-writable-path-identity-");
-      const target = path.join(directory, "target");
-      await fs.writeFile(target, "ORIGINAL");
-      const capability = await root(directory);
-      expect(Number(exactInode)).toBe(Number(collidingInode));
-      mockOpenedIdentity({
-        target,
-        pathIdentity: (_attempt, stat) => project(stat, collidingInode),
-      });
-
-      await expect(capability.openWritable("target", { writeMode })).rejects.toMatchObject({
-        code: "path-mismatch",
-        message: "path changed during write",
-      });
-      expect(await fs.readFile(target, "utf8")).toBe("ORIGINAL");
+  it.each([
+    ...(["replace", "update", "append"] as const).map(writeMode => ({
+      name: `pathname collision before ${writeMode} access`, writeMode,
+      identities: { pathIdentity: (_attempt: number, stat: Stats | BigIntStats) => project(stat, collidingInode) },
+      error: { code: "path-mismatch", message: "path changed during write" },
+      canonicalAttempts: undefined,
+    })),
+    {
+      name: "first canonical-path collision", writeMode: "update" as const,
+      identities: { canonicalIdentity: (_attempt: number, stat: Stats | BigIntStats) => project(stat, collidingInode) },
+      error: { code: "path-mismatch" }, canonicalAttempts: undefined,
     },
-  );
+    {
+      name: "final fresh canonical-path collision", writeMode: "update" as const,
+      identities: { canonicalIdentity: (attempt: number, stat: Stats | BigIntStats) =>
+        project(stat, attempt === 1 ? exactInode : collidingInode) },
+      error: { code: "path-mismatch" }, canonicalAttempts: 2,
+    },
+  ])("rejects a rounded $name", async ({ writeMode, identities, error, canonicalAttempts }) => {
+    const { target, capability } = await existingFile();
+    expect(Number(exactInode)).toBe(Number(collidingInode));
+    const observations = mockOpenedIdentity({ target, ...identities });
 
-  it("rejects a rounded canonical-path collision", async () => {
-    const directory = await tempRoot("fs-safe-open-writable-canonical-identity-");
-    const target = path.join(directory, "target");
-    await fs.writeFile(target, "ORIGINAL");
-    const capability = await root(directory);
-    mockOpenedIdentity({
-      target,
-      canonicalIdentity: (_attempt, stat) => project(stat, collidingInode),
-    });
-
-    await expect(capability.openWritable("target", { writeMode: "update" })).rejects.toMatchObject({
-      code: "path-mismatch",
-    });
-    expect(await fs.readFile(target, "utf8")).toBe("ORIGINAL");
-  });
-
-  it("rejects a rounded collision in the final fresh canonical-path check", async () => {
-    const directory = await tempRoot("fs-safe-open-writable-final-identity-");
-    const target = path.join(directory, "target");
-    await fs.writeFile(target, "ORIGINAL");
-    const capability = await root(directory);
-    const observations = mockOpenedIdentity({
-      target,
-      canonicalIdentity: (attempt, stat) => project(
-        stat,
-        attempt === 1 ? exactInode : collidingInode,
-      ),
-    });
-
-    await expect(capability.openWritable("target", { writeMode: "update" })).rejects.toMatchObject({
-      code: "path-mismatch",
-    });
-    expect(observations.canonicalAttempts()).toBe(2);
+    await expect(capability.openWritable("target", { writeMode })).rejects.toMatchObject(error);
+    if (canonicalAttempts !== undefined) expect(observations.canonicalAttempts()).toBe(canonicalAttempts);
     expect(await fs.readFile(target, "utf8")).toBe("ORIGINAL");
   });
 
   it("retries one transient unknown Windows pathname identity", async () => {
-    const directory = await tempRoot("fs-safe-open-writable-windows-retry-");
-    const target = path.join(directory, "target");
-    await fs.writeFile(target, "ORIGINAL");
-    const capability = await root(directory);
+    const { target, capability } = await existingFile();
     Object.defineProperty(process, "platform", { value: "win32" });
     const observations = mockOpenedIdentity({
       target,
@@ -144,10 +120,7 @@ describe("Root.openWritable exact identity admission", () => {
   it.each(["persistent unknown", "known component changes", "retry disappears"] as const)(
     "fails closed when a Windows pathname is %s",
     async (scenario) => {
-      const directory = await tempRoot("fs-safe-open-writable-windows-reject-");
-      const target = path.join(directory, "target");
-      await fs.writeFile(target, "ORIGINAL");
-      const capability = await root(directory);
+      const { target, capability } = await existingFile();
       Object.defineProperty(process, "platform", { value: "win32" });
       const missing = Object.assign(new Error("vanished during identity retry"), { code: "ENOENT" });
       const observations = mockOpenedIdentity({
@@ -172,10 +145,7 @@ describe("Root.openWritable exact identity admission", () => {
   );
 
   it("keeps the ordinary descriptor-stat count while returning numeric Stats", async () => {
-    const directory = await tempRoot("fs-safe-open-writable-stat-count-");
-    const target = path.join(directory, "target");
-    await fs.writeFile(target, "ORIGINAL");
-    const capability = await root(directory);
+    const { target, capability } = await existingFile();
     const fstat = fsSync.fstatSync.bind(fsSync);
     const precisions: string[] = [];
     vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
