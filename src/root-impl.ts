@@ -785,6 +785,8 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
       else {
         params.assertBeforeMutation?.();
         if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
+        // Windows can follow a dangling symlink even with O_EXCL.
+        if (!SUPPORTS_NOFOLLOW) assertFinalSymlinkRejected(ioPath, true);
         handle = await fs.open(ioPath, createFlags, mode);
       }
       cleanupCreated = nativeCreated?.cleanupCreated;

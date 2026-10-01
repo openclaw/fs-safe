@@ -682,6 +682,11 @@ is loaded, and does not confine creation under hostile concurrency. Required cre
 does not upgrade the returned `containment: "best-effort"` label or provide a
 transaction around later caller writes.
 
+On Windows, fallback creation rejects an observed dangling final symlink before
+opening it, preserving the missing referent. This check does not close the race
+between inspecting the leaf and opening it. An existing contained final symlink
+still follows the omitted-policy behavior described above.
+
 The native creation syscall applies the requested mode and inherited ACLs.
 If those kernel-created permissions prevent the subsequent FileHandle handoff,
 the operation fails and attempts identity-bound cleanup; it does not widen an
