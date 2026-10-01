@@ -5,12 +5,7 @@ export type WriteTextAtomicOptions = Pick<ReplaceFileAtomicOptions, "beforeRenam
   mode?: number;
   dirMode?: number;
   trailingNewline?: boolean;
-  /**
-   * When false, skip the temp-file and parent-directory fsync calls while
-   * preserving the temp-file replace/rename behavior.
-   *
-   * Defaults to true.
-   */
+  /** Defaults to true; false skips file and parent fsync without changing replacement. */
   durable?: boolean;
 };
 

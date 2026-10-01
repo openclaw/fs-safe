@@ -115,7 +115,10 @@ await fs.remove(".ssh/id_rsa");    // throws FsSafeError code "denied-path"
 
 ### `fs.write(rel, data, options?)`
 
-Overwrite or create. Always atomic.
+Overwrite or create. Replacement is atomic; buffered `overwrite: false` can
+expose incomplete content on the JavaScript fallback. Use
+[`create()` with `atomic: true`](#atomic-buffered-creation) when create-only
+publication must wait for complete content.
 
 ```ts
 await fs.write("state/last-run.json", JSON.stringify(run));
@@ -135,6 +138,11 @@ await fs.write("notes/today.txt", "hello\n", { encoding: "utf8" });
 | `mode` | `number` | Inherited on replacement, otherwise `0o600`. |
 | `overwrite` | `boolean` | `true`; `false` is create-only. |
 | `renameIdentity` | `RenameIdentityPolicy` | `"strict"`. |
+
+`mkdir: false` requires existing parents and never creates a missing parent.
+On POSIX, otherwise permitted relative in-root parent aliases remain available
+to buffered and streamed writes and copies with native support enabled or
+disabled. An explicit mutation symlink policy still applies.
 
 `write`, `create`, `writeJson`, `createJson`, `append`, and `copyIn` accept `durable`.
 Precedence is per-call option, then `Root.defaults.durable`, then `true`;
@@ -337,7 +345,12 @@ type RootWriteJsonOptions = RootWriteOptions & {
 
 ### `fs.append(rel, data, options?)`
 
-Open in append mode, write, sync the file handle, and close. Honors `mkdir` for the parent directory and syncs the parent directory when the append creates the file. `durable: false` skips both syncs. Pass `prependNewlineIfNeeded: true` to insert a `\n` if the file does not already end in one.
+Open in append mode, write, sync the file handle, and close. Honors `mkdir` for
+the parent directory and syncs that directory when creating the file.
+`durable: false` skips both syncs. Pass `prependNewlineIfNeeded: true` to separate
+existing content from appended text when neither side supplies a newline. Strings use their `encoding` for the
+newline check, including UTF-16LE; Buffers use a single LF byte. Empty strings
+and Buffers add no separator; an empty append still creates a missing file.
 
 `mode` selects the creation mode, defaulting to `0o600` when neither the call nor
 the Root supplies it. On POSIX, the process umask can further restrict that mode;
@@ -350,23 +363,87 @@ await fs.append("logs/today.log", `[${ts}] ${line}\n`);
 await fs.append("notes/scratch.md", "* new bullet", { prependNewlineIfNeeded: true });
 ```
 
-For high-volume logging, consider [`openWritable`](#openwritable) and a long-lived append handle. Direct append-mode writes preserve kernel append semantics, but they are not atomic against external rotators that rename or unlink the target.
+For high-volume logging, consider [`openWritable`](#openwritable-for-streaming) and a long-lived append handle. Direct append-mode writes preserve kernel append semantics, but they are not atomic against external rotators that rename or unlink the target.
 
 ### `fs.copyIn(rel, sourceAbsPath, options?)`
 
-Bring a file from outside the root into the root, atomically. The source path must be absolute. The library streams the source through the boundary, writes to a sibling temp, and renames over the destination.
+`copyIn` accepts a `RootCopySource`: a trusted absolute source path or a file
+within another Root. The guarded form supplies `root` with only its `open` and
+`stat` read capabilities, plus `relativePath`:
 
 ```ts
-await fs.copyIn("inbox/upload.bin", "/tmp/incoming.bin", {
-  maxBytes: 64 * 1024 * 1024,
+const source = await root("/srv/templates");
+const destination = await root("/srv/workspace");
+await destination.copyIn("config/settings.json", {
+  root: source,
+  relativePath: "config/settings.json",
+}, {
+  overwrite: false,
+  clone: "auto",
+  mode: 0o600,
+  signal: AbortSignal.timeout(30_000),
 });
 ```
 
-Options are `{ denyMutations?, durable?, maxBytes?, mkdir?, mode?, sourceHardlinks? }`.
-`durable` follows the root default and is `true` when omitted at both levels;
-set it to `false` to skip file and parent-directory syncs for reconstructible data.
-Use `sourceHardlinks: "reject"` to refuse if the source itself is a hardlinked
-alias. There is no encoding option: copying preserves source bytes.
+The source Root applies its read policies, including confinement and symlink
+handling. `sourceHardlinks` overrides its hardlink policy only when supplied;
+otherwise the source Root default is retained. The admitted source
+descriptor stays open through copying and source-identity verification; copying
+does not consume its current file position. Both forms enforce `maxBytes` while
+reading, including when a file grows after admission, and use bounded buffers.
+Copies have independent file data; changing either file cannot change the other.
+Set `preserveSourceMode: true` to select the mode from the admitted source
+descriptor. An explicit numeric `mode`, including `Root.defaults.mode`, takes
+precedence. By default, copying retains the existing destination-mode rules.
+The operation verifies source identity, not a coherent snapshot of concurrent
+in-place edits. Keep the source unchanged when snapshot consistency is required.
+
+`overwrite` defaults to `true`, preserving the existing replacement behavior.
+With `overwrite: false`, an existing destination produces `already-exists` and
+is never altered. Copying prepares a private sibling file before publishing its
+completed contents. Native mode uses no-replace rename. The guarded JavaScript
+fallback links the completed stage and removes its temporary name in the same
+JavaScript turn; the filesystem must support hardlinks. Other processes can
+briefly observe both names. The source is never hardlinked to the destination.
+
+`clone` chooses the file-data transfer strategy through `CopyCloneMode`, shared
+with [`copyTree`](copy.md#api). File copies default to `"never"`; tree copies
+default to `"auto"`:
+
+| Value | Behavior |
+| --- | --- |
+| `never` | Copy regular file bytes using reads and writes, without explicit cloning or copy offload. |
+| `auto` | Try native file cloning, then copy offload or ordinary byte copying when cloning is unavailable. |
+| `always` | Require native cloning; fail when the binding or filesystem cannot provide it. |
+
+Native file cloning supports APFS and supported Linux filesystems. Windows
+currently uses byte copying for `never` and `auto`; `always` fails. Clone choice
+does not change modes, durability, root confinement, or source and publication
+identity checks. The shared strategy does not replace Root's guarded regular-file
+contract with `copyTree`'s caller-owned immutable-tree and metadata contract.
+
+An already aborted `signal` prevents I/O. Cancellation during copying waits for
+admitted reads and native work to settle, then cleans only the owned unpublished
+stage. The final authority check runs before publication. Once publication has
+occurred, later cancellation or verification failure preserves the destination.
+The synchronous optional `onDestinationPublished` callback receives a frozen
+`RootCopyPublicationReceipt` containing `{ path, dev, ino }`, with exact bigint identity immediately after
+publication, before later checks can fail. Callback errors also preserve the
+published file and retain their original thrown value when cleanup succeeds,
+including errors whose metadata cannot be inspected. Promise, thenable, and synchronous or asynchronous generator
+results reject with `TypeError`; returned generators are never advanced. Other
+synchronous return values are ignored. This receipt records an outcome; it does
+not authorize removing a file that another actor may have edited. Application recovery and cooperative
+locking remain caller-owned.
+
+Existing `copyIn` callers must account for completed destinations retained after
+a post-publication source-verification failure, even without the new options.
+Recovery must inspect current destination state rather than assume a rejected
+copy left no file.
+
+`durable` follows the Root default (`true` when omitted at both levels);
+`false` skips file and parent-directory syncs. Use `sourceHardlinks: "reject"`
+to refuse hardlinked sources. There is no encoding option: copying preserves bytes.
 
 ### `fs.move(from, to, options?)`
 

@@ -118,8 +118,8 @@ describe("docs site navigation", () => {
       ["permissions", "Specialized", "secure-file", "creation"],
       ["creation", "Specialized", "permissions", "regular-file"],
       ["public-api", "Reference", "types", "testing"],
-      ["mutation-policy-proof", "Reference", "testing", "timing"],
-      ["migrating-to-0.5", "Reference", "test-hooks", "migrating-to-0.6"],
+      ["testing", "Reference", "public-api", "timing"],
+      ["migrating-to-0.5", "Reference", "advanced", "migrating-to-0.6"],
       ["migrating-to-0.6", "Reference", "migrating-to-0.5", "contributing"],
     ]) {
       const html = readFileSync(path.join(output, `${page}.html`), "utf8");
