@@ -20,7 +20,7 @@ import { writeFileSyncAtomic } from "./file-store-sync-write.js";
 import { createJsonStore, type JsonFileStoreOptions, type JsonStore } from "./json-document-store.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
 import { isNotFoundPathError } from "./path.js";
-import { throwFsSafeReadError } from "./root-errors.js";
+import { errorCauseOptions, throwFsSafeReadError } from "./root-errors.js";
 import { root, type OpenResult, type ReadResult, type Root, type RootReadOptions } from "./root.js";
 import { DEFAULT_ROOT_MAX_BYTES } from "./root-impl.js";
 import { matchRootFileOpenFailure, openRootFileSync, type RootFileOpenFailure } from "./root-file.js";
@@ -127,9 +127,7 @@ function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
       if (isNotFound(failure.error)) {
         return null;
       }
-      throw new FsSafeError("path-mismatch", "store target changed during read", {
-        cause: failure.error instanceof Error ? failure.error : undefined,
-      });
+      throw new FsSafeError("path-mismatch", "store target changed during read", errorCauseOptions(failure.error));
     },
     validation: (failure) => {
       if (failure.error instanceof FsSafeError) {
@@ -137,15 +135,11 @@ function handleSyncStoreReadOpenFailure(opened: RootFileOpenFailure): null {
       }
       // Validation failures mean the path existed but violated store policy
       // (directory, hardlink, symlink race). Do not report them as missing.
-      throw new FsSafeError("path-mismatch", "store target failed read validation", {
-        cause: failure.error instanceof Error ? failure.error : undefined,
-      });
+      throw new FsSafeError("path-mismatch", "store target failed read validation", errorCauseOptions(failure.error));
     },
     io: (failure) => throwFsSafeReadError(failure.error, "store"),
     fallback: (failure) => {
-      throw new FsSafeError("path-mismatch", "store target changed during read", {
-        cause: failure.error instanceof Error ? failure.error : undefined,
-      });
+      throw new FsSafeError("path-mismatch", "store target changed during read", errorCauseOptions(failure.error));
     },
   });
 }

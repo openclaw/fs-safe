@@ -126,10 +126,10 @@ function createPrivateWindowsFile(selected: CreationPath, options: CreateFileOpt
   }
 }
 
-function createFileCore(targetPath: string, options: CreateFileOptions, admission: CreationAdmission): OwnedFileDescriptorSync {
+export function createFileSync(targetPath: string, options: CreateFileOptions = {}): OwnedFileDescriptorSync {
   const permissions = resolveCreationPermissions(options, false);
   const assertion = options.assertBeforeMutation;
-  const selected = prepareCreationPath(targetPath, admission.expectedParentIdentity);
+  const selected = prepareCreationPath(targetPath);
   if (permissions.private && process.platform === "win32") {
     assertPrivateFileCreationAvailable();
     return createPrivateWindowsFile(selected, { ...permissions, assertBeforeMutation: assertion }, permissions.mode!);
@@ -153,10 +153,6 @@ function createFileCore(targetPath: string, options: CreateFileOptions, admissio
       cause: failure, details: { publication: { status: "published" }, path: selected.target, cleanup: "preserved" },
     });
   }
-}
-
-export function createFileSync(targetPath: string, options: CreateFileOptions = {}): OwnedFileDescriptorSync {
-  return createFileCore(targetPath, options, {});
 }
 
 /** Internal async writer; Windows preparation uses the nonblocking stage owner. */
