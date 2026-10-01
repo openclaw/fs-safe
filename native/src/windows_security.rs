@@ -410,10 +410,10 @@ mod windows {
             != 0
     }
 
-    fn parse_basic_ace(raw: *mut c_void, header: &ACE_HEADER) -> NativeResult<Option<BasicAce>> {
+    fn parse_basic_ace(raw: *mut c_void, header: &ACE_HEADER) -> Option<BasicAce> {
         let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
         if (header.AceSize as usize) < sid_offset + 8 {
-            return Ok(None);
+            return None;
         }
         let (mask, sid) = match header.AceType {
             ACCESS_ALLOWED_ACE_TYPE => {
@@ -430,21 +430,21 @@ mod windows {
                     (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
                 )
             }
-            _ => return Ok(None),
+            _ => return None,
         };
         if unsafe { IsValidSid(sid) } == 0 {
-            return Ok(None);
+            return None;
         }
         let sid_length = unsafe { GetLengthSid(sid) } as usize;
         if sid_length == 0 || sid_offset + sid_length > header.AceSize as usize {
-            return Ok(None);
+            return None;
         }
-        Ok(Some(BasicAce {
+        Some(BasicAce {
             sid,
             mask,
             ace_type: header.AceType,
             flags: header.AceFlags,
-        }))
+        })
     }
 
     fn public_ace(entry: BasicAce) -> NativeResult<WindowsAccessControlEntry> {
@@ -863,7 +863,7 @@ mod windows {
                         continue;
                     }
                     let header = unsafe { &*(raw.cast::<ACE_HEADER>()) };
-                    let Some(entry) = parse_basic_ace(raw, header)? else {
+                    let Some(entry) = parse_basic_ace(raw, header) else {
                         inspection.ace_list_complete = false;
                         if let Some(facts) = report.as_mut() {
                             facts.fallback_required = true;
