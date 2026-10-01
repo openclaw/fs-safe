@@ -9,6 +9,7 @@ import { realpathSync } from "./realpath.js";
 import { root as openRoot } from "./root.js";
 import {
   hasWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   pathForWindowsFilesystem,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
@@ -300,7 +301,8 @@ async function resolveCheckedPathsWithinRoot(
       !rootRealPath ||
       !raw ||
       !path.isAbsolute(raw) ||
-      hasWindowsPathAlias(raw, "filesystem")
+      hasWindowsPathAlias(raw, "filesystem") ||
+      isForeignWindowsShareOrDevicePath(raw, [rootDir, rootRealPath])
     ) {
       return lexicalPathResult;
     }

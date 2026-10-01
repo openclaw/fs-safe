@@ -9,6 +9,7 @@ import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import {
   hasWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
@@ -117,6 +118,10 @@ function assertAllowedTrashTarget(
   assertNoTrashPathAlias(targetPath, "target path");
   const lexicalTarget = path.resolve(targetPath);
   assertNoTrashPathAlias(lexicalTarget, "target path");
+  const resolvedRoots = resolveAllowedTrashRoots(allowedRoots);
+  if (isForeignWindowsShareOrDevicePath(lexicalTarget, [...allowedRoots, ...resolvedRoots])) {
+    throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
+  }
   const stat = fs.lstatSync(lexicalTarget);
   const resolvedTarget = resolveTrashTargetPath(targetPath);
   const resolvedTargetPath = resolvedTarget.path;
@@ -124,7 +129,7 @@ function assertAllowedTrashTarget(
   // Admit the directory entry only when its parent really stays inside an
   // allowed root. Do not admit it because the symlink target is inside.
   const resolvedParent = resolveTrashEntryParent(lexicalTarget, targetPath);
-  const isAllowed = resolveAllowedTrashRoots(allowedRoots).some((root) =>
+  const isAllowed = resolvedRoots.some((root) =>
     isSameOrChildPath(resolvedParent, root),
   );
   if (!isAllowed) {

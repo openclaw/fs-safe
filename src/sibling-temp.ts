@@ -14,6 +14,7 @@ import { tempFile } from "./temp-target.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import {
   assertNoWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
@@ -123,6 +124,9 @@ export async function writeViaSiblingTempPath(params: {
   assertNoWindowsPathAlias(rootDir, "filesystem", "sibling temp root uses a Windows filesystem namespace alias");
   const requestedTargetPath = path.resolve(targetPathInput);
   assertNoWindowsPathAlias(requestedTargetPath, "filesystem", "sibling temp target uses a Windows filesystem namespace alias");
+  if (isForeignWindowsShareOrDevicePath(requestedTargetPath, [resolvePathPreservingWindowsRoot(rootDirInput), rootDir])) {
+    throw new Error("Target path is outside the allowed root");
+  }
   let targetPath: string;
   try {
     const realDir = realpathSync.native(path.dirname(requestedTargetPath));

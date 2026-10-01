@@ -23,7 +23,7 @@ import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { expandRelativePathWithHome } from "./root-context.js";
 import { resolveRootPath } from "./root-path.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
-import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { assertNoWindowsPathAlias, isForeignWindowsShareOrDevicePath } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 
 const ERROR_ARCHIVE_ENTRY_TRAVERSES_SYMLINK = "archive entry traverses symlink in destination";
@@ -231,6 +231,9 @@ async function prepareOutputPath(
   params: ArchiveOutputPathParams, assertGuards?: () => Promise<void>, privateWorkingMode = false,
   existingDestinationGuard?: ArchiveDirectoryGuard,
 ): Promise<void> {
+  if (isForeignWindowsShareOrDevicePath(params.outPath, [params.destinationDir, params.destinationRealDir])) {
+    throw symlinkTraversalError(params.originalPath);
+  }
   const targetRoot = privateWorkingMode ? {
     async mkdir(relativePath: string) {
       // Retain Root.mkdir's strict alias admission before the shared traversal,

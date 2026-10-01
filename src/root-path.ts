@@ -35,6 +35,7 @@ import { assertNoDriveRelativePathSegments } from "./safe-path-segment.js";
 import type { RemovalPathReceipts } from "./root-remove-receipt.js";
 import {
   assertNoWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   pathForWindowsFilesystem,
   resolvePathFromBasePreservingWindowsRoot,
   resolvePathPreservingWindowsRoot,
@@ -179,6 +180,10 @@ function prepareRootTraversal(
     raw = direct.path;
     trustedAbsolutePath = direct.admission === "identity";
   } else {
+    // Even a metadata lookup on a foreign share contacts that host.
+    if (isForeignWindowsShareOrDevicePath(raw, [rootPath, rootCanonicalPath])) {
+      throw pathEscapeError({ rootPath, absolutePath: raw, boundaryLabel: params.boundaryLabel });
+    }
     const canonical = admitRawPathInsideRoot(rootCanonicalPath, raw, params.rootIdentity);
     const relative = canonical?.relativePath
       ?? rawPathRelativeToCanonicalRoot(raw, rootCanonicalPath, params);

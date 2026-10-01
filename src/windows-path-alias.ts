@@ -4,9 +4,29 @@ import {
   hasWindowsDrivePrefix,
   rootedWindowsDriveColonIndex,
   windowsNamespaceMarker,
+  windowsShareOrDeviceRoot,
 } from "./windows-path-syntax.js";
 
 export type WindowsPathAliasKind = "filesystem" | "relative";
+
+/**
+ * True when a Windows path names a UNC share or device namespace that none of
+ * the trusted boundary paths live on, or one its spelling cannot identify.
+ * Reject such input before any filesystem call: even lstat on
+ * `\\host\share\x` makes Windows contact host.
+ */
+export function isForeignWindowsShareOrDevicePath(
+  value: string,
+  trustedPaths: readonly (string | undefined)[],
+  platform: NodeJS.Platform | string = process.platform,
+): boolean {
+  if (platform !== "win32") return false;
+  const key = windowsShareOrDeviceRoot(value);
+  if (key === undefined) return false;
+  return key === null || !trustedPaths.some(
+    trusted => trusted !== undefined && windowsShareOrDeviceRoot(trusted) === key,
+  );
+}
 
 function isBareWindowsNamespaceDrive(value: string): boolean {
   return value.length === 6 && windowsNamespaceMarker(value) !== undefined &&

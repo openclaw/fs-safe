@@ -6,6 +6,7 @@ import { isNotFoundPathError, isPathInside, isSymlinkOpenError } from "./path.js
 import { realpathSync } from "./realpath.js";
 import {
   assertNoWindowsPathAlias,
+  isForeignWindowsShareOrDevicePath,
   pathForWindowsFilesystem,
   resolvePathFromBasePreservingWindowsRoot,
   resolvePathPreservingWindowsRoot,
@@ -41,6 +42,7 @@ export function rawPathRelativeToCanonicalRoot(
   assertNoWindowsPathAlias(rootCanonicalPath);
   const absolute = absolutePathWithRawSegments(candidate);
   const raw = process.platform === "win32" ? absolute.replaceAll("/", path.sep) : absolute;
+  if (isForeignWindowsShareOrDevicePath(raw, [rootCanonicalPath])) return undefined;
   const filesystemRoot = path.parse(raw).root;
   const segments = raw.slice(filesystemRoot.length).split(path.sep);
   const finalComponentIndex = segments.findLastIndex(segment => segment !== "" && segment !== ".");

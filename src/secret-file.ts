@@ -267,8 +267,11 @@ function snapshotSecretFileWriteParams(
   };
 }
 
-async function secretFileWriteQueueKey(filePath: string): Promise<string> {
+async function secretFileWriteQueueKey(rootDir: string, filePath: string): Promise<string> {
+  assertNoWindowsPathAlias(rootDir, "filesystem", "private secret root uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
+  // Canonicalizing an outside path would probe it first; a foreign share contacts its host.
+  assertPathWithinRoot(resolvePathPreservingWindowsRoot(rootDir), path.resolve(filePath));
   try {
     return await canonicalPathFromExistingAncestor(filePath);
   } catch (error) {
@@ -381,7 +384,7 @@ async function materializeSecretFileAtomic(
 
 export async function writeSecretFileAtomic(params: SecretFileWriteParams): Promise<void> {
   const ownedParams = snapshotSecretFileWriteParams(params);
-  const canonicalPath = await secretFileWriteQueueKey(ownedParams.filePath);
+  const canonicalPath = await secretFileWriteQueueKey(ownedParams.rootDir, ownedParams.filePath);
   await serializePathWrite(canonicalPath, async () => {
     await materializeSecretFileAtomic(ownedParams, false);
   });
@@ -390,7 +393,7 @@ export async function writeSecretFileAtomic(params: SecretFileWriteParams): Prom
 export async function createSecretFileAtomic(params: SecretFileCreateParams): Promise<void> {
   try {
     const ownedParams = snapshotSecretFileWriteParams(params);
-    const canonicalPath = await secretFileWriteQueueKey(ownedParams.filePath);
+    const canonicalPath = await secretFileWriteQueueKey(ownedParams.rootDir, ownedParams.filePath);
     await serializePathWrite(canonicalPath, async () => {
       await materializeSecretFileAtomic(ownedParams, true);
     });
