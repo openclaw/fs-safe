@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 async function settle() {
-  // Drain native delivery, including FSEvents batching, before the explicit checkpoint.
+  // Allow batching before a guarded checkpoint; reconciliation does not drain OS events.
   await delay(150); await owner!.reconcile();
 }
 function detailed(values: WatchInvalidation[], name: string) {
@@ -97,6 +97,7 @@ describe.each(["events", "poll"] as const)("selected observation (%s)", mode => 
   }, 30_000);
 
   test("ignores creation, deletion and recreation of an excluded build tree with thousands of files", async () => {
+    const diagnostics = watchDiagnostics("selected.ts");
     await fs.mkdir(path.join(directory, "dist"));
     await fs.writeFile(path.join(directory, "selected.ts"), "before");
     const values: WatchInvalidation[] = [];
@@ -112,11 +113,40 @@ describe.each(["events", "poll"] as const)("selected observation (%s)", mode => 
         expect(values.length).toBeLessThanOrEqual(8);
       } else expect(values).toEqual([]);
     };
+    const selectedDetail = (value: WatchInvalidation) => value.changes !== undefined &&
+      value.changes.length > 0 && value.changes.every(change => change.path === "selected.ts");
+    const assertRecovery = () => {
+      expect(spuriousOverflows).toBe(0);
+      expect(values.every(value => value.reason === "overflow"
+        ? allowBackendOverflow && value.changes === undefined : selectedDetail(value))).toBe(true);
+      expect(values.filter(value => value.reason === "overflow").length).toBeLessThanOrEqual(8);
+    };
+    const recoverSelected = async (phase: string) => {
+      diagnostics.phase(phase);
+      const deadline = performance.now() + 5000;
+      let attempt = 0;
+      do {
+        const start = values.length, before = backendOverflows;
+        await fs.writeFile(path.join(directory, "selected.ts"), `${phase}-${++attempt}`);
+        if (mode === "poll") await owner!.reconcile();
+        await delay(200);
+        assertRecovery();
+        const witnessed = values.slice(start).some(value =>
+          (mode === "poll" || value.reason === "event") && selectedDetail(value));
+        if (witnessed) {
+          await diagnostics.quiet(owner!, 1000);
+          assertRecovery();
+          if (backendOverflows === before) return;
+        }
+      } while (performance.now() < deadline);
+      throw new Error("selected watch detail did not recover after fixture activity");
+    };
     owner = watch(await root(directory), {
       mode, scopes: [{ path: "", kind: "tree" }], intervalMs: 60_000,
       // The workload tests selection; genuine native detail exhaustion is a separate contract.
       maxPendingPaths: 4096, exclude: entry => entry.kind === "directory" && entry.path === "dist",
       onInvalidate: value => {
+        diagnostics.invalidation(value);
         if (value.reason === "overflow") {
           if (reconciledOverflows <= consumedOverflows) spuriousOverflows++;
           consumedOverflows = reconciledOverflows;
@@ -124,23 +154,37 @@ describe.each(["events", "poll"] as const)("selected observation (%s)", mode => 
         values.push(value);
       },
     });
-    await owner.ready; await settle(); values.length = 0;
-    for (let cycle = 0; cycle < 2; cycle++) {
-      await fs.rm(path.join(directory, "dist"), { recursive: true }); await settle();
-      assertBurst();
-      await fs.mkdir(path.join(directory, "dist"));
-      for (let start = 0; start < 2048; start += 32) {
-        await Promise.all(Array.from({ length: 32 }, (_, index) => fs.writeFile(path.join(directory, "dist", `file-${start + index}`), "build output")));
+    try {
+      await owner.ready; await settle(); values.length = 0;
+      // A selected witness separates delayed setup activity from excluded-only churn.
+      await recoverSelected("fixture-drain"); values.length = 0;
+      diagnostics.phase("excluded-churn");
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await fs.rm(path.join(directory, "dist"), { recursive: true }); await settle();
+        assertBurst();
+        await fs.mkdir(path.join(directory, "dist"));
+        for (let start = 0; start < 2048; start += 32) {
+          await Promise.all(Array.from({ length: 32 }, (_, index) => fs.writeFile(path.join(directory, "dist", `file-${start + index}`), "build output")));
+        }
+        await settle(); assertBurst();
       }
-      await settle(); assertBurst();
+      // Real drops can outlive the churn. Retain and validate them until selected
+      // event detail resumes and stays quiet, before measuring one isolated edit.
+      await recoverSelected("churn-recovery");
+      const overflows = values.filter(value => value.reason === "overflow").length;
+      values.length = 0;
+      diagnostics.phase("selected-edit");
+      await fs.writeFile(path.join(directory, "selected.ts"), "selected edit");
+      if (mode === "events") await expect.poll(() => values.some(value => value.reason === "event" && selectedDetail(value)), { timeout: 5000 }).toBe(true);
+      await settle(); detailed(values, "selected.ts");
+      expect(spuriousOverflows).toBe(0);
+      expect(owner.health().failure).toBeUndefined();
+      console.log(JSON.stringify({ proof: "watch-excluded-build", platform: process.platform, mode, files: 4096, overflows, backendOverflows, spuriousOverflows, detailedDeliveryResumed: true }));
+    } catch (error) {
+      console.error(JSON.stringify({ proof: "watch-excluded-build-failure", mode, platform: process.platform, values,
+        backendOverflows, reconciledOverflows, consumedOverflows, spuriousOverflows, ...diagnostics.report() }));
+      throw error;
     }
-    const overflows = values.length;
-    values.length = 0;
-    await fs.writeFile(path.join(directory, "selected.ts"), "selected edit");
-    if (mode === "events") await expect.poll(() => values.length, { timeout: 5000 }).toBeGreaterThan(0);
-    await settle(); detailed(values, "selected.ts");
-    expect(owner.health().failure).toBeUndefined();
-    console.log(JSON.stringify({ proof: "watch-excluded-build", platform: process.platform, mode, files: 4096, overflows, backendOverflows, spuriousOverflows, detailedDeliveryResumed: true }));
   }, 60_000);
 
   test("keeps Config entry scopes quiet during heavy sibling churn and details selected edits", async () => {
