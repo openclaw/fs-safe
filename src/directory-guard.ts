@@ -73,9 +73,9 @@ export function createSyncDirectoryGuard(dir: string): SyncDirectoryGuard {
   return captureDirectoryGuard(dir, "normalized");
 }
 
-function captureDirectoryGuard(dir: string, mode: "normalized"): SyncDirectoryGuard;
-function captureDirectoryGuard(dir: string, mode: DirectoryGuardMode, options?: DirectoryGuardOptions): AnyAsyncDirectoryGuard;
-function captureDirectoryGuard(dir: string, mode: DirectoryGuardMode, options?: DirectoryGuardOptions): AnyAsyncDirectoryGuard {
+export function captureDirectoryGuard(dir: string, mode: DirectoryGuardMode, options?: { bigint?: false }): SyncDirectoryGuard;
+export function captureDirectoryGuard(dir: string, mode: DirectoryGuardMode, options?: DirectoryGuardOptions): AnyAsyncDirectoryGuard;
+export function captureDirectoryGuard(dir: string, mode: DirectoryGuardMode, options?: DirectoryGuardOptions): AnyAsyncDirectoryGuard {
   const operationPath = directoryOperationPath(dir);
   const stat = options?.bigint
     ? inspectDirectoryIdentityAtPathSync(operationPath, undefined, options.initial)
@@ -96,7 +96,7 @@ export function assertSyncDirectoryGuard(guard: SyncDirectoryGuard | AnyAsyncDir
   assertDirectoryGuard(guard, "normalized");
 }
 
-function assertDirectoryGuard(guard: AnyAsyncDirectoryGuard, mode: DirectoryGuardMode): void {
+export function assertDirectoryGuard(guard: AnyAsyncDirectoryGuard, mode: DirectoryGuardMode): void {
   const dir = guard.dir;
   const operationPath = directoryOperationPath(dir);
   const expectedRealPath = guard.realPath;
