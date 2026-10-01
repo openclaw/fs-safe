@@ -7,6 +7,7 @@ import { readFileDescriptorBoundedSync } from "./bounded-read.js";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard, inspectDirectoryIdentity, type AsyncDirectoryGuard } from "./directory-guard.js";
 import { pinNodeDirectoryForMode, assertOwnedDirectory } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
+import { hasNodeErrorCode } from "./path.js";
 import { openPinnedFileSync } from "./pinned-open.js";
 import { runPinnedWriteHelper } from "./pinned-write.js";
 import { ensureTrailingSep } from "./root-context.js";
@@ -211,9 +212,7 @@ async function ensurePrivateDirectory(
         identity = await inspectPrivateDirectory(current, "directory component");
         break;
       } catch (error) {
-        if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
-          throw error;
-        }
+        if (!hasNodeErrorCode(error, "ENOENT")) throw error;
         await assertAsyncDirectoryGuard(parentGuard);
         created = await createPrivateDirectory(current, mode);
         // EEXIST grants no initialization authority; both outcomes need fresh type checks.
@@ -345,9 +344,7 @@ async function materializeSecretFileAtomic(
       throw new Error(`Private secret file ${finalFilePath} must be a regular file.`);
     }
   } catch (error) {
-    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ENOENT") {
-      throw error;
-    }
+    if (!hasNodeErrorCode(error, "ENOENT")) throw error;
   }
 
   await assertAsyncDirectoryGuard(rootGuard);

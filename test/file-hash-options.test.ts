@@ -12,6 +12,7 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 import { useTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 let native: NativeBinding | undefined;
 try {
@@ -32,12 +33,6 @@ async function fixture(contents: string | Buffer): Promise<string> {
   const file = path.join(directory, "payload");
   await fs.writeFile(file, contents);
   return file;
-}
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
 }
 
 describe.runIf(Boolean(native))("direct native SHA-256 limits", () => {

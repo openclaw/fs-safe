@@ -19,7 +19,7 @@ const PLATFORM_MATRIX = Object.freeze({
   windows: [{ platform: "windows", os: "windows-latest" }],
 });
 
-export const METHOD_AUDIT_DEFAULTS = Object.freeze({
+const METHOD_AUDIT_DEFAULTS = Object.freeze({
   platform: "all",
   compare_ref: "",
   candidate_ref: "",
@@ -72,7 +72,7 @@ export function normalizeSha(name, value, { optional = false } = {}) {
   return value.toLowerCase();
 }
 
-export function validateCompareRef(value) {
+function validateCompareRef(value) {
   boundedText("compare_ref", value, 256);
   if (value === "" || SHA_PATTERN.test(value)) return value.toLowerCase();
   if (value !== value.trim() || value.startsWith("-") || value.startsWith("+") ||
@@ -145,7 +145,7 @@ export function selectNamedComparisonRef(requested, availableRefs) {
   return matches[0];
 }
 
-export function deriveControlKind(control, candidateSha, baselineSha) {
+function deriveControlKind(control, candidateSha, baselineSha) {
   const candidate = normalizeSha("candidate SHA", candidateSha);
   if (!baselineSha) return "none";
   const baseline = normalizeSha("baseline SHA", baselineSha);
@@ -202,7 +202,7 @@ function validateResolution(name, resolution) {
   };
 }
 
-export function normalizeSha256(name, value) {
+function normalizeSha256(name, value) {
   if (typeof value !== "string" || !/^[0-9a-f]{64}$/iu.test(value)) fail(`${name} must be a SHA-256 digest`);
   return value.toLowerCase();
 }
@@ -282,7 +282,7 @@ export function createMethodAuditPlan({ inputs, harness, candidate, baseline = n
   };
 }
 
-export function stableJson(value) {
+function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
@@ -354,7 +354,7 @@ function buildForReport(plan, reportPlan) {
   return build;
 }
 
-export function validateRawReport(plan, reportPlan, report, snapshot) {
+function validateRawReport(plan, reportPlan, report, snapshot) {
   const build = snapshot.builds[reportPlan.buildId];
   const buildPlan = buildForReport(plan, reportPlan);
   if (!build) fail(`snapshot is missing ${reportPlan.buildId}`);

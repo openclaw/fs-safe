@@ -1,29 +1,22 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { walkDirectory, walkDirectorySync } from "../src/walk.js";
+import { useTempDirs } from "./helpers/vitest.js";
 
-const tempDirs: string[] = [];
+const { tempRoot } = useTempDirs();
 const walkers = [
   { name: "async", walk: walkDirectory },
   { name: "sync", walk: walkDirectorySync },
 ];
 
-async function fixture(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-walk-paths-"));
-  tempDirs.push(directory);
-  return directory;
-}
-
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
 it.each(walkers)("$name preserves normalized absolute paths from noncanonical root spellings", async ({ walk }) => {
-  const directory = await fixture();
+  const directory = await tempRoot("fs-safe-walk-paths-");
   await fs.mkdir(path.join(directory, "nested space"));
   await fs.writeFile(path.join(directory, "nested space", "a..b.txt"), "value");
   const spellings = [
@@ -46,7 +39,7 @@ it.each(walkers)("$name preserves normalized absolute paths from noncanonical ro
 });
 
 it.each(walkers)("$name preserves filesystem and Windows namespaced drive roots", async ({ walk }) => {
-  const directory = await fixture();
+  const directory = await tempRoot("fs-safe-walk-paths-");
   await fs.writeFile(path.join(directory, "value.txt"), "value");
   const names = await fs.readdir(directory, { withFileTypes: true });
   const filesystemRoot = path.parse(directory).root;
@@ -73,7 +66,7 @@ it.each(walkers)("$name preserves filesystem and Windows namespaced drive roots"
 });
 
 it.each(walkers)("$name preserves nested lexical names from a relative root", async ({ walk }) => {
-  const directory = await fixture();
+  const directory = await tempRoot("fs-safe-walk-paths-");
   const nested = path.join(".hidden", "nested space", "café");
   const name = process.platform === "win32" ? "value.txt" : "value\\literal.txt";
   await fs.mkdir(path.join(directory, nested), { recursive: true });
@@ -97,7 +90,7 @@ it.each(walkers)("$name preserves nested lexical names from a relative root", as
 });
 
 it.each(walkers)("$name keeps followed directory paths relative to the supplied alias", async ({ walk }) => {
-  const directory = await fixture();
+  const directory = await tempRoot("fs-safe-walk-paths-");
   const scan = path.join(directory, "scan");
   const target = path.join(directory, "target");
   const alias = path.join(directory, "alias");
@@ -119,7 +112,7 @@ it.each(walkers)("$name keeps followed directory paths relative to the supplied 
 });
 
 it.each(walkers)("$name does not let callback result mutation redirect descendant paths", async ({ walk }) => {
-  const directory = await fixture();
+  const directory = await tempRoot("fs-safe-walk-paths-");
   await fs.mkdir(path.join(directory, "nested"));
   await fs.writeFile(path.join(directory, "nested", "file.txt"), "value");
 

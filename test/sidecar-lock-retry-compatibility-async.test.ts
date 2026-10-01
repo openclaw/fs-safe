@@ -9,6 +9,7 @@ import {
 } from "../src/sidecar-lock.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
@@ -21,12 +22,6 @@ type ManagerState = {
 function managerState(key: string): ManagerState {
   const managers = Reflect.get(globalThis, managersKey) as Map<string, ManagerState>;
   return managers.get(key)!;
-}
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
 }
 
 afterEach(() => {

@@ -3,14 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager, type SidecarLockHandle } from "../src/sidecar-lock.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
-}
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
   return await promise.then(

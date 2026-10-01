@@ -1,6 +1,6 @@
 // Keep qualification defaults here; scheduled CI supplies its smaller workload
 // through environment variables inherited by the harness's child processes.
-export function positiveInteger(name, fallback, minimum = 1) {
+function positiveInteger(name, fallback, minimum = 1) {
   const raw = process.env[name];
   if (raw === undefined) return fallback;
   const value = Number(raw);

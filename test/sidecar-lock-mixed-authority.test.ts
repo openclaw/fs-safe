@@ -8,18 +8,13 @@ import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => {
   __setFsSafeTestHooksForTest();
   __resetFsSafeNativeConfigForTest();
 });
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(done => { resolve = done; });
-  return { promise, resolve };
-}
 
 describe("sidecar admission across authority routes", () => {
   it.each(["root", "raw"] as const)("blocks a foreign route while %s holds the target", async first => {

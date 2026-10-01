@@ -6,6 +6,7 @@ import { root } from "../src/root.js";
 import { createSidecarLockManager, type SidecarLockHandle } from "../src/sidecar-lock.js";
 import type { HeldSidecarLock } from "../src/sidecar-lock-acquire.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 const managersKey = Symbol.for("fsSafe.sidecarLockManagers");
@@ -15,12 +16,6 @@ type ManagerState = { admissions: Map<string, object>; held: Map<string, HeldSid
 
 function managerState(key: string): ManagerState {
   return (Reflect.get(globalThis, managersKey) as Map<string, ManagerState>).get(key)!;
-}
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {

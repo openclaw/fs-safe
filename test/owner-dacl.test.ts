@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, vi } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";

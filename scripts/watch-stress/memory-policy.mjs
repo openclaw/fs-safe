@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { setImmediate as immediate } from "node:timers/promises";
 import { trend } from "./metrics.mjs";
 
-export const SOAK_MINUTES = 60;
+const SOAK_MINUTES = 60;
 const RSS_SLOPE_MINUTES = 30;
 const MiB = 1024 * 1024;
 

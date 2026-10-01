@@ -229,7 +229,7 @@ export function* copyFallbackReplace(io: AtomicIo, params: {
       if (destStat) {
         yield* assertDestinationHardlinkPolicy(io, params.dest, params.destinationHardlinks);
         mutation.assert();
-        yield* io.remove(params.dest, true);
+        yield* io.remove(params.dest);
         mutation.removed(params.dest);
       }
       mutation.assert();

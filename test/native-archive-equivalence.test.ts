@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { tarFixture, type TarFixtureEntry } from "./helpers/archive-fuzz.js";
+import { tarFixture } from "./helpers/archive-fuzz.js";
 import { zipDirectoryLinkFixture } from "./helpers/archive-zip-link.js";
 import { useTempDirs } from "./helpers/vitest.js";
 import {

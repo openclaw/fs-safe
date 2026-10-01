@@ -21,16 +21,13 @@ export function hasErrorCode(error: unknown, expected: string): boolean {
 
 type OwnedPathCleanupStatus = "removed" | "name-absent" | "preserved";
 
-export async function removeOwnedPath(params: {
-  fsModule: Pick<typeof fs, "lstat" | "unlink">;
+async function removeOwnedPath(params: {
   pathname: string;
   identity?: BigIntStats;
 }): Promise<OwnedPathCleanupStatus> {
   if (!params.identity) return "preserved";
   try {
-    const current = params.fsModule === fs
-      ? syncFs.lstatSync(params.pathname, { bigint: true })
-      : await params.fsModule.lstat(params.pathname, { bigint: true });
+    const current = syncFs.lstatSync(params.pathname, { bigint: true });
     if (
       current.isSymbolicLink() ||
       !current.isFile() ||
@@ -39,7 +36,7 @@ export async function removeOwnedPath(params: {
     ) {
       return "preserved";
     }
-    await params.fsModule.unlink(params.pathname);
+    await fs.unlink(params.pathname);
     return "removed";
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return "name-absent";
@@ -78,7 +75,6 @@ export async function cleanupPinnedFilePath(params: {
   }
   try {
     return await removeOwnedPath({
-      fsModule: fs,
       pathname: params.pathname,
       identity: params.identity,
     });

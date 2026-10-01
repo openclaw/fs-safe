@@ -2,10 +2,9 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itPosix } from "./helpers/vitest.js";
+import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { expectedHashOpenFlags, hashIdentity } from "./helpers/file-hash-identity.js";
 import { sha256File } from "../src/file-hash.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -15,13 +14,7 @@ import {
   type NativeBinding,
 } from "../src/native.js";
 
-const tempDirs: string[] = [];
-
-async function tempRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-hash-"));
-  tempDirs.push(root);
-  return root;
-}
+const { tempRoot } = useTempDirs();
 
 async function createFifo(filePath: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -38,12 +31,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
   __resetFsSafeNativeConfigForTest();
   __resetNativeLoaderForTest();
-  await Promise.all(tempDirs.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
 describe("sha256File", () => {
   it("batches large fallback reads in bounded buffers", async () => {
-    const directory = await tempRoot();
+    const directory = await tempRoot("fs-safe-hash-");
     const filePath = path.join(directory, "large.bin");
     const payload = Buffer.alloc(1024 * 1024, "x");
     await fs.writeFile(filePath, payload);
@@ -63,7 +55,7 @@ describe("sha256File", () => {
   });
 
   it("streams a path through the JavaScript fallback", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");
     await fs.writeFile(filePath, "abc");
     configureFsSafeNative({ mode: "off" });
@@ -75,7 +67,7 @@ describe("sha256File", () => {
   });
 
   it("does not close a caller-owned handle or change its current offset", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "position.bin");
     await fs.writeFile(filePath, "abcdef");
     const handle = await fs.open(filePath, "r");
@@ -95,7 +87,7 @@ describe("sha256File", () => {
   it.each(["read", "stat", "native"] as const)(
     "keeps a caller-owned handle open and its offset unchanged on %s failure",
     async (failureAt) => {
-      const root = await tempRoot();
+      const root = await tempRoot("fs-safe-hash-");
       const filePath = path.join(root, "position.bin");
       await fs.writeFile(filePath, "abcdef");
       const handle = await fs.open(filePath, "r");
@@ -128,7 +120,7 @@ describe("sha256File", () => {
   );
 
   it.each(["ELOOP", "EACCES"])("preserves open failure mapping for %s", async (code) => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");
     await fs.writeFile(filePath, "abc");
     const failure = Object.assign(new Error("open failed"), { code });
@@ -151,7 +143,7 @@ describe("sha256File", () => {
   it.each(["read", "native"].flatMap((failureAt) =>
     [new Error("hash failed"), undefined].map((failure) => ({ failureAt, failure })),
   ))("preserves $failureAt failure when its owned close also fails: $failure", async ({ failureAt, failure }) => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");
     await fs.writeFile(filePath, "abc");
     configureFsSafeNative({ mode: failureAt === "native" ? "auto" : "off" });
@@ -184,7 +176,7 @@ describe("sha256File", () => {
   });
 
   it("uses the native async hash when the binding is available", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "native.bin");
     await fs.writeFile(filePath, "native");
     const nativeHash = vi.fn(async () => ({ bytes: 6, digest: "native-digest" }));
@@ -200,7 +192,7 @@ describe("sha256File", () => {
   });
 
   itPosix("rejects symbolic-link path inputs", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");
     const linkPath = path.join(root, "link.bin");
     await fs.writeFile(filePath, "payload");
@@ -215,7 +207,7 @@ describe("sha256File", () => {
     { model: "real", timing: "after-open" },
     { model: "high-bigint", timing: "after-open" },
   ] as const)("rejects a real retained replacement ($model, $timing)", async ({ model, timing }) => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");
     const displacedPath = path.join(root, "payload.displaced");
     const unrelatedPath = path.join(root, "unrelated.bin");
@@ -323,7 +315,7 @@ describe("sha256File", () => {
   });
 
   itPosix("rejects a FIFO swapped in before open without blocking", async () => {
-    const root = await tempRoot();
+    const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");
     const displacedPath = path.join(root, "payload.displaced");
     await fs.writeFile(filePath, "payload");

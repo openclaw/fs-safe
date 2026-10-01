@@ -1,25 +1,18 @@
 import { deflateRawSync } from "node:zlib";
 import { tarFixture } from "./archive-fuzz.js";
+import { fixtureCrc32 } from "./zip-records.js";
 
 // Independent RFC 1952 construction: raw DEFLATE plus explicit CRC32/ISIZE.
-function crc32(bytes: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
 export function gzipMember(bytes: Buffer, optionalHeader = false): Buffer {
   let header: Buffer = Buffer.from([31, 139, 8, optionalHeader ? 30 : 0, 0, 0, 0, 0, 0, 255]);
   if (optionalHeader) {
     header = Buffer.concat([header, Buffer.from([3, 0, 0, 255, 10]), Buffer.from("name\0comment\0")]);
     const checksum = Buffer.alloc(2);
-    checksum.writeUInt16LE(crc32(header) & 0xffff);
+    checksum.writeUInt16LE(fixtureCrc32(header) & 0xffff);
     header = Buffer.concat([header, checksum]);
   }
   const trailer = Buffer.alloc(8);
-  trailer.writeUInt32LE(crc32(bytes));
+  trailer.writeUInt32LE(fixtureCrc32(bytes));
   trailer.writeUInt32LE(bytes.length >>> 0, 4);
   return Buffer.concat([header, deflateRawSync(bytes), trailer]);
 }

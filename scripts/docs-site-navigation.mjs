@@ -11,7 +11,7 @@ export const sections = [
   ["Reference", ["errors.md", "types.md", "public-api.md", "testing.md", "mutation-policy-proof.md", "timing.md", "advanced.md", "test-hooks.md", "migrating-to-0.5.md", "migrating-to-0.6.md", "contributing.md"]],
 ];
 
-export const buildExcludes = [];
+const buildExcludes = [];
 
 export function readDocPages(docsDir, excludes = buildExcludes) {
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

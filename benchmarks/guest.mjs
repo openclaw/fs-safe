@@ -90,7 +90,7 @@ export function createGuestFixture(workspace, operation, layout) {
   }
 }
 
-export function verifyGuestResult(result, fixture) {
+function verifyGuestResult(result, fixture) {
   assertProcessResult(result);
   assert.equal(result.stdout.length, 0, "guest mutation unexpectedly produced stdout");
   assert.equal(result.stderr.length, 0, "guest mutation unexpectedly produced diagnostics");

@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { chmod, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
@@ -11,17 +11,15 @@ import {
 } from "../src/index.js";
 import { openLocalFileSafely, readLocalFileSafely } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
-import { expectedFsSafeCode, expectFsSafeError } from "./helpers/security.js";
+import { expectFsSafeError } from "./helpers/security.js";
 
 const skipOnWindows = process.platform === "win32";
 
-const { tempDirs, tempRoot } = useTempDirs();
+const { tempRoot } = useTempDirs();
 
 afterEach(async () => {
   configureFsSafeNative({ mode: "auto" });
   __setFsSafeTestHooksForTest(undefined);
-  const { rm } = await import("node:fs/promises");
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
 describe("@openclaw/fs-safe", () => {
@@ -314,7 +312,7 @@ describe("@openclaw/fs-safe", () => {
     await symlink(outside, path.join(rootPath, "link"), "dir");
 
     await expectFsSafeError(root.read("link/secret.txt"), "outside-workspace");
-    await expect(root.list("link")).rejects.toMatchObject({ code: expectedFsSafeCode("path-alias") });
+    await expect(root.list("link")).rejects.toMatchObject({ code: "path-alias" });
   });
 
   it("rejects symlink leaves for stat and read", async () => {
@@ -324,7 +322,7 @@ describe("@openclaw/fs-safe", () => {
     await writeFile(path.join(outside, "secret.txt"), "secret");
     await symlink(path.join(outside, "secret.txt"), path.join(rootPath, "secret-link"), "file");
 
-    await expect(root.stat("secret-link")).rejects.toMatchObject({ code: expectedFsSafeCode("path-alias") });
+    await expect(root.stat("secret-link")).rejects.toMatchObject({ code: "path-alias" });
     await expect(root.read("secret-link")).rejects.toMatchObject({ code: "symlink" });
   });
 
@@ -412,7 +410,7 @@ describe("@openclaw/fs-safe", () => {
 
     await expect(readFile(outsideFile, "utf8")).resolves.toBe("kept");
     await expect(root.stat("link")).rejects.toMatchObject({
-      code: expectedFsSafeCode("not-found"),
+      code: "not-found",
     });
   });
 
@@ -422,13 +420,13 @@ describe("@openclaw/fs-safe", () => {
     await root.mkdir("full/child");
 
     await expect(root.remove("missing.txt")).rejects.toMatchObject({
-      code: expectedFsSafeCode("not-found"),
+      code: "not-found",
     });
     await expect(root.remove("missing-dir/missing.txt")).rejects.toMatchObject({
-      code: expectedFsSafeCode("not-found"),
+      code: "not-found",
     });
     await expect(root.remove("full")).rejects.toMatchObject({
-      code: expectedFsSafeCode("not-empty"),
+      code: "not-empty",
     });
   });
 

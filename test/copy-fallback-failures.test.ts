@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
+import { bindHandle } from "./helpers/file-handle-proxy.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
@@ -12,16 +13,6 @@ import {
 } from "../src/replace-file-copy-fallback.js";
 
 const { tempRoot } = useTempDirs();
-
-function bindHandle(handle: FileHandle, overrides: Partial<FileHandle>): FileHandle {
-  return new Proxy(handle, {
-    get(target, property) {
-      if (property in overrides) return overrides[property as keyof FileHandle];
-      const value = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-}
 
 describe("copy fallback source and destination guards", () => {
   it("rejects async and sync non-file sources before opening them", async () => {

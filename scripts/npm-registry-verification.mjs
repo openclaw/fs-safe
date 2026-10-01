@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import { verify as verifySigstoreBundle } from "sigstore";
 
-export const NPM_REGISTRY_ORIGIN = "https://registry.npmjs.org";
+const NPM_REGISTRY_ORIGIN = "https://registry.npmjs.org";
 export const NPM_PROVENANCE_PREDICATE_TYPE = "https://slsa.dev/provenance/v1";
 export const REGISTRY_RETRY_DELAYS_MS = [
   5_000,
@@ -30,7 +30,7 @@ const PACKAGE_VERSION_PATTERN =
   /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const SHA512_INTEGRITY_PATTERN = /^sha512-[A-Za-z0-9+/]{86}==$/u;
 
-export class RegistryVerificationError extends Error {
+class RegistryVerificationError extends Error {
   constructor(message, { code, retryable, cause } = {}) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "RegistryVerificationError";
@@ -244,7 +244,7 @@ function expectedProvenanceSubject(packageName, version) {
   return `pkg:npm/${encodeURIComponent(scope)}/${name}@${version}`;
 }
 
-export function verifyNpmRegistrySignatures({ integrity, keys, packageName, signatures, version }) {
+function verifyNpmRegistrySignatures({ integrity, keys, packageName, signatures, version }) {
   if (!Array.isArray(signatures) || signatures.length === 0) {
     throw new RetryableRegistryError(`npm registry signatures are missing for ${packageName}@${version}`, {
       code: "incomplete-signatures",
@@ -304,7 +304,7 @@ function provenancePolicy(statement, version) {
   };
 }
 
-export async function verifyNpmProvenanceAttestation({
+async function verifyNpmProvenanceAttestation({
   attestations,
   integrity,
   packageName,

@@ -5,7 +5,6 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-node.js";
 import type { AtomicMutation } from "./replace-file-mutation.js";
 import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
-export type { SyncFchmod } from "./atomic-io.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open">;
 

@@ -36,7 +36,7 @@ const MATRIX = [
 }));
 
 export const FILENAME_FALLBACK_CASES = Object.freeze(MATRIX);
-export const FILENAME_FALLBACK_PROFILES = Object.freeze(["legacy", "sanitized"]);
+const FILENAME_FALLBACK_PROFILES = Object.freeze(["legacy", "sanitized"]);
 
 export function validateFilenameFallbackProfile(value, label = "filename fallback profile") {
   assert(FILENAME_FALLBACK_PROFILES.includes(value), `Unknown ${label}: ${JSON.stringify(value)}`);

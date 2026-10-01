@@ -5,6 +5,7 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager, type SidecarLockHandle } from "../src/sidecar-lock.js";
 import type { HeldSidecarLock } from "../src/sidecar-lock-acquire.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { deferred } from "./helpers/deferred.js";
 
 const { tempRoot } = useRealTempDirs();
 
@@ -19,12 +20,6 @@ function managerState(key: string): ManagerState {
     ManagerState
   >;
   return managers.get(key)!;
-}
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
