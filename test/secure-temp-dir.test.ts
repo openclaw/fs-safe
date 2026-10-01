@@ -39,7 +39,6 @@ function resolveWithMocks(params: {
   lstatSync: NonNullable<TmpDirOptions["lstatSync"]>;
   fallbackLstatSync?: NonNullable<TmpDirOptions["lstatSync"]>;
   accessSync?: NonNullable<TmpDirOptions["accessSync"]>;
-  chmodSync?: NonNullable<TmpDirOptions["chmodSync"]>;
   warn?: NonNullable<TmpDirOptions["warn"]>;
   uid?: number;
   tmpdirPath?: string;
@@ -48,7 +47,6 @@ function resolveWithMocks(params: {
   const preferredDir = params.preferredDir ?? "/tmp/example";
   const fallbackPath = path.join("/var/fallback", `example-${uid}`);
   const accessSync = params.accessSync ?? vi.fn();
-  const chmodSync = params.chmodSync ?? vi.fn();
   const warn = params.warn ?? vi.fn();
   const wrappedLstatSync = vi.fn((target: string) => {
     if (target === preferredDir) {
@@ -63,7 +61,6 @@ function resolveWithMocks(params: {
   const tmpdir = vi.fn(() => params.tmpdirPath ?? "/var/fallback");
   const resolved = resolveSecureTempRoot({
     accessSync,
-    chmodSync,
     fallbackPrefix: "example",
     getuid: vi.fn(() => uid),
     lstatSync: wrappedLstatSync,
@@ -74,7 +71,7 @@ function resolveWithMocks(params: {
     warn,
     warningPrefix: "[example]",
   });
-  return { resolved, accessSync, chmodSync, lstatSync: wrappedLstatSync, mkdirSync, tmpdir };
+  return { resolved, accessSync, lstatSync: wrappedLstatSync, mkdirSync, tmpdir };
 }
 
 describe("resolveSecureTempRoot", () => {
@@ -134,18 +131,15 @@ describe("resolveSecureTempRoot", () => {
     expect(tmpdir).toHaveBeenCalled();
   });
 
-  itPosix("does not use a legacy pathname chmod adapter to repair broad permissions", () => {
-    const chmodSync = vi.fn();
+  itPosix("requires a descriptor adapter to repair broad permissions", () => {
     const warn = vi.fn();
 
     const { resolved } = resolveWithMocks({
-      chmodSync,
       lstatSync: vi.fn(() => makeDirStat({ mode: 0o40777 })),
       warn,
     });
 
     expect(resolved).toBe(path.join("/var/fallback", "example-501"));
-    expect(chmodSync).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -153,7 +147,6 @@ describe("resolveSecureTempRoot", () => {
     const winFallback = path.win32.join("C:\\Temp", "example-501");
     const result = resolveSecureTempRoot({
       accessSync: vi.fn(),
-      chmodSync: vi.fn(),
       fallbackPrefix: "example",
       getuid: vi.fn(() => 501),
       lstatSync: vi.fn((target: string) => {

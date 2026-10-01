@@ -16,10 +16,7 @@ export type ReplaceFileAtomicFileSystem = {
     | "open"
     | "stat"
     | "lstat"
-  > & {
-    /** @deprecated Accepted for adapter compatibility but never called. */
-    chmod?: typeof fs.chmod;
-  };
+  >;
 };
 
 export type ReplaceFileAtomicSyncFileSystem = Pick<
@@ -41,8 +38,6 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
   | "readSync"
   | "writeSync"
 > & {
-  /** @deprecated Accepted for adapter compatibility but never called. */
-  chmodSync?: typeof syncFs.chmodSync;
   fchmodSync?: typeof syncFs.fchmodSync;
 };
 

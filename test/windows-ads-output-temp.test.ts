@@ -329,7 +329,6 @@ describe("Windows filesystem namespace admission for output and temp helpers", (
 
     const secure = resolveSecureTempRoot({
       accessSync: () => undefined,
-      chmodSync: () => undefined,
       fallbackPrefix: "stage",
       getuid: () => 501,
       lstatSync: () => ({

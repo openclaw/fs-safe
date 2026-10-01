@@ -90,7 +90,6 @@ candidate, so replacing options while a read is pending cannot weaken admission.
 type ReadLocalFileFromRootsOptions = LocalRootsInputOptions & {
   hardlinks?: "reject" | "allow";
   maxBytes?: number;
-  nonBlockingRead?: boolean;
   symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root";
 };
 

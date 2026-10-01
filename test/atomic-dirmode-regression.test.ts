@@ -36,12 +36,6 @@ describe("atomic parent-directory descriptor modes", () => {
     };
     const injectedPromises = {
       ...fs,
-      chmod: async (candidate: fsSync.PathLike, mode: fsSync.Mode) => {
-        if (!swapped && path.resolve(String(candidate)) === targetDir) {
-          await swap();
-        }
-        await fs.chmod(candidate, mode);
-      },
       open: (async (...args: Parameters<typeof fs.open>) => {
         const [candidate, flags] = args;
         if (swapped && flags === "wx") {
@@ -102,12 +96,6 @@ describe("atomic parent-directory descriptor modes", () => {
     };
     const injectedFileSystem = {
       ...fsSync,
-      chmodSync: ((candidate: fsSync.PathLike, mode: fsSync.Mode) => {
-        if (!swapped && path.resolve(String(candidate)) === targetDir) {
-          swap();
-        }
-        fsSync.chmodSync(candidate, mode);
-      }) as typeof fsSync.chmodSync,
       openSync: ((candidate, flags, mode) => {
         if (swapped && flags === "wx") {
           restore();

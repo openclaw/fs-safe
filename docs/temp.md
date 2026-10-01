@@ -634,7 +634,6 @@ type ResolveSecureTempRootOptions = {
   getuid?: () => number | undefined;
   tmpdir?: () => string;
   accessSync?: typeof import("node:fs").accessSync;
-  chmodSync?: typeof import("node:fs").chmodSync; // deprecated, never read or called
   descriptor?: SecureTempRootDescriptorAdapter; // complete bundle; see below
   lstatSync?: (path: string) => {
     isDirectory(): boolean;
@@ -710,8 +709,7 @@ flags make repair/finalization unavailable. Injecting `lstatSync`, `accessSync`,
 or `mkdirSync` disables the default host descriptor bundle. Injected observations
 also require an explicit `mkdirSync` for creation; supplying a descriptor bundle
 likewise never implicitly authorizes host mkdir. A custom mkdir requires the
-complete descriptor bundle for POSIX finalization. The deprecated `chmodSync`
-option is inert and alone does not disable normal host behavior.
+complete descriptor bundle for POSIX finalization.
 
 These checks bind chmod to the admitted object and reject observed replacements;
 the returned path is not a retained capability. Pathname access and identity

@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeErrorSync } from "./helpers/security.js";
 import {
   __resetFsSafeNativeConfigForTest,
-  configureFsSafePython,
   configureFsSafeNative,
   getFsSafeNativeConfig,
 } from "../src/native-config.js";
@@ -21,12 +20,6 @@ import {
 const envKeys = [
   "FS_SAFE_NATIVE_MODE",
   "OPENCLAW_FS_SAFE_NATIVE_MODE",
-  "FS_SAFE_PYTHON_MODE",
-  "OPENCLAW_FS_SAFE_PYTHON_MODE",
-  "FS_SAFE_PYTHON",
-  "OPENCLAW_FS_SAFE_PYTHON",
-  "OPENCLAW_PINNED_PYTHON",
-  "OPENCLAW_PINNED_WRITE_PYTHON",
 ] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
@@ -59,32 +52,6 @@ describe("native helper configuration", () => {
     expect(getFsSafeNativeConfig()).toEqual({ mode: "off" });
     process.env.FS_SAFE_NATIVE_MODE = "true";
     expect(getFsSafeNativeConfig()).toEqual({ mode: "auto" });
-  });
-
-  it("warns once and maps legacy Python configuration during the 0.5 migration", () => {
-    const emitWarning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
-    process.env.FS_SAFE_PYTHON_MODE = "required";
-    process.env.FS_SAFE_PYTHON = "/legacy/python";
-
-    expect(getFsSafeNativeConfig()).toEqual({ mode: "require" });
-    expect(getFsSafeNativeConfig()).toEqual({ mode: "require" });
-    expect(emitWarning).toHaveBeenCalledTimes(1);
-    expect(emitWarning).toHaveBeenCalledWith(
-      expect.stringContaining('mapped to native mode "require"'),
-      expect.objectContaining({ code: "FS_SAFE_PYTHON_DEPRECATED" }),
-    );
-  });
-
-  it("keeps configureFsSafePython as a warning migration bridge only for 0.5", () => {
-    const emitWarning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
-    configureFsSafePython({ mode: "off", pythonPath: "/legacy/python" });
-
-    expect(getFsSafeNativeConfig()).toEqual({ mode: "off" });
-    expect(emitWarning).toHaveBeenCalledTimes(1);
-    expect(emitWarning).toHaveBeenCalledWith(
-      expect.stringContaining("configureFsSafeNative"),
-      expect.objectContaining({ code: "FS_SAFE_PYTHON_DEPRECATED" }),
-    );
   });
 
   it("falls back in auto mode and fails closed in require mode", () => {

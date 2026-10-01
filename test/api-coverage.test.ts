@@ -831,7 +831,7 @@ describe("secret files and temp roots", () => {
     const winFallback = path.win32.join(root, "fallback");
     const winFallbackStat = { isDirectory: () => true, isSymbolicLink: () => false };
     expect(resolveSecureTempRoot({
-      accessSync: vi.fn(), chmodSync: vi.fn(), fallbackPrefix: "fallback",
+      accessSync: vi.fn(), fallbackPrefix: "fallback",
       getuid: () => undefined, lstatSync: vi.fn(() => winFallbackStat), mkdirSync: vi.fn(),
       platform: "win32", preferredDir: secure, skipPreferredOnWindows: true, tmpdir: () => root,
     })).toBe(winFallback);

@@ -6,6 +6,10 @@
 
 - **Native initialization:** lazily load the addon in fs-safe's import context so its housekeeping does not retain the first operation's `AsyncLocalStorage` stores when fs-safe is imported outside caller scopes.
 
+### Compatibility
+
+- **Removed compatibility options:** remove `configureFsSafePython`, `FsSafePythonConfig`, `pythonPath`, and the six Python environment variables; use `configureFsSafeNative`, `FsSafeNativeConfig`, and `FS_SAFE_NATIVE_MODE` (or `OPENCLAW_FS_SAFE_NATIVE_MODE`). Remove secure-temp `chmodSync`, atomic adapter `chmod`/`chmodSync`, Root `nonBlockingRead`, and ACL `principalSids`; use descriptor-bound permission adapters (`descriptor` for secure-temp, `FileHandle.chmod` / `fchmodSync` for atomic writes), automatic nonblocking read admission, and direct SID classification. Callers passing removed options get TypeScript errors.
+
 ## 0.22.0 - 2026-10-01
 
 ### Highlights

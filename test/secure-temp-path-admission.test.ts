@@ -50,7 +50,6 @@ describe("secure temp host pathname admission", () => {
             tmpdir: () => source === "fallback" ? "C:\\Temp\\scope:alias" : "C:\\Temp",
             ...(adapters === "injected" ? {
               accessSync: (candidate: string, mode?: number) => fs.accessSync(candidate, mode),
-              chmodSync: (candidate: string, mode: number) => fs.chmodSync(candidate, mode),
               lstatSync: (candidate: string) => fs.lstatSync(candidate),
               mkdirSync: (candidate: string, mkdirOptions: { recursive: boolean; mode?: number }) => {
                 fs.mkdirSync(candidate, mkdirOptions);
@@ -75,7 +74,7 @@ describe("secure temp host pathname admission", () => {
     const lstatSync = vi.fn(secureDirStat);
     const accessSync = vi.fn();
     const mkdirSync = vi.fn();
-    const chmodSync = vi.fn();
+    const chmodSync = vi.spyOn(fs, "chmodSync");
 
     expect(resolveSecureTempRoot({
       fallbackPrefix: "fixture",
@@ -87,7 +86,6 @@ describe("secure temp host pathname admission", () => {
       lstatSync,
       accessSync,
       mkdirSync,
-      chmodSync,
     })).toBe(preferredDir);
     expect(lstatSync).toHaveBeenCalledWith(preferredDir);
     expect(accessSync).toHaveBeenCalledWith(preferredDir, expect.any(Number));
@@ -105,7 +103,7 @@ describe("secure temp host pathname admission", () => {
         const lstatSync = vi.fn(secureDirStat);
         const accessSync = vi.fn();
         const mkdirSync = vi.fn();
-        const chmodSync = vi.fn();
+        const chmodSync = vi.spyOn(fs, "chmodSync");
         const expected = source === "preferred" ? base : path.join(base, "fixture-501");
 
         expect(resolveSecureTempRoot({
@@ -116,7 +114,6 @@ describe("secure temp host pathname admission", () => {
           lstatSync,
           accessSync,
           mkdirSync,
-          chmodSync,
         })).toBe(expected);
         expect(lstatSync).toHaveBeenCalledWith(expected);
         expect(accessSync).toHaveBeenCalledWith(expected, expect.any(Number));

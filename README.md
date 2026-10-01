@@ -84,7 +84,7 @@ when concurrent mutation is in scope.
 ## Migrating from the Python helper
 
 Version 0.5 replaced the Python worker with prebuilt native bindings. Follow the
-[0.5 migration checklist](docs/migrating-to-0.5.md) to replace deprecated Python
+[0.5 migration checklist](docs/migrating-to-0.5.md) to replace the removed Python
 configuration with native mode selection; current archive changes are covered
 in the [0.6 migration guide](docs/migrating-to-0.6.md).
 

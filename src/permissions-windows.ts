@@ -288,7 +288,7 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
   return { ok: true, entries, ...summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid }) };
 }
 
-export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalSids?: Record<string, string>; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
+export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
   if (opts?.principalTranslationFailed) {
     const error = new Error("Windows ACL principal SID translation failed");
     return summarizeWindowsOwnerAcl({ error: String(error), errorCause: error });

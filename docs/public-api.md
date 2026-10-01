@@ -24,8 +24,7 @@ The handle resolver verifies exact descriptor and pathname identities, with one
 bounded retry for unknown Windows observations. It borrows the handle without
 reading, reopening, closing it, or changing its cursor.
 
-The error helpers are `categorizeFsSafeError` and `FsSafeErrorDetails`. The
-deprecated native-configuration bridge retains the `FsSafePythonConfig` type.
+The error helpers are `categorizeFsSafeError` and `FsSafeErrorDetails`.
 
 ## `path` and `advanced`
 

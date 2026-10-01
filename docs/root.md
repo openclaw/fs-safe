@@ -25,7 +25,6 @@ type RootDefaults = {
   maxBytes?: number;               // refuse reads larger than this many bytes; defaults to 16 MiB
   mkdir?: boolean;                 // create missing parent dirs on write/openWritable/append; default true
   mode?: number;                   // requested file mode; per-call override available
-  nonBlockingRead?: boolean;       // compatibility hint; safe opens are already nonblocking where supported
   renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
   symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root"; // read policy
   mutationSymlinks?: "reject" | "follow-parents-within-root"; // opt-in mutation policy
