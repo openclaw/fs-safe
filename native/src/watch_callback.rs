@@ -1,4 +1,4 @@
-//! Explicit payload ownership: napi-rs 3.12's TSFN call leaks rejected payloads.
+//! Explicit ownership of queued, rejected, and shutdown callback payloads.
 use super::{Notify, WatchBatch};
 use crate::{NativeResult, native_error};
 use napi::{Env, JsValue, bindgen_prelude::*, sys};
@@ -127,8 +127,8 @@ mod tests {
     #[test]
     fn diagnostics_survive_hint_coalescing_and_callback_retry() {
         let mut pending = super::super::Pending { limit: 1, ..Default::default() };
-        pending.push_with_flags("".into(), "config.json".into(), true, Some(0x100));
-        pending.push_with_flags("".into(), "config.json".into(), false, Some(0x1000));
+        pending.push("".into(), "config.json".into(), true, Some(0x100));
+        pending.push("".into(), "config.json".into(), false, Some(0x1000));
         let batch = pending.take().unwrap();
         pending.restore(batch);
         let batch = pending.take().unwrap();

@@ -169,8 +169,7 @@ fn decode(pending: &mut Pending, bytes: &[u8]) {
             pending.overflow();
             return;
         }
-        let (parent, leaf) = name.rsplit_once('\\').unwrap_or(("", &name));
-        pending.push(parent.into(), leaf.into(), action != FILE_ACTION_MODIFIED as usize);
+        pending.push_path(&name, action != FILE_ACTION_MODIFIED as usize, None);
         if next == 0 {
             return;
         }
@@ -274,11 +273,7 @@ impl Backend {
             return true;
         }
         let mut pending = anchor.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if data.is_empty() {
-            pending.overflow();
-        } else {
-            decode(&mut pending, &data);
-        }
+        decode(&mut pending, &data);
         true
     }
     fn retire(&mut self, keys: &[usize]) -> NativeResult<()> {
