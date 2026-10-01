@@ -1,5 +1,5 @@
 use super::*;
-use std::{fs, path::{Path, PathBuf}, sync::atomic::{AtomicU64, Ordering}};
+use std::{fs, mem::zeroed, path::{Path, PathBuf}, sync::atomic::{AtomicU64, Ordering}};
 use windows_sys::Win32::{System::Ioctl::FSCTL_SET_REPARSE_POINT};
 use crate::windows::open_existing_handle;
 struct Fixture { root: PathBuf, source: PathBuf, target: PathBuf }
