@@ -3,7 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AtomicIo, runAsync, runSync } from "../src/atomic-io.js";
+import { AtomicIo, runAsync, runSync, type Procedure } from "../src/atomic-io.js";
 import { bindHandle } from "./helpers/file-handle-proxy.js";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itPosix, useTempDirs } from "./helpers/vitest.js";
@@ -14,176 +14,111 @@ import {
 
 const { tempRoot } = useTempDirs();
 
+const MODES = [
+  { label: "async", io: AtomicIo.async(fs), run: runAsync },
+  { label: "sync", io: AtomicIo.sync(fsSync), run: runSync },
+] as const;
+
+async function fixture(prefix: string, sourceBytes: string | null = "replacement", destBytes?: string) {
+  const root = await tempRoot(prefix);
+  const source = path.join(root, "source"), dest = path.join(root, "dest");
+  if (sourceBytes !== null) await fs.writeFile(source, sourceBytes);
+  if (destBytes !== undefined) await fs.writeFile(dest, destBytes);
+  return { root, source, dest };
+}
+
+function copy(io: AtomicIo, options: Pick<Parameters<typeof copyFallbackReplace>[1], "src" | "dest"> &
+  Partial<Parameters<typeof copyFallbackReplace>[1]>) {
+  return copyFallbackReplace(io, { restore: "none", sync: false, ...options });
+}
+
+async function expectGuard(
+  mode: (typeof MODES)[number],
+  procedure: Procedure<void>,
+  expected: string | { code: Parameters<typeof expectFsSafeError>[1] },
+) {
+  if (mode.label === "async") {
+    if (typeof expected === "string") await expect(runAsync(procedure)).rejects.toThrow(expected);
+    else await expectFsSafeError(runAsync(procedure), expected.code);
+  } else {
+    expect(() => runSync(procedure)).toThrow(typeof expected === "string" ? expected : expect.objectContaining(expected));
+  }
+}
+
 describe("copy fallback source and destination guards", () => {
   it("rejects async and sync non-file sources before opening them", async () => {
-    const root = await tempRoot("fs-safe-copy-source-");
-    const directory = path.join(root, "source");
-    const dest = path.join(root, "dest");
-    await fs.mkdir(directory);
-
-    await expect(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
-      src: directory,
-      dest,
-      restore: "none",
-      sync: false,
-    }))).rejects.toThrow("non-file source");
-    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
-      src: directory,
-      dest,
-      restore: "none",
-      sync: false,
-    }))).toThrow("non-file source");
+    const { source, dest } = await fixture("fs-safe-copy-source-", null);
+    await fs.mkdir(source);
+    for (const mode of MODES) {
+      await expectGuard(mode, copy(mode.io, { src: source, dest }), "non-file source");
+    }
   });
 
   itPosix("rejects symlink sources and destinations without changing their targets", async () => {
-    const root = await tempRoot("fs-safe-copy-symlink-");
-    const sourceTarget = path.join(root, "source-target");
-    const sourceLink = path.join(root, "source-link");
-    const destTarget = path.join(root, "dest-target");
-    const destLink = path.join(root, "dest-link");
-    await fs.writeFile(sourceTarget, "source");
-    await fs.writeFile(destTarget, "dest");
-    await fs.symlink(sourceTarget, sourceLink);
-    await fs.symlink(destTarget, destLink);
-
-    await expect(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
-      src: sourceLink,
-      dest: path.join(root, "unused"),
-      restore: "none",
-      sync: false,
-    }))).rejects.toThrow("non-file source");
-    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
-      src: sourceLink,
-      dest: path.join(root, "unused-sync"),
-      restore: "none",
-      sync: false,
-    }))).toThrow("non-file source");
-
-    const asyncSource = path.join(root, "async-source");
-    const syncSource = path.join(root, "sync-source");
-    await fs.writeFile(asyncSource, "replacement");
-    await fs.writeFile(syncSource, "replacement");
-    await expect(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
-      src: asyncSource,
-      dest: destLink,
-      restore: "none",
-      sync: false,
-    }))).rejects.toMatchObject({ code: "symlink" });
-    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
-      src: syncSource,
-      dest: destLink,
-      restore: "none",
-      sync: false,
-    }))).toThrow(expect.objectContaining({ code: "symlink" }));
-    await expect(fs.readFile(destTarget, "utf8")).resolves.toBe("dest");
+    const { root, source, dest } = await fixture("fs-safe-copy-symlink-", "source", "dest");
+    const sourceLink = path.join(root, "source-link"), destLink = path.join(root, "dest-link");
+    await fs.symlink(source, sourceLink);
+    await fs.symlink(dest, destLink);
+    for (const mode of MODES) {
+      await expectGuard(mode, copy(mode.io, {
+        src: sourceLink, dest: path.join(root, `unused-${mode.label}`),
+      }), "non-file source");
+      const replacement = path.join(root, `${mode.label}-source`);
+      await fs.writeFile(replacement, "replacement");
+      await expectGuard(mode, copy(mode.io, { src: replacement, dest: destLink }), { code: "symlink" });
+    }
+    await expect(fs.readFile(dest, "utf8")).resolves.toBe("dest");
   });
 
   it("rejects source identity changes after open in both implementations", async () => {
-    const root = await tempRoot("fs-safe-copy-source-race-");
-    const source = path.join(root, "source");
+    const { root, source, dest } = await fixture("fs-safe-copy-source-race-", "source");
     const other = path.join(root, "other");
-    await fs.writeFile(source, "source");
     await fs.writeFile(other, "other");
-    let sourceLstats = 0;
-    const asyncFs = {
-      ...fs,
-      async lstat(candidate: fs.PathLike, options?: fsSync.StatOptions) {
-        if (String(candidate) === source && ++sourceLstats === 2) return await fs.lstat(other, options);
-        return await fs.lstat(candidate, options);
-      },
-    };
-    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
-      src: source,
-      dest: path.join(root, "dest"),
-      restore: "none",
-      sync: false,
-    })), "path-mismatch");
-
-    sourceLstats = 0;
-    const syncModule = {
-      ...fsSync,
-      lstatSync(candidate: fsSync.PathLike, options?: fsSync.StatOptions) {
-        if (String(candidate) === source && ++sourceLstats === 2) return fsSync.lstatSync(other, options);
-        return fsSync.lstatSync(candidate, options);
-      },
-    };
-    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
-      src: source,
-      dest: path.join(root, "dest-sync"),
-      restore: "none",
-      sync: false,
-    }))).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    for (const mode of MODES) {
+      let sourceLstats = 0;
+      const asyncFs = { ...fs, lstat: (async (candidate, options) =>
+        await fs.lstat(String(candidate) === source && ++sourceLstats === 2 ? other : candidate, options)
+      ) as typeof fs.lstat };
+      const syncModule = { ...fsSync, lstatSync: ((candidate, options) =>
+        fsSync.lstatSync(String(candidate) === source && ++sourceLstats === 2 ? other : candidate, options)
+      ) as typeof fsSync.lstatSync };
+      const io = mode.label === "async" ? AtomicIo.async(asyncFs) : AtomicIo.sync(syncModule);
+      await expectGuard(mode, copy(io, { src: source, dest: `${dest}-${mode.label}` }), { code: "path-mismatch" });
+    }
   });
 
   it("rejects a destination whose identity changes while it is pinned", async () => {
-    const root = await tempRoot("fs-safe-copy-dest-race-");
-    const source = path.join(root, "source");
-    const dest = path.join(root, "dest");
+    const { root, source, dest } = await fixture("fs-safe-copy-dest-race-", "replacement", "original");
     const other = path.join(root, "other");
-    await fs.writeFile(source, "replacement");
-    await fs.writeFile(dest, "original");
     await fs.writeFile(other, "other");
-    const asyncFs = {
-      ...fs,
-      async open(candidate: fs.PathLike, flags: string | number, mode?: number) {
-        return await fs.open(String(candidate) === dest ? other : candidate, flags, mode);
-      },
-    };
-
-    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(asyncFs), {
-      src: source,
-      dest,
-      restore: "restore-original",
-      maxRestoreBytes: 32,
-      sync: false,
-    })), "path-mismatch");
-    await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
-
-    const syncModule = {
-      ...fsSync,
-      openSync(candidate: fsSync.PathLike, flags: fsSync.OpenMode, mode?: fsSync.Mode) {
-        return fsSync.openSync(String(candidate) === dest ? other : candidate, flags, mode);
-      },
-    };
-    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(syncModule), {
-      src: source,
-      dest,
-      restore: "restore-original",
-      maxRestoreBytes: 32,
-      sync: false,
-    }))).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    for (const mode of MODES) {
+      const asyncFs = { ...fs, open: (async (candidate, flags, mode) =>
+        await fs.open(String(candidate) === dest ? other : candidate, flags, mode)
+      ) as typeof fs.open };
+      const syncModule = { ...fsSync, openSync: ((candidate, flags, mode) =>
+        fsSync.openSync(String(candidate) === dest ? other : candidate, flags, mode)
+      ) as typeof fsSync.openSync };
+      const io = mode.label === "async" ? AtomicIo.async(asyncFs) : AtomicIo.sync(syncModule);
+      await expectGuard(mode, copy(io, {
+        src: source, dest, restore: "restore-original", maxRestoreBytes: 32,
+      }), { code: "path-mismatch" });
+      await expect(fs.readFile(dest, "utf8")).resolves.toBe("original");
+    }
   });
 
   itPosix("enforces destination hardlink policy before remove or pinned replacement", async () => {
     const root = await tempRoot("fs-safe-copy-hardlink-");
-    const original = path.join(root, "original");
-    const alias = path.join(root, "alias");
-    const asyncSource = path.join(root, "async-source");
-    const syncSource = path.join(root, "sync-source");
+    const original = path.join(root, "original"), alias = path.join(root, "alias");
     await fs.writeFile(original, "original");
     await fs.link(original, alias);
-    await fs.writeFile(asyncSource, "replacement");
-    await fs.writeFile(syncSource, "replacement");
-
-    await expectFsSafeError(runAsync(assertDestinationHardlinkPolicy(AtomicIo.async(fs), alias, "reject")), "hardlink");
-    expect(() => runSync(assertDestinationHardlinkPolicy(AtomicIo.sync(fsSync), alias, "reject")))
-      .toThrow(expect.objectContaining({ code: "hardlink" }));
-    await expectFsSafeError(runAsync(copyFallbackReplace(AtomicIo.async(fs), {
-      src: asyncSource,
-      dest: alias,
-      destinationHardlinks: "reject",
-      restore: "restore-original",
-      maxRestoreBytes: 32,
-      sync: false,
-    })), "hardlink");
-    expect(() => runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
-      src: syncSource,
-      dest: alias,
-      destinationHardlinks: "reject",
-      restore: "restore-original",
-      maxRestoreBytes: 32,
-      sync: false,
-    }))).toThrow(expect.objectContaining({ code: "hardlink" }));
+    for (const mode of MODES) {
+      const source = path.join(root, `${mode.label}-source`);
+      await fs.writeFile(source, "replacement");
+      await expectGuard(mode, assertDestinationHardlinkPolicy(mode.io, alias, "reject"), { code: "hardlink" });
+      await expectGuard(mode, copy(mode.io, {
+        src: source, dest: alias, destinationHardlinks: "reject", restore: "restore-original", maxRestoreBytes: 32,
+      }), { code: "hardlink" });
+    }
     await expect(fs.readFile(original, "utf8")).resolves.toBe("original");
   });
 
@@ -202,14 +137,10 @@ describe("copy fallback source and destination guards", () => {
   });
 
   itPosix("rejects a destination that becomes a symlink or non-file after open", async () => {
-    const root = await tempRoot("fs-safe-copy-dest-recheck-");
-    const source = path.join(root, "source");
-    const dest = path.join(root, "dest");
+    const { root, source, dest } = await fixture("fs-safe-copy-dest-recheck-", "replacement", "original");
     const linkTarget = path.join(root, "link-target");
     const link = path.join(root, "link");
     const directory = path.join(root, "directory");
-    await fs.writeFile(source, "replacement");
-    await fs.writeFile(dest, "original");
     await fs.writeFile(linkTarget, "outside");
     await fs.symlink(linkTarget, link);
     await fs.mkdir(directory);
@@ -286,11 +217,7 @@ describe("copy fallback source and destination guards", () => {
 
 describe("copy fallback failure and restoration", () => {
   it("restores original bytes when an async write makes no progress", async () => {
-    const root = await tempRoot("fs-safe-copy-zero-write-");
-    const source = path.join(root, "source");
-    const dest = path.join(root, "dest");
-    await fs.writeFile(source, "replacement");
-    await fs.writeFile(dest, "original");
+    const { source, dest } = await fixture("fs-safe-copy-zero-write-", "replacement", "original");
     let writes = 0;
     const asyncFs = {
       ...fs,
@@ -323,11 +250,7 @@ describe("copy fallback failure and restoration", () => {
   }, process.platform === "win32" ? 30_000 : undefined);
 
   it("reports a synchronous double fault when neither write makes progress", async () => {
-    const root = await tempRoot("fs-safe-copy-zero-write-sync-");
-    const source = path.join(root, "source");
-    const dest = path.join(root, "dest");
-    await fs.writeFile(source, "replacement");
-    await fs.writeFile(dest, "original");
+    const { source, dest } = await fixture("fs-safe-copy-zero-write-sync-", "replacement", "original");
     let destFd: number | undefined;
     const syncModule = {
       ...fsSync,
@@ -388,43 +311,16 @@ describe("copy fallback failure and restoration", () => {
   });
 
   it("successfully replaces both missing and existing destinations through each fallback mode", async () => {
-    const root = await tempRoot("fs-safe-copy-success-paths-");
-    const missingSource = path.join(root, "missing-source");
-    const missingDest = path.join(root, "missing-dest");
-    await fs.writeFile(missingSource, "created");
-    await runAsync(copyFallbackReplace(AtomicIo.async(fs), {
-      src: missingSource,
-      dest: missingDest,
-      restore: "restore-original",
-      maxRestoreBytes: 16,
-      sync: false,
-    }));
-    await expect(fs.readFile(missingDest, "utf8")).resolves.toBe("created");
-
-    const pinnedSource = path.join(root, "pinned-source");
-    const pinnedDest = path.join(root, "pinned-dest");
-    await fs.writeFile(pinnedSource, "new");
-    await fs.writeFile(pinnedDest, "old");
-    await runAsync(copyFallbackReplace(AtomicIo.async(fs), {
-      src: pinnedSource,
-      dest: pinnedDest,
-      restore: "restore-original",
-      maxRestoreBytes: 3,
-      sync: true,
-    }));
-    await expect(fs.readFile(pinnedDest, "utf8")).resolves.toBe("new");
-
-    const syncSource = path.join(root, "sync-source");
-    const syncDest = path.join(root, "sync-dest");
-    await fs.writeFile(syncSource, "sync-new");
-    await fs.writeFile(syncDest, "sync-old");
-    runSync(copyFallbackReplace(AtomicIo.sync(fsSync), {
-      src: syncSource,
-      dest: syncDest,
-      restore: "none",
-      sync: true,
-    }));
-    expect(fsSync.readFileSync(syncDest, "utf8")).toBe("sync-new");
+    const rows = [
+      { mode: MODES[0], bytes: "created", previous: undefined, restore: "restore-original", maxRestoreBytes: 16, sync: false },
+      { mode: MODES[0], bytes: "new", previous: "old", restore: "restore-original", maxRestoreBytes: 3, sync: true },
+      { mode: MODES[1], bytes: "sync-new", previous: "sync-old", restore: "none", sync: true },
+    ] as const;
+    for (const { mode, bytes, previous, ...options } of rows) {
+      const { source, dest } = await fixture("fs-safe-copy-success-paths-", bytes, previous);
+      await mode.run(copyFallbackReplace(mode.io, { src: source, dest, ...options }));
+      await expect(fs.readFile(dest, "utf8")).resolves.toBe(bytes);
+    }
   });
 
 });
