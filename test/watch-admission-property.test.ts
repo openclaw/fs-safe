@@ -6,7 +6,7 @@ import type { WatchSnapshot } from "../src/watch-scan.js";
 import * as rootContext from "../src/root-context.js";
 import * as listing from "../src/root-directory-list.js";
 import * as entries from "../src/root-directory-entry.js";
-import { admittedNativeChanges } from "../src/watch-alias.js";
+import { admittedNativeChanges } from "../src/watch-alias.ts";
 
 const fake = { directories: new Map<string, bigint>(), entries: new Map<string, { ino: bigint; directory: boolean }>() };
 beforeEach(() => {
