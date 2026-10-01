@@ -7,15 +7,10 @@ import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/n
 import { createNativeStage, assertNativeStaging } from "../src/native-staged-file.js";
 import { openStagedDirectory } from "../src/staged-directory.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = process.platform !== "win32";
-} catch {
-  // Native CI provides the binding; fallback-only installations skip this suite.
-}
+const nativeAvailable = Boolean(loadTestNative("optional")) && process.platform !== "win32";
 afterEach(() => {
   vi.restoreAllMocks();
   configureFsSafeNative({ mode: "auto" });

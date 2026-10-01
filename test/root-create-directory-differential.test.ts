@@ -1,15 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { __loadBundledNativeForTest } from "../src/native.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const nativeAvailable = Boolean(loadTestNative("required-env"));
 
 it("classifies existing directories consistently in isolated public-API processes", () => {
   const script = fileURLToPath(new URL("../scripts/root-create-directory-proof.mjs", import.meta.url));

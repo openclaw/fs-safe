@@ -3,17 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, FsSafeError, root } from "../src/index.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest } from "../src/native.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import * as verification from "../src/root-write-verification.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch (error) {
-  if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
-}
+const nativeAvailable = Boolean(loadTestNative("required-env"));
 
 const { tempRoot } = useRealTempDirs();
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;

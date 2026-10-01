@@ -5,17 +5,10 @@ import path from "node:path";
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it } from "vitest";
-import { __loadBundledNativeForTest } from "../src/native.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
-let nativeAvailable = false;
-try {
-  __loadBundledNativeForTest();
-  nativeAvailable = true;
-} catch {
-  // Ordinary JavaScript lanes omit native artifacts. Required-native CI must
-  // fail if its addon is absent rather than silently skipping this regression.
-}
+const nativeAvailable = Boolean(loadTestNative("optional"));
 
 type WorkerResult = { kind: "result"; completed: string[]; warnings: string[] };
 

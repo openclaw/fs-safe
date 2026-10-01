@@ -7,21 +7,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectFsSafeError } from "./helpers/security.js";
 import { itDarwin } from "./helpers/vitest.js";
+import { loadTestNative } from "./helpers/native-probe.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __resetNativeLoaderForTest,
-  __loadBundledNativeForTest,
   __setNativeLoaderForTest,
-  type NativeBinding,
 } from "../src/native.js";
 import { publishFileExclusive } from "../src/publish-file.js";
 
-let native: NativeBinding | undefined;
-try {
-  native = __loadBundledNativeForTest();
-} catch {
-  // JS-only jobs intentionally exercise the fallback without a built binding.
-}
+const native = loadTestNative("optional");
 const tempDirs: string[] = [];
 let pendingPublication: Promise<void> | undefined;
 
