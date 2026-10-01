@@ -233,6 +233,9 @@ synchronous throws and rejected promises from custom asynchronous adapters.
 
 The best-effort parent-directory synchronization helper also ignores either form
 of close failure. Parent-directory mode admission and its close remain fail-closed.
+If parent preparation and its descriptor close both fail, sync and async replacement
+report an `AggregateError` retaining the preparation failure first and the close
+failure second. A close failure alone is propagated unchanged.
 A compatibility-publication handle that was not adopted also receives one
 best-effort close, preserving the selected verification or previous-handle close
 failure. The retained owner's close failures remain reportable.

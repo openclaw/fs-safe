@@ -8,6 +8,10 @@ import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Proce
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open">;
 
+function parentCloseFailure(primary: { error: unknown } | undefined, closeError: unknown): unknown {
+  return primary ? new AggregateError([primary.error, closeError], "Atomic parent preparation and close failed") : closeError;
+}
+
 export function* syncDirectoryBestEffort(io: AtomicIo, dirPath: string): Procedure<void> {
   let file: AtomicFile | undefined;
   try {
@@ -77,7 +81,8 @@ async function pinDirectoryForMode(params: {
     await owner.verify();
     return owner;
   } catch (error) {
-    await handle.close();
+    try { await handle.close(); }
+    catch (closeError) { throw parentCloseFailure({ error }, closeError); }
     throw error;
   }
 }
@@ -93,10 +98,15 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
       ...params,
       fsModule: io.asyncFs as AsyncTempFileSystem,
     }));
+    let primary: { error: unknown } | undefined;
     try {
       if (owner) yield* wait(owner.apply(params.mode));
+    } catch (error) {
+      primary = { error };
+      throw error;
     } finally {
-      if (owner) yield* wait(owner.close());
+      try { if (owner) yield* wait(owner.close()); }
+      catch (closeError) { throw parentCloseFailure(primary, closeError); }
     }
     return;
   }
@@ -105,12 +115,17 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
   const expected = inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
     undefined, false, admit) as BigIntStats;
   const file = yield* io.open(params.dirPath, directoryOpenFlags());
+  let primary: { error: unknown } | undefined;
   try {
     inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
     params.mutation?.assert();
     file.chmod(params.mode & 0o7777);
+  } catch (error) {
+    primary = { error };
+    throw error;
   } finally {
-    file.close();
+    try { file.close(); }
+    catch (closeError) { throw parentCloseFailure(primary, closeError); }
   }
 }
 

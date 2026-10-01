@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- **Atomic writes:** preserve both parent-directory preparation and descriptor-close failures, in operation-first order, for synchronous and asynchronous replacements.
+
 - **Watch overflow:** fold busy pending hints into guarded subtree reconciliation so unselected sibling churn beside a missing tree no longer exhausts the hint budget. ([#813](https://github.com/openclaw/fs-safe/pull/813))
 
 - **Native initialization:** lazily load the addon in fs-safe's import context so its housekeeping does not retain the first operation's `AsyncLocalStorage` stores when fs-safe is imported outside caller scopes.
