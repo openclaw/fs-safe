@@ -34,8 +34,11 @@ try {
 }
 
 describe("owned caller pathname snapshots", () => {
-  it("keeps asynchronous regular reads and appends on their first pathname", async () => {
-    const root = await tempRoot("fs-safe-path-snapshot-regular-async-");
+  it.each([
+    { kind: "async", read: readRegularFile, append: appendRegularFile },
+    { kind: "sync", read: readRegularFileSync, append: appendRegularFileSync },
+  ])("keeps $kind regular reads and appends on their first pathname", async ({ kind, read, append }) => {
+    const root = await tempRoot(`fs-safe-path-snapshot-regular-${kind}-`);
     const readPath = path.join(root, "read.txt");
     const appendPath = path.join(root, "append.txt");
     const decoyPath = path.join(root, "decoy.txt");
@@ -44,17 +47,17 @@ describe("owned caller pathname snapshots", () => {
     await fs.writeFile(decoyPath, "decoy");
 
     let readPathCalls = 0;
-    const read = await readRegularFile({
+    const result = await read({
       get filePath() {
         readPathCalls += 1;
         return readPathCalls === 1 ? readPath : decoyPath;
       },
     });
-    expect(read.buffer.toString()).toBe("read-first");
+    expect(result.buffer.toString()).toBe("read-first");
     expect(readPathCalls).toBe(1);
 
     let appendPathCalls = 0;
-    await appendRegularFile({
+    await append({
       get filePath() {
         appendPathCalls += 1;
         return appendPathCalls === 1 ? appendPath : decoyPath;
@@ -66,37 +69,12 @@ describe("owned caller pathname snapshots", () => {
     await expect(fs.readFile(decoyPath, "utf8")).resolves.toBe("decoy");
   });
 
-  it("keeps synchronous regular reads, appends, and pinned opens on the first path", async () => {
-    const root = await tempRoot("fs-safe-path-snapshot-regular-sync-");
-    const readPath = path.join(root, "read.txt");
-    const appendPath = path.join(root, "append.txt");
+  it("keeps synchronous pinned opens on their first pathname", async () => {
+    const root = await tempRoot("fs-safe-path-snapshot-pinned-");
     const pinnedPath = path.join(root, "pinned.txt");
     const decoyPath = path.join(root, "decoy.txt");
-    await fs.writeFile(readPath, "read-first");
-    await fs.writeFile(appendPath, "append-first");
     await fs.writeFile(pinnedPath, "pinned-first");
     await fs.writeFile(decoyPath, "decoy");
-
-    let readPathCalls = 0;
-    const read = readRegularFileSync({
-      get filePath() {
-        readPathCalls += 1;
-        return readPathCalls === 1 ? readPath : decoyPath;
-      },
-    });
-    expect(read.buffer.toString()).toBe("read-first");
-    expect(readPathCalls).toBe(1);
-
-    let appendPathCalls = 0;
-    appendRegularFileSync({
-      get filePath() {
-        appendPathCalls += 1;
-        return appendPathCalls === 1 ? appendPath : decoyPath;
-      },
-      content: ":updated",
-    });
-    expect(appendPathCalls).toBe(1);
-    expect(fsSync.readFileSync(appendPath, "utf8")).toBe("append-first:updated");
 
     let pinnedPathCalls = 0;
     const pinned = openPinnedFileSync({
@@ -268,15 +246,18 @@ describe("owned caller pathname snapshots", () => {
       .resolves.toBe("decoy-target");
   });
 
-  it("passes the first async replace-file path through mode inheritance and publication", async () => {
-    const root = await tempRoot("fs-safe-path-snapshot-replace-file-async-");
+  it.each([
+    ["async", replaceFileAtomic],
+    ["sync", replaceFileAtomicSync],
+  ] as const)("passes the first %s replace-file path through mode inheritance and publication", async (kind, replace) => {
+    const root = await tempRoot(`fs-safe-path-snapshot-replace-file-${kind}-`);
     const target = path.join(root, "target.txt");
     const decoy = path.join(root, "decoy.txt");
     await fs.writeFile(target, "target-old");
     await fs.writeFile(decoy, "decoy");
     let filePathCalls = 0;
 
-    await replaceFileAtomic({
+    await replace({
       get filePath() {
         filePathCalls += 1;
         return filePathCalls === 1 ? target : decoy;
@@ -288,28 +269,6 @@ describe("owned caller pathname snapshots", () => {
     expect(filePathCalls).toBe(1);
     await expect(fs.readFile(target, "utf8")).resolves.toBe("target-new");
     await expect(fs.readFile(decoy, "utf8")).resolves.toBe("decoy");
-  });
-
-  it("passes the first sync replace-file path through mode inheritance and publication", async () => {
-    const root = await tempRoot("fs-safe-path-snapshot-replace-file-sync-");
-    const target = path.join(root, "target.txt");
-    const decoy = path.join(root, "decoy.txt");
-    await fs.writeFile(target, "target-old");
-    await fs.writeFile(decoy, "decoy");
-    let filePathCalls = 0;
-
-    replaceFileAtomicSync({
-      get filePath() {
-        filePathCalls += 1;
-        return filePathCalls === 1 ? target : decoy;
-      },
-      content: "target-new",
-      preserveExistingMode: true,
-    });
-
-    expect(filePathCalls).toBe(1);
-    expect(fsSync.readFileSync(target, "utf8")).toBe("target-new");
-    expect(fsSync.readFileSync(decoy, "utf8")).toBe("decoy");
   });
 
   it("captures install bases and canonical candidates before encoder or I/O access", async () => {
