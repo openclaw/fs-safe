@@ -10,6 +10,8 @@
 
 ### Fixes
 
+- **Windows directory preparation:** retain exact file identities in `ensureAbsoluteDirectory()` so a replaced directory cannot compare equal after large Windows file IDs are rounded to JavaScript numbers.
+
 - **Windows writable creation:** in native `auto`/`off` mode, `openWritable()`, `append()`, and create-only writes could create a dangling file symlink's missing in-Root target before rejecting the link. Check final leaves before fallback creation; outside-Root targets were already rejected.
 
 - **Windows symlink creation escape:** unchanged dangling file symlinks could redirect standalone exclusive creation outside the caller-selected directory, including source contents during cross-volume copy publication and records from unrooted fallback locks. Check final leaves before creation, including internal staging files; concurrent replacement remains best-effort.
