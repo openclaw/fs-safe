@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   assertDirectoryGuard,
-  type AsyncDirectoryGuard,
+  type AnyAsyncDirectoryGuard,
   captureDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
@@ -48,7 +48,7 @@ export type EnsureAbsoluteDirectoryResult =
 
 type EnsureAbsoluteDirectoryFailure = Extract<EnsureAbsoluteDirectoryResult, { ok: false }>;
 type DirectoryGuardResult =
-  | { ok: true; guard: AsyncDirectoryGuard }
+  | { ok: true; guard: AnyAsyncDirectoryGuard }
   | EnsureAbsoluteDirectoryFailure;
 type DirectoryPrefixResult =
   | {
@@ -71,11 +71,11 @@ function ensureDirectoryFailure(
 }
 
 function directoryGuardResult(
-  target: string | AsyncDirectoryGuard,
+  target: string | AnyAsyncDirectoryGuard,
   scopeLabel: string,
 ): DirectoryGuardResult {
   try {
-    const guard = typeof target === "string" ? captureDirectoryGuard(target, "native") : target;
+    const guard = typeof target === "string" ? captureDirectoryGuard(target, "native", { bigint: true }) : target;
     if (typeof target !== "string") assertDirectoryGuard(guard, "native");
     return { ok: true, guard };
   } catch (err) {
@@ -260,7 +260,7 @@ export async function ensureAbsoluteDirectory(
   if (!initialGuard.ok) {
     return initialGuard;
   }
-  let currentGuard: AsyncDirectoryGuard = initialGuard.guard;
+  let currentGuard: AnyAsyncDirectoryGuard = initialGuard.guard;
   for (const segment of prefix.missingSegments) {
     current = path.join(current, segment);
     while (true) {

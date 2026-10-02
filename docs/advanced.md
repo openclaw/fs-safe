@@ -63,6 +63,9 @@ supplies a path that must stay under a root.
 The helper returns `{ ok: false, code, error }` for path-policy failures such as
 relative paths, symlinks, non-directories, or directory swaps during creation.
 Operational filesystem failures such as permissions or I/O errors are rethrown.
+Directory guards retain exact bigint identities, including Windows file IDs
+above JavaScript's integer precision. These checks remain best-effort against
+concurrent namespace changes.
 
 ### Files and identity
 

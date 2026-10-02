@@ -10,6 +10,8 @@
 
 ### Fixes
 
+- **Windows directory preparation:** retain exact file identities in `ensureAbsoluteDirectory()` so a replaced directory cannot compare equal after large Windows file IDs are rounded to JavaScript numbers.
+
 - **Windows writable creation:** reject dangling final symlinks before fallback `openWritable()` or `append()` creation, without creating their missing targets.
 
 - **Atomic writes:** preserve both parent-directory preparation and descriptor-close failures, in operation-first order, for synchronous and asynchronous replacements.

@@ -90,7 +90,7 @@ describe("absolute-directory guards across queued substitutions", () => {
     }
   });
 
-  it("checks the child again after a queued replacement at the previous-parent fence", async () => {
+  it.each([false, true])("checks the child again after a queued replacement at the previous-parent fence (large IDs: %s)", async largeIds => {
     const directory = await tempRoot("fs-safe-absolute-queued-child-");
     const parent = path.join(directory, "parent");
     const target = path.join(parent, "child");
@@ -103,6 +103,21 @@ describe("absolute-directory guards across queued substitutions", () => {
     let captured: ReturnType<typeof identity> | undefined;
     let replacement: ReturnType<typeof identity> | undefined;
     let modeReads = 0, mkdirCalls = 0;
+    if (largeIds) {
+      const lstat = fsSync.lstatSync.bind(fsSync);
+      const ids = new Map<bigint, bigint>();
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+        const stat = lstat(...args);
+        if (stat && [target, retained].includes(String(args[0]))) {
+          const exact = lstat(args[0], { bigint: true });
+          // Valid 64-bit file IDs can collide when represented as Numbers.
+          if (!ids.has(exact.ino)) ids.set(exact.ino, 2n ** 54n + BigInt(ids.size));
+          const ino = ids.get(exact.ino)!;
+          Object.assign(stat, { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
+        }
+        return stat;
+      });
+    }
     vi.spyOn(realpathSync, "native").mockImplementation(candidate => {
       const resolved = canonicalize(candidate);
       if (candidate === target && captured === undefined) {
