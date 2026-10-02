@@ -186,7 +186,7 @@
     "@emnapi/runtime": "2.0.0-alpha.5",
     "@napi-rs/cli": "3.10.5",
     "@types/node": "^26.6.1",
-    "@vitest/coverage-v8": "5.0.2",
+    "@vitest/coverage-v8": "5.0.3",
     "fast-check": "^4.10.1",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
