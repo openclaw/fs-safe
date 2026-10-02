@@ -10,9 +10,9 @@
 
 ### Fixes
 
-- **Windows writable creation:** in native `auto`/`off` mode, `openWritable()`, `append()`, and create-only writes could create a dangling file symlink's missing in-Root target before rejecting the link. Check final leaves before fallback creation; Root admission already rejects outside, UNC, and device targets.
+- **Windows writable creation:** in native `auto`/`off` mode, `openWritable()`, `append()`, and create-only writes could create a dangling file symlink's missing in-Root target before rejecting the link. Check final leaves before fallback creation; outside-Root targets were already rejected.
 
-- **Windows symlink creation escape:** standalone exclusive file creators could create an empty target outside the caller-selected directory, and unrooted fallback locks could write their lock record there through an unchanged dangling file symlink. Check final leaves before creation, including internal staging files; concurrent replacement remains best-effort.
+- **Windows symlink creation escape:** standalone exclusive file creators could create an empty target outside the caller-selected directory, and unrooted fallback locks could write their lock record there through an unchanged dangling file symlink. Check final leaves before creation, including exclusive copy publication and internal staging files; concurrent replacement remains best-effort.
 
 - **Atomic writes:** preserve both parent-directory preparation and descriptor-close failures, in operation-first order, for synchronous and asynchronous replacements.
 
