@@ -2,29 +2,32 @@
 
 ## Unreleased
 
-### Performance
+## 0.23.0 - 2026-10-02
 
-- **Root metadata path assembly:** avoid renormalizing each literal child beneath its canonical directory, cutting 1,000-entry listing time by a further 19–23% and sampled allocations by 33–34% on Linux x64.
+### Highlights
 
-- **Root metadata listings:** construct named metadata once per entry, reducing 1,000-entry listing time by 16% and sampled allocations by 27–28% on Linux x64, with all filesystem and identity checks retained.
+- **BREAKING: Python bridge removed:** remove the Python bridge and its compatibility options; migrate to `configureFsSafeNative` / `FS_SAFE_NATIVE_MODE`. ([#815](https://github.com/openclaw/fs-safe/pull/815))
+- **Watch overflow:** fold busy hints so unselected sibling churn beside a missing tree no longer overflows the watch. ([#813](https://github.com/openclaw/fs-safe/pull/813))
+- **Windows exclusive creation:** no longer follows unchanged dangling file symlinks, including standalone creators, unrooted locks and cross-volume copy publication. ([#823](https://github.com/openclaw/fs-safe/pull/823), [#824](https://github.com/openclaw/fs-safe/pull/824))
+- **Faster metadata listings:** reduce path normalization and per-entry allocation when listing Root directory metadata. ([#818](https://github.com/openclaw/fs-safe/pull/818), [#819](https://github.com/openclaw/fs-safe/pull/819))
 
 ### Fixes
 
-- **Windows directory preparation:** retain exact file identities in `ensureAbsoluteDirectory()` so a replaced directory cannot compare equal after large Windows file IDs are rounded to JavaScript numbers.
-
-- **Windows writable creation:** in native `auto`/`off` mode, `openWritable()`, `append()`, and create-only writes could create a dangling file symlink's missing in-Root target before rejecting the link. Check final leaves before fallback creation; outside-Root targets were already rejected.
-
-- **Windows symlink creation escape:** unchanged dangling file symlinks could redirect standalone exclusive creation outside the caller-selected directory, including source contents during cross-volume copy publication and records from unrooted fallback locks. Check final leaves before creation, including internal staging files; concurrent replacement remains best-effort.
-
-- **Atomic writes:** preserve both parent-directory preparation and descriptor-close failures, in operation-first order, for synchronous and asynchronous replacements.
-
+- **Windows directory preparation:** retain exact file identities in `ensureAbsoluteDirectory()` so a replaced directory cannot compare equal after large Windows file IDs are rounded to JavaScript numbers. ([#825](https://github.com/openclaw/fs-safe/pull/825))
+- **Windows writable creation:** in native `auto`/`off` mode, `openWritable()`, `append()`, and create-only writes could create a dangling file symlink's missing in-Root target before rejecting the link. Check final leaves before fallback creation; outside-Root targets were already rejected. ([#823](https://github.com/openclaw/fs-safe/pull/823))
+- **Windows symlink creation escape:** unchanged dangling file symlinks could redirect standalone exclusive creation outside the caller-selected directory, including source contents during cross-volume copy publication and records from unrooted fallback locks. Check final leaves before creation, including internal staging files; concurrent replacement remains best-effort. ([#824](https://github.com/openclaw/fs-safe/pull/824))
+- **Atomic writes:** preserve both parent-directory preparation and descriptor-close failures, in operation-first order, for synchronous and asynchronous replacements. ([#820](https://github.com/openclaw/fs-safe/pull/820))
 - **Watch overflow:** fold busy pending hints into guarded subtree reconciliation so unselected sibling churn beside a missing tree no longer exhausts the hint budget. ([#813](https://github.com/openclaw/fs-safe/pull/813))
+- **Native initialization:** lazily load the addon in fs-safe's import context so its housekeeping does not retain the first operation's `AsyncLocalStorage` stores when fs-safe is imported outside caller scopes. ([#797](https://github.com/openclaw/fs-safe/pull/797))
 
-- **Native initialization:** lazily load the addon in fs-safe's import context so its housekeeping does not retain the first operation's `AsyncLocalStorage` stores when fs-safe is imported outside caller scopes.
+### Performance
+
+- **Root metadata path assembly:** avoid renormalizing each literal child beneath its canonical directory, cutting 1,000-entry listing time by a further 19–23% and sampled allocations by 33–34% on Linux x64. ([#819](https://github.com/openclaw/fs-safe/pull/819))
+- **Root metadata listings:** construct named metadata once per entry, reducing 1,000-entry listing time by 16% and sampled allocations by 27–28% on Linux x64, with all filesystem and identity checks retained. ([#818](https://github.com/openclaw/fs-safe/pull/818))
 
 ### Compatibility
 
-- **Removed compatibility options:** remove `configureFsSafePython`, `FsSafePythonConfig`, `pythonPath`, and the six Python environment variables; use `configureFsSafeNative`, `FsSafeNativeConfig`, and `FS_SAFE_NATIVE_MODE` (or `OPENCLAW_FS_SAFE_NATIVE_MODE`). The Python variables are now ignored, so a deployment that still sets `FS_SAFE_PYTHON_MODE=require` or `off` runs in `auto` until it sets `FS_SAFE_NATIVE_MODE`. Remove secure-temp `chmodSync`, atomic adapter `chmod`/`chmodSync`, Root `nonBlockingRead`, and ACL `principalSids`; use descriptor-bound permission adapters (`descriptor` for secure-temp, `FileHandle.chmod` / `fchmodSync` for atomic writes), automatic nonblocking read admission, and direct SID classification. Callers passing removed options get TypeScript errors.
+- **Removed compatibility options:** remove `configureFsSafePython`, `FsSafePythonConfig`, `pythonPath`, and the six Python environment variables; use `configureFsSafeNative`, `FsSafeNativeConfig`, and `FS_SAFE_NATIVE_MODE` (or `OPENCLAW_FS_SAFE_NATIVE_MODE`). The Python variables are now ignored, so a deployment that still sets `FS_SAFE_PYTHON_MODE=require` or `off` runs in `auto` until it sets `FS_SAFE_NATIVE_MODE`. Remove secure-temp `chmodSync`, atomic adapter `chmod`/`chmodSync`, Root `nonBlockingRead`, and ACL `principalSids`; use descriptor-bound permission adapters (`descriptor` for secure-temp, `FileHandle.chmod` / `fchmodSync` for atomic writes), automatic nonblocking read admission, and direct SID classification. Callers passing removed options get TypeScript errors. ([#815](https://github.com/openclaw/fs-safe/pull/815))
 
 ## 0.22.0 - 2026-10-01
 
