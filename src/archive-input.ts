@@ -12,6 +12,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { tempFile } from "./temp-target.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type StagedArchiveFile = { path: string; cleanup: () => Promise<void> };
@@ -87,6 +88,7 @@ export async function stageArchiveFileForExtraction(params: {
       (process.platform !== "win32" && "O_NOFOLLOW" in fsConstants
         ? fsConstants.O_NOFOLLOW
         : 0);
+    assertExclusiveCreateLeaf(staged.path);
     output = await fs.open(staged.path, flags, 0o600);
     const buffer = Buffer.allocUnsafe(Math.min(
       512 * 1024, Math.max(64 * 1024, Number(opened.size)), params.limits.maxArchiveBytes + 1,

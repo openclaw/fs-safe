@@ -1,4 +1,5 @@
 import { syncFileBestEffort } from "./file-sync.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -297,6 +298,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
             private: true, mode: 0o600, assertBeforeMutation,
           }, creationAdmissionFromParent(parentGuard));
         }
+        assertExclusiveCreateLeaf(targetPath);
         return await fs.open(
           targetPath,
           fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,

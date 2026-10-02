@@ -55,6 +55,7 @@ import {
   type NativeBinding,
 } from "./native.js";
 import { writeSiblingTempFile } from "./sibling-temp.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { classifyArchiveParserError } from "./archive-parser-errors.js";
 import { validateArchiveEntryPath } from "./archive-entry.js";
@@ -143,6 +144,7 @@ async function writeZipFileEntry(params: {
       syncTempFile: false,
       syncParentDir: false,
       writeTemp: async (tempPath) => {
+        assertExclusiveCreateLeaf(tempPath);
         tempHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
         const writable = tempHandle.createWriteStream();
         writable.once("close", () => {

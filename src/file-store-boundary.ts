@@ -17,6 +17,7 @@ import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { readRegularFile } from "./regular-file.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { errorCauseOptions } from "./root-errors.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -97,6 +98,7 @@ export async function writeStreamToTempSource(params: {
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
   let handleClosedByStream = false;
   try {
+    assertExclusiveCreateLeaf(filePath);
     handle = await fs.open(filePath, "wx", params.mode);
     const writable = handle.createWriteStream();
     writable.once("close", () => {

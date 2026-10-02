@@ -4,6 +4,8 @@ import { readBoundedSync } from "./bounded-read.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { sleep, sleepSync } from "./timing.js";
+import { assertExclusiveCreateStat } from "./exclusive-create.js";
+import { hasNodeErrorCode } from "./path.js";
 
 export type Procedure<T> = Generator<unknown, T, unknown>;
 type SyncFchmod = (fd: number, mode: number) => void;
@@ -95,6 +97,12 @@ export class AtomicIo {
 
   *open(pathname: string, flags: string | number, mode?: number): Procedure<AtomicFile> {
     const withMode = arguments.length > 2;
+    const exclusive = syncFs.constants.O_CREAT | syncFs.constants.O_EXCL;
+    if (process.platform === "win32" && (typeof flags === "string"
+      ? flags.includes("x") : (flags & exclusive) === exclusive)) {
+      try { assertExclusiveCreateStat(pathname, yield* this.lstat(pathname)); }
+      catch (error) { if (!hasNodeErrorCode(error, "ENOENT")) throw error; }
+    }
     const resource = this.asyncFs
       ? yield* wait(withMode
         ? this.asyncFs.open!(pathname, flags, mode)

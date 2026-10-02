@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -50,6 +51,7 @@ export async function runPinnedStagedWrite(
   let failure: { error: unknown } | undefined;
   try {
     params.assertBeforeMutation?.();
+    assertExclusiveCreateLeaf(tempPath);
     handle = params.private
       ? await createFileHandle(tempPath, {
         private: true, mode: 0o600, assertBeforeMutation: params.assertBeforeMutation,

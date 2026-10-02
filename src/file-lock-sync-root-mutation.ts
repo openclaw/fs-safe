@@ -1,4 +1,5 @@
 import fs, { type BigIntStats } from "node:fs";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -115,6 +116,11 @@ export function createFileLockSyncRootFile(
   let receipt: FileLockSyncRootFileReceipt | undefined;
   try {
     options.assertBeforeOpen();
+    try { assertExclusiveCreateLeaf(pathForWindowsFilesystem(pathAuthority.path)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onOpenFailure(error);
+      throw error;
+    }
     try {
       fd = fs.openSync(
         pathForWindowsFilesystem(pathAuthority.path),

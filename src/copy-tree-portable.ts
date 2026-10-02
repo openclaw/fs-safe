@@ -3,6 +3,7 @@ import fs from "node:fs";
 import fsp, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import type { NativeBinding } from "./native-binding.js";
 import {
   assertStagedDirectoryCurrent,
@@ -70,6 +71,7 @@ export async function copyOwnedTree(
       if (!opened.isFile() || !exactIdentityMatches(stat, opened)) {
         throw new FsSafeError("path-mismatch", "copy source changed while opening");
       }
+      assertExclusiveCreateLeaf(to);
       output = await fsp.open(to, "wx", 0o600);
       if (options.copyFileContents) {
         // napi-rs owns onabort. Each admitted file gets a separate signal; the

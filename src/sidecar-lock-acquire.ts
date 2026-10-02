@@ -5,6 +5,7 @@ import { fileObservation } from "./file-observation.js";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile } from "./native-operations.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import {
   sidecarLockRetryDelay,
   sidecarLockTimeout,
@@ -285,14 +286,19 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           }
           handle = opened.handle;
         } else {
-          try {
-            handle =
-              (await createNativeExclusiveFile(lockPath, 0o600)) ??
-              (await fs.open(lockPath, "wx", 0o600));
-          } catch (createError) {
+          const failedOpen = (createError: unknown): never => {
             lockFileCreateDenied = isTransientLockFileDenial(createError, lockPath);
             exclusiveCreateConflict = (createError as NodeJS.ErrnoException).code === "EEXIST";
             throw createError;
+          };
+          handle = await createNativeExclusiveFile(lockPath, 0o600).catch(failedOpen) ?? null;
+          if (!handle) {
+            try { assertExclusiveCreateLeaf(lockPath); }
+            catch (error) {
+              exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
+              throw error;
+            }
+            handle = await fs.open(lockPath, "wx", 0o600).catch(failedOpen);
           }
           await handle.writeFile(raw, "utf8");
         }

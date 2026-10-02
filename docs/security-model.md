@@ -91,6 +91,19 @@ publication, and cleanup. File writers preserve the raw suffix. Root-relative
 APIs and caller-constructed relative directory receipts continue to reject
 drive designators.
 
+### Exclusive creation on Windows
+
+Windows Node exclusive creation can follow a dangling file symlink before an
+opened-descriptor check can reject it. Fallback creators therefore inspect the
+final leaf before opening it, including create-only Root writes, standalone
+creators, lock records, and internal staging files. This preserves an unchanged
+link and its missing target, including a target outside the intended directory.
+Random staging names and freshly created workspaces reduce the opportunity to
+preplace such a link, but are not a replacement for this check. The preflight is
+best-effort: a concurrent replacement between inspection and open can still
+redirect a pathname operation in native `auto`/`off` mode. Use the documented
+native `require` creation paths and OS isolation when hostile concurrency is in scope.
+
 ### Symlinks (read side)
 
 `open()` and `read()` use `fs.open` with `O_NOFOLLOW` on POSIX where available. The library then `fstat`s the open fd and `realpath`s the original input, asserting the two refer to the same inode. A symlink swap that happens between resolve and open will fail at the identity check rather than silently following the new target.

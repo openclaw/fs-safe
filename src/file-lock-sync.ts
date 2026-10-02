@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { acquireFileLockSyncWithRoot } from "./file-lock-sync-root-acquire.js";
 import { withSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
 import path from "node:path";
@@ -258,6 +259,11 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           process.platform !== "win32" && typeof fs.constants.O_NOFOLLOW === "number"
             ? fs.constants.O_NOFOLLOW
             : 0;
+        try { assertExclusiveCreateLeaf(lockPath); }
+        catch (error) {
+          exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
+          throw error;
+        }
         try {
           fd = fs.openSync(
             lockPath,

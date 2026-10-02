@@ -98,6 +98,7 @@ import { createCopyPublicationObserver, onCopyPublication, onCopySourceAdmission
 import { writeAllToFile } from "./write-file-handle.js";
 import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { assertNoWindowsPathAlias, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 import { resolvePinnedObservedPathInRoot, type PinnedObservedPath } from "./root-observed-path.js";
 import { registerFileLockSyncRootAdapter } from "./file-lock-sync-root.js";
@@ -1557,6 +1558,7 @@ async function writeFileFallbackUnlocked(
     }
     assertRootIdentityCurrentSync(root);
     assertSyncDirectoryGuard(destinationGuard);
+    assertExclusiveCreateLeaf(tempPath);
     writtenHandle = await fs.open(tempPath, OPEN_WRITE_CREATE_FLAGS, 0o600);
     writtenIdentity = fsSync.fstatSync(writtenHandle.fd, { bigint: true });
     // Preserve the creation mask when no existing destination supplies a mode.
@@ -1692,6 +1694,7 @@ async function writeMissingFileFallback(
         assertFinalSymlinkRejected(targetPath, params.mutationSymlinks !== undefined);
         params.assertBeforeMutation?.();
         if (mutationAdmission) assertSyncDirectoryGuard(parentGuard);
+        assertExclusiveCreateLeaf(targetPath);
         const handle = await fs.open(targetPath, OPEN_WRITE_CREATE_FLAGS, params.mode ?? 0o600).catch((error) => recordExclusiveCreateFailure(error, targetPath));
         writtenHandle = handle;
         created = true;

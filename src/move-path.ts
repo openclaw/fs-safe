@@ -3,6 +3,7 @@ import fsSync, { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { assertSyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { guardedRename } from "./guarded-mutation.js";
@@ -208,6 +209,7 @@ async function copyRegularFilePinned(params: {
     await assertSourceStillMatches(params.from, openedIdentity);
 
     const parentGuard = await createAsyncDirectoryGuard(path.dirname(params.to), { bigint: true });
+    assertExclusiveCreateLeaf(params.to);
     const destinationHandle = await fs.open(
       params.to,
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,

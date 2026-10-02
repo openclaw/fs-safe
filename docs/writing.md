@@ -683,7 +683,9 @@ does not upgrade the returned `containment: "best-effort"` label or provide a
 transaction around later caller writes.
 
 On Windows, fallback creation rejects an observed dangling final symlink before
-opening it, preserving the missing referent. This check does not close the race
+opening it, preserving the missing referent even when it is outside the Root.
+Create-only writes and standalone exclusive creators apply the same preflight;
+exclusive creation treats an existing symlink as a collision. This check does not close the race
 between inspecting the leaf and opening it. An existing contained final symlink
 still follows the omitted-policy behavior described above.
 

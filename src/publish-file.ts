@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import {
   pinDirectory,
   type DirectoryReceipt,
@@ -185,6 +186,7 @@ async function copyPinnedSource(params: {
     }
   }
 
+  assertExclusiveCreateLeaf(params.targetPath);
   const target = await fs.open(params.targetPath, "wx+", 0o600);
   try {
     const createdIdentity = fsSync.fstatSync(target.fd, { bigint: true });

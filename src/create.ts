@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import fs, { type BigIntStats } from "node:fs";
 import fsAsync, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -81,6 +82,7 @@ function createPrivateWindowsFile(selected: CreationPath, options: CreateFileOpt
     }
     assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
     assertStage();
+    assertExclusiveCreateLeaf(stagePath);
     file = ownFileDescriptorSync(fs.openSync(stagePath, fs.constants.O_RDWR | fs.constants.O_CREAT |
       fs.constants.O_EXCL | resolveReadOpenFlags(), 0o600));
     identity = assertCreationFile(file.fd, stagePath);
@@ -137,6 +139,7 @@ export function createFileSync(targetPath: string, options: CreateFileOptions = 
   assertBeforeCreation(selected, permissions, assertion, "file");
   let file: OwnedFileDescriptorSync;
   try {
+    assertExclusiveCreateLeaf(selected.target);
     file = ownFileDescriptorSync(fs.openSync(selected.target, fs.constants.O_RDWR | fs.constants.O_CREAT |
       fs.constants.O_EXCL | resolveReadOpenFlags(), permissions.mode ?? 0o666));
   } catch (error) { throw creationCollision(error); }
@@ -166,6 +169,8 @@ export async function createFileHandle(
   if (process.platform !== "win32" || !permissions.private) {
     const selected = prepareCreationPath(targetPath, admission.expectedParentIdentity);
     assertBeforeCreation(selected, permissions, assertion, "file");
+    try { assertExclusiveCreateLeaf(selected.target); }
+    catch (error) { throw creationCollision(error); }
     const handle = await fsAsync.open(selected.target, fs.constants.O_RDWR | fs.constants.O_CREAT |
       fs.constants.O_EXCL | resolveReadOpenFlags(), permissions.mode ?? 0o666)
       .catch(error => { throw creationCollision(error); });
@@ -349,6 +354,7 @@ async function createPrivateWindowsFileHandle(
     }
     assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
     assertStage();
+    assertExclusiveCreateLeaf(stagePath);
     file = await fsAsync.open(stagePath, fs.constants.O_RDWR | fs.constants.O_CREAT |
       fs.constants.O_EXCL | resolveReadOpenFlags(), 0o600);
     assertStage();

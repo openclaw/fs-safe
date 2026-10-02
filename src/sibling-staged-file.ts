@@ -2,6 +2,7 @@ import { syncFileBestEffort } from "./file-sync.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import {
   type AsyncDirectoryGuard,
   assertDirectoryIdentitySync,
@@ -234,6 +235,7 @@ export async function writeCallbackSibling<T>(params: {
         unregister = isolated.handoff.unregister;
       }
     } else {
+      assertExclusiveCreateLeaf(tempPath);
       result = await Reflect.apply(write, params, [tempPath]);
     }
     assertParent();
