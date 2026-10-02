@@ -96,7 +96,7 @@ drive designators.
 Windows Node exclusive creation can follow a dangling file symlink before an
 opened-descriptor check can reject it. Fallback creators therefore inspect the
 final leaf before opening it, including create-only Root writes, standalone
-creators, lock records, and internal staging files. This preserves an unchanged
+creators, exclusive copy publication, lock records, and internal staging files. This preserves an unchanged
 link and its missing target, including a target outside the intended directory.
 Random staging names and freshly created workspaces reduce the opportunity to
 preplace such a link, but are not a replacement for this check. The preflight is
