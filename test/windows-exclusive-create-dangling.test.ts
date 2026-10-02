@@ -33,7 +33,7 @@ it.each(["async string", "async numeric", "sync string", "sync numeric"])(
 );
 
 describe.each(["auto", "off"] as const)("exclusive creation preserves dangling leaves (%s)", mode => {
-  describe.each(["absolute", "relative"])("%s outside target", kind => {
+  describe.each(["inside", "absolute outside", "relative outside"])("%s target", kind => {
     it.each([
       "root.create", "root.write-exclusive", "root.writeJson-exclusive", "createFileSync", "createFileHandle",
       "lock async", "lock sync", "root lock async", "root lock sync", "pinned create",
@@ -44,9 +44,9 @@ describe.each(["auto", "off"] as const)("exclusive creation preserves dangling l
       const directory = path.join(base, "root", "nested");
       await fs.mkdir(directory, { recursive: true });
       const capability = await root(path.join(base, "root"));
-      const target = path.join(base, "outside");
+      const target = path.join(kind === "inside" ? directory : base, "referent");
       const leaf = path.join(directory, "leaf");
-      const link = await fileSymlinkOrSkip(kind === "absolute" ? target : path.join("..", "..", "outside"), leaf, context);
+      const link = await fileSymlinkOrSkip(kind === "relative outside" ? path.join("..", "..", "referent") : target, leaf, context);
       const attempt = async () => {
         if (operation === "root.create") return await capability.create("nested/leaf", "data");
         if (operation === "root.write-exclusive") return await capability.write("nested/leaf", "data", { overwrite: false, mkdir: true });
