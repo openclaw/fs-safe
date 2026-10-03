@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **macOS entry watch:** open admitted non-directory entries with `O_NONBLOCK`, so a FIFO at a watched name cannot block the process in `openat`.
+
 ## 0.23.0 - 2026-10-02
 
 ### Highlights

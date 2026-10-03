@@ -89,7 +89,8 @@ fn open(spec: &Spec) -> NativeResult<OwnedFd> {
         | match spec.kind.as_str() {
             "symlink" => libc::O_SYMLINK,
             "directory" => libc::O_NOFOLLOW | libc::O_DIRECTORY,
-            _ => libc::O_NOFOLLOW,
+            // A FIFO opened without O_NONBLOCK blocks the hub thread in openat.
+            _ => libc::O_NOFOLLOW | libc::O_NONBLOCK,
         };
     let target = opened(unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) })?;
     matches(&target, spec.identity)?;
@@ -335,5 +336,28 @@ mod tests {
         );
         assert!(queue.watches.is_empty());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn fifo_entry_registration_returns() {
+        let root = std::env::temp_dir().join(format!("fs-safe-kqueue-fifo-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let fifo = root.join("entry");
+        let name = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let pending = Arc::new(Mutex::new(Pending { limit: 32, ..Pending::default() }));
+        let mut queue = Queue::new().unwrap();
+        let root_text = root.to_str().unwrap().to_string();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let registration = entry(std::path::Path::new(&root_text));
+            let opened = queue.configure(1, &root_text, vec![registration], pending);
+            let _ = sender.send(opened.is_ok());
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(true) => {}
+            Ok(false) => panic!("fifo entry registration failed"),
+            Err(error) => panic!("fifo entry registration blocked: {error}"),
+        }
+        fs::remove_dir_all(&root).unwrap();
     }
 }
