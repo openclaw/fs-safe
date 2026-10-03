@@ -882,12 +882,17 @@ pub(crate) fn clone_file_exclusive_with_sync(
         rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd))
     };
     if let Err(error) = cloned {
+        // Container seccomp profiles deny FICLONE with EPERM before the
+        // filesystem sees it. Target creation has already succeeded here, so
+        // only the clone ioctl is reclassified; the ordinary copy recreates
+        // the target through the same exclusive, guarded path.
         let error = if matches!(
             error,
             rustix::io::Errno::NOTTY
                 | rustix::io::Errno::INVAL
                 | rustix::io::Errno::XDEV
                 | rustix::io::Errno::NOSYS
+                | rustix::io::Errno::PERM
         ) || error == rustix::io::Errno::NOTSUP
             || error == rustix::io::Errno::OPNOTSUPP
         {
