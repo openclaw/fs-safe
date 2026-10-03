@@ -428,7 +428,8 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
         : await fs.copyFile(copy.sourcePath, probe, fsSync.constants.COPYFILE_FICLONE_FORCE).then(
         () => true,
         error => {
-          expect(["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL"]).toContain(error.code);
+          // Container seccomp policies deny FICLONE with EPERM.
+          expect(["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL", "EPERM"]).toContain(error.code);
           return false;
         },
       );

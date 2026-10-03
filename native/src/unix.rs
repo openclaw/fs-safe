@@ -868,6 +868,29 @@ pub fn clone_file_exclusive(
     clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true)
 }
 
+// FICLONE runs before any payload exists, against a target this call just
+// created exclusively, so the kernel's own EPERM (immutable or append-only
+// destination) cannot apply. EPERM here comes from a seccomp or LSM policy
+// denying the ioctl, as container runtimes do; an ordinary copy still writes
+// through the same descriptor under that policy, so it stays fail-closed.
+#[cfg(target_os = "linux")]
+fn ficlone_error(error: rustix::io::Errno) -> napi::Error<String> {
+    if matches!(
+        error,
+        rustix::io::Errno::NOTTY
+            | rustix::io::Errno::INVAL
+            | rustix::io::Errno::XDEV
+            | rustix::io::Errno::NOSYS
+            | rustix::io::Errno::PERM
+    ) || error == rustix::io::Errno::NOTSUP
+        || error == rustix::io::Errno::OPNOTSUPP
+    {
+        native_error("ENOTSUP", format!("FICLONE is unavailable: {error}"))
+    } else {
+        os_error(error, "FICLONE")
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn clone_file_exclusive_with_sync(
     source_fd: i32,
@@ -882,19 +905,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
         rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd))
     };
     if let Err(error) = cloned {
-        let error = if matches!(
-            error,
-            rustix::io::Errno::NOTTY
-                | rustix::io::Errno::INVAL
-                | rustix::io::Errno::XDEV
-                | rustix::io::Errno::NOSYS
-        ) || error == rustix::io::Errno::NOTSUP
-            || error == rustix::io::Errno::OPNOTSUPP
-        {
-            native_error("ENOTSUP", format!("FICLONE is unavailable: {error}"))
-        } else {
-            os_error(error, "FICLONE")
-        };
+        let error = ficlone_error(error);
         return Err(with_cleanup_error(
             error,
             remove_created_target_checked(target_root_fd, target_rel_path, &target),
@@ -1588,6 +1599,21 @@ mod tests {
         let path = temp_path(&format!("native-{label}"));
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ficlone_policy_denials_select_ordinary_copy() {
+        for unavailable in [
+            rustix::io::Errno::PERM,
+            rustix::io::Errno::OPNOTSUPP,
+            rustix::io::Errno::XDEV,
+        ] {
+            assert_eq!(ficlone_error(unavailable).status, "ENOTSUP");
+        }
+        for failure in [rustix::io::Errno::IO, rustix::io::Errno::BADF] {
+            assert_ne!(ficlone_error(failure).status, "ENOTSUP");
+        }
     }
 
     #[test]
