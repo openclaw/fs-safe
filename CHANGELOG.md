@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Linux clone fallback in containers:** `copyIn({ clone: "auto" })` and other native file copies now fall back to ordinary copying when a container seccomp profile denies `FICLONE` with `EPERM`, instead of failing with `helper-failed`; `clone: "always"` reports `unsupported-platform`. Directory `copyTree` cloning is unchanged. ([#829](https://github.com/openclaw/fs-safe/pull/829))
+
 ## 0.23.0 - 2026-10-02
 
 ### Highlights
