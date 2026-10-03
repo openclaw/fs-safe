@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Linux clone fallback in containers:** `clone: "auto"` file copies now fall back to an ordinary copy when a seccomp or LSM policy denies `FICLONE` with `EPERM`, as LXC containers do on ext4, instead of failing with `helper-failed`. `clone: "always"` still reports the clone as unavailable.
+
 ## 0.23.0 - 2026-10-02
 
 ### Highlights
