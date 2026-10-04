@@ -37,10 +37,10 @@ export function isAlreadyExistsError(error: unknown): boolean {
   return hasNodeErrorCode(error, "EEXIST") || /File exists|EEXIST/i.test(String(error));
 }
 
-function descriptorExhaustion(error: unknown): FsSafeError | undefined {
+function resourceExhaustion(error: unknown): FsSafeError | undefined {
   const pending: unknown[] = [error];
   let details: FsSafeErrorDetails | undefined;
-  let code: "EMFILE" | "ENFILE" | undefined;
+  let code: "EMFILE" | "ENFILE" | "ENOSPC" | undefined;
   const seen = new Set<Error>();
   while (pending.length) {
     const current = pending.pop();
@@ -50,22 +50,27 @@ function descriptorExhaustion(error: unknown): FsSafeError | undefined {
     if (current instanceof FsSafeError && current.code !== "helper-failed" && current.code !== "not-removable") return;
     const diagnostic = current as Error & { code?: unknown; error?: unknown; suppressed?: unknown };
     if (current instanceof FsSafeError && (!details || current.details?.cleanup)) details = current.details ?? details;
-    if (diagnostic.code === "EMFILE" || diagnostic.code === "ENFILE") code ??= diagnostic.code;
+    if (diagnostic.code === "EMFILE" || diagnostic.code === "ENFILE") {
+      if (!code || code === "ENOSPC") code = diagnostic.code;
+    } else if (diagnostic.code === "ENOSPC") code ??= diagnostic.code;
     if (diagnostic.name === "SuppressedError") pending.push(diagnostic.suppressed, diagnostic.error);
     if (current instanceof AggregateError) pending.push(...current.errors);
     pending.push(current.cause);
   }
   if (!code) return;
+  // Disk-space diagnostics retain the published direct-write code and already-classified errors.
+  if (code === "ENOSPC" && error instanceof FsSafeError) return;
   const cleanup = details?.cleanup as { status?: unknown } | undefined;
   const publication = details?.publication as { status?: unknown } | undefined;
   const preserved = cleanup?.status === "preserved" && publication?.status === "indeterminate";
-  return new FsSafeError("helper-failed", `filesystem write failed: too many open files (${code})${
+  const message = code === "ENOSPC" ? PINNED_WRITE_ERRNO_MESSAGES.get(code) : "filesystem write failed: too many open files";
+  return new FsSafeError(code === "ENOSPC" ? "invalid-path" : "helper-failed", `${message} (${code})${
     preserved ? "; publication outcome is indeterminate; staged file preserved" : ""
   }`, { cause: error, details });
 }
 
 export function normalizePinnedWriteError(error: unknown): Error {
-  const exhausted = descriptorExhaustion(error);
+  const exhausted = resourceExhaustion(error);
   if (exhausted) return exhausted;
   if (error instanceof FsSafeError) {
     return error;

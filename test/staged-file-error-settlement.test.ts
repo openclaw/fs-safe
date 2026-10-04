@@ -30,6 +30,45 @@ function descriptorCount(): number | undefined {
   return posix ? fsSync.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length : undefined;
 }
 
+it.skipIf(!posix || !native).each(["before", "after"] as const)(
+  "reports disk exhaustion through Root.copyIn disposal %s rename dispatch", async timing => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("fs-safe-copy-disk-full-");
+    const source = path.join(directory, "source");
+    await fs.writeFile(source, "complete source bytes");
+    const scoped = await root(directory);
+    const errno = Object.assign(new Error("private native path"), { code: "ENOSPC" });
+    const remove = vi.fn(native!.removeStagedFile);
+    let temporary = "";
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      removeStagedFile: remove,
+      renameNoReplace(...args) {
+        temporary = args[1];
+        if (timing === "after") native!.renameNoReplace(...args);
+        throw errno;
+      },
+    }));
+    const before = descriptorCount();
+    const { error } = await rejection(scoped.copyIn("target", source, { overwrite: false }));
+    expect(error).toMatchObject({
+      code: "invalid-path", category: "policy",
+      message: "no space left on device (ENOSPC); publication outcome is indeterminate; staged file preserved",
+      cause: { name: "SuppressedError", suppressed: { cause: errno } },
+      details: {
+        publication: { status: "indeterminate", basename: "target", overwrite: false },
+        cleanup: { status: "preserved", resources: "closed" },
+      },
+    });
+    expect(remove).not.toHaveBeenCalled();
+    expect(descriptorCount()).toBe(before);
+    const preserved = timing === "before" ? temporary : "target";
+    expect((await fs.readdir(directory)).sort()).toEqual(["source", preserved].sort());
+    expect(await fs.readFile(path.join(directory, preserved), "utf8")).toBe("complete source bytes");
+    expect(await fs.readFile(source, "utf8")).toBe("complete source bytes");
+  },
+);
+
 describe.each(["off", "require"] as const)("Root.copyIn hostile publication errors with native %s", nativeMode => {
   it.skipIf(nativeMode === "require" && !native).each(
     hostileErrors.flatMap(error => [false, true].map(overwrite => ({ ...error, overwrite }))),

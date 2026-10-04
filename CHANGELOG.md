@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve disk-full (`ENOSPC`) diagnostics and cleanup receipts through combined write and disposal failures instead of reporting a misleading file-type error.
+
 ## 0.23.0 - 2026-10-02
 
 ### Highlights

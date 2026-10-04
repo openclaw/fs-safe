@@ -45,6 +45,11 @@ failures with messages such as `permission denied (EACCES)` or
 code and `policy` category for compatibility, along with the original `cause`;
 they do not expose native message text or paths. Already-classified `FsSafeError`
 instances and missing-path errors keep their existing classification.
+Disk-space diagnostics also survive combined publication and disposal failures,
+including `SuppressedError` and `AggregateError`. They retain the original cause
+graph and cleanup/publication receipts, without changing the compatibility code
+or category. An uncertain native rename still reports indeterminate publication
+and a preserved stage; `ENOSPC` does not prove that publication never happened.
 
 Descriptor exhaustion during writes uses `helper-failed` / `operational` and
 names `EMFILE` (process descriptor limit) or `ENFILE` (system descriptor limit)
