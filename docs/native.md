@@ -141,6 +141,8 @@ errno. This is a definite non-publication, not an uncertain remote rename.
 Completed streams are replayed from the retained stage descriptor, without
 calling their producer again. Unsupported capability is cached by the retained
 parent's exact device number in a process-local cache bounded to 128 devices.
+Only sibling publication/quarantine failures populate that cache; generic
+cross-parent moves can also reject directory ancestry after a source swap.
 Other devices and replacement writes retain their native route. `require`
 cleans the stage and reports `helper-unavailable`, naming the operation and
 `renameat2 RENAME_NOREPLACE`. Failed cleanup prevents retry.

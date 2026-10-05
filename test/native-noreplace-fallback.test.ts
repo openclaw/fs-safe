@@ -105,6 +105,38 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
     expect(await fs.readdir(directory)).toEqual(["target"]);
   });
 
+  it("does not cache a cross-parent move's directory-ancestry EINVAL after a source swap", async () => {
+    const directory = await tempRoot("fs-safe-noreplace-move-race-");
+    const source = path.join(directory, "source");
+    const saved = path.join(directory, "saved");
+    const destination = path.join(directory, "destination");
+    const nested = path.join(source, "nested");
+    await fs.writeFile(source, "source");
+    await fs.mkdir(destination);
+    const rename = vi.fn<NonNullable<typeof native>["renameNoReplace"]>((...args) => {
+      if (args[1] !== "source") return native!.renameNoReplace(...args);
+      // Model a namespace swap in the final check-to-syscall gap: the held
+      // destination parent becomes a descendant of the substituted source.
+      fsSync.renameSync(source, saved);
+      fsSync.mkdirSync(source);
+      fsSync.renameSync(destination, nested);
+      try { native!.renameNoReplace(...args); } finally {
+        fsSync.renameSync(nested, destination);
+        fsSync.rmdirSync(source);
+        fsSync.renameSync(saved, source);
+      }
+    });
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: rename }));
+    const scoped = await root(directory);
+    await expect(scoped.move("source", "destination/target")).rejects.toMatchObject({ code: "helper-unavailable" });
+    configureFsSafeNative({ mode: "require" });
+    await scoped.create("target", "native still available");
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(await scoped.readText("target")).toBe("native still available");
+    expect(await scoped.readText("source")).toBe("source");
+    expect(await fs.readdir(destination)).toEqual([]);
+  });
+
   it.skipIf(process.platform !== "linux" || !fsSync.existsSync("/dev/shm"))("keeps tmpfs native after another device rejects no-replace", async () => {
     const directory = await tempRoot("fs-safe-noreplace-device-");
     const tmpfs = await fs.mkdtemp("/dev/shm/fs-safe-noreplace-");

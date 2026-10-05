@@ -27,7 +27,7 @@ import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { isNoReplaceUnavailable, noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-noreplace.js";
+import { noReplaceUnavailable } from "./native-noreplace.js";
 
 function nativeParentRelativePath(rootReal: string, parentPath: string): string {
   const relative = path.relative(rootReal, parentPath);
@@ -213,13 +213,9 @@ export async function movePathNative(
       if (isAlreadyExistsError(error) || (!overwrite && (error as NodeJS.ErrnoException | undefined)?.code === "ENOTEMPTY")) {
         throw new FsSafeError("already-exists", "destination exists", errorCauseOptions(error));
       }
-      const normalized = overwrite ? normalizeMoveError(error) : normalizeRenameNoReplaceError(error);
-      // No-replace source admission above excludes directories, so EINVAL
-      // cannot be an invalid directory-ancestry move here.
-      if (!overwrite && isNoReplaceUnavailable(normalized)) {
-        rememberNoReplaceUnavailable(binding, targetParent.fd, normalized);
-      }
-      throw normalized;
+      // Cross-parent source swaps can produce directory-ancestry EINVAL.
+      // Fail closed here without poisoning the sibling-publication device cache.
+      throw overwrite ? normalizeMoveError(error) : normalizeRenameNoReplaceError(error);
     }
     try {
       for (const admission of parentAdmissions) await assertAsyncDirectoryGuard(admission.guard);
