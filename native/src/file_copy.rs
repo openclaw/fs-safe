@@ -637,6 +637,94 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn deny_ficlone_with_eperm() {
+        // Mirror container seccomp profiles: ioctl(FICLONE) fails with EPERM
+        // before any filesystem sees it; every other syscall is allowed.
+        let request = std::mem::offset_of!(libc::seccomp_data, args) + 8;
+        let request = if cfg!(target_endian = "little") {
+            request
+        } else {
+            request + 4
+        };
+        let statement = |code: u32, k: u32| libc::sock_filter {
+            code: code as u16,
+            jt: 0,
+            jf: 0,
+            k,
+        };
+        let jump = |k: u32, jt: u8, jf: u8| libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt,
+            jf,
+            k,
+        };
+        let load = libc::BPF_LD | libc::BPF_W | libc::BPF_ABS;
+        let mut filter = [
+            statement(load, std::mem::offset_of!(libc::seccomp_data, nr) as u32),
+            jump(libc::SYS_ioctl as u32, 0, 3),
+            statement(load, request as u32),
+            jump(libc::FICLONE as u32, 0, 1),
+            statement(
+                libc::BPF_RET | libc::BPF_K,
+                libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
+            ),
+            statement(libc::BPF_RET | libc::BPF_K, libc::SECCOMP_RET_ALLOW),
+        ];
+        let program = libc::sock_fprog {
+            len: filter.len() as u16,
+            filter: filter.as_mut_ptr(),
+        };
+        unsafe {
+            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+            assert_eq!(
+                libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program),
+                0
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn seccomp_denied_ficlone_retries_ordinary_copy_only_in_auto_mode() {
+        isolated_admission_test(
+            "file_copy::tests::seccomp_denied_ficlone_retries_ordinary_copy_only_in_auto_mode",
+            || {
+                deny_ficlone_with_eperm();
+                for mode in [CloneMode::Auto, CloneMode::Always] {
+                    let fixture = Fixture::new();
+                    let probe = File::create(fixture.path.join("probe")).unwrap();
+                    assert_eq!(
+                        rustix::fs::ioctl_ficlone(&probe, &fixture.source).err(),
+                        Some(rustix::io::Errno::PERM)
+                    );
+                    drop(probe);
+                    fs::remove_file(fixture.path.join("probe")).unwrap();
+                    let result = fixture.task(mode, u64::MAX).copy();
+                    if mode == CloneMode::Auto {
+                        let created = result.unwrap();
+                        assert!(created.error.is_none());
+                        assert_ne!(created.method, "clone");
+                        assert_eq!(
+                            fs::read(fixture.path.join("stage")).unwrap(),
+                            b"copy source"
+                        );
+                        drop(created);
+                    } else {
+                        let error = result.err().unwrap();
+                        assert_eq!(error.status, "ENOTSUP");
+                        assert!(error.reason.contains("FICLONE is unavailable"));
+                    }
+                    assert!(!fixture.path.join("stage").exists());
+                    assert_eq!(
+                        fs::read(fixture.path.join("source")).unwrap(),
+                        b"copy source"
+                    );
+                }
+            },
+        );
+    }
+
     #[test]
     fn rejects_retired_clone_mode_before_starting_work() {
         let error = copy_file_exclusive(

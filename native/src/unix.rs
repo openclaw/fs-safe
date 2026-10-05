@@ -882,12 +882,18 @@ pub(crate) fn clone_file_exclusive_with_sync(
         rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd))
     };
     if let Err(error) = cloned {
+        // O_EXCL just created this target, so FICLONE's immutable/append-only
+        // destination EPERM cannot apply. Seccomp/LSM can deny the ioctl instead;
+        // ordinary copying retries through the same guarded exclusive path and
+        // still fails closed on write denial. Unlike openat2 EPERM, this fallback
+        // does not weaken path resolution; only clone availability changes.
         let error = if matches!(
             error,
             rustix::io::Errno::NOTTY
                 | rustix::io::Errno::INVAL
                 | rustix::io::Errno::XDEV
                 | rustix::io::Errno::NOSYS
+                | rustix::io::Errno::PERM
         ) || error == rustix::io::Errno::NOTSUP
             || error == rustix::io::Errno::OPNOTSUPP
         {
