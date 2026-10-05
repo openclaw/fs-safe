@@ -1,10 +1,27 @@
 import type { FileHandle } from "node:fs/promises";
+import { readSync } from "node:fs";
 import { types } from "node:util";
+
 import { snapshotByteView } from "./byte-view.js";
 import { writeCopyFileToFd } from "./copy-file-input.js";
 import { FsSafeError } from "./errors.js";
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { writeAllToFile } from "./write-file-handle.js";
+
+/** Replay a consumed stream from an owned, readable stage descriptor. */
+export function replayPinnedInput(fd: number, input: PinnedWriteInput): PinnedWriteInput {
+  if (input.kind !== "stream") return input;
+  return { kind: "stream", stageBeforePublish: true, stream: (async function* () {
+    let position = 0;
+    const buffer = Buffer.alloc(64 * 1024);
+    for (;;) {
+      const bytes = readSync(fd, buffer, 0, buffer.length, position);
+      if (!bytes) return;
+      position += bytes;
+      yield buffer.subarray(0, bytes);
+    }
+  })() };
+}
 
 const isUint8Array = types.isUint8Array;
 

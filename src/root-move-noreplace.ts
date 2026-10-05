@@ -27,6 +27,7 @@ import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { noReplaceUnavailable } from "./native-noreplace.js";
 
 function nativeParentRelativePath(rootReal: string, parentPath: string): string {
   const relative = path.relative(rootReal, parentPath);
@@ -73,14 +74,7 @@ function normalizeMoveError(error: unknown): unknown {
 }
 
 function normalizeRenameNoReplaceError(error: unknown): unknown {
-  if ((error as NodeJS.ErrnoException | undefined)?.code === "EINVAL") {
-    return new FsSafeError(
-      "helper-unavailable",
-      "native no-replace move is unavailable on this filesystem",
-      errorCauseOptions(error),
-    );
-  }
-  return normalizeMoveError(error);
+  return noReplaceUnavailable(error, "move", true) ?? normalizeMoveError(error);
 }
 
 export function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T, overwrite = false): T {
@@ -219,6 +213,8 @@ export async function movePathNative(
       if (isAlreadyExistsError(error) || (!overwrite && (error as NodeJS.ErrnoException | undefined)?.code === "ENOTEMPTY")) {
         throw new FsSafeError("already-exists", "destination exists", errorCauseOptions(error));
       }
+      // Cross-parent source swaps can produce directory-ancestry EINVAL.
+      // Fail closed here without poisoning the sibling-publication device cache.
       throw overwrite ? normalizeMoveError(error) : normalizeRenameNoReplaceError(error);
     }
     try {

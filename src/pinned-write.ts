@@ -124,7 +124,8 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   }
   const native = getNativeBinding();
   if (native) {
-    return await runPinnedWriteNative(native, normalizedParams);
+    return await runPinnedWriteNative(native, normalizedParams,
+      input => runPinnedWriteFallback({ ...normalizedParams, input }));
   }
   return await runPinnedWriteFallback(normalizedParams);
 }

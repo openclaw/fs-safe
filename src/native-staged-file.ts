@@ -10,7 +10,7 @@ import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult, isMutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
-import { writePinnedInput } from "./pinned-write-input.js";
+import { replayPinnedInput, writePinnedInput } from "./pinned-write-input.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write-types.js";
 import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
@@ -25,6 +25,8 @@ import type {
 } from "./staged-file-types.js";
 import { classifyNativeRenameFailure } from "./native-rename-outcome.js";
 import { createStagedFileReceipt, stagedFailure } from "./staged-file-settlement.js";
+import { noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-noreplace.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
@@ -82,6 +84,9 @@ class NativeStagedFile implements StagedFile {
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
   #rejectFinalSymlink = false;
+  #unsupportedNoReplace?: FsSafeError;
+  #fallbackCleanup?: StagedFileCleanupReceipt["status"];
+  #fallbackCleanupError?: { error: unknown };
 
   constructor(owner: NativeStageOwner) {
     const name = owner.name ?? `.fs-safe-${randomUUID()}.tmp`;
@@ -122,6 +127,7 @@ class NativeStagedFile implements StagedFile {
     directory: StagedFileReceipt["directory"],
     params: PinnedWriteParams,
     parentGuard: AnyAsyncDirectoryGuard,
+    fallback: (input: PinnedWriteInput) => Promise<FileIdentityStat>,
   ): Promise<FileIdentityStat> {
     const exclusive = params.overwrite === false && params.input.kind === "buffer" && params.input.stageBeforePublish === false;
     // This owner never escapes. Only the internal verifier borrows its fd;
@@ -140,9 +146,29 @@ class NativeStagedFile implements StagedFile {
       params.assertBeforeMutation?.();
       if (staged.#verifyMode) staged.#assertCurrent();
     }
-    const published = exclusive
-      ? staged.#completePublication(params.basename, false, params.onPublished)
-      : await staged.publish(params.basename, { overwrite: params.overwrite !== false }, params.onPublished);
+    let published: PublishedFileReceipt;
+    try {
+      published = exclusive
+        ? staged.#completePublication(params.basename, false, params.onPublished)
+        : await staged.publish(params.basename, { overwrite: params.overwrite !== false }, params.onPublished);
+    } catch (error) {
+      if (!staged.#unsupportedNoReplace || isFsSafeNativeRequired() ||
+        (params.input.kind === "file" && params.input.clone === "always")) throw error;
+      // Remove only our identity-known stage before re-admitting the JS write.
+      // Keep its descriptor alive to replay a one-shot stream in bounded chunks.
+      staged.#fallbackCleanup = "failed";
+      let removed: StagedFileCleanupReceipt["status"];
+      try {
+        removed = binding.removeStagedFile(parentFd, staged.#owner.name, staged.#file());
+        staged.#fallbackCleanup = removed;
+      } catch (cleanupError) {
+        staged.#fallbackCleanupError = { error: cleanupError };
+        throw error;
+      }
+      if (removed !== "removed" && removed !== "name-absent") throw error;
+      rememberNoReplaceUnavailable(binding, parentFd, staged.#unsupportedNoReplace);
+      return await fallback(replayPinnedInput(staged.#file(), params.input));
+    }
     const identity = published.staged.identity;
     try {
       await params.verifyPublished?.(staged.#file(), identity, parentGuard);
@@ -312,6 +338,15 @@ class NativeStagedFile implements StagedFile {
       } catch (error) {
         // Record before inspecting metadata, whose getters can reenter cleanup.
         state.publication = Object.freeze({ status: "indeterminate", basename, overwrite });
+        // Linux VFS and rename(2): unsupported flags return EINVAL; ENOSYS
+        // means no syscall. A regular file renamed to a distinct sibling cannot
+        // hit the directory-into-itself EINVAL case. Nothing was published.
+        const unavailable = !overwrite ? noReplaceUnavailable(error, "publication", true) : undefined;
+        if (unavailable && this.#state === state && state.status === "open") {
+          state.publication = NOT_PUBLISHED;
+          this.#unsupportedNoReplace = unavailable;
+          throw unavailable;
+        }
         // Only explicit pre-dispatch provenance can rule out a committed rename.
         if (classifyNativeRenameFailure(error) === "uncommitted") {
           state.publication = NOT_PUBLISHED;
@@ -363,6 +398,9 @@ class NativeStagedFile implements StagedFile {
     const errors: unknown[] = [];
     if (state.publication.status === "indeterminate") {
       outcome = "preserved";
+    } else if (this.#fallbackCleanup) {
+      outcome = this.#fallbackCleanup;
+      if (this.#fallbackCleanupError) errors.push(this.#fallbackCleanupError.error);
     } else if (state.publication.status === "not-published" && state.fileFd !== undefined) {
       try {
         outcome = this.#owner.binding.removeStagedFile(this.#owner.parentFd, this.#owner.name, state.fileFd);

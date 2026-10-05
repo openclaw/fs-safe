@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **gVisor file creation:** fall back safely when the filesystem rejects native no-replace publication, clean unpublished stages, and report the missing capability in native-required mode. ([#834](https://github.com/openclaw/fs-safe/pull/834)) Thanks @vishnukool.
 - **ZIP collision checks:** reject directory and file names that differ only by case, Unicode normalization, or a trailing separator before extraction or bounded reads. ([#832](https://github.com/openclaw/fs-safe/pull/832)) Thanks @SebTardif.
 - **macOS entry watch:** prevent a FIFO at a watched name from blocking every watcher in the process. ([#830](https://github.com/openclaw/fs-safe/pull/830)) Thanks @SebTardif.
 - Preserve disk-full (`ENOSPC`) diagnostics and cleanup receipts through combined write and disposal failures instead of reporting a misleading file-type error.
