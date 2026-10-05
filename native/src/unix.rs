@@ -884,6 +884,24 @@ pub fn clone_file_exclusive(
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) fn ficlone_unavailable(error: rustix::io::Errno) -> bool {
+    // Only call for FICLONE on a target just created with O_EXCL: its own
+    // immutable/append-only destination EPERM cannot apply. Seccomp/LSM can
+    // deny the ioctl instead. Byte-copy retries still use guarded exclusive
+    // creation and fail closed on write denial; unlike openat2 EPERM, this
+    // changes clone availability without weakening path resolution.
+    matches!(
+        error,
+        rustix::io::Errno::NOTTY
+            | rustix::io::Errno::INVAL
+            | rustix::io::Errno::XDEV
+            | rustix::io::Errno::NOSYS
+            | rustix::io::Errno::PERM
+    ) || error == rustix::io::Errno::NOTSUP
+        || error == rustix::io::Errno::OPNOTSUPP
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn clone_file_exclusive_with_sync(
     source_fd: i32,
     target_root_fd: i32,
@@ -897,21 +915,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
         rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd))
     };
     if let Err(error) = cloned {
-        // O_EXCL just created this target, so FICLONE's immutable/append-only
-        // destination EPERM cannot apply. Seccomp/LSM can deny the ioctl instead;
-        // ordinary copying retries through the same guarded exclusive path and
-        // still fails closed on write denial. Unlike openat2 EPERM, this fallback
-        // does not weaken path resolution; only clone availability changes.
-        let error = if matches!(
-            error,
-            rustix::io::Errno::NOTTY
-                | rustix::io::Errno::INVAL
-                | rustix::io::Errno::XDEV
-                | rustix::io::Errno::NOSYS
-                | rustix::io::Errno::PERM
-        ) || error == rustix::io::Errno::NOTSUP
-            || error == rustix::io::Errno::OPNOTSUPP
-        {
+        let error = if ficlone_unavailable(error) {
             native_error("ENOTSUP", format!("FICLONE is unavailable: {error}"))
         } else {
             os_error(error, "FICLONE")

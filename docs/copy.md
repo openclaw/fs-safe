@@ -58,7 +58,7 @@ Apple [strongly discourages general directory cloning](https://github.com/apple-
 | `"always"`         | Require native cloning. Unsupported operations fail without a byte-copy fallback.                                                            |
 | `"never"`          | Copy regular file bytes using reads and writes. No native cloning or copy-offload calls. Works without a native binding.                     |
 
-Automatic copying does not recover from permission errors, I/O errors, cancellation, or rejected source contents such as ReFS named streams. A failed clone must leave the destination absent before fallback can create it; otherwise copying fails rather than merging into a partial tree.
+On Linux XFS and ZFS, `FICLONE` capability failures (including an ioctl denied by container seccomp or LSM policy with `EPERM`) select byte copying in `"auto"` mode; `"always"` reports `unsupported-platform`. Automatic copying does not recover from ordinary file-access permission errors, I/O errors, cancellation, or rejected source contents such as ReFS named streams. Native reflink workers settle and remove partial output before returning a clone failure. A failed clone must leave the destination absent before fallback can create it; otherwise copying fails rather than merging into a partial tree.
 
 `concurrency` accepts integers from 1 through 32 and bounds active file copies. ReFS, XFS, and ZFS cloning default to 16 workers. Byte copying defaults to four concurrent files on Windows and one elsewhere. Btrfs uses its bulk operation. APFS uses a bulk clone followed by native directory-entry enumeration to restore directory timestamps; known regular files and symbolic links need no additional stat or open.
 

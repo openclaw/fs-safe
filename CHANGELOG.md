@@ -10,6 +10,8 @@
 - Preserve disk-full (`ENOSPC`) diagnostics and cleanup receipts through combined write and disposal failures instead of reporting a misleading file-type error.
 - **Linux clone fallback:** copies with `clone: "auto"` fall back to guarded byte copying when container seccomp or LSM policy denies `FICLONE`; `clone: "always"` reports `unsupported-platform` and removes its stage. ([#829](https://github.com/openclaw/fs-safe/pull/829)) Thanks @Mohl and @foxsky.
 
+- **Linux tree clone fallback:** `copyTree` with `clone: "auto"` copies bytes when XFS/ZFS file reflinks are unavailable or denied by container policy; `"always"` reports `unsupported-platform` after partial-tree cleanup. ([#835](https://github.com/openclaw/fs-safe/pull/835))
+
 ## 0.23.0 - 2026-10-02
 
 ### Highlights
