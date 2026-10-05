@@ -1,3 +1,4 @@
+import { noReplaceUnavailable } from "./native-noreplace.js";
 import { createHash } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
@@ -352,12 +353,16 @@ export async function publishFileExclusive(params: {
 
     if (strategy === "rename-noreplace") {
       const binding = requireNativeBinding();
-      binding.renameNoReplace(
-        sourceNativeParent!.handle.fd,
-        sourceNativeParent!.basename,
-        targetNativeParent!.handle.fd,
-        targetNativeParent!.basename,
-      );
+      try {
+        binding.renameNoReplace(
+          sourceNativeParent!.handle.fd,
+          sourceNativeParent!.basename,
+          targetNativeParent!.handle.fd,
+          targetNativeParent!.basename,
+        );
+      } catch (error) {
+        throw noReplaceUnavailable(error, "file publication", true) ?? error;
+      }
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;

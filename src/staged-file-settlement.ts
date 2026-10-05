@@ -1,5 +1,6 @@
 import type { BigIntStats } from "node:fs";
 import { FsSafeError } from "./errors.js";
+import { noReplaceUnavailable } from "./native-noreplace.js";
 import type { StagedSymlinkFailureDetails } from "./staged-symlink-types.js";
 import type {
   StagedFileCleanupReceipt,
@@ -29,6 +30,7 @@ export function stagedFailure(
   error: unknown,
   details: StagedFileFailureDetails | StagedSymlinkFailureDetails,
 ): FsSafeError {
+  error = noReplaceUnavailable(error, `${kind} publication`) ?? error;
   let code: FsSafeError["code"] = "helper-failed";
   try {
     code = error instanceof FsSafeError ? error.code
@@ -36,7 +38,8 @@ export function stagedFailure(
   } catch {
     // Uninspectable error metadata must not interrupt terminal settlement.
   }
-  return new FsSafeError(code, `staged ${kind} ${details.phase} failed`, { cause: error, details });
+  return new FsSafeError(code, code === "helper-unavailable" && error instanceof FsSafeError
+    ? error.message : `staged ${kind} ${details.phase} failed`, { cause: error, details });
 }
 
 /** Finish owned cleanup and every close before surfacing publication evidence. */

@@ -12,6 +12,8 @@ import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
+import { cachedNoReplaceDevice, isNoReplaceUnavailable } from "./native-noreplace.js";
 import {
   handoffPrivateProducerFile,
   type PrivateProducerHandoff,
@@ -138,12 +140,19 @@ async function writeIsolatedProducer<T>(params: {
     const result = await Reflect.apply(write, writeReceiver, [producerPath]);
     assertCurrent();
     if (native) {
-      await targetRoot.move(
-        path.relative(targetRoot.rootReal, producerPath),
-        path.basename(tempPath),
-        { assertBeforeMutation: assertCurrent },
-      );
-      return { cleanupWorkspace, result };
+      try {
+        const cached = cachedNoReplaceDevice(native, parentGuard.stat.dev, "producer handoff");
+        if (cached) throw cached;
+        await targetRoot.move(
+          path.relative(targetRoot.rootReal, producerPath),
+          path.basename(tempPath),
+          { assertBeforeMutation: assertCurrent },
+        );
+        return { cleanupWorkspace, result };
+      } catch (error) {
+        if (isFsSafeNativeRequired() || !isNoReplaceUnavailable(error)) throw error;
+        assertCurrent();
+      }
     }
     const handoff = await handoffPrivateProducerFile({
       sourcePath: producerPath,
@@ -157,10 +166,12 @@ async function writeIsolatedProducer<T>(params: {
     try {
       await cleanupWorkspace();
     } catch (cleanupError) {
-      throw new AggregateError(
+      const combined = new AggregateError(
         [error, cleanupError],
         "isolated producer operation and workspace cleanup failed",
       );
+      if (isNoReplaceUnavailable(error)) throw new FsSafeError(error.code, error.message, { cause: combined });
+      throw combined;
     }
     throw error;
   }

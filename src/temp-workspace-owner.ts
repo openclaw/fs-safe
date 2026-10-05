@@ -15,6 +15,8 @@ import {
   type RetainedDirectory,
 } from "./temp-workspace-descriptor.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
+import { cachedNoReplaceUnavailable, noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-noreplace.js";
 
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
@@ -120,6 +122,10 @@ export class TempWorkspaceCleanupCapability {
   get canRemoveOwnedTree(): boolean {
     return (this.#phase === "ready" || this.#phase === "sealed") &&
       this.#ownedTreeRemovalAvailable;
+  }
+
+  get canUseCompatibleCleanup(): boolean {
+    return this.#safety === "compatible" && !isFsSafeNativeRequired();
   }
 
   prepareChildCreation(): void {
@@ -294,15 +300,23 @@ export class TempWorkspaceCleanupOwner {
       }
       const name = `.fs-safe-workspace-cleanup-${randomUUID()}`;
       const quarantinePath = path.join(parent.receipt.path, name);
-      const nativeRemoval = this.#capability.canRemoveOwnedTree && this.#directory !== undefined;
+      let nativeRemoval = this.#capability.canRemoveOwnedTree && this.#directory !== undefined;
       if (nativeRemoval) {
-        this.#capability.binding!.renameNoReplace(
-          parent.fd,
-          path.basename(this.#dir),
-          parent.fd,
-          name,
-        );
-      } else {
+        const binding = this.#capability.binding!;
+        try {
+          const cached = cachedNoReplaceUnavailable(binding, parent.fd, "workspace quarantine");
+          if (cached) throw cached;
+          binding.renameNoReplace(parent.fd, path.basename(this.#dir), parent.fd, name);
+        } catch (error) {
+          const unavailable = error instanceof FsSafeError && error.code === "helper-unavailable"
+            ? error : noReplaceUnavailable(error, "workspace quarantine", true);
+          if (!unavailable) throw error;
+          rememberNoReplaceUnavailable(binding, parent.fd, unavailable);
+          if (!this.#capability.canUseCompatibleCleanup) throw unavailable;
+          nativeRemoval = false;
+        }
+      }
+      if (!nativeRemoval) {
         // The admitted receipt is exact and descriptor-associated. Reuse it as
         // the pre/post parent fence instead of layering a numeric guard over it.
         this.#capability.assertCurrent();
@@ -316,7 +330,8 @@ export class TempWorkspaceCleanupOwner {
         return "indeterminate";
       }
       return { name, path: quarantinePath, nativeRemoval };
-    } catch {
+    } catch (error) {
+      if (error instanceof FsSafeError && error.code === "helper-unavailable") throw error;
       // A failed rename can still have committed on a remote filesystem.
       return "indeterminate";
     }

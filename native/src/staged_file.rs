@@ -19,7 +19,9 @@ fn create(parent_fd: i32, name: &str) -> NativeResult<i32> {
     rustix::fs::openat(
         borrowed(parent_fd),
         name,
-        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        // Retain read authority for replaying completed one-shot input if
+        // no-replace publication is unsupported; never reopen the stage name.
+        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::from_bits_retain(0o600),
     )
     .map(IntoRawFd::into_raw_fd)

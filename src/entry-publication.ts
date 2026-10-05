@@ -2,6 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { assertDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { noReplaceUnavailable } from "./native-noreplace.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { captureNativeFdClose, type NativeBinding, type NativeWindowsEntryPublication, type NativePublicationTransition } from "./native-binding.js";
 import { requireNativeBinding } from "./native.js";
@@ -127,8 +128,9 @@ class Publication implements RetainedEntryPublication {
       }
       transition = native.outcome; // Capture BEFORE diagnostics, observations or close.
       if (native.errorCode || transition !== "committed") {
-        throw Object.assign(new Error(native.errorMessage ?? "entry publication did not commit"),
+        const error = Object.assign(new Error(native.errorMessage ?? "entry publication did not commit"),
           { code: native.errorCode ?? "helper-failed" });
+        throw noReplaceUnavailable(error, "retained entry publication") ?? error;
       }
       phase = "postcheck";
       verification = "failed";

@@ -1056,6 +1056,11 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Prove unsupported no-replace publication fallback
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/native-noreplace-fallback.test.ts test/native-noreplace-owners.test.ts test/linux-noreplace-fallback.test.ts
+
       - name: Prove Windows retained entry publication
         if: runner.os == 'Windows'
         env:

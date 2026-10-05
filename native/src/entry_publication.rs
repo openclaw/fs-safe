@@ -104,7 +104,7 @@ pub fn publish_retained_entry_no_replace(
             // Only determinate rejection codes on the admitted local filesystems.
             // EIO/EINTR and any unknown native failure retain both locations.
             let outcome = match error.status.as_str() {
-                "EEXIST" | "EXDEV" | "ENOSYS" | "ENOTSUP" => "not-published",
+                "EEXIST" | "EXDEV" | "ENOSYS" | "ENOTSUP" | unix::RENAME_NOREPLACE_UNSUPPORTED => "not-published",
                 _ => "indeterminate",
             };
             failure(outcome, error)

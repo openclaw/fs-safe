@@ -233,6 +233,21 @@ pub fn link_beneath(
     .map_err(|error| os_error(error, "linkat beneath roots"))
 }
 
+pub(crate) const RENAME_NOREPLACE_UNSUPPORTED: &str = "FS_SAFE_INTERNAL_RENAME_NOREPLACE_UNSUPPORTED";
+
+fn no_replace_error(error: rustix::io::Errno) -> napi::Error<String> {
+    #[cfg(target_os = "linux")]
+    if matches!(error, rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS)
+        || error == rustix::io::Errno::NOTSUP || error == rustix::io::Errno::OPNOTSUPP {
+        // VFS requires EINVAL for unsupported flags (rename(2), VFS rename docs).
+        // Flags are fixed here. Sibling regular-file publication has no other
+        // EINVAL cause; even an invalid directory ancestry is a definite rejection.
+        let errno = os_error(error, "renameat2 RENAME_NOREPLACE").status;
+        return native_error(RENAME_NOREPLACE_UNSUPPORTED, format!("renameat2 RENAME_NOREPLACE: {errno}"));
+    }
+    os_error(error, "rename without replacement")
+}
+
 fn direct_rename_no_replace(
     source_root_fd: i32,
     source_name: &str,
@@ -292,7 +307,7 @@ fn direct_rename_no_replace(
         Err(rustix::io::Errno::EXIST | rustix::io::Errno::NOTEMPTY) => {
             Err(native_error("EEXIST", "rename destination already exists"))
         }
-        Err(error) => Err(os_error(error, "rename without replacement")),
+        Err(error) => Err(no_replace_error(error)),
     }
 }
 
@@ -329,7 +344,7 @@ pub fn rename_no_replace(
         Err(rustix::io::Errno::EXIST | rustix::io::Errno::NOTEMPTY) => {
             Err(native_error("EEXIST", "rename destination already exists"))
         }
-        Err(error) => Err(os_error(error, "rename without replacement")),
+        Err(error) => Err(no_replace_error(error)),
     }
 }
 

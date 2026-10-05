@@ -114,10 +114,17 @@ drive-relative spellings, and the stage's own name are rejected.
 With `overwrite: false`, publication is genuine kernel no-replace rename.
 A native collision raises `FsSafeError("already-exists")`, but ordinary errno
 does not prove that a remote rename never committed. Native rename failures
-without explicit pre-dispatch provenance therefore report `indeterminate`:
+without explicit non-publication provenance therefore report `indeterminate`:
 cleanup preserves names and closes descriptors, and further publication rejects.
-Only rejection before rename dispatch leaves the stage eligible for cleanup or
-publication under another name. With
+Rejection before rename dispatch, or an unsupported no-replace capability,
+leaves the stage eligible for identity-checked cleanup. Linux `EINVAL` for the
+fixed `RENAME_NOREPLACE` flag on a regular file renamed to a distinct sibling,
+`ENOSYS`, and unsupported-operation errno prove that nothing was published
+([rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html),
+[VFS rename contract](https://www.kernel.org/doc/html/latest/filesystems/vfs.html)).
+This native-only API reports `helper-unavailable` with the capability name;
+it does not retry through JavaScript. `Root.create()` in native `auto` mode owns
+that separate compatibility retry. With
 `overwrite: true`, publication is plain atomic replacement. Neither route
 copies. Both source and destination resolve through the retained original
 parent, with checks immediately before rename and after publication.
