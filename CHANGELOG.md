@@ -2,15 +2,22 @@
 
 ## Unreleased
 
+## 0.23.1 - 2026-10-04
+
+### Highlights
+
+- **gVisor and 9p file creation:** `create()` and other no-replace publication fall back in `auto` mode on filesystems that reject `renameat2` with `RENAME_NOREPLACE`; `require` mode fails closed. ([#834](https://github.com/openclaw/fs-safe/pull/834), fixes [#828](https://github.com/openclaw/fs-safe/issues/828)) Thanks @vishnukool.
+- **Container copy compatibility:** seccomp or LSM policies denying `FICLONE` no longer break `clone: "auto"` copies, for both single files and `copyTree`. ([#829](https://github.com/openclaw/fs-safe/pull/829), [#835](https://github.com/openclaw/fs-safe/pull/835)) Thanks @Mohl, with co-author credit to @foxsky.
+- **macOS watching:** a FIFO at a watched name no longer freezes watching across the process. ([#830](https://github.com/openclaw/fs-safe/pull/830)) Thanks @SebTardif.
+
 ### Fixes
 
 - **gVisor file creation:** fall back safely when the filesystem rejects native no-replace publication, clean unpublished stages, and report the missing capability in native-required mode. ([#834](https://github.com/openclaw/fs-safe/pull/834)) Thanks @vishnukool.
 - **ZIP collision checks:** reject directory and file names that differ only by case, Unicode normalization, or a trailing separator before extraction or bounded reads. ([#832](https://github.com/openclaw/fs-safe/pull/832)) Thanks @SebTardif.
 - **macOS entry watch:** prevent a FIFO at a watched name from blocking every watcher in the process. ([#830](https://github.com/openclaw/fs-safe/pull/830)) Thanks @SebTardif.
-- Preserve disk-full (`ENOSPC`) diagnostics and cleanup receipts through combined write and disposal failures instead of reporting a misleading file-type error.
-- **Linux clone fallback:** copies with `clone: "auto"` fall back to guarded byte copying when container seccomp or LSM policy denies `FICLONE`; `clone: "always"` reports `unsupported-platform` and removes its stage. ([#829](https://github.com/openclaw/fs-safe/pull/829)) Thanks @Mohl and @foxsky.
-
-- **Linux tree clone fallback:** `copyTree` with `clone: "auto"` copies bytes when XFS/ZFS file reflinks are unavailable or denied by container policy; `"always"` reports `unsupported-platform` after partial-tree cleanup. ([#835](https://github.com/openclaw/fs-safe/pull/835))
+- **Disk-full diagnostics:** preserve disk-full (`ENOSPC`) diagnostics and cleanup receipts through combined write and disposal failures instead of reporting a misleading file-type error. ([#833](https://github.com/openclaw/fs-safe/pull/833)) Thanks @steipete.
+- **Linux clone fallback:** copies with `clone: "auto"` fall back to guarded byte copying when container seccomp or LSM policy denies `FICLONE`; `clone: "always"` reports `unsupported-platform` and removes its stage. ([#829](https://github.com/openclaw/fs-safe/pull/829)) Thanks @Mohl, with co-author credit to @foxsky.
+- **Linux tree clone fallback:** `copyTree` with `clone: "auto"` copies bytes when XFS/ZFS file reflinks are unavailable or denied by container policy; `"always"` reports `unsupported-platform` after partial-tree cleanup. ([#835](https://github.com/openclaw/fs-safe/pull/835)) Thanks @steipete.
 
 ## 0.23.0 - 2026-10-02
 
