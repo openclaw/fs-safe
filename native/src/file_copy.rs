@@ -351,7 +351,9 @@ mod tests {
     use std::io::{Seek, SeekFrom, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
-    use crate::test_support::temp_path;
+    use crate::test_support::{isolated_admission_test, temp_path};
+    #[cfg(target_os = "linux")]
+    use crate::test_support::deny_ficlone_with_eperm;
 
     struct Fixture {
         path: PathBuf,
@@ -393,28 +395,6 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.path).unwrap();
         }
-    }
-
-    fn isolated_admission_test(name: &str, check: impl FnOnce()) {
-        const CHILD_TEST: &str = "FS_SAFE_COPY_ADMISSION_TEST";
-        if std::env::var(CHILD_TEST).as_deref() == Ok(name) {
-            let limits = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-            // A baseline regression can panic before syscall validation.
-            assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limits) }, 0);
-            check();
-            return;
-        }
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([name, "--exact", "--test-threads=1"])
-            .env(CHILD_TEST, name)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "isolated admission check failed: {}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
     }
 
     fn assert_admission_failure(task: &FileCopyTask, fixture: &Fixture, operation: &str) {
@@ -634,53 +614,6 @@ mod tests {
             }
             assert!(!fixture.path.join("stage").exists());
             assert_eq!(fs::read(fixture.path.join("source")).unwrap(), b"copy source");
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    fn deny_ficlone_with_eperm() {
-        // Mirror container seccomp profiles: ioctl(FICLONE) fails with EPERM
-        // before any filesystem sees it; every other syscall is allowed.
-        let request = std::mem::offset_of!(libc::seccomp_data, args) + 8;
-        let request = if cfg!(target_endian = "little") {
-            request
-        } else {
-            request + 4
-        };
-        let statement = |code: u32, k: u32| libc::sock_filter {
-            code: code as u16,
-            jt: 0,
-            jf: 0,
-            k,
-        };
-        let jump = |k: u32, jt: u8, jf: u8| libc::sock_filter {
-            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
-            jt,
-            jf,
-            k,
-        };
-        let load = libc::BPF_LD | libc::BPF_W | libc::BPF_ABS;
-        let mut filter = [
-            statement(load, std::mem::offset_of!(libc::seccomp_data, nr) as u32),
-            jump(libc::SYS_ioctl as u32, 0, 3),
-            statement(load, request as u32),
-            jump(libc::FICLONE as u32, 0, 1),
-            statement(
-                libc::BPF_RET | libc::BPF_K,
-                libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
-            ),
-            statement(libc::BPF_RET | libc::BPF_K, libc::SECCOMP_RET_ALLOW),
-        ];
-        let program = libc::sock_fprog {
-            len: filter.len() as u16,
-            filter: filter.as_mut_ptr(),
-        };
-        unsafe {
-            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
-            assert_eq!(
-                libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program),
-                0
-            );
         }
     }
 

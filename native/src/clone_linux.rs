@@ -6,8 +6,8 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat, Timestamps, XattrFlags};
 
 use crate::unix::{
-    borrowed, create_exclusive_target, open_owned_beneath, open_cleanup_directory, os_error,
-    remove_owned_tree,
+    borrowed, create_exclusive_target, ficlone_unavailable, open_owned_beneath,
+    open_cleanup_directory, os_error, remove_owned_tree,
 };
 use crate::{NativeResult, native_error};
 
@@ -164,10 +164,10 @@ fn clone_file(job: FileJob) -> NativeResult<()> {
         ));
     }
     let target = create_exclusive_target(job.target_parent.as_raw_fd(), &job.name)?;
-    // This is deliberately the strict primitive: preserve its errno and never
-    // fall back to byte copying, normalize permissions, or fsync each file.
+    // This is deliberately the strict primitive: classify clone capability
+    // failures, but never byte-copy, normalize permissions, or fsync each file.
     rustix::fs::ioctl_ficlone(&target, &source).map_err(|error| {
-        if error == rustix::io::Errno::OPNOTSUPP {
+        if ficlone_unavailable(error) {
             native_error(
                 "CLONE_UNAVAILABLE",
                 format!("clone Linux reflink file extents: {error}"),
@@ -486,4 +486,88 @@ pub fn clone_tree(
         };
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{deny_ficlone_with_eperm, isolated_admission_test, temp_path};
+    use std::fs::{self, File};
+
+    #[test]
+    fn only_clone_capability_errors_allow_fallback() {
+        use rustix::io::Errno;
+        for error in [
+            Errno::PERM, Errno::NOTTY, Errno::INVAL, Errno::XDEV,
+            Errno::NOSYS, Errno::NOTSUP, Errno::OPNOTSUPP,
+        ] {
+            assert!(ficlone_unavailable(error), "{error}");
+        }
+        for error in [Errno::IO, Errno::NOSPC, Errno::BADF, Errno::ACCESS, Errno::ROFS] {
+            assert!(!ficlone_unavailable(error), "{error}");
+        }
+    }
+
+    #[test]
+    fn seccomp_denied_file_job_reports_clone_unavailable() {
+        isolated_admission_test(
+            "clone_linux::tests::seccomp_denied_file_job_reports_clone_unavailable",
+            || {
+                let directory = temp_path("tree-clone-job");
+                let source = directory.join("source");
+                let target = directory.join("target");
+                fs::create_dir_all(&source).unwrap();
+                fs::create_dir(&target).unwrap();
+                fs::write(source.join("payload"), b"tree source").unwrap();
+                let source_parent: OwnedFd = File::open(&source).unwrap().into();
+                let metadata = rustix::fs::statat(
+                    &source_parent, "payload", AtFlags::SYMLINK_NOFOLLOW,
+                ).unwrap();
+                deny_ficlone_with_eperm();
+                let error = clone_file(FileJob {
+                    source_parent: Arc::new(source_parent),
+                    target_parent: Arc::new(File::open(&target).unwrap().into()),
+                    name: "payload".to_owned(),
+                    metadata,
+                }).unwrap_err();
+                // The strict file job leaves rollback to the tree owner and
+                // must never turn a denied clone into an ordinary byte copy.
+                assert_eq!(fs::read(target.join("payload")).unwrap(), b"");
+                assert_eq!(fs::read(source.join("payload")).unwrap(), b"tree source");
+                fs::remove_dir_all(directory).unwrap();
+                assert_eq!(error.status, "CLONE_UNAVAILABLE");
+            },
+        );
+    }
+
+    #[test]
+    fn seccomp_denied_workers_remove_partial_tree_before_rejecting() {
+        isolated_admission_test(
+            "clone_linux::tests::seccomp_denied_workers_remove_partial_tree_before_rejecting",
+            || {
+                deny_ficlone_with_eperm();
+                for concurrency in [1, 4, 32] {
+                    let directory = temp_path("tree-clone-workers");
+                    let source = directory.join("source");
+                    fs::create_dir_all(source.join("nested")).unwrap();
+                    for index in 0..64 {
+                        fs::write(source.join(format!("payload-{index}")), b"tree source").unwrap();
+                    }
+                    fs::write(source.join("nested/payload"), b"nested source").unwrap();
+                    let original = File::open(&source).unwrap();
+                    let parent = File::open(&directory).unwrap();
+                    let error = clone_tree(
+                        original.as_raw_fd(), parent.as_raw_fd(), "target",
+                        &AtomicBool::new(false), concurrency,
+                    ).unwrap_err();
+                    assert!(!directory.join("target").exists());
+                    assert_eq!(fs::read(source.join("payload-0")).unwrap(), b"tree source");
+                    drop(original);
+                    drop(parent);
+                    fs::remove_dir_all(directory).unwrap();
+                    assert_eq!(error.status, "CLONE_UNAVAILABLE");
+                }
+            },
+        );
+    }
 }
