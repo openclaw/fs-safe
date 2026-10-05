@@ -72,6 +72,18 @@ function resourceExhaustion(error: unknown): FsSafeError | undefined {
 export function normalizePinnedWriteError(error: unknown): Error {
   const exhausted = resourceExhaustion(error);
   if (exhausted) return exhausted;
+  // Disposal retains cleanup evidence, but the failed publication remains primary.
+  let primary = error;
+  const seen = new Set<unknown>();
+  try {
+    while (primary instanceof Error && primary.name === "SuppressedError" && !seen.has(primary)) {
+      seen.add(primary);
+      primary = (primary as Error & { suppressed?: unknown }).suppressed;
+    }
+    if (primary !== error && primary instanceof FsSafeError && primary.details?.phase === "publish") {
+      return new FsSafeError(primary.code, primary.message, { cause: error, details: primary.details });
+    }
+  } catch { /* Unreadable diagnostics retain the original failure. */ }
   if (error instanceof FsSafeError) {
     return error;
   }

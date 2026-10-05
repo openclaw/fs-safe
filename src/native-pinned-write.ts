@@ -8,9 +8,14 @@ import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from
 import type { NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
+import { cachedNoReplaceUnavailable } from "./native-noreplace.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
 import type { describeStagedDirectory } from "./staged-directory.js";
 
-export async function runPinnedWriteNative(binding: NativeBinding, params: PinnedWriteParams): Promise<FileIdentityStat> {
+export async function runPinnedWriteNative(
+  binding: NativeBinding, params: PinnedWriteParams,
+  fallback: (input: PinnedWriteParams["input"]) => Promise<FileIdentityStat>,
+): Promise<FileIdentityStat> {
   const closeFd = captureNativeFdClose(binding);
   const windows = process.platform === "win32";
   if (!windows) {
@@ -77,10 +82,17 @@ export async function runPinnedWriteNative(binding: NativeBinding, params: Pinne
       windowsOwnsDirectories = true;
       return await runPinnedWriteWindows(binding, params, root, parentFd, verificationGuard);
     }
+    if (params.overwrite === false && !(params.input.kind === "buffer" && params.input.stageBeforePublish === false)) {
+      const unavailable = cachedNoReplaceUnavailable(binding, parentFd);
+      if (unavailable) {
+        if (isFsSafeNativeRequired() || (params.input.kind === "file" && params.input.clone === "always")) throw unavailable;
+        return await fallback(params.input);
+      }
+    }
     const ownedParent = parentFd;
     parentFd = undefined;
     return await writeNativeStage(
-      binding as NativeStagingBinding, ownedParent, closeFd, directory!, params, verificationGuard,
+      binding as NativeStagingBinding, ownedParent, closeFd, directory!, params, verificationGuard, fallback,
     );
   } catch (error) {
     admissionFailure = { error };

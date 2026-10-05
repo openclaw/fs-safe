@@ -1,10 +1,12 @@
 import { expect, it } from "vitest";
+import { NATIVE_NOREPLACE_UNSUPPORTED } from "../src/native-noreplace.js";
 import {
   classifyNativeRenameFailure,
   NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH,
 } from "../src/native-rename-outcome.js";
 
-it("classifies only the internal source fence mismatch as definitely uncommitted", () => {
+it("classifies explicit source-fence and unsupported-capability provenance as uncommitted", () => {
+  expect(classifyNativeRenameFailure({ code: NATIVE_NOREPLACE_UNSUPPORTED })).toBe("uncommitted");
   expect(classifyNativeRenameFailure({ code: NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH }))
     .toBe("uncommitted");
   expect(classifyNativeRenameFailure({ code: "path-mismatch" })).toBe("indeterminate");

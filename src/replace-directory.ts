@@ -1,3 +1,4 @@
+import { noReplaceUnavailable } from "./native-noreplace.js";
 import { randomUUID } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 import fsSync from "node:fs";
@@ -56,7 +57,8 @@ function replacementFailure(
   cause: unknown = error,
 ): Error {
   if (error instanceof FsSafeError) {
-    return new FsSafeError(error.code, message, { cause, details });
+    const code = error.code;
+    return new FsSafeError(code, code === "helper-unavailable" ? `${message}: ${error.message}` : message, { cause, details });
   }
   const failure = new Error(message, { cause });
   copyOperationalCode(failure, error);
@@ -93,19 +95,13 @@ function observeOptionalDirectory(pathname: string): BigIntStats | undefined {
 }
 
 function normalizeNativeRenameFailure(error: unknown): unknown {
+  const unavailable = noReplaceUnavailable(error, "directory rename", true);
+  if (unavailable) return unavailable;
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === NATIVE_RENAME_SOURCE_IDENTITY_MISMATCH) {
     return new FsSafeError(
       "path-mismatch",
       "directory replacement source identity changed before native rename",
-      { cause: error },
-    );
-  }
-  if (code === "EINVAL" || code === "ENOSYS" || code === "ENOTSUP" ||
-    code === "EOPNOTSUPP") {
-    return new FsSafeError(
-      "helper-unavailable",
-      "native no-replace directory rename is unavailable on this filesystem",
       { cause: error },
     );
   }

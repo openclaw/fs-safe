@@ -133,6 +133,28 @@ That separate syscall/filesystem capability remains required; if unavailable,
 the operation fails with `helper-unavailable`. Turning native mode `off` still
 disables no-clobber moves because Node has no equivalent atomic rename API.
 
+For regular-file writes with no-clobber publication (including `Root.create()`
+and archive file extraction), `auto` removes its identity-checked unpublished
+stage and retries through the same guarded JavaScript path as native mode `off`
+when Linux rejects `RENAME_NOREPLACE` with `EINVAL`, `ENOSYS`, or unsupported-operation
+errno. This is a definite non-publication, not an uncertain remote rename.
+Completed streams are replayed from the retained stage descriptor, without
+calling their producer again. Unsupported capability is cached by the retained
+parent's exact device number in a process-local cache bounded to 128 devices.
+Other devices and replacement writes retain their native route. `require`
+cleans the stage and reports `helper-unavailable`, naming the operation and
+`renameat2 RENAME_NOREPLACE`. Failed cleanup prevents retry.
+Copies explicitly requiring `clone: "always"` also fail closed: the JavaScript
+byte-copy path cannot satisfy that requirement.
+
+Private producer workspace promotion likewise uses its existing guarded
+JavaScript handoff in `auto`, preserving the completed producer output.
+Explicit native-only staged, retained-entry, symlink, directory-replacement and
+`rename-noreplace` publication contracts fail closed with the same capability
+diagnostic. Compatible temp-workspace cleanup can use its existing guarded
+JavaScript quarantine/removal path; `require-bounded` and native `require` refuse
+that downgrade. No native hardlink/unlink publication primitive is substituted.
+
 Bounded owned-tree cleanup deliberately has no `openat` fallback:
 `RESOLVE_NO_XDEV` rejects bind mounts even when device numbers match, which
 ordinary identity checks cannot reproduce. `cleanupSafety: "require-bounded"`

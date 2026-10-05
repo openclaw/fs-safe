@@ -54,6 +54,8 @@ use fs_safe_archive_core::tar_meter;
 mod unix;
 #[cfg(target_os = "linux")]
 mod linux_open;
+#[cfg(all(test, target_os = "linux"))]
+mod rename_noreplace_tests;
 #[cfg(windows)]
 mod windows;
 mod windows_security;
