@@ -40,6 +40,8 @@ type SyncCopyReturn = Expect<Equal<ReturnType<typeof copyRootFileSync>, CopiedRo
 type SyncCopyOptions = Expect<Equal<Parameters<typeof copyRootFileSync>, [CopyRootFileSyncOptions]>>;
 type SyncCopyMethod = Expect<Equal<CopiedRootFileSync["method"], "clone" | "copy-file-range" | "copy">>;
 type SyncCopyIdentity = Expect<Equal<CopiedRootFileSync["identity"], Readonly<{ dev: bigint; ino: bigint }>>>;
+type SyncCopyExpectedSourceIdentity = Expect<Equal<CopyRootFileSyncOptions["expectedSourceIdentity"], { dev: bigint; ino: bigint } | undefined>>;
+type SyncCopySourceIdentity = Expect<Equal<CopiedRootFileSync["sourceIdentity"], Readonly<{ dev: bigint; ino: bigint }>>>;
 type SyncCopyClose = Expect<Equal<CopiedRootFileSync["close"], () => void>>;
 type SyncCopyDispose = Expect<Equal<CopiedRootFileSync[typeof Symbol.dispose], () => void>>;
 type SymlinkExpectedShape = Expect<Equal<StagedSymlinkExpected, Readonly<{

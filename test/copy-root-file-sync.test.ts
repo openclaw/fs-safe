@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyRootFileSync, type CopyRootFileSyncOptions } from "../src/advanced.js";
+import { copyRootFileSync, openRootFileSync, type CopyRootFileSyncOptions } from "../src/advanced.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { loadTestNative } from "./helpers/native-probe.js";
@@ -37,6 +37,64 @@ function enableNative() {
   __setNativeLoaderForTest(() => native!);
   configureFsSafeNative({ mode: "require" });
 }
+function sourceIdentity(fd: number) {
+  const { dev, ino } = fs.fstatSync(fd, { bigint: true });
+  return { dev, ino };
+}
+
+describe.each([false, true])("expected source identity (native=%s)", useNative => {
+  beforeEach(context => {
+    if (useNative && !native) context.skip("Native binding unavailable");
+    if (useNative) enableNative();
+  });
+  it("copies the caller-pinned source without taking ownership or moving its cursor", async () => {
+    const f = await fixture();
+    const opened = openRootFileSync({ ...f.options.source, boundaryLabel: "caller source" });
+    if (!opened.ok) throw opened.error;
+    try {
+      const expectedSourceIdentity = sourceIdentity(opened.fd);
+      const byte = Buffer.alloc(1);
+      fs.readSync(opened.fd, byte, 0, 1, null);
+      using copied = copyRootFileSync({ ...f.options, expectedSourceIdentity, clone: "auto" });
+      expect(copied.sourceIdentity).toEqual(expectedSourceIdentity);
+      expect(Object.isFrozen(copied.sourceIdentity)).toBe(true);
+      expect(copied.identity).not.toEqual(copied.sourceIdentity);
+      expect(fs.readFileSync(copied.fd, "utf8")).toBe(f.content);
+      expect(sourceIdentity(opened.fd)).toEqual(expectedSourceIdentity);
+      fs.readSync(opened.fd, byte, 0, 1, null);
+      expect(byte.toString()).toBe(f.content[1]);
+    } finally { fs.closeSync(opened.fd); }
+  });
+  it("refuses a source replaced after the caller's pin before creating a destination", async () => {
+    const f = await fixture();
+    const opened = openRootFileSync({ ...f.options.source, boundaryLabel: "caller source" });
+    if (!opened.ok) throw opened.error;
+    try {
+      const expectedSourceIdentity = sourceIdentity(opened.fd);
+      fs.renameSync(f.source, `${f.source}.old`);
+      fs.writeFileSync(f.source, "replacement");
+      const create = vi.spyOn(creation, "createFileWithAdmissionSync");
+      const transfer = vi.fn();
+      if (useNative) __setNativeLoaderForTest(() => ({ ...native!, copyFileExclusiveSync: transfer }));
+      expect(() => copyRootFileSync({ ...f.options, expectedSourceIdentity, clone: "auto" }))
+        .toThrow(expect.objectContaining({ code: "path-mismatch" }));
+      expect(create).not.toHaveBeenCalled();
+      expect(transfer).not.toHaveBeenCalled();
+      expect(fs.readdirSync(f.targetRoot)).toEqual([]);
+      expect(fs.readFileSync(opened.fd, "utf8")).toBe(f.content);
+      expect(fs.readFileSync(f.source, "utf8")).toBe("replacement");
+    } finally { fs.closeSync(opened.fd); }
+  });
+  it.each(["dev", "ino"] as const)("rejects an expected %s mismatch", async field => {
+    const f = await fixture();
+    const { dev, ino } = fs.statSync(f.source, { bigint: true });
+    const expectedSourceIdentity = { dev, ino };
+    expectedSourceIdentity[field] += 1n;
+    expect(() => copyRootFileSync({ ...f.options, expectedSourceIdentity }))
+      .toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    expect(fs.readdirSync(f.targetRoot)).toEqual([]);
+  });
+});
 
 it.each(["never", "auto"] as const)("copies bytes with native off and clone=%s, returning the owned destination", async clone => {
   const f = await fixture(Buffer.alloc(512 * 1024 + 17, 0x5a));
@@ -46,6 +104,8 @@ it.each(["never", "auto"] as const)("copies bytes with native off and clone=%s, 
   expect(copied.path).toBe(f.target);
   expect(copied.identity).toEqual(expect.objectContaining({ dev: expect.any(BigInt), ino: expect.any(BigInt) }));
   expect(fs.fstatSync(copied.fd, { bigint: true })).toMatchObject(copied.identity);
+  expect(fs.statSync(f.source, { bigint: true })).toMatchObject(copied.sourceIdentity);
+  expect(Object.keys(copied.sourceIdentity).sort()).toEqual(["dev", "ino"]);
   expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
   fs.writeSync(copied.fd, Buffer.from("independent"), 0, 11, 0);
   expect(fs.readFileSync(f.source).equals(Buffer.from(f.content))).toBe(true);
@@ -226,6 +286,7 @@ describe.runIf(native)("native synchronous copying", () => {
     using copied = copyRootFileSync({ ...f.options, clone, maxBytes: f.content.length });
     expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     expect(copied.bytes).toBe(f.content.length);
+    expect(fs.statSync(f.source, { bigint: true })).toMatchObject(copied.sourceIdentity);
     if (clone === "never" || process.platform === "win32") expect(copied.method).toBe("copy");
   });
   it.each(["auto", "never", "always"] as const)("enforces the native size limit with clone=%s", async clone => {
@@ -274,6 +335,7 @@ describe.runIf(native)("native synchronous copying", () => {
     expect(probeTreeClone(f.targetRoot)).toBe("apfs");
     using copied = copyRootFileSync({ ...f.options, clone: "always" });
     expect(copied.method).toBe("clone");
+    expect(fs.statSync(f.source, { bigint: true })).toMatchObject(copied.sourceIdentity);
     expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     const [source, target] = await readCloneFileMetadata([f.source, f.target]);
     expect(source).toBeDefined();
@@ -287,6 +349,7 @@ describe.runIf(native)("native synchronous copying", () => {
       const f = await fixture(Buffer.alloc(65537, 0x42), directory);
       using copied = copyRootFileSync({ ...f.options, clone: "auto", maxBytes: f.content.length });
       expect(copied.method).toBe("copy-file-range");
+      expect(fs.statSync(f.source, { bigint: true })).toMatchObject(copied.sourceIdentity);
       expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
