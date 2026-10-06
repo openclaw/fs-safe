@@ -197,3 +197,49 @@ Run `node scripts/clone-xfs-proof.mjs MOUNT` on a real XFS volume to verify the 
 Run `node scripts/clone-zfs-proof.mjs MOUNT POOL` on a dedicated, otherwise idle Linux ZFS pool with compression and deduplication disabled. It verifies both `copyTree` and `Root.copyIn` through hashes and changes in the documented `bclonesaved` pool counter. It requires `zfs`, `zpool`, and `findmnt`, including permission to run `zpool sync`. Add `no-reflink` for a pool without block cloning to verify strict refusal and automatic byte fallback. The script creates and removes only its temporary directory; it does not create pools or change their properties.
 
 Run `node benchmarks/clone.mjs SOURCE DESTINATION_PARENT` after `pnpm build` to compare one, four, and 16 workers on the same immutable source. Add `3 auto` or `3 never` to measure three samples of ordinary copying, including NTFS destinations. It records copying time separately from fixture preparation and full file-hash verification, and retains its uniquely named output directory for inspection. Prepare Btrfs sources with `createCloneSource` first.
+
+## Synchronous guarded file copies
+
+`copyRootFileSync` from `@openclaw/fs-safe/advanced` is for synchronous module
+hooks and capture owners. Both roots and file paths are absolute; destination
+parents must exist. The destination must be absent, and is created exclusively.
+
+```ts
+import { copyRootFileSync } from "@openclaw/fs-safe/advanced";
+
+using copied = copyRootFileSync({
+  source: { rootPath: "/srv/plugins", absolutePath: "/srv/plugins/plugin.js" },
+  destination: { rootPath: "/srv/capture", absolutePath: "/srv/capture/plugin.js" },
+  clone: "auto",
+  maxBytes: 16 * 1024 * 1024,
+  mode: 0o600,
+});
+// Hash or read copied.fd: this is the owned destination, never a reopened path.
+console.log(copied.bytes, copied.method, copied.identity);
+```
+
+`CopyRootFileSyncOptions` selects the source and destination, `clone`, `maxBytes`,
+`mode`, `preserveSourceMode`, and `sourceHardlinks`. `CopiedRootFileSync` owns a
+readable/writable `fd`, with idempotent `close()` and `Symbol.dispose`, and returns
+`path`, `bytes`, `method` (`"clone"`, `"copy-file-range"`, or `"copy"`), and exact
+bigint `identity` (`dev`, `ino`). Closing releases the descriptor, not the file.
+
+Clone policy matches `Root.copyIn`: the default is `"never"`; `"auto"` tries
+native cloning, then bounded copy offload and byte copying on capability failure;
+`"always"` requires cloning or throws `unsupported-platform`. APFS cloning
+creates the guarded destination name from the admitted source descriptor. Linux
+uses FICLONE and copy_file_range. Windows and native-disabled operation copy
+bytes; they cannot satisfy `"always"`.
+
+The source descriptor remains open through before/after source identity checks.
+Symlink components are rejected; source hardlinks are rejected unless
+`sourceHardlinks: "allow"` is selected. The byte limit is an EOF bound, not a
+prefix length: overflow throws `too-large`. Omitted limits are unlimited. An
+explicit mode wins over `preserveSourceMode`; otherwise new files use `0o600`
+subject to the process umask, consistently with `copyIn`.
+
+Failures attempt identity-checked removal of the owned destination and preserve
+replacement entries. This helper creates directly at the destination name, so
+other processes may observe partial bytes until it returns. It does not promise
+crash durability or a coherent snapshot of concurrent in-place source edits.
+Use a private capture directory and keep sources unchanged while capturing.
