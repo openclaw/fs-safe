@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Pinned source copies:** `copyRootFileSync` accepts `expectedSourceIdentity` to reject a replaced source before destination creation and returns the verified `sourceIdentity` for every copy method.
+
 ## 0.24.0 - 2026-10-06
 
 ### Highlights

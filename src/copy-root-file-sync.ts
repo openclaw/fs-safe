@@ -22,6 +22,7 @@ type CopyPath = { rootPath: string; absolutePath: string };
 export type CopyRootFileSyncOptions = {
   source: CopyPath;
   destination: CopyPath;
+  expectedSourceIdentity?: { dev: bigint; ino: bigint };
   clone?: CopyCloneMode;
   maxBytes?: number;
   mode?: number;
@@ -34,6 +35,7 @@ export type CopiedRootFileSync = OwnedFileDescriptorSync & Readonly<{
   bytes: number;
   method: "clone" | "copy-file-range" | "copy";
   identity: Readonly<{ dev: bigint; ino: bigint }>;
+  sourceIdentity: Readonly<{ dev: bigint; ino: bigint }>;
 }>;
 
 function copyError(error: unknown): FsSafeError {
@@ -90,6 +92,8 @@ export function copyRootFileSync(options: CopyRootFileSyncOptions): CopiedRootFi
   const sourcePath = { rootPath: sourceInput.rootPath, absolutePath: sourceInput.absolutePath };
   const targetInput = options.destination;
   const targetPath = { rootPath: targetInput.rootPath, absolutePath: targetInput.absolutePath };
+  const expectedInput = options.expectedSourceIdentity;
+  const expectedSourceIdentity = expectedInput === undefined ? undefined : { dev: expectedInput.dev, ino: expectedInput.ino };
   const clone = resolveCopyCloneMode(options.clone, "never");
   const maxBytes = normalizeMaxBytes(options.maxBytes);
   const mode = options.mode;
@@ -125,7 +129,7 @@ export function copyRootFileSync(options: CopyRootFileSyncOptions): CopiedRootFi
     });
     if (!opened.ok) throw opened.error ?? new FsSafeError("helper-failed", "copy source admission failed");
     sourceOwner = ownFileDescriptorSync(opened.fd);
-    const sourceIdentity = inspectFileIdentitySync(() => fs.fstatSync(opened.fd, { bigint: true }));
+    const sourceIdentity = inspectFileIdentitySync(() => fs.fstatSync(opened.fd, { bigint: true }), expectedSourceIdentity);
     const verifySource = () => {
       source.assertCurrent();
       for (const inspect of [
@@ -196,6 +200,7 @@ export function copyRootFileSync(options: CopyRootFileSyncOptions): CopiedRootFi
     return Object.freeze({
       ...targetOwner, path: target.path, bytes: Number(completed.size), method,
       identity: Object.freeze({ dev: identity.dev, ino: identity.ino }),
+      sourceIdentity: Object.freeze({ dev: sourceIdentity.dev, ino: sourceIdentity.ino }),
     });
   } catch (error) {
     const primary = copyError(error);

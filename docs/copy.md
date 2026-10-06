@@ -215,14 +215,28 @@ using copied = copyRootFileSync({
   mode: 0o600,
 });
 // Hash or read copied.fd: this is the owned destination, never a reopened path.
-console.log(copied.bytes, copied.method, copied.identity);
+console.log(copied.bytes, copied.method, copied.identity, copied.sourceIdentity);
 ```
 
 `CopyRootFileSyncOptions` selects the source and destination, `clone`, `maxBytes`,
-`mode`, `preserveSourceMode`, and `sourceHardlinks`. `CopiedRootFileSync` owns a
+`mode`, `preserveSourceMode`, `sourceHardlinks`, and optional `expectedSourceIdentity`.
+`CopiedRootFileSync` owns a
 readable/writable `fd`, with idempotent `close()` and `Symbol.dispose`, and returns
 `path`, `bytes`, `method` (`"clone"`, `"copy-file-range"`, or `"copy"`), and exact
-bigint `identity` (`dev`, `ino`). Closing releases the descriptor, not the file.
+bigint destination `identity` and `sourceIdentity` (`dev`, `ino`). Both identities
+are readonly and frozen. Closing releases the descriptor, not the file.
+
+Callers that already pinned a source can pass `expectedSourceIdentity: { dev, ino }`
+from `fs.fstatSync(pinnedSourceFd, { bigint: true })`. fs-safe still admits and
+opens its own source descriptor, and compares its exact bigint identity before
+creating any destination. A mismatch throws `FsSafeError("path-mismatch")`.
+Keep the caller's descriptor open across the call; it remains caller-owned and
+its cursor is unchanged. Do not derive the expectation from numeric stat fields,
+which may have lost identity bits. Omitting the option preserves ordinary source
+admission. Every successful copy method returns `sourceIdentity` for the source
+actually copied, verified current again at the end of the operation. This binds
+identity only; keep any existing source fingerprint/content and destination
+receipt checks for concurrent edits and later replacements.
 
 Clone policy matches `Root.copyIn`: the default is `"never"`; `"auto"` tries
 native cloning, then bounded copy offload and byte copying on capability failure;
