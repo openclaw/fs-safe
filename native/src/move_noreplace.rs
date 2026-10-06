@@ -20,7 +20,9 @@ fn verify(stat: &Stat, expected: &ExactFileIdentity, kind: FileType, links: u64)
         FileType::from_raw_mode(stat.st_mode) != kind {
         return Err(native_error("path-mismatch", "no-replace move fallback identity changed"));
     }
-    if kind == FileType::RegularFile && stat.st_nlink != links {
+    // Linux exposes a 32-bit link count on aarch64 and 64-bit on x86_64.
+    #[allow(clippy::unnecessary_cast)]
+    if kind == FileType::RegularFile && stat.st_nlink as u64 != links {
         return Err(native_error("hardlink", "no-replace move fallback link count changed"));
     }
     Ok(())
