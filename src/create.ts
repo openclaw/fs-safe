@@ -129,9 +129,17 @@ function createPrivateWindowsFile(selected: CreationPath, options: CreateFileOpt
 }
 
 export function createFileSync(targetPath: string, options: CreateFileOptions = {}): OwnedFileDescriptorSync {
+  return createFileWithAdmissionSync(targetPath, options);
+}
+
+export function createFileWithAdmissionSync(
+  targetPath: string,
+  options: CreateFileOptions = {},
+  admission: CreationAdmission = {},
+): OwnedFileDescriptorSync {
   const permissions = resolveCreationPermissions(options, false);
   const assertion = options.assertBeforeMutation;
-  const selected = prepareCreationPath(targetPath);
+  const selected = prepareCreationPath(targetPath, admission.expectedParentIdentity);
   if (permissions.private && process.platform === "win32") {
     assertPrivateFileCreationAvailable();
     return createPrivateWindowsFile(selected, { ...permissions, assertBeforeMutation: assertion }, permissions.mode!);

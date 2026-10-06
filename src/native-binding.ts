@@ -207,6 +207,13 @@ export interface NativeBinding {
     maxBytes: number | undefined,
     signal: AbortSignal | undefined,
   ): Promise<NativeFileCopyResult>;
+  copyFileExclusiveSync?(
+    sourceFd: number,
+    parentFd: number,
+    basename: string,
+    clone: CopyCloneMode,
+    maxBytes: number | undefined,
+  ): NativeFileCopyResult;
   cloneFileExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
   copyFileRangeExclusive(
     sourceFd: number,

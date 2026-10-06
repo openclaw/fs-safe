@@ -367,6 +367,11 @@ For high-volume logging, consider [`openWritable`](#openwritable-for-streaming) 
 
 ### `fs.copyIn(rel, sourceAbsPath, options?)`
 
+Synchronous module hooks can use [`copyRootFileSync`](copy.md#synchronous-guarded-file-copies)
+from `@openclaw/fs-safe/advanced` to create an absent destination and retain its
+descriptor for hashing. Root itself remains asynchronous.
+
+
 `copyIn` accepts a `RootCopySource`: a trusted absolute source path or a file
 within another Root. The guarded form supplies `root` with only its `open` and
 `stat` read capabilities, plus `relativePath`:
