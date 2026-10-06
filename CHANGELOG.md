@@ -2,13 +2,31 @@
 
 ## Unreleased
 
+## 0.24.0 - 2026-10-06
+
+### Highlights
+
+- **No-replace moves on more Linux filesystems:** when filesystems reject `renameat2` with `RENAME_NOREPLACE`, including reported QNAP ZFS shares and some overlay mounts, `auto` falls back safely: directories use plain rename that can at most replace an empty directory, and files use identity-checked link/unlink that cannot overwrite a target. Native `require` fails closed. ([#838](https://github.com/openclaw/fs-safe/pull/838), fixes [openclaw#165617](https://github.com/openclaw/openclaw/issues/165617)) Thanks @StarGazer1995, original reporter @bbs2i58, and @MertBasar0.
+- **Synchronous guarded copies:** new `copyRootFileSync` on `advanced` supports APFS cloning, reflinks, `copy_file_range`, and guarded byte fallback, returning an owned destination descriptor for synchronous capture hashes. ([#839](https://github.com/openclaw/fs-safe/pull/839))
+- **Public capability classification:** new `isNoReplaceUnsupported(error)` identifies unavailable no-replace rename support without matching internal native error codes. ([#838](https://github.com/openclaw/fs-safe/pull/838))
+
 ### Features
 
-- **Synchronous guarded copies:** add `copyRootFileSync` with bounded clone/copy fallback and an owned destination descriptor for synchronous capture hashes. ([#839](https://github.com/openclaw/fs-safe/pull/839))
+- **Synchronous root-to-root copy:** `copyRootFileSync` exclusively creates an absent destination under its admitted root, bounds the copy with `maxBytes`, verifies source and destination identities, and returns a disposable descriptor with copy-method and byte-count receipts. ([#839](https://github.com/openclaw/fs-safe/pull/839))
+- **No-replace error classifier:** export `isNoReplaceUnsupported(error)` from the root package and `errors` subpath for stable `helper-unavailable` capability diagnostics. ([#838](https://github.com/openclaw/fs-safe/pull/838))
 
 ### Fixes
 
-- **Linux no-replace moves:** `Root.move()` falls back through retained parents when `RENAME_NOREPLACE` is unsupported: identity-checked file link/unlink and directory rename (which can replace a concurrently created empty directory). Native `require` stays strict; `isNoReplaceUnsupported()` exposes stable capability classification. ([#838](https://github.com/openclaw/fs-safe/pull/838), fixes [openclaw#165617](https://github.com/openclaw/openclaw/issues/165617)) Thanks @StarGazer1995, @bbs2i58, and @MertBasar0.
+- **Linux no-replace moves:** `Root.move()` uses retained-parent file link/unlink or directory rename when `RENAME_NOREPLACE` is unsupported in `auto`, rejects file collisions, and preserves publication/source-removal details after partial failures. ([#838](https://github.com/openclaw/fs-safe/pull/838)) Thanks @StarGazer1995, @bbs2i58, and @MertBasar0.
+
+### Performance
+
+- **Synchronous copy acceleration:** reuse the native bounded copy engine for APFS clones, Linux reflinks, and `copy_file_range` before byte copying when `copyRootFileSync` is called with `clone: "auto"`. ([#839](https://github.com/openclaw/fs-safe/pull/839))
+
+### Compatibility
+
+- **Move fallback limits:** native `require` keeps refusing unsupported no-replace moves. In `auto`, the directory fallback can replace a concurrently created empty directory; nonempty directories and non-directory competitors reject. File fallback requires hard-link support and fails closed if links are denied or unsupported. ([#838](https://github.com/openclaw/fs-safe/pull/838))
+- **Synchronous copy contract:** `copyRootFileSync` defaults to `clone: "never"`, requires existing parents and an absent destination, and performs direct exclusive creation. Use a private capture directory; it does not promise atomic publication, crash durability, or a coherent snapshot of concurrent in-place edits. ([#839](https://github.com/openclaw/fs-safe/pull/839))
 
 ## 0.23.1 - 2026-10-04
 
