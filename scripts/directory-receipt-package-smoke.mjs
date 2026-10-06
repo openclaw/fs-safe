@@ -19,7 +19,7 @@ import { join } from "node:path";
 import type {
   Root, RootCopyPublicationReceipt, RootWalkDataEntryKind, RootWalkEntry, RootWalkOptions, RootWalkSymlinkPolicy,
 } from "@openclaw/fs-safe";
-import { stageFileInDirectory } from "@openclaw/fs-safe/advanced";
+import { copyRootFileSync, stageFileInDirectory, type CopiedRootFileSync, type CopyRootFileSyncOptions } from "@openclaw/fs-safe/advanced";
 import type {
   PublishedSymlinkReceipt, RetainedFile, RetainedFileExpected, RetainFileInDirectoryOptions,
   StagedSymlink, StagedSymlinkCleanupReceipt, StagedSymlinkExpected,
@@ -36,6 +36,12 @@ import {
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Expect<T extends true> = T;
+type SyncCopyReturn = Expect<Equal<ReturnType<typeof copyRootFileSync>, CopiedRootFileSync>>;
+type SyncCopyOptions = Expect<Equal<Parameters<typeof copyRootFileSync>, [CopyRootFileSyncOptions]>>;
+type SyncCopyMethod = Expect<Equal<CopiedRootFileSync["method"], "clone" | "copy-file-range" | "copy">>;
+type SyncCopyIdentity = Expect<Equal<CopiedRootFileSync["identity"], Readonly<{ dev: bigint; ino: bigint }>>>;
+type SyncCopyClose = Expect<Equal<CopiedRootFileSync["close"], () => void>>;
+type SyncCopyDispose = Expect<Equal<CopiedRootFileSync[typeof Symbol.dispose], () => void>>;
 type SymlinkExpectedShape = Expect<Equal<StagedSymlinkExpected, Readonly<{
   dev: bigint;
   ino: bigint;

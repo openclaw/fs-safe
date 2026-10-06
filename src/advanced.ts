@@ -1,3 +1,4 @@
+export { copyRootFileSync, type CopyRootFileSyncOptions, type CopiedRootFileSync } from "./copy-root-file-sync.js";
 // Advanced composition surface. These exports are less stable than the focused
 // public subpaths; prefer root/json/store/temp/archive unless you are building a
 // higher-level primitive.

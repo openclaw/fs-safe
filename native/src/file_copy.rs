@@ -322,6 +322,33 @@ pub fn copy_file_exclusive(
     max_bytes: Option<f64>,
     signal: Option<AbortSignal>,
 ) -> Result<AsyncTask<FileCopyTask>> {
+    Ok(AsyncTask::new(prepare_file_copy(
+        source_fd, parent_fd, basename, clone_mode, max_bytes, signal.as_ref(),
+    )?))
+}
+
+// Both entry points use the same bounded transfer and CreatedCopy cleanup owner.
+#[napi(js_name = "copyFileExclusiveSync")]
+pub fn copy_file_exclusive_sync(
+    env: Env,
+    source_fd: i32,
+    parent_fd: i32,
+    basename: String,
+    clone_mode: String,
+    max_bytes: Option<f64>,
+) -> Result<NativeFileCopyResult> {
+    let task = prepare_file_copy(source_fd, parent_fd, basename, clone_mode, max_bytes, None)?;
+    crate::into_napi(env, task.copy().map(CreatedCopy::release))
+}
+
+fn prepare_file_copy(
+    source_fd: i32,
+    parent_fd: i32,
+    basename: String,
+    clone_mode: String,
+    max_bytes: Option<f64>,
+    signal: Option<&AbortSignal>,
+) -> Result<FileCopyTask> {
     validate_child_basename(&basename)
         .map_err(|error| Error::new(Status::InvalidArg, error.reason))?;
     let clone_mode = match clone_mode.as_str() {
@@ -331,17 +358,17 @@ pub fn copy_file_exclusive(
         _ => return Err(Error::new(Status::InvalidArg, "invalid copy clone mode")),
     };
     let max_bytes = checked_max_bytes(max_bytes)?;
-    let cancelled = cancellation(signal.as_ref());
+    let cancelled = cancellation(signal);
     // Keep settlement under this task: every created descriptor, including a
     // canceled transfer, must pass through resolve to reach its cleanup owner.
-    Ok(AsyncTask::new(FileCopyTask {
+    Ok(FileCopyTask {
         source_fd,
         parent_fd,
         name: basename,
         clone_mode,
         max_bytes,
         cancelled,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -380,14 +407,18 @@ mod tests {
         }
 
         fn task(&self, clone_mode: CloneMode, max_bytes: u64) -> FileCopyTask {
-            FileCopyTask {
-                source_fd: self.source.as_raw_fd(),
-                parent_fd: self.parent.as_raw_fd(),
-                name: "stage".to_owned(),
-                clone_mode,
-                max_bytes,
-                cancelled: Arc::new(AtomicBool::new(false)),
-            }
+            prepare_file_copy(
+                self.source.as_raw_fd(),
+                self.parent.as_raw_fd(),
+                "stage".to_owned(),
+                match clone_mode {
+                    CloneMode::Never => "never",
+                    CloneMode::Auto => "auto",
+                    CloneMode::Always => "always",
+                }.to_owned(),
+                (max_bytes != u64::MAX).then_some(max_bytes as f64),
+                None,
+            ).unwrap()
         }
     }
 
