@@ -21,7 +21,7 @@ describe.skipIf(!available)("Linux without renameat2 RENAME_NOREPLACE", () => {
       const cc = spawnSync("cc", [fileURLToPath(new URL("./fixtures/deny-rename-noreplace.c", import.meta.url)), "-o", wrapper], { encoding: "utf8" });
       expect(cc.status, cc.stderr).toBe(0);
       const child = spawnSync(wrapper, [`EINVAL-${fault}`, process.execPath,
-        fileURLToPath(new URL("./fixtures/linux-move-partial.mjs", import.meta.url)), artifact!, fault,
+        fileURLToPath(new URL("./fixtures/linux-move-partial.mjs", import.meta.url)), artifact!, fault, path.join(directory, "files"),
       ], { env: { ...process.env, FS_SAFE_NATIVE_MODE: "auto" }, encoding: "utf8", timeout: 20_000 });
       expect(child.error, child.stderr).toBeUndefined();
       expect(child.status, child.stderr).toBe(0);
