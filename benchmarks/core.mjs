@@ -414,6 +414,24 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       after: (_, { source, target }) => { try { fs.closeSync(source); } finally { fs.closeSync(target); } },
       verify: (bytes) => { assert.equal(bytes, size); assert.deepEqual(fs.readFileSync(copyPath), payload); },
     });
+    for (const clone of ["auto", "never"]) {
+      add(`copyRootFileSync/${clone}/${size}`, () => a.copyRootFileSync({
+        source: { rootPath: w, absolutePath: filePath },
+        destination: { rootPath: w, absolutePath: copyPath },
+        clone, maxBytes: size,
+      }), {
+        divisor, sync: true,
+        skip: typeof a.copyRootFileSync !== "function"
+          ? "Not exported by this explicitly selected older comparison build." : undefined,
+        before: () => fs.rmSync(copyPath, { force: true }),
+        after: (copied) => { try { copied?.close(); } finally { fs.rmSync(copyPath, { force: true }); } },
+        verify: (copied) => {
+          assert.equal(copied.bytes, size);
+          assert.deepEqual(fs.readFileSync(copied.fd), payload);
+          assert.equal(fs.fstatSync(copied.fd, { bigint: true }).ino, copied.identity.ino);
+        },
+      });
+    }
     if (size === 2 * 1024 * 1024) {
       const expectedMinimumChunks = size / (512 * 1024);
       const liveSignal = new AbortController().signal;
