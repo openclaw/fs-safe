@@ -46,9 +46,9 @@ it.each(["never", "auto"] as const)("copies bytes with native off and clone=%s, 
   expect(copied.path).toBe(f.target);
   expect(copied.identity).toEqual(expect.objectContaining({ dev: expect.any(BigInt), ino: expect.any(BigInt) }));
   expect(fs.fstatSync(copied.fd, { bigint: true })).toMatchObject(copied.identity);
-  expect(fs.readFileSync(copied.fd)).toEqual(f.content);
+  expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
   fs.writeSync(copied.fd, Buffer.from("independent"), 0, 11, 0);
-  expect(fs.readFileSync(f.source)).toEqual(f.content);
+  expect(fs.readFileSync(f.source).equals(Buffer.from(f.content))).toBe(true);
   copied[Symbol.dispose]();
   copied.close();
   expect(() => fs.fstatSync(copied.fd)).toThrow();
@@ -224,7 +224,7 @@ describe.runIf(native)("native synchronous copying", () => {
     const f = await fixture(Buffer.alloc(128 * 1024 + 1, 0x31));
     if (process.platform !== "win32") expect(native!.copyFileExclusiveSync).toBeTypeOf("function");
     using copied = copyRootFileSync({ ...f.options, clone, maxBytes: f.content.length });
-    expect(fs.readFileSync(copied.fd)).toEqual(f.content);
+    expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     expect(copied.bytes).toBe(f.content.length);
     if (clone === "never" || process.platform === "win32") expect(copied.method).toBe("copy");
   });
@@ -274,7 +274,7 @@ describe.runIf(native)("native synchronous copying", () => {
     expect(probeTreeClone(f.targetRoot)).toBe("apfs");
     using copied = copyRootFileSync({ ...f.options, clone: "always" });
     expect(copied.method).toBe("clone");
-    expect(fs.readFileSync(copied.fd)).toEqual(f.content);
+    expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     const [source, target] = await readCloneFileMetadata([f.source, f.target]);
     expect(source).toBeDefined();
     expect(target).toBeDefined();
@@ -287,7 +287,7 @@ describe.runIf(native)("native synchronous copying", () => {
       const f = await fixture(Buffer.alloc(65537, 0x42), directory);
       using copied = copyRootFileSync({ ...f.options, clone: "auto", maxBytes: f.content.length });
       expect(copied.method).toBe("copy-file-range");
-      expect(fs.readFileSync(copied.fd)).toEqual(f.content);
+      expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
 });
