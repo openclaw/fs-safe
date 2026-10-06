@@ -9,7 +9,8 @@ const MAX_DEVICES = 128;
 
 function unavailable(operation: string, detail: string, cause?: unknown): FsSafeError {
   const error = new FsSafeError("helper-unavailable",
-    `native no-replace ${operation} is unsupported on this filesystem (${detail})`, { cause });
+    `native no-replace ${operation} is unsupported on this filesystem (${detail})`,
+    { cause, details: { capability: "rename-noreplace" } });
   capabilityErrors.set(error, detail);
   return error;
 }

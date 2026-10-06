@@ -97,6 +97,15 @@ export async function registerPaths({
     sync: true, batch: 100, verify: (result) => assert.equal(result, true),
   });
   add("FsSafeError", () => new a.FsSafeError("invalid-path", "synthetic"), { sync: true, batch: 100 });
+  const noReplaceError = new a.FsSafeError("helper-unavailable", "synthetic", {
+    details: { capability: "rename-noreplace" },
+  });
+  add("isNoReplaceUnsupported", () => a.isNoReplaceUnsupported(noReplaceError), {
+    sync: true, batch: 100,
+    skip: typeof a.isNoReplaceUnsupported !== "function"
+      ? "Not exported by this explicitly selected older comparison build." : undefined,
+    verify: result => assert.equal(result, true),
+  });
   for (const name of ["safeRealpathSync", "safeStatSync", "pathExistsSync"]) add(name, () => a[name](input), { sync: true });
   for (const name of ["pathExists", "safeStat", "inspectPathPermissions"]) add(name, () => a[name](input));
   registerWindowsOwnerCaughtFailure({

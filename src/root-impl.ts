@@ -1402,9 +1402,9 @@ async function movePathFallback(
   let sourceIdentity: BigIntStats | undefined;
   try {
     if (params.overwrite && params.assertBeforeMutation) {
-      sourceIdentity = inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(source.resolved, { bigint: true }), true));
+      sourceIdentity = inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(source.resolved, { bigint: true })));
     } else {
-      admitMoveSourceStat(fsSync.lstatSync(source.resolved), params.overwrite);
+      admitMoveSourceStat(fsSync.lstatSync(source.resolved));
     }
   } catch (error) {
     if (isNotFoundPathError(error)) {
@@ -1464,7 +1464,7 @@ async function movePathFallback(
           } catch (error) { throw normalizePinnedPathError(error); }
         }
       }
-      inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(source.resolved, { bigint: true }), true), sourceIdentity);
+      inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(source.resolved, { bigint: true })), sourceIdentity);
     }
     await fs.rename(source.resolved, target.resolved);
   } catch (error) {

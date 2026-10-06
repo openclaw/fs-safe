@@ -53,3 +53,9 @@ export class FsSafeError extends Error {
     this.details = options.details;
   }
 }
+
+/** A rejected no-replace rename capability, not a generic missing native helper. */
+export function isNoReplaceUnsupported(error: unknown): error is FsSafeError {
+  return error instanceof FsSafeError && error.code === "helper-unavailable" &&
+    error.details?.capability === "rename-noreplace";
+}

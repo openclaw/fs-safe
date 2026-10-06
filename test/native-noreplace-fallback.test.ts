@@ -128,13 +128,14 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
     });
     __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: rename }));
     const scoped = await root(directory);
-    await expect(scoped.move("source", "destination/target")).rejects.toMatchObject({ code: "helper-unavailable" });
+    if (process.platform === "linux") await scoped.move("source", "destination/target");
+    else await expect(scoped.move("source", "destination/target")).rejects.toMatchObject({ code: "helper-unavailable" });
     configureFsSafeNative({ mode: "require" });
     await scoped.create("target", "native still available");
     expect(rename).toHaveBeenCalledTimes(2);
     expect(await scoped.readText("target")).toBe("native still available");
-    expect(await scoped.readText("source")).toBe("source");
-    expect(await fs.readdir(destination)).toEqual([]);
+    expect(await scoped.readText(process.platform === "linux" ? "destination/target" : "source")).toBe("source");
+    expect(await fs.readdir(destination)).toEqual(process.platform === "linux" ? ["target"] : []);
   });
 
   it.skipIf(process.platform !== "linux" || !fsSync.existsSync("/dev/shm"))("keeps tmpfs native after another device rejects no-replace", async () => {

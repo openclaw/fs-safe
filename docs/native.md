@@ -127,11 +127,13 @@ is the same documented containment class as the macOS and JavaScript paths;
 applications requiring atomic beneath resolution must check the result or use
 OS isolation. Rejection after a mutating open does not promise rollback.
 
-Nested no-clobber `Root.move()` still admits both parents and uses
-`renameat2(RENAME_NOREPLACE)`. Existing destinations are never overwritten.
-That separate syscall/filesystem capability remains required; if unavailable,
-the operation fails with `helper-unavailable`. Turning native mode `off` still
-disables no-clobber moves because Node has no equivalent atomic rename API.
+Nested no-clobber `Root.move()` admits both parents and first uses
+`renameat2(RENAME_NOREPLACE)`. Linux `auto` can fall back through those same
+descriptors to identity-checked file link/unlink or directory `renameat`;
+the directory fallback can replace an empty directory created concurrently.
+See the [move contract](writing.md#fs-move-from-to-options) for identity windows
+and partial-state receipts. `require` rejects an unsupported capability.
+Turning native mode `off` still disables no-clobber moves.
 
 For regular-file writes with no-clobber publication (including `Root.create()`
 and archive file extraction), `auto` removes its identity-checked unpublished
@@ -141,7 +143,7 @@ errno. This is a definite non-publication, not an uncertain remote rename.
 Completed streams are replayed from the retained stage descriptor, without
 calling their producer again. Unsupported capability is cached by the retained
 parent's exact device number in a process-local cache bounded to 128 devices.
-Only sibling publication/quarantine failures populate that cache; generic
+Only distinct sibling publication/quarantine/move failures populate that cache; generic
 cross-parent moves can also reject directory ancestry after a source swap.
 Other devices and replacement writes retain their native route. `require`
 cleans the stage and reports `helper-unavailable`, naming the operation and
@@ -155,7 +157,10 @@ Explicit native-only staged, retained-entry, symlink, directory-replacement and
 `rename-noreplace` publication contracts fail closed with the same capability
 diagnostic. Compatible temp-workspace cleanup can use its existing guarded
 JavaScript quarantine/removal path; `require-bounded` and native `require` refuse
-that downgrade. No native hardlink/unlink publication primitive is substituted.
+that downgrade. These publication/cleanup owners keep their own recovery
+contracts; only Root moves opt into the native move fallback. The standalone
+`movePathWithCopyFallback()` uses guarded replacing rename and its existing
+cross-device copy policy, so unsupported no-replace flags do not affect it.
 
 Bounded owned-tree cleanup deliberately has no `openat` fallback:
 `RESOLVE_NO_XDEV` rejects bind mounts even when device numbers match, which

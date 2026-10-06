@@ -9,6 +9,7 @@
         "configureFsSafeNative",
         "getFsSafeLockConfig",
         "getFsSafeNativeConfig",
+        "isNoReplaceUnsupported",
         "root",
         "writeExternalFileWithinRoot"
       ],
@@ -741,7 +742,8 @@
     "./errors": {
       "runtime": [
         "FsSafeError",
-        "categorizeFsSafeError"
+        "categorizeFsSafeError",
+        "isNoReplaceUnsupported"
       ],
       "types": [
         "FsSafeError",

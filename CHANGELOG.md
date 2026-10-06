@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Linux no-replace moves:** `Root.move()` falls back through retained parents when `RENAME_NOREPLACE` is unsupported: identity-checked file link/unlink and directory rename (which can replace a concurrently created empty directory). Native `require` stays strict; `isNoReplaceUnsupported()` exposes stable capability classification. ([#838](https://github.com/openclaw/fs-safe/pull/838), fixes [openclaw#165617](https://github.com/openclaw/openclaw/issues/165617)) Thanks @StarGazer1995, @bbs2i58, and @MertBasar0.
+
 ## 0.23.1 - 2026-10-04
 
 ### Highlights
