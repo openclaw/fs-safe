@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+## 0.24.1 - 2026-10-06
+
 ### Features
 
-- **Pinned source copies:** `copyRootFileSync` accepts `expectedSourceIdentity` to reject a replaced source before destination creation and returns the verified `sourceIdentity` for every copy method. ([#841](https://github.com/openclaw/fs-safe/pull/841))
+- **Pinned source copies:** `copyRootFileSync` accepts `expectedSourceIdentity` to reject a replaced source before destination creation and returns the verified `sourceIdentity` for every copy method. This refines the `copyRootFileSync` API introduced in 0.24.0. ([#841](https://github.com/openclaw/fs-safe/pull/841))
 
 ## 0.24.0 - 2026-10-06
 
