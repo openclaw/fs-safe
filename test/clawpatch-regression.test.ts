@@ -398,17 +398,15 @@ describe("clawpatch regression coverage", () => {
     }
   });
 
-  itPosix("rejects no-clobber directory moves instead of racing rename", async () => {
-    for (const mode of ["auto", "off"] as const) {
-      configureFsSafeNative({ mode });
-      const rootDir = await tempRoot(`fs-safe-root-move-dir-noclobber-${mode}-`);
-      await fs.mkdir(path.join(rootDir, "from"));
-      const scoped = await openRoot(rootDir);
+  itPosix("rejects no-clobber directory moves without native parent admission", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await tempRoot("fs-safe-root-move-dir-noclobber-off-");
+    await fs.mkdir(path.join(rootDir, "from"));
+    const scoped = await openRoot(rootDir);
 
-      await expect(scoped.move("from", "to")).rejects.toMatchObject({ code: "invalid-path" });
-      await expect(fs.lstat(path.join(rootDir, "from"))).resolves.toBeTruthy();
-      await expect(fs.lstat(path.join(rootDir, "to"))).rejects.toMatchObject({ code: "ENOENT" });
-    }
+    await expect(scoped.move("from", "to")).rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(fs.lstat(path.join(rootDir, "from"))).resolves.toBeTruthy();
+    await expect(fs.lstat(path.join(rootDir, "to"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
 

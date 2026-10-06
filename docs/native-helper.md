@@ -94,9 +94,11 @@ through the retained parents without another receipt, duplicate, reopen, or
 macOS `F_GETPATH`; the documented final source-name substitution window remains
 there. Deeper names retain guarded parent traversal.
 
-No-clobber `Root.move()` fails with `helper-unavailable` if descriptor-relative
-parent admission or atomic no-replace rename is unavailable; it never substitutes
-a check followed by a replacing rename. See the
+No-clobber `Root.move()` requires descriptor-relative parent admission. On Linux,
+`auto` can use identity-checked link/unlink for files or plain descriptor-relative
+rename for directories when `RENAME_NOREPLACE` is unsupported. Directory fallback
+can replace an empty directory created concurrently; `require` stays strict.
+See the [move contract](writing.md#fs-move-from-to-options) and the
 [fallback contract](native.md#javascript-fallback-guarantees-and-delta).
 
 Guarded JavaScript mutations can have out-of-root effects before a post-check

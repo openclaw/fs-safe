@@ -138,7 +138,7 @@ describe("platform fallback coverage", () => {
     await expect(scoped.move("hardlink.txt", "moved-hardlink.txt"))
       .rejects.toMatchObject({ code: "hardlink" });
     await expect(scoped.move("directory", "moved-directory"))
-      .rejects.toMatchObject({ code: "invalid-path" });
+      .rejects.toMatchObject({ code: "helper-unavailable" });
     await expect(scoped.move("source.txt", "existing.txt"))
       .rejects.toMatchObject({ code: "already-exists" });
     await expect(scoped.move("source.txt", "missing-parent/moved.txt"))

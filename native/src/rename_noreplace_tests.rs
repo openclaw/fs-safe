@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::os::fd::AsRawFd;
 use crate::unix;
 
-fn deny_noreplace(error: i32) {
+pub(crate) fn deny_noreplace(error: i32) {
     let flags = std::mem::offset_of!(libc::seccomp_data, args) + 4 * 8;
     let flags = if cfg!(target_endian = "little") { flags } else { flags + 4 };
     let statement = |code: u32, k: u32| libc::sock_filter { code: code as u16, jt: 0, jf: 0, k };
@@ -57,4 +57,37 @@ fn seccomp_unsupported_noreplace_is_definitely_unpublished() {
         unix::rename_replace(parent.as_raw_fd(), &source, parent.as_raw_fd(), &target).unwrap();
     }
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn seccomp_auto_move_preserves_inode() {
+    const NAME: &str = "rename_noreplace_tests::seccomp_auto_move_preserves_inode";
+    if std::env::var_os("FS_SAFE_MOVE_SECCOMP_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([NAME, "--exact", "--test-threads=1"])
+            .env("FS_SAFE_MOVE_SECCOMP_CHILD", "1").output().unwrap();
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+    use std::os::unix::fs::MetadataExt;
+    let directory = std::env::temp_dir().join(format!("fs-safe-move-seccomp-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let parent = File::open(&directory).unwrap();
+    deny_noreplace(libc::EINVAL);
+    for kind in ["directory", "file"] {
+        let source = directory.join("source");
+        let target = directory.join("target");
+        if kind == "directory" { fs::create_dir(&source).unwrap(); }
+        else { fs::write(&source, b"keep inode").unwrap(); }
+        let before = fs::symlink_metadata(&source).unwrap();
+        let error = unix::rename_no_replace(parent.as_raw_fd(), "source", parent.as_raw_fd(), "target").unwrap_err();
+        assert_eq!(error.status, unix::RENAME_NOREPLACE_UNSUPPORTED);
+        crate::move_noreplace::move_fallback(parent.as_raw_fd(), "source", parent.as_raw_fd(), "target",
+            crate::ExactFileIdentity { dev: before.dev(), ino: before.ino() }).unwrap();
+        assert_eq!(fs::symlink_metadata(&target).unwrap().ino(), before.ino());
+        assert!(!source.exists());
+        if kind == "directory" { fs::remove_dir(target).unwrap(); }
+        else { fs::remove_file(target).unwrap(); }
+    }
+    fs::remove_dir(directory).unwrap();
 }

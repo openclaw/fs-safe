@@ -1,6 +1,7 @@
 export {
   FsSafeError,
   categorizeFsSafeError,
+  isNoReplaceUnsupported,
 } from "./errors.js";
 export type * from "./errors.js";
 export {

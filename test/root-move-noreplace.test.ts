@@ -260,7 +260,7 @@ it("keeps overwrite moves on the existing JavaScript rename path", async () => {
   await expect(fs.readFile(target, "utf8")).resolves.toBe("source");
 });
 
-it("continues to reject no-replace directory moves", async () => {
+it("dispatches no-replace directory moves through retained parents", async () => {
   const directory = await tempRoot("fs-safe-root-move-directory-");
   await fs.mkdir(path.join(directory, "source"));
   const adapter = noReplaceAdapter(directory);
@@ -268,10 +268,10 @@ it("continues to reject no-replace directory moves", async () => {
   configureFsSafeNative({ mode: "require" });
 
   const scoped = await root(directory);
-  await expect(scoped.move("source", "target"))
-    .rejects.toMatchObject({ code: "invalid-path" });
-  expect(adapter.renameNoReplace).not.toHaveBeenCalled();
-  expect((await fs.stat(path.join(directory, "source"))).isDirectory()).toBe(true);
+  await scoped.move("source", "target");
+  expect(adapter.renameNoReplace).toHaveBeenCalledOnce();
+  await expect(fs.lstat(path.join(directory, "source"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await fs.stat(path.join(directory, "target"))).isDirectory()).toBe(true);
 });
 
 

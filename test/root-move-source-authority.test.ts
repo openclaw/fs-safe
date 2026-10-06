@@ -38,7 +38,7 @@ async function fixture(layout: "flat" | "separate-parents") {
 
 it.each([
   { change: "hardlink", code: "hardlink" },
-  { change: "directory", code: "invalid-path" },
+  { change: "directory", code: "path-mismatch" },
   { change: "replacement", code: "path-mismatch" },
 ] as const)("rejects a source $change introduced by the final authority callback", async ({ change, code }) => {
   const f = await fixture("flat");

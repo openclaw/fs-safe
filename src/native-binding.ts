@@ -280,6 +280,10 @@ export interface NativeBinding {
     targetParentFd: number, targetBasename: string,
   ): NativePublicationTransition;
   renameNoReplace(...args: NativeTwoPathArgs): void;
+  /** Linux auto-mode fallback through already-admitted direct-child parents. */
+  moveNoReplaceFallback?(
+    ...args: [...paths: NativeTwoPathArgs, expectedSourceDev: bigint, expectedSourceIno: bigint]
+  ): void;
   /** Identity-fenced retained-directory rename capability. */
   renameNoReplaceWithIdentity?(
     ...args: [...paths: NativeTwoPathArgs, expectedSourceDev: bigint, expectedSourceIno: bigint]

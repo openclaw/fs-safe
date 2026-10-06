@@ -27,7 +27,7 @@ import { PATH_ALIAS_POLICIES } from "./path-policy.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { noReplaceUnavailable } from "./native-noreplace.js";
+import { nativeMoveNoReplace } from "./native-move-fallback.js";
 
 function nativeParentRelativePath(rootReal: string, parentPath: string): string {
   const relative = path.relative(rootReal, parentPath);
@@ -73,26 +73,19 @@ function normalizeMoveError(error: unknown): unknown {
   return error;
 }
 
-function normalizeRenameNoReplaceError(error: unknown): unknown {
-  return noReplaceUnavailable(error, "move", true) ?? normalizeMoveError(error);
-}
-
-export function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T, overwrite = false): T {
+export function admitMoveSourceStat<T extends Stats | BigIntStats>(stat: T): T {
   if (stat.isSymbolicLink()) {
     throw new FsSafeError("symlink", "symlink not allowed");
   }
   if (stat.isFile() && stat.nlink > 1) {
     throw hardlinkedPathNotAllowedError();
   }
-  if (!overwrite && stat.isDirectory()) {
-    throw new FsSafeError("invalid-path", "directory moves require overwrite: true");
-  }
   return stat;
 }
 
 export async function movePathNative(
   root: RootContext,
-  params: Pick<RootMoveOptions, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks">,
+  params: Pick<RootMoveOptions, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & { requireNative: boolean },
   paths: {
     sourcePath: string;
     sourceParentPath: string;
@@ -153,10 +146,10 @@ export async function movePathNative(
     }
     await assertRootIdentityCurrent(root);
     for (const admission of parentAdmissions) assertSyncDirectoryGuard(admission.guard);
-    // Overwrite publication always binds an exact source; no-clobber retains
-    // its existing callback-dependent identity contract.
-    const sourceStat = overwrite || params.assertBeforeMutation
-      ? inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath, { bigint: true }), overwrite), paths.expectedSourceIdentity)
+    // Linux auto fallback needs an exact source even without an authority callback.
+    const sourceStat = overwrite || params.assertBeforeMutation || (process.platform === "linux" && !params.requireNative)
+      ? inspectFileIdentitySync(
+        () => admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath, { bigint: true })), paths.expectedSourceIdentity)
       : undefined;
     if (!sourceStat) admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath));
     assertFinalSymlinkRejected(admittedTargetPath, params.mutationSymlinks !== undefined);
@@ -197,25 +190,23 @@ export async function movePathNative(
       }
     }
     if (sourceStat !== undefined) {
-      inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath, { bigint: true }), overwrite), sourceStat);
+      inspectFileIdentitySync(() => admitMoveSourceStat(fsSync.lstatSync(admittedSourcePath, { bigint: true })), sourceStat);
     }
     try {
       assertFinalSymlinkRejected(admittedTargetPath, params.mutationSymlinks !== undefined);
       if (overwrite) binding.renameReplaceWithIdentity!(sourceParent.fd, path.basename(paths.sourcePath),
         targetParent.fd, path.basename(paths.targetPath), sourceStat!.dev, sourceStat!.ino);
-      else binding.renameNoReplace(
+      else nativeMoveNoReplace(binding, [
         sourceParent.fd,
         path.basename(paths.sourcePath),
         targetParent.fd,
         path.basename(paths.targetPath),
-      );
+      ], sourceStat, !params.requireNative);
     } catch (error) {
       if (isAlreadyExistsError(error) || (!overwrite && (error as NodeJS.ErrnoException | undefined)?.code === "ENOTEMPTY")) {
         throw new FsSafeError("already-exists", "destination exists", errorCauseOptions(error));
       }
-      // Cross-parent source swaps can produce directory-ancestry EINVAL.
-      // Fail closed here without poisoning the sibling-publication device cache.
-      throw overwrite ? normalizeMoveError(error) : normalizeRenameNoReplaceError(error);
+      throw normalizeMoveError(error);
     }
     try {
       for (const admission of parentAdmissions) await assertAsyncDirectoryGuard(admission.guard);

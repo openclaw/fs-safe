@@ -463,17 +463,38 @@ Mutation policy is captured at call start; changes to caller-owned denial arrays
 apply to later moves. For live cancellation or revocation, throw from
 `assertBeforeMutation` immediately before dispatch.
 
-The default no-clobber mode requires the native helper. It admits both parent
-directory descriptors and performs a descriptor-relative no-replace rename, so
-a competitor that creates the target first is preserved and the source remains
-in place. If the helper or safe parent admission is unavailable, the call fails
-with `helper-unavailable`; it never falls back to a check followed by a
-replacing rename. After dispatch it rechecks both parent identities, so a
-post-operation rejection can mean the no-replace rename completed. Directory
-moves continue to require `overwrite: true`.
+The default no-clobber mode supports regular files and directories and requires
+the native helper. It admits both parent directory descriptors and first uses
+descriptor-relative no-replace rename. If the helper or safe parent admission
+is unavailable, the call fails with `helper-unavailable`. After dispatch it
+rechecks both parent identities; rejection does not imply rollback.
+
+On Linux filesystems that reject `renameat2(RENAME_NOREPLACE)`, `auto` uses the
+same retained parents and rechecks the source identity before falling back:
+
+- Regular files use `linkat` without following symlinks, verify the exact
+  source/target inode pair with two links, then recheck the source before
+  `unlinkat`. Existing targets cannot be overwritten. Only this intermediate
+  pair permits two links; admission and completed publication require one.
+  Denied or unsupported hard links fail closed, naming both capabilities.
+- Directories recheck that the target is absent and use plain `renameat`.
+  A concurrent non-empty directory or non-directory target rejects as
+  `already-exists`. **A concurrently created empty directory can be replaced.**
+  A trailing slash on the direct-child source requires a directory at syscall
+  time, even after a file or symlink substitution. Source identity checks and
+  rename/unlink are separate syscalls,
+  not source-name compare-and-swap; use exclusive namespace ownership or OS
+  isolation against hostile actors in the final check-to-syscall window.
+
+`require` does not take these fallbacks. Use
+[`isNoReplaceUnsupported(error)`](errors.md#unsupported-no-replace-moves) to
+classify the capability refusal. File fallback failures after link publication
+leave the target intact and report `details.publication: "published"` plus
+`details.sourceRemoval`; callers must inspect that partial state before retrying.
+There is no automatic rollback or crash-durability guarantee.
 
 Linux without `openat2` uses the [guarded native parent walk](native.md#linux-without-openat2).
-The move still uses `renameat2(RENAME_NOREPLACE)` and preserves collisions;
+The move uses `renameat2(RENAME_NOREPLACE)` or the Linux auto fallbacks above;
 parent resolution reports the documented `best-effort` containment class.
 Disabling the addon still makes no-clobber moves unavailable.
 

@@ -54,6 +54,10 @@ use fs_safe_archive_core::tar_meter;
 mod unix;
 #[cfg(target_os = "linux")]
 mod linux_open;
+#[cfg(target_os = "linux")]
+mod move_noreplace;
+#[cfg(all(test, target_os = "linux"))]
+mod move_noreplace_tests;
 #[cfg(all(test, target_os = "linux"))]
 mod rename_noreplace_tests;
 #[cfg(windows)]
@@ -348,6 +352,16 @@ macro_rules! native_path_pair_operation {
 
 native_path_pair_operation!(link_beneath, "linkBeneath");
 native_path_pair_operation!(rename_no_replace, "renameNoReplace");
+
+#[cfg(target_os = "linux")]
+#[napi(js_name = "moveNoReplaceFallback")]
+pub fn move_no_replace_fallback(
+    env: Env, source_fd: i32, source: String, target_fd: i32, target: String,
+    dev: BigInt, ino: BigInt,
+) -> Result<()> {
+    into_napi(env, exact_file_identity(&dev, &ino).and_then(|expected|
+        move_noreplace::move_fallback(source_fd, &source, target_fd, &target, expected)))
+}
 
 #[napi(js_name = "renameNoReplaceWithIdentity")]
 pub fn rename_no_replace_with_identity(

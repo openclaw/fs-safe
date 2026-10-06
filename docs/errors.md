@@ -259,3 +259,35 @@ Two reasons it isn't a richer hierarchy of subclasses:
 - [Reading](reading.md) — read-path codes.
 - [Writing](writing.md) — write-path codes.
 - [Archive extraction](archive.md) — `ArchiveLimitError` and `ArchiveSecurityError`.
+
+## Unsupported no-replace moves
+
+`isNoReplaceUnsupported(error)` is exported from `@openclaw/fs-safe` and
+`@openclaw/fs-safe/errors`. It recognizes a `helper-unavailable` `FsSafeError`
+with `details.capability === "rename-noreplace"`. This includes strict native
+publication refusals and a Root file move whose link fallback is also unavailable
+(`details.fallback === "link-unlink"`, `details.fallbackCapability === "linkat"`).
+It does not classify a missing native addon, unrelated permission errors, or
+post-publication failures. Once no-replace rename has been rejected, a denied
+or unsupported `linkat` fallback (`EPERM`, `EOPNOTSUPP`, `EMLINK`, `EXDEV`,
+or `ENOSYS`) also fails with this classification. `EPERM` can reflect source
+permissions or inode flags rather than a filesystem-wide lack of hard links;
+the fallback is unavailable for this move. No link-capability cache is populated.
+Consumers need not inspect internal native cause codes.
+The classifier is diagnostic; it does not authorize a replacing retry.
+
+When a Root file move's link/unlink fallback fails after creating the target,
+`details.operation` is `"move"`, `details.fallback` is `"link-unlink"`, and
+`details.publication` is `"published"` (the link was created, not a guarantee
+that a concurrent actor has left it unchanged). `details.sourceRemoval` is:
+
+| Value | Observation |
+| --- | --- |
+| `"not-attempted"` | Identity or link-pair verification failed; source unlink was refused (`path-mismatch`). |
+| `"still-linked"` | Unlink failed and both original inode links were reverified (`helper-failed`). |
+| `"unverified"` | Unlink failed and the current pair could not be verified (`helper-failed`). |
+| `"removed"` | Source unlink succeeded but final target verification failed (`helper-failed`). |
+
+The target is never deleted to roll back these failures. These are observations,
+not locks; inspect the names and identities before recovery. Interrupted processes
+can likewise leave both links, and default hardlink rejection remains enabled.
