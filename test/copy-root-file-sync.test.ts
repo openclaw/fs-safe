@@ -137,7 +137,7 @@ it.each([-1, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid budgets be
   expect(fs.existsSync(f.target)).toBe(false);
 });
 
-it.each(["file", "directory", "dangling-link"])("refuses a pre-existing %s", async (kind, context) => {
+it.for(["file", "directory", "dangling-link"])("refuses a pre-existing %s", async (kind, context) => {
   const f = await fixture();
   const absent = path.join(f.targetRoot, "absent");
   if (kind === "directory") fs.mkdirSync(f.target);
@@ -214,7 +214,7 @@ it("preserves a destination replacement when source verification fails", async (
   expect(fs.readFileSync(f.target, "utf8")).toBe("replacement destination");
 });
 
-it.each(["source", "destination"] as const)("rejects a symlinked %s parent", async (side, context) => {
+it.for(["source", "destination"] as const)("rejects a symlinked %s parent", async (side, context) => {
   const f = await fixture();
   const rootPath = f.options[side].rootPath;
   fs.mkdirSync(path.join(rootPath, "real"));
@@ -279,7 +279,7 @@ it.runIf(process.platform !== "win32").each([
 });
 
 describe.runIf(native)("native synchronous copying", () => {
-  it.each(["auto", "never", "always"] as const)("copies with clone=%s through a readable/writable descriptor", async (clone, context) => {
+  it.for(["auto", "never", "always"] as const)("copies with clone=%s through a readable/writable descriptor", async (clone, context) => {
     enableNative();
     const f = await fixture(Buffer.alloc(128 * 1024 + 1, 0x31));
     if (clone === "always" && (process.platform === "win32" || !probeTreeClone(f.targetRoot))) {
@@ -295,7 +295,7 @@ describe.runIf(native)("native synchronous copying", () => {
     if (clone === "never" || process.platform === "win32") expect(copied.method).toBe("copy");
     if (clone === "always") expect(copied.method).toBe("clone");
   });
-  it.runIf(process.platform !== "win32").each([0o400, 0o444])("clones a read-only source with mode %s without restricting its owned descriptor", async (mode, context) => {
+  it.runIf(process.platform !== "win32").for([0o400, 0o444])("clones a read-only source with mode %s without restricting its owned descriptor", async (mode, context) => {
     enableNative();
     const f = await fixture();
     if (!probeTreeClone(f.targetRoot)) context.skip("Host filesystem cannot clone files");
