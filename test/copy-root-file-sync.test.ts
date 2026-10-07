@@ -279,15 +279,34 @@ it.runIf(process.platform !== "win32").each([
 });
 
 describe.runIf(native)("native synchronous copying", () => {
-  it.each(["auto", "never"] as const)("copies with clone=%s on the host filesystem", async clone => {
+  it.each(["auto", "never", "always"] as const)("copies with clone=%s through a readable/writable descriptor", async (clone, context) => {
     enableNative();
     const f = await fixture(Buffer.alloc(128 * 1024 + 1, 0x31));
+    if (clone === "always" && (process.platform === "win32" || !probeTreeClone(f.targetRoot))) {
+      context.skip("Synchronous cloning is unavailable on this host");
+    }
     if (process.platform !== "win32") expect(native!.copyFileExclusiveSync).toBeTypeOf("function");
     using copied = copyRootFileSync({ ...f.options, clone, maxBytes: f.content.length });
     expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
+    expect(fs.writeSync(copied.fd, Buffer.from("independent"), 0, 11, 0)).toBe(11);
+    expect(fs.readFileSync(f.source).equals(Buffer.from(f.content))).toBe(true);
     expect(copied.bytes).toBe(f.content.length);
     expect(fs.statSync(f.source, { bigint: true })).toMatchObject(copied.sourceIdentity);
     if (clone === "never" || process.platform === "win32") expect(copied.method).toBe("copy");
+    if (clone === "always") expect(copied.method).toBe("clone");
+  });
+  it.runIf(process.platform !== "win32").each([0o400, 0o444])("clones a read-only source with mode %s without restricting its owned descriptor", async (mode, context) => {
+    enableNative();
+    const f = await fixture();
+    if (!probeTreeClone(f.targetRoot)) context.skip("Host filesystem cannot clone files");
+    fs.chmodSync(f.source, mode);
+    using copied = copyRootFileSync({ ...f.options, clone: "always", preserveSourceMode: true });
+    expect(copied.method).toBe("clone");
+    expect(fs.readFileSync(copied.fd, "utf8")).toBe(f.content);
+    expect(fs.writeSync(copied.fd, Buffer.from("independent"), 0, 11, 0)).toBe(11);
+    expect(fs.fstatSync(copied.fd).mode & 0o777).toBe(mode);
+    expect(fs.statSync(f.source).mode & 0o777).toBe(mode);
+    expect(fs.readFileSync(f.source, "utf8")).toBe(f.content);
   });
   it.each(["auto", "never", "always"] as const)("enforces the native size limit with clone=%s", async clone => {
     enableNative();
