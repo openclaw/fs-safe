@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runBoundedProcess } from "../scripts/mutation-policy-proof.mjs";
 import { expectFsSafeErrorSync, expectFsSafeError } from "./helpers/security.js";
@@ -15,12 +16,10 @@ import {
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { deferred } from "./helpers/deferred.js";
 
-const childTarget = process.env.FS_SAFE_STRESS_LOCK_TARGET;
-const childLog = process.env.FS_SAFE_STRESS_LOCK_LOG;
 const { tempRoot } = useTempDirs();
 
 describe("file-lock concurrency stress", () => {
-  it.runIf(!childTarget)("bounds attacker-controlled sidecar payload reads", async () => {
+  it("bounds attacker-controlled sidecar payload reads", async () => {
     const base = await tempRoot("fs-safe-sidecar-payload-limit-");
     const targetPath = path.join(base, "state.json");
     const lockPath = `${targetPath}.lock`;
@@ -44,7 +43,7 @@ describe("file-lock concurrency stress", () => {
       }), "too-large");
   });
 
-  it.runIf(!childTarget && process.platform !== "win32")(
+  it.runIf(process.platform !== "win32")(
     "rejects a dangling symlink sidecar without ignoring the deadline",
     async () => {
       const base = await tempRoot("fs-safe-sidecar-dangling-symlink-");
@@ -67,7 +66,7 @@ describe("file-lock concurrency stress", () => {
     },
   );
 
-  it.runIf(!childTarget)("never overlaps many in-process holders and releases after throws", async () => {
+  it("never overlaps many in-process holders and releases after throws", async () => {
     const root = await tempRoot("fs-safe-lock-in-process-");
     const targetPath = path.join(root, "state.json");
     const manager = createFileLockManager(`stress-${Date.now()}-${Math.random()}`);
@@ -131,27 +130,21 @@ describe("file-lock concurrency stress", () => {
     await expect(fs.stat(`${targetPath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  describe.runIf(!childTarget)("real child processes", () => {
+  describe("real child processes", () => {
     let directory: string | undefined;
     const run = useSuiteFixture(async () => {
       directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-lock-child-process-"));
       const targetPath = path.join(directory, "state.json");
       const logPath = path.join(directory, "critical-sections.log");
-      const vitestPath = path.resolve("node_modules/vitest/vitest.mjs");
-      const testPath = path.relative(process.cwd(), import.meta.filename);
-      // Eight real processes remain independent; their test workers stay inside
-      // those processes so the watchdog can kill and reap the complete holder.
+      const childPath = fileURLToPath(new URL("./fixtures/file-lock-concurrency-child.mjs", import.meta.url));
+      // Keep each holder in its own process without booting another test runner;
+      // the watchdog still owns and reaps every process before fixture cleanup.
       const children = Array.from({ length: 8 }, (_, index) => runBoundedProcess(
         process.execPath,
-        [vitestPath, "run", testPath, "--pool=threads", "--maxWorkers=1", "--silent"],
+        [childPath, targetPath, logPath, String(index)],
         {
           cwd: process.cwd(),
-          env: {
-            ...process.env,
-            FS_SAFE_STRESS_LOCK_TARGET: targetPath,
-            FS_SAFE_STRESS_LOCK_LOG: logPath,
-            FS_SAFE_STRESS_LOCK_INDEX: String(index),
-          },
+          env: process.env,
           timeoutMs: 45_000,
           maxStdoutBytes: 16_384,
         },
@@ -192,23 +185,5 @@ describe("file-lock concurrency stress", () => {
       expect(active.size).toBe(0);
       await expect(fs.stat(`${targetPath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
     }));
-  });
-
-  it.runIf(!!childTarget)("holds one cross-process critical section", async () => {
-    const owner = `${process.pid}:${process.env.FS_SAFE_STRESS_LOCK_INDEX ?? "unknown"}`;
-    const lock = await acquireFileLock(childTarget!, {
-      staleMs: 60_000,
-      timeoutMs: 10_000,
-      retry: { minTimeout: 1, maxTimeout: 5 },
-      payload: async () => ({ owner, createdAt: new Date().toISOString() }),
-    });
-    try {
-      await fs.appendFile(childLog!, `enter ${owner}\n`);
-      await delay(20);
-      await fs.appendFile(childLog!, `exit ${owner}\n`);
-    } finally {
-      await lock.release();
-    }
-    expect(await fs.readFile(childLog!, "utf8")).toContain(owner);
   });
 });

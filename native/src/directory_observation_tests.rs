@@ -119,11 +119,12 @@ fn final_handle_path_detects_rename_after_named_observation() {
 }
 
 #[test]
-fn metadata_changes_on_either_side_of_named_observation_are_rejected() {
+fn metadata_observations_track_mode_and_link_changes_on_either_side() {
     for after_named in [false, true] {
         for change_mode in [false, true] {
             let fixture = Fixture::new("metadata-change");
             let (path, directory) = fixture.directory("directory");
+            let before = rustix::fs::fstat(directory.as_fd()).unwrap();
             let change = || {
                 if change_mode {
                     fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
@@ -137,7 +138,19 @@ fn metadata_changes_on_either_side_of_named_observation_are_rejected() {
                 if after_named { change(); }
                 Ok(named)
             });
-            assert_eq!(observed.unwrap_err().status, "path-mismatch");
+            let after = rustix::fs::fstat(directory.as_fd()).unwrap();
+            if change_mode || before.st_nlink != after.st_nlink {
+                assert_eq!(observed.unwrap_err().status, "path-mismatch");
+            } else {
+                // Btrfs retains directory nlink=1 when children change; unchanged
+                // observed metadata must still admit the exact retained directory.
+                let observed = observed.unwrap();
+                assert_eq!(observed.dev, before.st_dev as u64);
+                assert_eq!(observed.ino, before.st_ino as u64);
+                assert_eq!(observed.mode, before.st_mode as u32);
+                assert_eq!(observed.nlink, before.st_nlink as u64);
+                assert_eq!(observed.real_path, path.to_str().unwrap());
+            }
             directory.metadata().unwrap();
         }
     }

@@ -472,7 +472,7 @@ pub fn read_at(reader: &IndependentReader, buffer: &mut [u8], offset: u64) -> Na
 
 #[cfg(target_os = "linux")]
 pub(crate) fn create_exclusive_target(root_fd: i32, rel_path: &str) -> NativeResult<OwnedFd> {
-    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
+    let flags = OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
     open_owned_beneath(root_fd, rel_path, flags.bits() as i32)
 }
 
@@ -1163,6 +1163,23 @@ pub(crate) fn clone_file_exclusive_with_sync(
         let (publication_stage_receipt, payload_receipt) =
             normalize().map_err(post_clone_security_error)?;
         stage.receipt = Some(publication_stage_receipt);
+        // A clone inherits read-only source modes. Normalize through its original
+        // pin before acquiring the read/write descriptor promised to callers.
+        let writable = open_owned_beneath(
+            stage_fd.as_raw_fd(),
+            "payload",
+            (OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW).bits() as i32,
+        )
+        .map_err(post_clone_security_error)?;
+        let writable_receipt = crate::darwin_security::inspect_security(writable.as_fd())
+            .map_err(post_clone_security_error)?;
+        if writable_receipt != payload_receipt {
+            return Err(native_error(
+                "EIO",
+                "cloned payload changed while acquiring read/write access",
+            ));
+        }
+        stage.target = Some(writable);
         rename_no_replace(
             stage_fd.as_raw_fd(),
             "payload",
