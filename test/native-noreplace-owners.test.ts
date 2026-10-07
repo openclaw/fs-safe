@@ -54,9 +54,14 @@ describe.skipIf(!native || process.platform === "win32")("no-replace publication
     expect(await stage.cleanup()).toMatchObject({ status: "removed", publication: { status: "not-published" } });
     const sourcePath = path.join(directory, "source");
     await fs.writeFile(sourcePath, "source");
-    await expect(publishFileExclusive({ sourcePath, targetPath: path.join(directory, "target"), strategy: "rename-noreplace" }))
-      .rejects.toMatchObject(expected);
-    expect(await fs.readdir(directory)).toEqual(["source"]);
+    const publication = publishFileExclusive({ sourcePath, targetPath: path.join(directory, "target"), strategy: "rename-noreplace" });
+    if (mode === "auto" && process.platform === "linux") {
+      await expect(publication).resolves.toMatchObject({ method: "rename-noreplace", fallback: "link-unlink" });
+      expect(await fs.readdir(directory)).toEqual(["target"]);
+    } else {
+      await expect(publication).rejects.toMatchObject(expected);
+      expect(await fs.readdir(directory)).toEqual(["source"]);
+    }
   });
 
   it("preserves an unpublished directory replacement without an uncertain transition", async () => {

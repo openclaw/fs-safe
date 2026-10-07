@@ -153,12 +153,16 @@ byte-copy path cannot satisfy that requirement.
 
 Private producer workspace promotion likewise uses its existing guarded
 JavaScript handoff in `auto`, preserving the completed producer output.
-Explicit native-only staged, retained-entry, symlink, directory-replacement and
-`rename-noreplace` publication contracts fail closed with the same capability
+Explicit native-only staged, retained-entry, symlink and directory-replacement
+contracts fail closed with the same capability
 diagnostic. Compatible temp-workspace cleanup can use its existing guarded
 JavaScript quarantine/removal path; `require-bounded` and native `require` refuse
 that downgrade. These publication/cleanup owners keep their own recovery
-contracts; only Root moves opt into the native move fallback. The standalone
+contracts. Regular-file `publishFileExclusive` with `rename-noreplace` also opts
+into the retained-parent file-move fallback in Linux `auto`, reporting
+`fallback: "link-unlink"`; `require` still refuses. This fallback is not
+crash-atomic: see [publication strategies](durability.md#strategies) and partial
+failure receipts. The standalone
 `movePathWithCopyFallback()` uses guarded replacing rename and its existing
 cross-device copy policy, so unsupported no-replace flags do not affect it.
 
@@ -340,7 +344,7 @@ See [Root containment guarantees](security-model.md#containment-guarantees-by-pl
 | ZIP/TAR/gzip | Rust streaming decode and fd-relative output creation. | Optional JSZip or bundled WASM TAR into guarded private staging, then the same guarded merge policy. |
 | Zstd/bzip2 TAR | Rust streaming decode and fd-relative output creation. | Bundled WASM codecs feed the shared Rust TAR parser, then guarded private staging and the same merge policy; no optional codec dependency. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
-| `rename-noreplace` | Atomic platform no-replace rename. | Unsupported; no emulation by check-then-rename. |
+| `rename-noreplace` | Atomic platform no-replace rename; Linux `auto` file publication can use identity-checked, non-crash-atomic link/unlink when unsupported. | Unsupported; no emulation by check-then-rename. |
 | Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | The packaged PowerShell/C# bridge preserves raw facts and inspects the borrowed descriptor for secure reads, with the same Node identity comparison; its command failures reject. Structured .NET pathname reporting retains its separate compatibility query. |
 | Windows private directory | Creation-time protected DACL. | The packaged PowerShell/C# bridge applies the protected DACL at creation and retains exact handles through identity validation and failure cleanup. Command failures reject. |
 

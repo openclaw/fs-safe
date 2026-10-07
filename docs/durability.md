@@ -191,7 +191,37 @@ try {
 |---|---|---|
 | `link-required` | Create a same-filesystem hardlink or propagate the failure. | No; guarded JS `link` fallback remains. |
 | `link-or-copy` | Try hardlink, then clone, Linux `copy_file_range`, then the JS byte loop for classified unsupported errors. | No; acceleration is optional. |
-| `rename-noreplace` | Atomically move the source without replacing an existing target. Success consumes `sourcePath`. | Yes. |
+| `rename-noreplace` | Move the source without replacing an existing target; Linux `auto` can use identity-checked link/unlink when no-replace rename is unsupported. Success consumes `sourcePath`. | Yes. |
+
+`rename-noreplace` normally uses atomic native rename. On Linux in native `auto`
+mode, a definitively unsupported `RENAME_NOREPLACE` result (`EINVAL`, `ENOSYS`,
+or unsupported-operation errno) permits the existing native file-move fallback.
+It requires a regular source with one link, retains both parents, creates the
+target with `linkat` without following symlinks, verifies both names against the
+staged identity with exactly two links, then unlinks the source and verifies the
+target has one link. Fallback collisions report `already-exists` without clobbering;
+the atomic rename path retains its existing `EEXIST` error.
+Success still returns `method: "rename-noreplace"`, with the additive
+`fallback: "link-unlink"` field identifying this weaker mechanism. Atomic rename
+and the other strategies omit `fallback`.
+
+**Link/unlink is not crash-atomic.** A crash between those syscalls can leave both
+names on the same complete inode. Callers must recognize that interrupted pair
+as incomplete evidence or recover it under their own identity/ownership rules
+before accepting a sealed artifact. The source parent is synchronized after
+unlink, and the target parent is synchronized through the existing pinned
+directory/`parentReceipt` path before success. These directory barriers do not
+flush file contents: callers must finish and synchronize staged contents first.
+Identity checks and syscalls remain separate, not source-name compare-and-swap;
+detected substitutions refuse completion and preserve evidence.
+
+Native `require` remains fail-closed with `helper-unavailable` and
+`details.capability === "rename-noreplace"`. Missing helpers, native `off`, and
+non-Linux platforms gain no fallback. If `linkat` returns `EPERM`, `EOPNOTSUPP`,
+`EMLINK`, `EXDEV`, or `ENOSYS`, publication also fails closed, naming both
+`rename-noreplace` and `details.fallbackCapability: "linkat"`. Permission or link
+count limits need not mean the entire filesystem lacks hard-link support.
+`link-required` and `link-or-copy` do not use `renameat2` and are unchanged.
 
 `"link-required"` propagates an unsupported hardlink failure.
 `"link-or-copy"` falls back only for `EPERM`, `EXDEV`, `ENOTSUP`,
@@ -339,6 +369,9 @@ type PublishFileExclusiveFailureDetails = {
   targetIdentity?: { dev: number | bigint; ino: number | bigint };
   cleanup: "removed" | "preserved" | "unknown";
   directorySync?: { status: "failed"; code?: string };
+  fallback?: "link-unlink";
+  publication?: "published";
+  sourceRemoval?: "not-attempted" | "still-linked" | "unverified" | "removed";
 };
 ```
 
@@ -351,6 +384,16 @@ application-level guard, such as SQLite snapshot validation, should branch on
 this receipt instead of inferring ownership from path existence. The original
 failure remains available as `cause`. Failures before target creation retain
 their existing error shape and do not claim a cleanup result.
+
+After a fallback link succeeds, failure always preserves the target, irrespective
+of `onSyncFailure`. The receipt reports `fallback: "link-unlink"`,
+`publication: "published"`, and the source-removal state. `still-linked` means
+unlink failed and both names were reverified as the exact two-link pair;
+`not-attempted` means pair verification failed before unlink; `unverified` means
+unlink failed and the pair could no longer be verified; `removed` means unlink
+completed but a later verification or sync failed. Publication describes the
+completed link operation, not continuing authority over the target pathname.
+Unverified targets do not receive a claimed `targetIdentity`.
 
 Source and target identities are checked again after successful or unsupported
 directory synchronization, while their descriptors remain owned. A late
@@ -389,13 +432,15 @@ can make a failed directory sync succeed: rollback deletion is also not proven
 durable, and a preserved name may disappear after a crash. Always use the
 typed receipt rather than inferring ownership from `exists()`.
 
-`rename-noreplace` always preserves its target after a successful rename,
+`rename-noreplace` always preserves its target after a successful rename or fallback link,
 because removing it would discard the source's only remaining name; its typed
 failure receipt makes that explicit regardless of `onSyncFailure`.
 
-`"rename-noreplace"` requires the native helper and atomically moves the
-source to the target without replacement. A collision is reported as
-`EEXIST`, both files remain unchanged, and a successful call returns
+`"rename-noreplace"` requires the native helper and moves the
+source to the target without replacement, with the Linux `auto` fallback limits
+described above. A collision is reported as `EEXIST` for atomic rename or
+`already-exists` for its Linux fallback, both files remain
+unchanged, and a successful call returns
 `method: "rename-noreplace"` after synchronizing the source and target parent
 directories. Unlike the link/copy strategies, success consumes `sourcePath`.
 
