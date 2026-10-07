@@ -17,7 +17,7 @@ if ! command -v node >/dev/null || ! node -e 'process.exit(Number(process.versio
   export PATH="$HOME/.local/node/bin:$PATH"
   cd - >/dev/null
 fi
-if ! command -v pnpm >/dev/null; then npm install -g pnpm@12.4.2 --prefix "$HOME/.local"; fi
+if ! command -v pnpm >/dev/null; then npm install -g pnpm@12.10.1 --prefix "$HOME/.local"; fi
 node --version
 pnpm --version
 pnpm install --frozen-lockfile

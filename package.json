@@ -183,22 +183,22 @@
     "jszip": "^3.10.2"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-alpha.5",
-    "@napi-rs/cli": "3.10.6",
-    "@types/node": "^26.6.1",
+    "@emnapi/runtime": "2.0.0-alpha.6",
+    "@napi-rs/cli": "3.10.8",
+    "@types/node": "^26.6.4",
     "@vitest/coverage-v8": "5.0.3",
-    "fast-check": "^4.10.1",
+    "fast-check": "^4.10.2",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
     "sigstore": "5.0.0",
     "tar": "7.5.22",
     "typescript": "^7.0.2",
-    "vite": "8.3.2",
-    "vitest": "^5.0.1"
+    "vite": "8.3.3",
+    "vitest": "^5.0.3"
   },
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@12.4.2"
+  "packageManager": "pnpm@12.10.1"
 }

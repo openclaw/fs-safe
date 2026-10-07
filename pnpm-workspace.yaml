@@ -8,3 +8,8 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAge: 2880
+
+# Reviewed upstream releases required by the dependency refresh.
+minimumReleaseAgeExclude:
+  - '@napi-rs/cli@3.10.8'
+  - 'vite@8.3.3'

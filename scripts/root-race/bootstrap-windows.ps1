@@ -11,7 +11,7 @@ if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $parts[0]) { throw 
 Expand-Archive -Force $zip $toolsDir
 $nodeDir = Join-Path $toolsDir ([IO.Path]::GetFileNameWithoutExtension($parts[1]))
 $env:PATH = "$nodeDir;$toolsDir;$env:PATH"
-& npm.cmd install --global pnpm@12.4.2 --prefix $toolsDir
+& npm.cmd install --global pnpm@12.10.1 --prefix $toolsDir
 if ($LASTEXITCODE) { throw 'pnpm install failed' }
 & node --version
 & pnpm.cmd --version

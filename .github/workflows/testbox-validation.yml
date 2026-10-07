@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 240
     steps:
       - name: Begin Testbox
-        uses: useblacksmith/begin-testbox@233448af4bfdc6fca509a7f0974411ac6d8a8043
+        uses: useblacksmith/begin-testbox@233448af4bfdc6fca509a7f0974411ac6d8a8043 # v2
         with:
           testbox_id: ${{ inputs.testbox_id }}
 
@@ -36,7 +36,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 12.4.2
+          version: 12.10.1
           run_install: false
 
       - name: Set up portable archive LLVM
@@ -60,7 +60,7 @@ jobs:
 
       - name: Run Testbox
         if: always()
-        uses: useblacksmith/run-testbox@3f60ff9ceb2c10c3feefa87dc0c6490cffae059d
+        uses: useblacksmith/run-testbox@3f60ff9ceb2c10c3feefa87dc0c6490cffae059d # post-v2: idle timeout and hydration failure reporting
 
       - name: Close Testbox SSH sessions
         if: always()
