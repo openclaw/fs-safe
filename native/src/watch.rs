@@ -370,6 +370,9 @@ fn register_impl(
     if !(1..=4096).contains(&limit) {
         return Err(native_error("EINVAL", "invalid watch pending limit"));
     }
+    // Preserve Rust 1.88 support; use try_update and remove this allowance
+    // once the minimum Rust version reaches 1.95.
+    #[allow(deprecated)]
     let id = NEXT
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |id| id.checked_add(1))
         .map_err(|_| unavailable())?;
