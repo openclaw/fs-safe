@@ -183,7 +183,7 @@
     "jszip": "^3.10.2"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-alpha.5",
+    "@emnapi/runtime": "2.0.0-alpha.6",
     "@napi-rs/cli": "3.10.6",
     "@types/node": "^26.6.1",
     "@vitest/coverage-v8": "5.0.3",

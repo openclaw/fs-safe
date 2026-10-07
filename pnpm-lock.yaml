@@ -167,11 +167,11 @@ importers:
   .:
     devDependencies:
       '@emnapi/runtime':
-        specifier: 2.0.0-alpha.5
-        version: 2.0.0-alpha.5
+        specifier: 2.0.0-alpha.6
+        version: 2.0.0-alpha.6
       '@napi-rs/cli':
         specifier: 3.10.6
-        version: 3.10.6(@emnapi/core@1.9.2)(@emnapi/runtime@2.0.0-alpha.5)(@types/node@26.6.4)(supports-color@7.2.0)
+        version: 3.10.6(@emnapi/core@1.9.2)(@emnapi/runtime@2.0.0-alpha.6)(@types/node@26.6.4)(supports-color@7.2.0)
       '@types/node':
         specifier: ^26.6.1
         version: 26.6.4
@@ -282,8 +282,8 @@ packages:
   '@emnapi/runtime@1.9.2':
     resolution: {integrity: sha512-3U4+MIWHImeyu1wnmVygh5WlgfYDtyf0k8AbLhMFxOipihf6nrWC4syIm/SwEeec0mNSafiiNnMJwbza/Is6Lw==}
 
-  '@emnapi/runtime@2.0.0-alpha.5':
-    resolution: {integrity: sha512-SS4jUXRklsrPKTEtW92WHdneh9QBrZGmRyeYEac2ktLN3ie1wd/BrkBbk4DqPWKhjSFfrR8NClXwMlfZ73m60A==}
+  '@emnapi/runtime@2.0.0-alpha.6':
+    resolution: {integrity: sha512-5ZR49ZsZ3cLvu5lkrVj6CMpHRgZjYz7XSlqK23GYYpyEqp749RVuIH0bEUKaGNghMh2pXRhIC3cnVrH28Y1j1Q==}
 
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
@@ -1958,7 +1958,7 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@emnapi/runtime@2.0.0-alpha.5':
+  '@emnapi/runtime@2.0.0-alpha.6':
     dependencies:
       tslib: 2.8.1
 
@@ -2184,7 +2184,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@napi-rs/cli@3.10.6(@emnapi/core@1.9.2)(@emnapi/runtime@2.0.0-alpha.5)(@types/node@26.6.4)(supports-color@7.2.0)':
+  '@napi-rs/cli@3.10.6(@emnapi/core@1.9.2)(@emnapi/runtime@2.0.0-alpha.6)(@types/node@26.6.4)(supports-color@7.2.0)':
     dependencies:
       '@inquirer/prompts': 8.7.2(@types/node@26.6.4)
       '@napi-rs/cross-toolchain': 1.0.3(supports-color@7.2.0)
@@ -2200,7 +2200,7 @@ snapshots:
       typescript: 6.0.3
     optionalDependencies:
       '@emnapi/core': 1.9.2
-      '@emnapi/runtime': 2.0.0-alpha.5
+      '@emnapi/runtime': 2.0.0-alpha.6
     transitivePeerDependencies:
       - '@napi-rs/cross-toolchain-arm64-target-aarch64'
       - '@napi-rs/cross-toolchain-arm64-target-armv7'
