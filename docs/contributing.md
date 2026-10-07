@@ -175,7 +175,7 @@ temporary storage; session scratch trees may suppress macOS filesystem events.
 ### Optional Linux Testbox
 
 The manual `testbox-validation.yml` workflow prepares a 16-vCPU Ubuntu 24.04
-Blacksmith Testbox with Node 24.21.0, pnpm 12.4.2, dependencies, the Rust WASM
+Blacksmith Testbox with Node 24.21.0, pnpm 12.10.1, dependencies, the Rust WASM
 target, and the pinned portable archive compiler. It leaves library builds and
 validation commands to the caller and does not replace required CI checks.
 

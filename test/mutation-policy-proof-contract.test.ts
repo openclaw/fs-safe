@@ -451,7 +451,7 @@ describe("mutation policy hosted proof contract", () => {
     expect(workflow).toContain("Run bounded public mutation proof\n        id: proof\n        if: always()");
     expect(workflow).toContain("Preserve one canonical receipt on every path\n        if: always()");
     expect(workflow).toContain("Upload exact mutation proof receipt\n        if: always()");
-    expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(workflow).toContain("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9");
     const jobStart = workflow.indexOf("  public-behavior-proof:\n");
     const stepsStart = workflow.indexOf("    steps:\n", jobStart);
     expect(jobStart).toBeGreaterThanOrEqual(0);

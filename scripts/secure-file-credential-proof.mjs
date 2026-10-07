@@ -53,7 +53,7 @@ const WORKER_FAILURE_CODES = new Set([
   "ERR_UNSUPPORTED_DIR_IMPORT",
 ]);
 const NODE_ARCHIVE_SHA256 = new Map([
-  ["v22.23.2", "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"],
+  ["v22.23.3", "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"],
   ["v24.21.0", "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"],
 ]);
 // BEGIN STARTUP PROBE CONTRACT
@@ -263,12 +263,12 @@ try {
   if (JSON.stringify(config) !== process.argv[1] ||
       !keys(config, ["tuple", "expectedNode", "node", "fixture", "files"]) ||
       !["equal", "split"].includes(config.tuple) || process.platform !== "linux" ||
-      !["v22.23.2", "v24.21.0"].includes(config.expectedNode)) fail("INVALID_ARGUMENTS");
+      !["v22.23.3", "v24.21.0"].includes(config.expectedNode)) fail("INVALID_ARGUMENTS");
   receipt.tuple = config.tuple;
   const absolute = (value) => typeof value === "string" && Buffer.byteLength(value) <= 4096 &&
     !value.includes("\0") && path.isAbsolute(value) && path.resolve(value) === value;
   const nodeMatch = typeof config.node === "string" && config.node.match(
-    /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.2|24\.21\.0)\/node$/u);
+    /^\/usr\/local\/lib\/fs-safe-credential-proof-([1-9][0-9]{0,19})-([1-9][0-9]{0,9})-(22\.23\.3|24\.21\.0)\/node$/u);
   if (!absolute(config.node) || !nodeMatch || nodeMatch[3] !== config.expectedNode.slice(1) ||
       !absolute(config.fixture) || !/^fixture-[A-Za-z0-9]{6}$/u.test(path.basename(config.fixture)) ||
       path.basename(path.dirname(config.fixture)) !== "fs-safe-secure-file-proof-" + config.expectedNode.slice(1) ||
@@ -2218,7 +2218,7 @@ async function main() {
     metadata.candidateArtifactId === metadata.historicalArtifactId ||
     metadata.runnerImage === null ||
     metadata.runnerImageVersion === null ||
-    !["v22.23.2", "v24.21.0"].includes(metadata.expectedNode)
+    !["v22.23.3", "v24.21.0"].includes(metadata.expectedNode)
   ) {
     proofError("INVALID_FIXED_INPUT");
   }
