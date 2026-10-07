@@ -21,6 +21,9 @@ export type PublishFileExclusiveFailureDetails = {
   targetIdentity?: FileIdentityStat;
   cleanup: PublishFileExclusiveCleanup;
   directorySync?: PublishFileExclusiveDirectorySyncFailure;
+  fallback?: "link-unlink";
+  publication?: "published";
+  sourceRemoval?: "not-attempted" | "still-linked" | "unverified" | "removed";
 };
 
 export type PublishFailureState = {
@@ -30,6 +33,8 @@ export type PublishFailureState = {
   targetCleanupIdentity?: FileIdentityStat;
   preserveTarget: boolean;
   directorySync?: PublishFileExclusiveDirectorySyncFailure;
+  fallback?: PublishFileExclusiveFailureDetails["fallback"];
+  sourceRemoval?: PublishFileExclusiveFailureDetails["sourceRemoval"];
 };
 
 export function rememberCreatedTarget(
@@ -54,6 +59,7 @@ export function publicationFailure(
     targetCreated: state.targetCreated,
     ...(state.targetIdentity ? { targetIdentity: state.targetIdentity } : {}),
     ...(state.directorySync ? { directorySync: state.directorySync } : {}),
+    ...(state.fallback ? { fallback: state.fallback, publication: "published" as const, sourceRemoval: state.sourceRemoval } : {}),
     cleanup,
   };
   return new FsSafeError(

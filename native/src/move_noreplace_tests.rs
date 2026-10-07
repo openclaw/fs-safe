@@ -30,8 +30,9 @@ fn seccomp_move_fallback_races_and_partial_states() {
     fs::create_dir(&base).unwrap();
     for case in ["directory", "file", "nonempty-race", "file-race", "empty-race",
         "directory-source-file", "directory-source-symlink",
-        "link-collision", "source-swap", "source-symlink", "target-swap", "third-link",
-        "link-EPERM", "link-EOPNOTSUPP", "link-EMLINK", "link-EXDEV", "unlink-failure",
+        "link-collision", "source-before-link", "symlink-before-link",
+        "source-swap", "source-symlink", "target-swap", "third-link",
+        "link-EPERM", "link-EOPNOTSUPP", "link-EMLINK", "link-EXDEV", "link-ENOSYS", "unlink-failure",
         "target-removed-after-unlink", "require"] {
         let dir = base.join(case);
         fs::create_dir(&dir).unwrap();
@@ -96,6 +97,16 @@ fn run_case(directory: &Path, case: &str) {
                 fs::write(&target, b"competitor").unwrap();
             })));
         }
+        "source-before-link" | "symlink-before-link" => {
+            let source = source.clone();
+            let saved = directory.join("saved");
+            let case = case.to_owned();
+            move_noreplace::BEFORE_LINK.with(|hook| *hook.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&source, &saved).unwrap();
+                if case == "source-before-link" { fs::write(&source, b"replacement").unwrap(); }
+                else { symlink(&saved, &source).unwrap(); }
+            })));
+        }
         "source-swap" | "source-symlink" | "target-swap" | "third-link" => {
             let source = source.clone();
             let target = target.clone();
@@ -117,6 +128,7 @@ fn run_case(directory: &Path, case: &str) {
         "link-EOPNOTSUPP" => deny_syscall(libc::SYS_linkat, libc::EOPNOTSUPP),
         "link-EMLINK" => deny_syscall(libc::SYS_linkat, libc::EMLINK),
         "link-EXDEV" => deny_syscall(libc::SYS_linkat, libc::EXDEV),
+        "link-ENOSYS" => deny_syscall(libc::SYS_linkat, libc::ENOSYS),
         "unlink-failure" => deny_syscall(libc::SYS_unlinkat, libc::EACCES),
         "target-removed-after-unlink" => {
             let target = target.clone();
@@ -172,6 +184,17 @@ fn run_case(directory: &Path, case: &str) {
             assert!(error.reason.contains("linkat"));
             assert!(!target.exists());
             assert_eq!(fs::read(source).unwrap(), b"source");
+        }
+        "source-before-link" | "symlink-before-link" => {
+            assert_eq!(result.unwrap_err().status, "FS_SAFE_INTERNAL_MOVE_LINK_CHANGED");
+            assert_eq!(fs::read(directory.join("saved")).unwrap(), b"source");
+            for name in [source, target] {
+                let current = fs::symlink_metadata(&name).unwrap();
+                assert_ne!(current.ino(), before.ino());
+                assert_eq!(current.nlink(), 2);
+                if case == "symlink-before-link" { assert!(current.is_symlink()); }
+                else { assert_eq!(fs::read(name).unwrap(), b"replacement"); }
+            }
         }
         _ => {
             assert_eq!(result.unwrap_err().status, "FS_SAFE_INTERNAL_MOVE_LINK_CHANGED");

@@ -1,4 +1,4 @@
-import { noReplaceUnavailable } from "./native-noreplace.js";
+import { publishFileNoReplaceNative } from "./publish-file-native.js";
 import { createHash } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
@@ -38,6 +38,8 @@ export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "r
 
 export type PublishFileExclusiveResult = {
   method: "hardlink" | "exclusive-copy" | "rename-noreplace";
+  /** Linux auto fallback; exclusive and identity-checked, but not crash-atomic. */
+  fallback?: "link-unlink";
   identity: Stats;
   directorySync: DirectorySyncOutcome;
 };
@@ -338,7 +340,7 @@ export async function publishFileExclusive(params: {
       if (method === "rename-noreplace") assertRenamedSourceAbsent(sourcePath);
       else assertSourceCurrent();
       assertPublishedTargetCurrent(targetPath, identity, "publication target changed during directory sync");
-      return { method, identity: fsSync.fstatSync(handle.fd), directorySync };
+      return { method, ...(failure.fallback ? { fallback: failure.fallback } : {}), identity: fsSync.fstatSync(handle.fd), directorySync };
     };
     await parent.assertCurrent();
     assertSourceCurrent();
@@ -353,16 +355,12 @@ export async function publishFileExclusive(params: {
 
     if (strategy === "rename-noreplace") {
       const binding = requireNativeBinding();
-      try {
-        binding.renameNoReplace(
-          sourceNativeParent!.handle.fd,
-          sourceNativeParent!.basename,
-          targetNativeParent!.handle.fd,
-          targetNativeParent!.basename,
-        );
-      } catch (error) {
-        throw noReplaceUnavailable(error, "file publication", true) ?? error;
-      }
+      publishFileNoReplaceNative(binding, [
+        sourceNativeParent!.handle.fd,
+        sourceNativeParent!.basename,
+        targetNativeParent!.handle.fd,
+        targetNativeParent!.basename,
+      ], sourceExactIdentity, failure);
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;
