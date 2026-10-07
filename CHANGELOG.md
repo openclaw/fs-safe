@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.24.2 - 2026-10-07
+
 ### Fixes
 
 - **Linux exclusive publication:** `publishFileExclusive` with `rename-noreplace` uses the identity-checked link/unlink move fallback in native `auto` when `RENAME_NOREPLACE` is unsupported, consumes the source on success, and reports `fallback: "link-unlink"` plus precise partial-failure receipts; native `require` stays fail-closed. Link/unlink is not crash-atomic. ([#843](https://github.com/openclaw/fs-safe/pull/843), [openclaw#166246](https://github.com/openclaw/openclaw/issues/166246)) Thanks @MertBasar0.
-- Fix native file copies returning descriptors with incomplete access: Linux clones can be read immediately, and macOS clones can be written while preserving read-only source modes.
+- **Native clone descriptors:** native file copies return read-write descriptors, so Linux clones can be read immediately and macOS clones can be written while preserving read-only source modes. ([#844](https://github.com/openclaw/fs-safe/pull/844))
 
 ## 0.24.1 - 2026-10-06
 
