@@ -50,12 +50,14 @@ describe.each([false, true])("batch revalidation (native=%s)", useNative => {
     const f = await fixture();
     using batch = createRootFileCopyBatchSync();
     using first = batch.copyFile(f.options("first"));
+    // Windows denies ancestor renames while the prior destination fd is open.
+    first.close();
     const root = side === "source" ? f.sourceRoot : f.targetRoot;
     fs.renameSync(path.join(root, "a"), path.join(root, "saved"));
     fs.symlinkSync(path.join(root, "saved"), path.join(root, "a"), process.platform === "win32" ? "junction" : "dir");
     expect(() => batch.copyFile(f.options("second"))).toThrow();
     expect(fs.existsSync(f.options("second").destination.absolutePath)).toBe(false);
-    expect(fs.readFileSync(first.fd, "utf8")).toBe("first");
+    expect(fs.readFileSync(f.options("first").destination.absolutePath, "utf8")).toBe("first");
   });
 
   it.runIf(process.platform !== "win32").each(["source", "destination"] as const)("refuses a %s ancestor replaced by a real directory while preserving the leaf parent", async side => {
@@ -109,7 +111,7 @@ describe.each([false, true])("batch revalidation (native=%s)", useNative => {
   });
 });
 
-it.each(["source", "destination"] as const)("detects a %s ancestor symlink swap during a warmed byte copy", async side => {
+it.runIf(process.platform !== "win32").each(["source", "destination"] as const)("detects a %s ancestor symlink swap during a warmed byte copy", async side => {
   configureFsSafeNative({ mode: "off" });
   const f = await fixture();
   using batch = createRootFileCopyBatchSync();
@@ -119,10 +121,10 @@ it.each(["source", "destination"] as const)("detects a %s ancestor symlink swap 
   vi.spyOn(fs, "readSync").mockImplementation((...args: Parameters<typeof fs.readSync>) => {
     const result = Reflect.apply(read, fs, args);
     if (!swapped) {
-      swapped = true;
       const root = side === "source" ? f.sourceRoot : f.targetRoot;
       fs.renameSync(path.join(root, "a"), path.join(root, "saved"));
-      fs.symlinkSync(path.join(root, "saved"), path.join(root, "a"), process.platform === "win32" ? "junction" : "dir");
+      fs.symlinkSync(path.join(root, "saved"), path.join(root, "a"), "dir");
+      swapped = true;
     }
     return result;
   });
