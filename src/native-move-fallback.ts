@@ -8,6 +8,9 @@ import {
 function fallbackError(error: unknown, operation: string): unknown {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   const message = error instanceof Error ? error.message : "native no-replace move fallback failed";
+  if (code === "EEXIST") {
+    return new FsSafeError("already-exists", "no-replace fallback destination exists", { cause: error });
+  }
   if (code === "FS_SAFE_INTERNAL_MOVE_LINK_UNSUPPORTED") {
     return new FsSafeError("helper-unavailable", message, { cause: error,
       details: { capability: "rename-noreplace", fallback: "link-unlink", fallbackCapability: "linkat" } });
@@ -23,7 +26,7 @@ function fallbackError(error: unknown, operation: string): unknown {
       message, { cause: error, details: { operation, fallback: "link-unlink",
         publication: "published", sourceRemoval } });
   }
-  // Keep collision and identity errors available to the Root normalizer.
+  // Keep identity errors available to the caller's normalizer.
   return error;
 }
 

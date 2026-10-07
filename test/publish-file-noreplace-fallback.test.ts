@@ -28,12 +28,12 @@ async function fixture() {
 }
 
 describe.skipIf(!native)("native rename publication", () => {
-  it("omits the fallback marker for atomic rename and classifies collisions", async () => {
+  it("omits the fallback marker and preserves atomic rename collision errors", async () => {
     configureFsSafeNative({ mode: "require" });
     const f = await fixture();
     await fs.writeFile(f.targetPath, "competitor");
     await expect(publishFileExclusive({ ...f, strategy: "rename-noreplace" }))
-      .rejects.toMatchObject({ code: "already-exists" });
+      .rejects.toMatchObject({ code: "EEXIST" });
     expect(await fs.readFile(f.targetPath, "utf8")).toBe("competitor");
     await fs.unlink(f.targetPath);
     const result = await publishFileExclusive({ ...f, strategy: "rename-noreplace" });

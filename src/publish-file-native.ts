@@ -29,7 +29,6 @@ export function publishFileNoReplaceNative(
     }
     if (error instanceof FsSafeError) throw error;
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
-    if (code === "EEXIST") throw new FsSafeError("already-exists", "publication destination exists", { cause: error });
     if (code === "path-mismatch" || code === "hardlink") {
       throw new FsSafeError(code, "publication source changed before fallback", { cause: error });
     }

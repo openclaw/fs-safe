@@ -199,7 +199,8 @@ or unsupported-operation errno) permits the existing native file-move fallback.
 It requires a regular source with one link, retains both parents, creates the
 target with `linkat` without following symlinks, verifies both names against the
 staged identity with exactly two links, then unlinks the source and verifies the
-target has one link. Collisions report `already-exists` without clobbering.
+target has one link. Fallback collisions report `already-exists` without clobbering;
+the atomic rename path retains its existing `EEXIST` error.
 Success still returns `method: "rename-noreplace"`, with the additive
 `fallback: "link-unlink"` field identifying this weaker mechanism. Atomic rename
 and the other strategies omit `fallback`.
@@ -437,7 +438,8 @@ failure receipt makes that explicit regardless of `onSyncFailure`.
 
 `"rename-noreplace"` requires the native helper and moves the
 source to the target without replacement, with the Linux `auto` fallback limits
-described above. A collision is reported as `already-exists`, both files remain
+described above. A collision is reported as `EEXIST` for atomic rename or
+`already-exists` for its Linux fallback, both files remain
 unchanged, and a successful call returns
 `method: "rename-noreplace"` after synchronizing the source and target parent
 directories. Unlike the link/copy strategies, success consumes `sourcePath`.
