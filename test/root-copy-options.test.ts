@@ -233,7 +233,8 @@ describe("Root.copyIn exclusive publication", () => {
   });
 
   it("settles an admitted read before completing cancellation and private-stage cleanup", async () => {
-    const copy = await fixture(Buffer.alloc(128 * 1024, 0x5a));
+    const content = Buffer.alloc(128 * 1024, 0x5a);
+    const copy = await fixture(content);
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const controller = new AbortController();
@@ -262,7 +263,7 @@ describe("Root.copyIn exclusive publication", () => {
     expect(await pending).toBe(canceled);
     expect(onDestinationPublished).not.toHaveBeenCalled();
     expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
-    expect(await fs.readFile(copy.sourcePath)).toEqual(copy.content);
+    expect((await fs.readFile(copy.sourcePath)).equals(content)).toBe(true);
   });
 
   it("rejects pre-aborted copies before creating a destination parent", async () => {
