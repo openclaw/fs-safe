@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Guarded copy batches:** `createRootFileCopyBatchSync` on `advanced` reuses directory admissions across synchronous copies on canonical POSIX paths while rechecking ancestor and file identities for every copy; single-file copies also reuse admission within the operation.
+
 ## 0.24.2 - 2026-10-07
 
 ### Fixes

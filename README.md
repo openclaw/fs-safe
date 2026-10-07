@@ -22,7 +22,7 @@ await fs.write("../escape.txt", "x");            // throws FsSafeError("outside-
 
 That's the whole pitch. `root()` is the product; the rest of the package — JSON stores, atomic writes, secret files, archive extraction, temp workspaces — is supporting cast for the same boundary.
 
-Full docs and reference at **[fs-safe.io](https://fs-safe.io)**.
+Full docs and reference at **[fs-safe.io](https://fs-safe.io)**. For synchronous plugin captures, [guarded file copies and batches](docs/copy.md#synchronous-guarded-file-copies) return owned destination descriptors while preserving per-file checks.
 
 ## Contents
 

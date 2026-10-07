@@ -1,5 +1,21 @@
 # Method performance audit
 
+## Guarded synchronous copy batches
+
+After `pnpm build`, run `node benchmarks/root-file-copy-batch.mjs` to compare
+single-file and batch copying on 3,000 1 KiB files across 30 nested package
+folders. Pass a stock build's absolute `dist/advanced.js` path to include it:
+
+```sh
+node benchmarks/root-file-copy-batch.mjs /absolute/baseline/dist/advanced.js
+```
+
+The benchmark rotates execution order over three rounds, excludes fixture
+creation and content verification from timing, checks all copied bytes, closes
+every descriptor, and removes all temporary output. Native mode is off in both
+builds to isolate directory-validation cost from clone/copy-offload differences.
+JSON output includes each sample, median milliseconds, and microseconds per file.
+
 ## Watch ready and reconcile
 
 `scripts/watch-scan-benchmark.mjs` measures complete public watch admission and
