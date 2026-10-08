@@ -1,4 +1,5 @@
-import { publishFileNoReplaceNative } from "./publish-file-native.js";
+import { nativeMoveNoReplace } from "./native-move-fallback.js";
+import { getFsSafeNativeConfig } from "./native-config.js";
 import { createHash } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
@@ -355,12 +356,35 @@ export async function publishFileExclusive(params: {
 
     if (strategy === "rename-noreplace") {
       const binding = requireNativeBinding();
-      publishFileNoReplaceNative(binding, [
-        sourceNativeParent!.handle.fd,
-        sourceNativeParent!.basename,
-        targetNativeParent!.handle.fd,
-        targetNativeParent!.basename,
-      ], sourceExactIdentity, failure);
+      try {
+        const fallback = nativeMoveNoReplace(binding, [
+          sourceNativeParent!.handle.fd, sourceNativeParent!.basename,
+          targetNativeParent!.handle.fd, targetNativeParent!.basename,
+        ], sourceExactIdentity, getFsSafeNativeConfig().mode === "auto", "file publication");
+        if (fallback) {
+          failure.fallback = fallback;
+          failure.sourceRemoval = "removed";
+        }
+      } catch (error) {
+        if (error instanceof FsSafeError) {
+          if (error.details?.publication === "published") {
+            failure.targetCreated = true;
+            failure.preserveTarget = true;
+            failure.phase = "rename-verify";
+            failure.fallback = "link-unlink";
+            failure.sourceRemoval = error.details.sourceRemoval as PublishFailureState["sourceRemoval"];
+            // Changed/unverified pairs cannot establish which inode was published.
+            if (failure.sourceRemoval === "still-linked") rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
+          }
+          throw error;
+        }
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        if (code === "path-mismatch" || code === "hardlink") {
+          throw new FsSafeError(code, "publication source changed before fallback", { cause: error });
+        }
+        if (code === "ELOOP") throw new FsSafeError("symlink", "publication source became a symlink", { cause: error });
+        throw error;
+      }
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;

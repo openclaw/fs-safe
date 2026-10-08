@@ -3,11 +3,11 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root, type RootWriteOptions } from "../src/index.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import * as verification from "../src/root-write-verification.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
-import { loadTestNative } from "./helpers/native-probe.js";
+import { loadTestNative, loadWindowsSimulationNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -247,7 +247,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
   });
 
   it.skipIf(!nativeAvailable).each([true, false])("gates every Windows native sync with sync %s", async (sync) => {
-    const binding = __loadBundledNativeForTest();
+    const binding = loadWindowsSimulationNative();
     __setNativeLoaderForTest(() => binding);
     configureFsSafeNative({ mode: "auto" });
     Object.defineProperty(process, "platform", { value: "win32" });
