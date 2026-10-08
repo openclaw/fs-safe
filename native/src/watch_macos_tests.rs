@@ -636,6 +636,12 @@ fn decoder_preserves_inside_names_and_discards_outside_paths() {
     assert!(!batch.overflow);
     assert_eq!(batch.hints.len(), 1);
     assert_eq!(batch.hints[0].name, "kept");
+    for root in ["/admitted", "/admitted/", "/"] {
+        let events = Owner { root: root.into(), pending: pending.clone(), notify: events.notify.clone() };
+        events.record(root.as_bytes(), 0x1400);
+        let batch = pending.lock().unwrap().take().expect("Root metadata must reconcile");
+        assert!(batch.overflow && batch.hints.is_empty());
+    }
     for path in ["/admitted-other/private", "/admitted/../private", "/outside/private"] {
         events.record(path.as_bytes(), 0x1000);
         assert!(pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().is_none());

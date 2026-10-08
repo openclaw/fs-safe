@@ -9,11 +9,11 @@ import {
   __setNativeLoaderForTest,
 } from "../src/native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
-import { loadTestNative } from "./helpers/native-probe.js";
+import { loadTestNative, loadWindowsSimulationNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
-const native = loadTestNative("required-env");
+const native = loadTestNative("required-env", loadWindowsSimulationNative);
 
 afterEach(() => {
   vi.restoreAllMocks();

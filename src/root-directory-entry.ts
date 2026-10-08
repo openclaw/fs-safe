@@ -21,7 +21,7 @@ export async function lookupRootDirectoryEntry(
     const observed = inspectStatObservationSync(bigint => bigint
       ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname));
     await assertRootDirectoryObservationGuard(root, guard);
-    return { entry: { name, ...pathStatFromStats(observed.stat) }, identity: observed.identity };
+    return { entry: pathStatFromStats(observed.stat, name), identity: observed.identity };
   } catch (error) {
     await assertRootDirectoryObservationGuard(root, guard);
     if (isNotFoundPathError(error)) return undefined;

@@ -141,10 +141,12 @@ impl Owner {
             pending.overflow();
             return;
         }
-        let relative = path
-            .strip_prefix(self.root.trim_end_matches('/').as_bytes())
-            .and_then(|p| p.strip_prefix(b"/"))
-            .filter(|p| !p.is_empty());
+        let relative = path.strip_prefix(self.root.trim_end_matches('/').as_bytes());
+        if matches!(relative, Some(b"" | b"/")) {
+            pending.overflow();
+            return;
+        }
+        let relative = relative.and_then(|p| p.strip_prefix(b"/"));
         let Some(relative) = relative else {
             return; // Activity only: never retain an outside pathname.
         };
