@@ -21,6 +21,7 @@ import {
 } from "../src/secret.js";
 import { tempWorkspace } from "../src/temp.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import { getNativeBinding } from "../src/native.js";
 import { FsSafeError } from "../src/errors.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
@@ -317,7 +318,10 @@ describe("file lock additions", () => {
     await fs.writeFile(lockPath, "replacement");
     await vi.waitFor(() => expect(compromised).toBe(true));
     expect(await lock.verifyStillHeld()).toBe(false);
-    await lock.release();
+    const native = getNativeBinding();
+    if (process.platform === "win32" ? native?.retainWindowsSidecar : native?.removeStagedFile) {
+      await expectFsSafeError(lock.release(), "path-mismatch");
+    } else await lock.release();
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("replacement");
 
     await expectFsSafeError(acquireFileLock(path.join(directory, "other.json"), {

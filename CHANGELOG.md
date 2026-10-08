@@ -8,6 +8,7 @@
 
 ### Fixes
 
+- **Root-backed file locks:** native asynchronous release and exit cleanup follow the created lock's retained identity after its Root moves, preserving replacement files and reporting ownership mismatches. ([#879](https://github.com/openclaw/fs-safe/pull/879)) Thanks @axiom-ncis.
 - **Guest cross-device moves:** preserve the admitted source file's permissions instead of leaving the destination with a broader default mode. ([#869](https://github.com/openclaw/fs-safe/pull/869))
 - **Move receipts:** publication receipts capture the source identity after synchronous authorization callbacks return, so a source replaced during authorization is reported accurately. ([#868](https://github.com/openclaw/fs-safe/pull/868))
 - **Atomic copy fallback:** report a failed restoration as a failure even when the underlying error carries a restored receipt. ([#851](https://github.com/openclaw/fs-safe/pull/851))
