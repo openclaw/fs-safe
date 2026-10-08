@@ -240,7 +240,8 @@ export async function readArchiveEntry(
   entryPath: string,
   options: { maxBytes: number; kind?: ArchiveKind },
 ): Promise<Buffer> {
-  if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
+  const maxBytes = options.maxBytes;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("maxBytes must be a non-negative safe integer");
   }
   const kind = options.kind ?? resolveArchiveKind(archivePath);
@@ -253,7 +254,7 @@ export async function readArchiveEntry(
   const zipEntries: ZipDirectoryEntry[] = [];
   if (kind === "zip") admitZipBuffer(buffer, resolveExtractLimits(), entry => { zipEntries.push(entry); });
   const native = getNativeBinding();
-  if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, options.maxBytes, zipEntries);
-  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, options.maxBytes, zipEntries)
-    : await readTarEntry(buffer, requestedEntry, options.maxBytes, kind);
+  if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, maxBytes, zipEntries);
+  return kind === "zip" ? await readZipEntry(buffer, requestedEntry, maxBytes, zipEntries)
+    : await readTarEntry(buffer, requestedEntry, maxBytes, kind);
 }
