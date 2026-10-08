@@ -17,6 +17,7 @@
 
 ### Performance
 
+- **Guarded file copies:** reuse checked canonical POSIX roots during initial path admission, reducing repeated path-resolution work in synchronous plugin source captures without changing per-file identity or race checks.
 - **Root walks:** reuse normalized directory prefixes, cutting a 50k-file walk by 5.6% and its sampled allocation by about 9% while keeping every filesystem and identity check. ([#870](https://github.com/openclaw/fs-safe/pull/870))
 - **Atomic writes:** non-durable async POSIX writes skip a redundant mode change when the staged file already has the requested permissions. ([#871](https://github.com/openclaw/fs-safe/pull/871))
 - **Guarded mutations:** fewer promise allocations around synchronous guard checks, with directory identity checks unchanged. ([#857](https://github.com/openclaw/fs-safe/pull/857))

@@ -298,3 +298,10 @@ are not rolled back if a later copy fails. A failed copy keeps the ordinary
 identity-checked cleanup contract; the batch is not an atomic tree transaction
 or a coherent snapshot of concurrent edits. The single-file helper also reuses
 directory admissions for the duration of its one copy.
+
+Both APIs reuse the freshly checked canonical root during initial POSIX path
+admission. This avoids repeatedly resolving every absolute root component while
+retaining lexical traversal and the before/after root and parent identity checks.
+Windows and root aliases retain the ordinary resolver, including its handling
+of dot segments in symlink targets. No caller changes are needed for the
+single-file improvement.
