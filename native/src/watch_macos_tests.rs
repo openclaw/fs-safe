@@ -647,7 +647,10 @@ fn decoder_preserves_inside_names_and_discards_outside_paths() {
         assert!(pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take().is_none());
     }
     for (path, directory) in [(b"/admitted/selected/\xff".as_slice(), "selected"),
-        (b"/admitted/selected/\xff/deeper".as_slice(), "selected"), (b"/admitted/\xff".as_slice(), "")] {
+        (b"/admitted/selected/\xff/deeper".as_slice(), "selected"), (b"/admitted/\xff".as_slice(), ""),
+        (b"/admitted/selected/partial\xff/deeper".as_slice(), "selected"),
+        (b"/admitted/partial\xff/deeper".as_slice(), ""),
+        (b"/admitted/caf\xc3\xa9/partial\xc3".as_slice(), "café")] {
         events.record(path, 0x1000);
         let batch = pending.lock().unwrap().take().unwrap();
         assert!(!batch.overflow);
@@ -655,7 +658,8 @@ fn decoder_preserves_inside_names_and_discards_outside_paths() {
         assert_eq!(batch.hints[0].nameless_child, Some(true));
         assert!(batch.hints[0].name.is_empty());
     }
-    for path in [b"/admitted-other/\xff".as_slice(), b"/admitted/../\xff".as_slice()] {
+    for path in [b"/admitted-other/\xff".as_slice(), b"/admitted/../\xff".as_slice(),
+        b"/admitted/\xff/../private".as_slice(), b"/admitted/\xff//private".as_slice()] {
         events.record(path, 0x1000);
         assert!(pending.lock().unwrap().take().is_none());
     }
