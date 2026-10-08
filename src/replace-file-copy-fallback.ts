@@ -174,14 +174,11 @@ function* replacePinnedWithRestore(
       const chmod = file.chmod(originalMode);
       if (io.asynchronous) yield chmod;
       yield* file.sync();
-      throw restoreFailure(writeError, "restored");
     } catch (restoreError) {
       mutation.rethrowRefusal();
-      if (restoreError instanceof FsSafeError && restoreError.details?.cleanup === "restored") {
-        throw restoreError;
-      }
       throw restoreFailure(writeError, "restore-failed", restoreError);
     }
+    throw restoreFailure(writeError, "restored");
   }
 }
 
