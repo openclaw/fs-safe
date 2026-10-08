@@ -6,6 +6,7 @@ import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { hasNodeErrorCode } from "./path.js";
 import { assertSafePathSegment } from "./safe-path-segment.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
+import { privateTempDirectoryFix, secureTempDirectoryFailure } from "./temp-directory-diagnostics.js";
 import {
   captureSecureTempRepairAdapter,
   repairSecureTempDirectory,
@@ -124,7 +125,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
     return fallbackPath;
   };
 
-  type DirState = { kind: "available" | "missing" | "invalid"; receipt?: SecureTempDirectoryReceipt; error?: unknown };
+  type DirState = { kind: "available" | "missing" | "invalid"; receipt?: SecureTempDirectoryReceipt; error?: unknown; detail?: string };
   const resolveDirState = (candidatePath: string): DirState => {
     assertNoWindowsPathAlias(
       candidatePath, "filesystem", "temp directory uses a Windows filesystem namespace alias", admissionPlatform,
@@ -133,8 +134,13 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
     try {
       candidate = lstatSync(candidatePath);
     } catch (error) {
-      return { kind: hasNodeErrorCode(error, "ENOENT") ? "missing" : "invalid", error };
+      return { kind: hasNodeErrorCode(error, "ENOENT") ? "missing" : "invalid", error,
+        detail: `directory metadata could not be read; check path traversal/access permissions; ${privateTempDirectoryFix(uid)}` };
     }
+    const failureDetail = (): string => {
+      try { return secureTempDirectoryFailure(candidate, uid, windows); }
+      catch { return `directory security facts could not be read; ${privateTempDirectoryFix(uid)}`; }
+    };
     let receipt: SecureTempDirectoryReceipt | undefined;
     try {
       if (descriptor && uid !== undefined) {
@@ -142,12 +148,12 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       }
       if (receipt ? (receipt.mode & 0o022n) !== 0n :
           candidate.isDirectory() !== true || candidate.isSymbolicLink() !== false || !isSecureDirForUser(candidate)) {
-        return { kind: "invalid", receipt };
+        return { kind: "invalid", receipt, detail: failureDetail() };
       }
       accessSync(candidatePath, TMP_DIR_ACCESS_MODE);
       return { kind: "available", receipt };
     } catch (error) {
-      return { kind: "invalid", receipt, error };
+      return { kind: "invalid", receipt, error, detail: failureDetail() };
     }
   };
 
@@ -156,7 +162,8 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
       candidatePath, "filesystem", "temp directory uses a Windows filesystem namespace alias", admissionPlatform,
     );
     if (!descriptor || uid === undefined || !state.receipt) {
-      return finalize ? { kind: "invalid", error: new Error("Secure temp descriptor finalization is unavailable.") } : state;
+      return finalize ? { ...state, kind: "invalid", error: new Error("Secure temp descriptor finalization is unavailable."),
+        detail: `descriptor finalization is unavailable; ${privateTempDirectoryFix(uid)}` } : state;
     }
     try {
       repairSecureTempDirectory(candidatePath, state.receipt, uid, descriptor,
@@ -164,7 +171,8 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
         () => warn(`${warningPrefix} tightened permissions on temp dir: ${candidatePath}`), finalize);
       return { kind: "available" };
     } catch (error) {
-      return { kind: "invalid", error };
+      return { kind: "invalid", error,
+        detail: state.detail ?? `descriptor identity, permissions, or access could not be verified during repair; ${privateTempDirectoryFix(uid)}` };
     }
   };
 
@@ -180,7 +188,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
         const created = mkdirSync(entryPath, { recursive: true, mode: 0o700 });
         finalize = !windows && (suppliedMkdir !== undefined || created !== undefined);
       } catch (cause) {
-        throw new Error(`Unable to create fallback ${unsafeFallbackLabel}: ${fallbackPath}`, { cause });
+        throw new Error(`Unable to create fallback ${unsafeFallbackLabel}: ${JSON.stringify(fallbackPath)}; check parent directory write/search access; ${privateTempDirectoryFix(uid)}`, { cause });
       }
       // A concurrent mkdir winner has no implicit ownership or mode authority.
       state = resolveDirState(entryPath);
@@ -188,7 +196,7 @@ export function resolveSecureTempRoot(options: ResolveSecureTempRootOptions): st
     }
     state = tryRepair(entryPath, state, finalize);
     if (state.kind !== "available") {
-      throw new Error(`Unsafe fallback ${unsafeFallbackLabel}: ${fallbackPath}`, { cause: state.error });
+      throw new Error(`Unsafe fallback ${unsafeFallbackLabel}: ${JSON.stringify(fallbackPath)}; ${state.detail}`, { cause: state.error });
     }
     return fallbackPath;
   };

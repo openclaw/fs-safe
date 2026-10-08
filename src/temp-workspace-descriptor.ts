@@ -222,13 +222,13 @@ export class TempWorkspaceRetainedChild {
       this.#identity,
       this.#numericIdentity,
     );
-    validateAdmittedTempWorkspaceChild(current, ownerUid, mode);
+    validateAdmittedTempWorkspaceChild(current, ownerUid, mode, this.#dir);
     const named = inspectTempWorkspaceDirectoryIdentitySync(
       this.#dir,
       this.#identity,
       this.#numericIdentity,
     );
-    validateAdmittedTempWorkspaceChild(named, ownerUid, mode);
+    validateAdmittedTempWorkspaceChild(named, ownerUid, mode, this.#dir);
     this.#transferAuthorized = true;
     return named;
   }
@@ -254,13 +254,13 @@ export class TempWorkspaceRetainedChild {
     const descriptor = initial ?? inspectTempWorkspaceDescriptorIdentitySync(
       fd, this.#identity, this.#numericIdentity,
     );
-    assertTempWorkspaceChildState(descriptor, ownerUid);
+    assertTempWorkspaceChildState(descriptor, ownerUid, this.#dir);
     const named = inspectTempWorkspaceDirectoryIdentitySync(
       this.#dir,
       this.#identity,
       this.#numericIdentity,
     );
-    assertTempWorkspaceChildState(named, ownerUid);
+    assertTempWorkspaceChildState(named, ownerUid, this.#dir);
     return descriptor;
   }
 
@@ -298,8 +298,8 @@ export class TempWorkspaceRetainedChild {
       this.#identity,
     );
     assertOwnedDirectory(opened, followed);
-    assertTempWorkspaceChildState(opened, ownerUid);
-    assertTempWorkspaceChildState(followed, ownerUid);
+    assertTempWorkspaceChildState(opened, ownerUid, this.#dir);
+    assertTempWorkspaceChildState(followed, ownerUid, this.#dir);
   }
 
   async initializeMode(

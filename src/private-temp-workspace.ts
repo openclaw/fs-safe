@@ -221,6 +221,7 @@ async function createTempWorkspace(
       stat,
       admission.ownerUid,
       dirMode,
+      dir,
     );
     // Retain while the child still has its private creation mode so an
     // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
@@ -329,7 +330,7 @@ function createTempWorkspaceSync(
     } else {
       stat = inspectDirectoryIdentitySync(dir);
     }
-    const needsModeInitialization = validateInitialTempWorkspaceChild(stat, admission.ownerUid, dirMode);
+    const needsModeInitialization = validateInitialTempWorkspaceChild(stat, admission.ownerUid, dirMode, dir);
     retainedChild ??= TempWorkspaceRetainedChild.retain(dir, stat);
     if (needsModeInitialization) {
       retainedChild.initializeModeSync(dirMode, admission.ownerUid, admission.assertCurrent);
