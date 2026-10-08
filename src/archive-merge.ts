@@ -116,15 +116,15 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
     for (const ancestor of sourceAncestors) assertSourceDirectory(ancestor);
   };
   const assertGuards = async () => {
-    await assertDirectoryIdentityGuard(destinationGuard);
+    assertDirectoryIdentityGuard(destinationGuard);
     check();
     for (const ancestor of ancestors) {
-      await assertDirectoryIdentityGuard(ancestor.guard);
+      assertDirectoryIdentityGuard(ancestor.guard);
       check();
       await ancestor.owner.verify(check);
       check();
     }
-    await assertDirectoryIdentityGuard(sourceGuard);
+    assertDirectoryIdentityGuard(sourceGuard);
     check();
   };
   const walk = async (sourceDir: string): Promise<void> => {
@@ -200,7 +200,7 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
                 await owner.apply(mode, { check, beforeChmod: async () => {
                   await assertGuards();
                   assertSourceAncestors();
-                  await assertDirectoryIdentityGuard(guard);
+                  assertDirectoryIdentityGuard(guard);
                   check();
                   await assertResolvedInsideDestination({
                     destinationRealDir, targetPath: destinationPath, originalPath,

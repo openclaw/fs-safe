@@ -72,9 +72,9 @@ describe("archive-staging helpers", () => {
 
       const targetRoot = rootFromDirectoryGuard(guard);
       await expect(targetRoot.stat(".")).rejects.toMatchObject({ code: "path-mismatch" });
-      await expect(assertDirectoryIdentityGuard(guard)).rejects.toMatchObject({
+      expect(() => assertDirectoryIdentityGuard(guard)).toThrow(expect.objectContaining({
         code: "destination-symlink-traversal",
-      } satisfies Partial<ArchiveSecurityError>);
+      } satisfies Partial<ArchiveSecurityError>));
     });
   });
 
@@ -87,9 +87,9 @@ describe("archive-staging helpers", () => {
 
       await fs.rename(destDir, admittedDir);
 
-      await expect(assertDirectoryIdentityGuard(guard)).rejects.toMatchObject({
+      expect(() => assertDirectoryIdentityGuard(guard)).toThrow(expect.objectContaining({
         code: "destination-symlink-traversal",
-      } satisfies Partial<ArchiveSecurityError>);
+      } satisfies Partial<ArchiveSecurityError>));
     });
   });
 
