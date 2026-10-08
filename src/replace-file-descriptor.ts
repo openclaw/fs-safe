@@ -146,8 +146,11 @@ export function* writeTempFile(io: AtomicIo, params: {
     params.mutation?.assert();
     const writing = file.writeFile(params.content, true);
     if (io.asynchronous) yield writing;
-    const chmod = file.chmod(params.mode);
-    if (io.asynchronous) yield chmod;
+    if (io.asyncFs !== fs || process.platform === "win32" ||
+      ((yield* file.stat()).mode & 0o7777) !== (params.mode & 0o7777)) {
+      const chmod = file.chmod(params.mode);
+      if (io.asynchronous) yield chmod;
+    }
     if (params.sync) yield* file.syncBestEffort();
     const currentInspection = inspectAtomicIdentity(io, () => file.statExact(), identity);
     if (io.asynchronous) yield currentInspection;
