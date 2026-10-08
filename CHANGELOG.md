@@ -4,7 +4,25 @@
 
 ### Features
 
-- **Guarded copy batches:** `createRootFileCopyBatchSync` on `advanced` reuses directory admissions across synchronous copies on canonical POSIX paths while rechecking ancestor and file identities for every copy; single-file copies also reuse admission within the operation.
+- **Guarded copy batches:** `createRootFileCopyBatchSync` on `advanced` reuses directory admissions across synchronous copies on canonical POSIX paths while rechecking ancestor and file identities for every copy; single-file copies also reuse admission within the operation. ([#849](https://github.com/openclaw/fs-safe/pull/849))
+
+### Fixes
+
+- **Guest cross-device moves:** preserve the admitted source file's permissions instead of leaving the destination with a broader default mode. ([#869](https://github.com/openclaw/fs-safe/pull/869))
+- **Move receipts:** publication receipts capture the source identity after synchronous authorization callbacks return, so a source replaced during authorization is reported accurately. ([#868](https://github.com/openclaw/fs-safe/pull/868))
+- **Atomic copy fallback:** report a failed restoration as a failure even when the underlying error carries a restored receipt. ([#851](https://github.com/openclaw/fs-safe/pull/851))
+- **Archive read limits:** keep the validated entry-read byte limit fixed when callers mutate the options during a read. ([#852](https://github.com/openclaw/fs-safe/pull/852))
+- **Watch on macOS:** reconcile notifications for changes to the watched Root itself immediately instead of waiting for the periodic scan. ([#858](https://github.com/openclaw/fs-safe/pull/858))
+- **`pathScope` tilde names:** keep literal `~` directory names inside scoped file and existing-path lookups instead of expanding them. ([#856](https://github.com/openclaw/fs-safe/pull/856))
+
+### Performance
+
+- **Root walks:** reuse normalized directory prefixes, cutting a 50k-file walk by 5.6% and its sampled allocation by about 9% while keeping every filesystem and identity check. ([#870](https://github.com/openclaw/fs-safe/pull/870))
+- **Atomic writes:** non-durable async POSIX writes skip a redundant mode change when the staged file already has the requested permissions. ([#871](https://github.com/openclaw/fs-safe/pull/871))
+- **Guarded mutations:** fewer promise allocations around synchronous guard checks, with directory identity checks unchanged. ([#857](https://github.com/openclaw/fs-safe/pull/857))
+- **Archive publication:** fewer promise allocations in archive guard checks, without removing identity or containment checks. ([#864](https://github.com/openclaw/fs-safe/pull/864))
+- **Watch:** Linux and Windows watch passes skip macOS stream-path preparation. ([#860](https://github.com/openclaw/fs-safe/pull/860))
+- **Permission diagnostics:** bound escaping work for large error messages without changing the displayed excerpts. ([#859](https://github.com/openclaw/fs-safe/pull/859))
 
 ## 0.24.2 - 2026-10-07
 
