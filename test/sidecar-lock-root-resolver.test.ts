@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
@@ -9,14 +9,21 @@ import { realpathSync } from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { useTempDirs } from "./helpers/vitest.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { loadTestNative, loadWindowsSimulationNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const finalResolverOutcomes = ["outside", "EPERM", "EBADF"] as const;
+beforeEach(() => {
+  const binding = loadTestNative("required-env", loadWindowsSimulationNative);
+  if (binding) __setNativeLoaderForTest(() => binding);
+});
 afterEach(() => {
   __setFsSafeTestHooksForTest();
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", platform);
+  __resetNativeLoaderForTest();
 });
 
 function interceptFinalResolution(

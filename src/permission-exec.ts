@@ -25,7 +25,8 @@ export type PermissionFailureFields = {
 };
 
 export function formatPermissionErrorDetail(value: string): string {
-  const formatted = formatErrorDetail(value);
+  // Escaping cannot shrink input; 401 code units decide the 400-character excerpt.
+  const formatted = formatErrorDetail(value.slice(0, 401));
   return formatted.length > 400 ? `${formatted.slice(0, 399)}…` : formatted;
 }
 
