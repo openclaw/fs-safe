@@ -67,7 +67,8 @@ describe.runIf(native)("native filesystem primitives", () => {
           ? "kernel-atomic" : "best-effort",
       );
       try {
-        expect(native!.fstatIdentity(opened.fd)).toMatchObject({ isFile: true, size: 2 });
+        expect(fsSync.fstatSync(opened.fd).size).toBe(2);
+        expect(fsSync.fstatSync(opened.fd).isFile()).toBe(true);
       } finally {
         native!.closeOwnedFd(opened.fd);
       }

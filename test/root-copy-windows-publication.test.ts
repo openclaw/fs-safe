@@ -1,3 +1,4 @@
+import { loadWindowsSimulationNative } from "./helpers/native-probe.js";
 import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -6,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root, type RootCopyPublicationReceipt } from "../src/index.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
-  __loadBundledNativeForTest,
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
   type NativeBinding,
@@ -18,7 +18,7 @@ const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 let native: NativeBinding | undefined;
 try {
-  native = __loadBundledNativeForTest();
+  native = loadWindowsSimulationNative();
 } catch (error) {
   if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
 }
