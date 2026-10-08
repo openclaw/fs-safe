@@ -1,5 +1,9 @@
 # pathScope()
 
+Paths supplied to a scope are literal filesystem names. In particular, `~/file`
+selects a file inside a directory named `~` beneath the scope; it does not expand
+the user's home directory.
+
 `pathScope()` prepares absolute paths and returns plain `{ ok, path }` results. `resolve()` and `resolveAll()` check lexical containment without touching the filesystem; `existing()`, `files()`, and `writable()` add the filesystem checks described below. Use it to prepare paths before handing them to another library, whose file-opening and mutation behavior still applies.
 
 ```ts

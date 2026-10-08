@@ -16,6 +16,11 @@ import {
 
 Write `content` to a sibling temp file in the destination directory, apply the parent-directory and final file modes through verified descriptors, optionally `fsync` the file descriptor, optionally `fsync` the parent directory after rename, then atomically rename over the destination. No permission change follows a caller-supplied pathname.
 
+On POSIX, non-durable asynchronous writes using Node inspect the staged file's
+complete permission bits with their final identity check and skip a redundant
+mode change when they already match. A restrictive umask or differing special
+bits still require descriptor mode correction before publication.
+
 On POSIX, the parent is opened with no-follow and directory-only flags, checked against its exact pre-open device/inode identity, and mode-adjusted through that descriptor. A replacement symlink is rejected rather than followed. If the directory cannot be opened for descriptor access, the operation fails closed instead of retrying by pathname. Windows does not enforce POSIX directory modes and Node cannot consistently open directory descriptors there, so `dirMode` is passed only to `mkdir`; no pathname `chmod` fallback is attempted.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
@@ -258,7 +263,9 @@ opened, removed, or replaced. A successor at that name is left untouched.
 `details.cleanup: "restored"` means the retained original file's bytes and mode
 were restored and synchronized, not that the pathname still names it. The existing
 `writing` receipt identifies that file; no `published` receipt is emitted for a
-failed replacement. Restoration I/O failures report `"restore-failed"`.
+failed replacement. Restoration I/O failures report `"restore-failed"`, even if
+the thrown error itself carries a `cleanup: "restored"` receipt from another
+operation; the cause retains both the replacement and restoration failures.
 
 Callback refusals, detected identity/type/link changes, and other metadata errors
 remain terminal. Failed descriptor revalidation also stops restoration. These
@@ -539,8 +546,9 @@ remain a best-effort sequence, not atomic.
 `onDestinationPublished` runs exactly once after a successful rename resolves,
 before awaited post-rename directory checks or source cleanup. It receives a
 frozen receipt with the resolved absolute destination path and the exact bigint
-device/inode identity observed on the rename source before dispatch: the
-original source for a direct rename, or the staged copy for fallback. Failed
+device/inode identity observed on the rename source after the synchronous
+authority callbacks return and before dispatch: the source selected for a direct
+rename, or the staged copy for fallback. Failed
 rename attempts never emit receipts. The return contract remains `Promise<void>`.
 
 The receipt records an observed identity, not authorization, durable storage,
