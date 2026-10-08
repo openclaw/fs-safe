@@ -1,5 +1,29 @@
 # Method performance audit
 
+## Plugin source capture
+
+After `pnpm build` and `pnpm native:build`, run:
+
+```sh
+FS_SAFE_BENCH_NATIVE=require node benchmarks/plugin-source-capture.mjs /absolute/baseline/dist/advanced.js
+```
+
+This synthetic installed-plugin workload copies 6,000 files in 60 packages,
+with nested JavaScript, declarations, maps and metadata ranging from 200 bytes
+to 64 KiB. It mirrors OpenClaw's independent source pin, expected inode, per-file
+destination root, byte bound, executable mode, automatic clone policy and
+copied-descriptor hash. Fixture creation and complete byte/hash/mode/inode
+verification are outside timing. Descriptors and temporary trees are cleaned up.
+
+The baseline, candidate single-file and candidate batch APIs run in forward
+then reverse order. Each result records its actual copy methods: compare like
+methods, and use `FS_SAFE_BENCH_NATIVE=off` for portable byte-copy comparisons.
+`FS_SAFE_BENCH_CASE=baseline|single|batch` selects one diagnostic run;
+`FS_SAFE_BENCH_PROFILE=1` additionally counts JavaScript filesystem calls per
+file inside capture. Native helper syscalls are not included in those counters.
+Use Node's `--cpu-prof` separately for time attribution; instrumented runs are
+diagnostics, not comparable uninstrumented timings.
+
 ## Guarded synchronous copy batches
 
 After `pnpm build`, run `node benchmarks/root-file-copy-batch.mjs` to compare

@@ -8,18 +8,21 @@ import { resolveRootPathSync, ROOT_PATH_ALIAS_POLICIES } from "./root-path.js";
 
 export type CopyPath = { rootPath: string; absolutePath: string };
 
-function admitUncachedCopyPath(input: CopyPath, create = false) {
+function admitUncachedCopyPath(input: CopyPath, create = false, admittedRoot?: AnyAsyncDirectoryGuard) {
   if (!path.isAbsolute(input.rootPath) || !path.isAbsolute(input.absolutePath)) {
     throw new FsSafeError("invalid-path", "copy roots and paths must be absolute");
   }
-  const root = captureDirectoryGuard(realpathSync(input.rootPath), "native", { bigint: true });
+  const root = admittedRoot ?? captureDirectoryGuard(realpathSync(input.rootPath), "native", { bigint: true });
+  // Canonical POSIX callers already own a freshly checked root. Keep the
+  // resolver's lexical/symlink walk, but do not rediscover that root each time.
+  const rootCanonicalPath = admittedRoot?.realPath;
   const resolve = () => {
     const parent = create ? resolveRootPathSync({
-      ...input, absolutePath: path.dirname(input.absolutePath), boundaryLabel: "copy parent",
+      ...input, rootCanonicalPath, absolutePath: path.dirname(input.absolutePath), boundaryLabel: "copy parent",
       rejectSymlinks: true, rejectFinalSymlink: true,
     }) : undefined;
     const selected = resolveRootPathSync({
-      ...input, boundaryLabel: "copy", rejectSymlinks: !create, rejectFinalSymlink: !create,
+      ...input, rootCanonicalPath, boundaryLabel: "copy", rejectSymlinks: !create, rejectFinalSymlink: !create,
       policy: create ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
     });
     if (parent && path.dirname(selected.canonicalPath) !== parent.canonicalPath) {
@@ -84,7 +87,7 @@ export function createCopyPathAdmissionCache() {
     let admitted = byParent?.get(parentPath);
     if (!admitted) {
       // The first file in each parent retains the existing lexical admission.
-      const selected = admitUncachedCopyPath(input, create);
+      const selected = admitUncachedCopyPath(input, create, root);
       const chain: AnyAsyncDirectoryGuard[] = [];
       let cursor = input.rootPath;
       const relative = path.relative(input.rootPath, parentPath);
