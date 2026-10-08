@@ -134,14 +134,6 @@ export async function assertRootDirectoryObservationGuard(
   }
 }
 
-function sameObservationDirectory(
-  left: RootPathDirectoryObservationGuard,
-  right: RootPathDirectoryObservationGuard,
-): boolean {
-  return left.dir === right.dir && left.realPath === right.realPath &&
-    left.identity.dev === right.identity.dev && left.identity.ino === right.identity.ino;
-}
-
 function assertReceiptDirectoryGuardSync(
   root: RootContext,
   guard: RootPathDirectoryObservationGuard,
@@ -181,7 +173,8 @@ export function assertRootPathObservationReceiptCurrent(
     rootGuard.identity.dev !== root.rootIdentity.dev || rootGuard.identity.ino !== root.rootIdentity.ino) {
     throw rootPathChangedError();
   }
-  if (sameObservationDirectory(rootGuard, directoryGuard)) {
+  if (rootGuard.dir === directoryGuard.dir && rootGuard.realPath === directoryGuard.realPath &&
+    rootGuard.identity.dev === directoryGuard.identity.dev && rootGuard.identity.ino === directoryGuard.identity.ino) {
     try {
       if (receipt.kind === "stat" && receipt.target === rootGuard && finalTarget &&
         !receipt.directoryObserver) {
@@ -216,25 +209,6 @@ function normalizeDirectoryError(error: unknown): unknown {
   return error;
 }
 
-function normalizeInitialDirectoryError(error: unknown): unknown {
-  if (error instanceof FsSafeError && error.code === "not-file") {
-    return new FsSafeError("not-found", "directory not found", { cause: error });
-  }
-  return normalizeDirectoryError(error);
-}
-
-export function listDirectoryPath(
-  root: RootContext,
-  directory: string,
-  withFileTypes: true,
-  receipt?: RootPathObservationReceipt,
-): Promise<DirEntry[]>;
-export function listDirectoryPath(
-  root: RootContext,
-  directory: string,
-  withFileTypes: boolean,
-  receipt?: RootPathObservationReceipt,
-): Promise<string[] | DirEntry[]>;
 export async function listDirectoryPath(
   root: RootContext,
   directory: string,
@@ -248,7 +222,10 @@ export async function listDirectoryPath(
     try {
       guard = await createRootDirectoryObservationGuard(root, directory);
     } catch (error) {
-      throw normalizeInitialDirectoryError(error);
+      if (error instanceof FsSafeError && error.code === "not-file") {
+        throw new FsSafeError("not-found", "directory not found", { cause: error });
+      }
+      throw normalizeDirectoryError(error);
     }
   }
   return await listGuardedDirectoryPath(root, guard, withFileTypes, receipt);
