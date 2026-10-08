@@ -67,6 +67,7 @@ mod windows_secure_file;
 #[cfg(windows)]
 mod retained_file;
 
+#[cfg(windows)]
 #[napi(object)]
 pub struct FileIdentity {
     pub dev: f64,
@@ -405,6 +406,7 @@ pub fn rename_replace_with_identity(
     })())
 }
 
+#[cfg(windows)]
 #[napi(js_name = "fstatIdentity")]
 pub fn fstat_identity(env: Env, fd: i32) -> Result<FileIdentity> {
     into_napi(env, platform::fstat_identity(fd))
