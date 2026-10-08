@@ -7,7 +7,7 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, RenameFlags};
 use rustix::path::Arg;
 
-use crate::{ExactFileIdentity, FileIdentity, NativeResult, native_error};
+use crate::{ExactFileIdentity, NativeResult, native_error};
 
 pub(crate) fn nonnegative_fd(fd: i32, operation: &str) -> NativeResult<i32> {
     // Reject sentinels; the caller still owns and retains each live descriptor.
@@ -408,22 +408,6 @@ pub fn rename_replace_with_identity(
 #[cfg(test)]
 #[path = "root_move_tests.rs"]
 mod root_move_tests;
-
-pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
-    let fd = nonnegative_fd(fd, "fstat")?;
-    let stat = rustix::fs::fstat(borrowed(fd)).map_err(|error| os_error(error, "fstat"))?;
-    let file_type = FileType::from_raw_mode(stat.st_mode);
-    Ok(FileIdentity {
-        dev: stat.st_dev as f64,
-        ino: stat.st_ino as f64,
-        mode: stat.st_mode as u32,
-        nlink: stat.st_nlink as f64,
-        size: stat.st_size as f64,
-        is_file: file_type.is_file(),
-        is_directory: file_type.is_dir(),
-        is_symbolic_link: file_type.is_symlink(),
-    })
-}
 
 pub fn write_archive_file<R: Read>(
     root_fd: i32,
@@ -1727,7 +1711,7 @@ mod tests {
         let root_handle = fs::File::open(&root).unwrap();
         let fd = open_beneath(root_handle.as_raw_fd(), "file", OFlags::RDONLY.bits() as i32)
             .unwrap();
-        assert_eq!(fstat_identity(fd).unwrap().size, 5.0);
+        assert_eq!(rustix::fs::fstat(borrowed(fd)).unwrap().st_size, 5);
         let lock = rustix::fs::FlockOperation::NonBlockingLockExclusive;
         rustix::fs::flock(borrowed(fd), lock).unwrap();
         let observer = fs::File::open(root.join("file")).unwrap();
@@ -1756,7 +1740,7 @@ mod tests {
         .unwrap();
         // SAFETY: fd is uniquely owned after open_beneath.
         let file = unsafe { std::fs::File::from_raw_fd(fd) };
-        assert_eq!(fstat_identity(file.as_raw_fd()).unwrap().size, 2.0);
+        assert_eq!(file.metadata().unwrap().len(), 2);
         assert!(
             open_beneath(
                 root_handle.as_raw_fd(),
