@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.25.0 - 2026-10-08
+
+### Highlights
+
+- **Faster synchronous plugin captures:** 16% faster than pre-change main on a measured 6,000-file tree; the new `createRootFileCopyBatchSync` API on `advanced` also reuses directory admissions across copies. ([#878](https://github.com/openclaw/fs-safe/pull/878), [#849](https://github.com/openclaw/fs-safe/pull/849))
+- **Guest workspace publication:** works on gVisor and other Linux filesystems that reject `RENAME_NOREPLACE`. ([#876](https://github.com/openclaw/fs-safe/pull/876))
+- **Root-backed sidecar locks:** native asynchronous release and exit cleanup no longer strand locks after their Root moves. ([#879](https://github.com/openclaw/fs-safe/pull/879))
+- **Guest cross-device moves:** preserve the admitted file permissions. ([#869](https://github.com/openclaw/fs-safe/pull/869))
+
 ### Features
 
 - **Guarded copy batches:** `createRootFileCopyBatchSync` on `advanced` reuses directory admissions across synchronous copies on canonical POSIX paths while rechecking ancestor and file identities for every copy; single-file copies also reuse admission within the operation. ([#849](https://github.com/openclaw/fs-safe/pull/849))
