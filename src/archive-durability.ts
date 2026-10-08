@@ -40,7 +40,7 @@ export async function finalizeArchivePublication(params: {
   const check = () => params.deadline?.check();
   const assertGuards = async (guards: readonly ArchiveDirectoryGuard[]) => {
     for (const guard of [params.destinationGuard, ...guards, params.sourceGuard]) {
-      await assertDirectoryIdentityGuard(guard);
+      assertDirectoryIdentityGuard(guard);
       check();
     }
   };
