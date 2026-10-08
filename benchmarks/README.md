@@ -586,3 +586,19 @@ with the candidate in both positions; trace timings are not latency evidence.
 The JSON retains every sample for paired-ratio confidence intervals and A/A
 noise comparisons. `trace` performs ten sample batches without timing warmups;
 its syscall totals include fixture setup, module loading, and cleanup.
+
+### Root walk literal prefixes
+
+Compare two built revisions on the same 50,000-file fixture with alternating
+A/B and unchanged A/A pairs:
+
+```sh
+node benchmarks/root-walk-prefix-comparison.mjs /path/to/base/dist /path/to/candidate/dist 24
+node benchmarks/root-walk-prefix-allocation.mjs /path/to/base/dist /path/to/candidate/dist
+```
+
+The comparison reports per-walk latency and separately counted filesystem and
+path-normalization calls. The allocation probe samples ten complete walks at a
+32 KiB interval, including collected objects; its bytes estimate cumulative
+allocation, not retained memory. Both use the Node fallback and remove their
+synthetic trees after measurement. Use an otherwise idle host.

@@ -354,6 +354,19 @@ describe.runIf(native)("native synchronous copying", () => {
     expect(fs.readdirSync(f.targetRoot)).toEqual([]);
     expect(() => fs.fstatSync(fd!)).toThrow();
   });
+  it.runIf(process.platform !== "win32").each([undefined, null, "unknown"])("rejects a native receipt with method %s", async method => {
+    enableNative();
+    const f = await fixture();
+    let fd: number | undefined;
+    __setNativeLoaderForTest(() => ({ ...native!, copyFileExclusiveSync(...args) {
+      const result = native!.copyFileExclusiveSync!(...args);
+      fd = result.fd;
+      return { ...result, method: method as unknown as string };
+    } }));
+    expect(() => copyRootFileSync(f.options)).toThrow(expect.objectContaining({ code: "helper-failed" }));
+    expect(fs.readdirSync(f.targetRoot)).toEqual([]);
+    expect(() => fs.fstatSync(fd!)).toThrow();
+  });
   it.runIf(process.platform === "darwin")("clones on APFS and shares the data-stream identity", async () => {
     enableNative();
     const f = await fixture(Buffer.alloc(4 * 1024 * 1024, 0x4a));

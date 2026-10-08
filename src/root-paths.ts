@@ -332,7 +332,7 @@ async function resolveCheckedPathsWithinRoot(
       if (!root) {
         throw new FsSafeError("not-found", "root dir not found");
       }
-      opened = await root.open(pathResult.relativePath);
+      opened = await root.open(`./${pathResult.relativePath}`);
       resolvedPaths.push(opened.realPath);
     } catch (err) {
       if (allowMissingFallback && err instanceof FsSafeError && err.code === "not-found") {
