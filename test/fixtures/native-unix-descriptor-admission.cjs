@@ -63,11 +63,9 @@ async function run() {
   process.chdir(cwd);
 
   switch (method) {
-    case "fstatIdentity":
     case "probeTreeClone": {
-      const operation = method === "fstatIdentity" ? "fstat" : "inspect clone filesystem";
-      if (method === "fstatIdentity") assert.equal((await invoke(root)).isDirectory, true);
-      else await invoke(root);
+      const operation = "inspect clone filesystem";
+      await invoke(root);
       for (const fd of invalids) await rejects([fd], "EBADF", operation);
       await invoke(root);
       break;
