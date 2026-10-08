@@ -43,9 +43,26 @@ The fragment has no argument preflight of its own.
 
 On Linux it uses `renameat2(RENAME_NOREPLACE)`; on macOS it uses
 `renameatx_np(RENAME_EXCL)`. If Linux lacks that function or reports it as
-unsupported, it falls back to `link(..., follow_symlinks=False)`, leaving the
-source entry for caller cleanup. That fallback supports files, not directory
-publication. Existing destinations are never replaced by this fragment.
+unsupported, it falls back to `link(..., follow_symlinks=False)`, verifying the
+source and target against the admitted inode with exactly two links
+before unlinking the source. Admission and final target verification require
+one link. A successful file publication consumes the source in both paths.
+
+For directories, a definitive Linux rejection (`EINVAL`, `ENOSYS`, `ENOTSUP`,
+or `EOPNOTSUPP`) or missing `renameat2` rechecks the source identity and target
+absence, then uses plain rename through the same directory descriptors. A
+trailing slash enforces directory source type at the syscall. Directory rename
+can replace only an **empty directory created concurrently**; non-empty
+directories and non-directory targets are refused as `EEXIST`. An existing
+empty directory observed by the absence check is also refused. No empty claim
+directory is exposed before publishing the completed source.
+
+Identity checks and mutation remain separate, not source-name compare-and-swap.
+The fallback verifies the published identity afterward. A file fallback failure
+can leave both names, and post-publication failures preserve the destination
+for caller reconciliation. Exclusive-create cleanup preserves changed payloads
+and incomplete link pairs. The guest has no strict/require mode; host native
+policy does not apply. macOS and other errors retain their fail-closed behavior.
 
 ## Invocation protocol
 
