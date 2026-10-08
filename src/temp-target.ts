@@ -212,7 +212,7 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
       const initial = inspectDirectoryIdentitySync(dir);
       identity = Object.freeze({ dev: initial.dev, ino: initial.ino });
       const needsModeInitialization = validateInitialTempWorkspaceChild(
-        initial, admission.ownerUid, 0o700,
+        initial, admission.ownerUid, 0o700, dir,
       );
       retainedChild = TempWorkspaceRetainedChild.retain(dir, identity);
       if (needsModeInitialization) {

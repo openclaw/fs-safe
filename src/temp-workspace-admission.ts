@@ -100,7 +100,7 @@ function snapshotFromExactObservation(
   if (stat.symbolicLink || !stat.directory) {
     throw new FsSafeError("not-file", "temp workspace root component must be a real directory");
   }
-  assertTrustedTempWorkspaceDirectory(stat, uid, privateDirectory);
+  assertTrustedTempWorkspaceDirectory(stat, uid, privateDirectory, dir);
   const identity = Object.freeze({ dev: stat.dev, ino: stat.ino });
   // Retain copied immutable scalars, never a mutable Stats object supplied by
   // an observation hook. Every later permission check uses a fresh snapshot.
@@ -162,7 +162,7 @@ function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats 
 
 function assertSnapshot(entry: DirectorySnapshot, uid: number | undefined): void {
   const stat = inspectSnapshotIdentity(entry);
-  assertTrustedTempWorkspaceDirectory(stat, uid, entry.privateDirectory);
+  assertTrustedTempWorkspaceDirectory(stat, uid, entry.privateDirectory, entry.dir);
   assertCanonicalRoot(entry);
 }
 
@@ -177,7 +177,7 @@ function snapshotMissingRootComponent(
     return snapshot(dir, ownerUid, undefined, privateDirectory);
   }
   const current = inspectSnapshotIdentity(parent);
-  assertTrustedTempWorkspaceDirectory(current, ownerUid, parent.privateDirectory);
+  assertTrustedTempWorkspaceDirectory(current, ownerUid, parent.privateDirectory, parent.dir);
   let realPath: string;
   try {
     realPath = canonicalTempWorkspacePath(dir);
@@ -198,7 +198,7 @@ function snapshotMissingRootComponent(
 function assertChain(chain: DirectorySnapshot[], uid: number | undefined): void {
   for (const entry of chain) {
     const current = inspectSnapshotIdentity(entry);
-    assertTrustedTempWorkspaceDirectory(current, uid, entry.privateDirectory);
+    assertTrustedTempWorkspaceDirectory(current, uid, entry.privateDirectory, entry.dir);
   }
   const last = chain[chain.length - 1]!;
   assertCanonicalRoot(last);
@@ -233,7 +233,7 @@ function associateTempWorkspaceRoot(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace cleanup parent must be a real directory");
   }
-  assertTrustedTempWorkspaceDirectory(stat, ownerUid, entry.privateDirectory);
+  assertTrustedTempWorkspaceDirectory(stat, ownerUid, entry.privateDirectory, entry.dir);
 }
 
 function discoverMissingTempWorkspaceAncestor(
@@ -374,7 +374,7 @@ function canonicalRootAdmission(
           return snapshot(dir, ownerUid, dir, index === ancestry.length - 1 && discovery.privateDirectory).entry;
         }
         const current = inspectSnapshotIdentity(discovery);
-        assertTrustedTempWorkspaceDirectory(current, ownerUid, discovery.privateDirectory);
+        assertTrustedTempWorkspaceDirectory(current, ownerUid, discovery.privateDirectory, discovery.dir);
         return discovery;
       });
       const current = candidate[candidate.length - 1]!;

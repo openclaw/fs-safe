@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { fileIdentityMismatchError, inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
 import { classifyTempWorkspaceOwner, warnUnmappedTempWorkspaceAncestor } from "./temp-workspace-ownership.js";
+import { privateTempDirectoryFix, tempDirectoryMode } from "./temp-directory-diagnostics.js";
 
 export type TempWorkspaceIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 export type TempWorkspaceNumericIdentity = Readonly<{ dev: number; ino: number }>;
@@ -79,12 +80,13 @@ export function validateTempWorkspaceDirMode(mode: number): void {
 export function assertTrustedTempWorkspaceDirectory(
   stat: Pick<BigIntStats, "uid" | "gid" | "mode"> | Pick<Stats, "uid" | "gid" | "mode">,
   uid: number | undefined,
-  privateDirectory = false,
+  privateDirectory: boolean,
+  dir: string,
 ): void {
   if (uid === undefined) return;
   const ownership = classifyTempWorkspaceOwner(stat, uid);
   if (ownership === "foreign" || (privateDirectory && ownership !== "user")) {
-    throw new FsSafeError("not-owned", "temp workspace directory has an untrusted owner; use a private temp root owned by the effective user under a trusted directory hierarchy");
+    throw new FsSafeError("not-owned", `temp workspace directory ${JSON.stringify(dir)} has an untrusted owner uid ${stat.uid}; expected uid ${uid}${privateDirectory || uid === 0 ? "" : " or root uid 0"}; ${privateTempDirectoryFix(uid)}`);
   }
   // Unmapped host owners are unverifiable; trust the host directory hierarchy.
   // Admit sticky ancestors so PrivateUsers keeps host /tmp and PrivateTmp usable.
@@ -96,14 +98,14 @@ export function assertTrustedTempWorkspaceDirectory(
     ? (stat.mode & 0o1000n) !== 0n
     : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o1000) !== 0;
   if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
-    throw new FsSafeError("insecure-permissions", "temp workspace directory permissions are invalid");
+    throw new FsSafeError("insecure-permissions", `temp workspace directory ${JSON.stringify(dir)} permissions are invalid; ${privateTempDirectoryFix(uid)}`);
   }
   if (writable && (privateDirectory || !sticky)) {
     throw new FsSafeError(
       "insecure-permissions",
       privateDirectory
-        ? "temp workspace root and child must not be group/world writable; use a private temp directory"
-        : "temp workspace ancestor is group/world writable without sticky protection",
+        ? `temp workspace directory ${JSON.stringify(dir)} has group/world-writable mode ${tempDirectoryMode(stat.mode)}; root and child must not be group/world writable, even with the sticky bit; ${privateTempDirectoryFix(uid)}`
+        : `temp workspace ancestor ${JSON.stringify(dir)} has group/world-writable mode ${tempDirectoryMode(stat.mode)} without sticky protection (sticky bit missing); have its administrator restore safe permissions (1777 for a shared system temp directory), or move the private root under trusted ancestors`,
     );
   }
   if (ownership === "unmapped") warnUnmappedTempWorkspaceAncestor();
@@ -114,6 +116,7 @@ const WINDOWS = process.platform === "win32";
 export function assertTempWorkspaceChildState(
   stat: BigIntStats | Stats,
   ownerUid: number | undefined,
+  dir: string,
 ): void {
   const exactIdentity = typeof stat.dev === "bigint" && typeof stat.ino === "bigint" &&
     (!WINDOWS || (stat.dev !== 0n && stat.ino !== 0n));
@@ -124,17 +127,18 @@ export function assertTempWorkspaceChildState(
     throw new FsSafeError("path-mismatch", "temp workspace child identity could not be verified");
   }
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new FsSafeError("not-file", "temp workspace child must be a real directory");
+    throw new FsSafeError("not-file", `temp workspace child ${JSON.stringify(dir)} ${stat.isSymbolicLink() ? "is a symbolic link" : "is not a directory"}; ${privateTempDirectoryFix(ownerUid)}`);
   }
-  assertTrustedTempWorkspaceDirectory(stat, ownerUid, true);
+  assertTrustedTempWorkspaceDirectory(stat, ownerUid, true, dir);
 }
 
 export function validateInitialTempWorkspaceChild(
   stat: BigIntStats,
   ownerUid: number | undefined,
   mode: number,
+  dir: string,
 ): boolean {
-  assertTempWorkspaceChildState(stat, ownerUid);
+  assertTempWorkspaceChildState(stat, ownerUid, dir);
   return !childHasRequestedMode(stat, mode);
 }
 
@@ -160,7 +164,7 @@ async function initializeTempWorkspaceChildMode(
   try {
     await owner.apply(mode, { check: parent.assertCurrent });
     const current = inspectDirectoryIdentitySync(dir, expected);
-    validateAdmittedTempWorkspaceChild(current, parent.ownerUid, mode);
+    validateAdmittedTempWorkspaceChild(current, parent.ownerUid, mode, dir);
     parent.assertCurrent();
   } finally {
     await owner.close();
@@ -173,7 +177,7 @@ export function admitTempWorkspaceChild(
   parent: TempWorkspaceRootAdmission,
   mode: number,
 ): Promise<void> | undefined {
-  if (!validateInitialTempWorkspaceChild(expected, parent.ownerUid, mode)) return undefined;
+  if (!validateInitialTempWorkspaceChild(expected, parent.ownerUid, mode, dir)) return undefined;
   return initializeTempWorkspaceChildMode(dir, expected, parent, mode);
 }
 
@@ -183,7 +187,7 @@ export function admitTempWorkspaceChildSync(
   parent: TempWorkspaceRootAdmission,
   mode: number,
 ): void {
-  if (!validateInitialTempWorkspaceChild(expected, parent.ownerUid, mode)) return;
+  if (!validateInitialTempWorkspaceChild(expected, parent.ownerUid, mode, dir)) return;
   parent.assertCurrent();
   const owner = pinNodeDirectoryForModeSync(dir, {
     expectedIdentity: expected,
@@ -192,7 +196,7 @@ export function admitTempWorkspaceChildSync(
   try {
     owner.apply(mode, parent.assertCurrent);
     const current = inspectDirectoryIdentitySync(dir, expected);
-    validateAdmittedTempWorkspaceChild(current, parent.ownerUid, mode);
+    validateAdmittedTempWorkspaceChild(current, parent.ownerUid, mode, dir);
     parent.assertCurrent();
   } finally {
     owner.close();
@@ -203,8 +207,9 @@ export function validateAdmittedTempWorkspaceChild(
   current: TempWorkspaceIdentityStat,
   ownerUid: number | undefined,
   mode: number,
+  dir: string,
 ): void {
-  assertTempWorkspaceChildState(current, ownerUid);
+  assertTempWorkspaceChildState(current, ownerUid, dir);
   if (!childHasRequestedMode(current, mode)) {
     throw new FsSafeError("path-mismatch", "temp workspace final mode could not be verified");
   }
