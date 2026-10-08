@@ -48,7 +48,11 @@ if (action === "leaks") {
   console.log("no-leaks");
 } else {
   const lock = await acquireFileLock(target, { ...options, retainOnExit: action === "retain" });
-  if (kind === "parent-symlink") {
+  if (kind === "ancestor-pinned") {
+    assert.throws(() => fs.renameSync(parent, `${parent}-moved`), error =>
+      ["EPERM", "EACCES", "EBUSY"].includes(error.code));
+    assert.equal(await lock.verifyStillHeld(), true);
+  } else if (kind === "parent-symlink") {
     fs.renameSync(parent, path.join(base, "parent-moved"));
     fs.symlinkSync(path.join(base, "parent-moved"), parent, process.platform === "win32" ? "junction" : "dir");
   } else if (kind !== "control") {

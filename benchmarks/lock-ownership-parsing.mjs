@@ -31,7 +31,7 @@ function buildCases() {
                 divisor: ITERATION_DIVISOR,
                 workloadSemantics: "equivalent-output",
                 workloadDetails: Object.freeze({
-                  schema: "lock-ownership-parsing-v1",
+                  schema: "lock-ownership-parsing-v2",
                   api: `${handleType}.${method}`,
                   method,
                   rooted,
@@ -45,6 +45,7 @@ function buildCases() {
                   recordShape: shape === "records" ? "{ id, values: [id, id + 1] }" : null,
                   padding: "ASCII x; JSON uses two-space indentation",
                   customParserCalls: parser === "custom-json" && (method === "verifyStillHeld" || !sync) ? 1 : 0,
+                  retainedCustomParserCalls: parser === "custom-json" && (method === "verifyStillHeld" || (!sync && !rooted)) ? 1 : 0,
                   timedOperation: `one complete public ${handleType}.${method} call`,
                   untimedOperations: Object.freeze([
                     "payload construction", "acquisition", "byte and ownership verification", "cleanup",
@@ -105,15 +106,19 @@ function inspectOwnedSidecar(fixture, expected) {
   return { raw, identity };
 }
 
-function verifyParser(fixture, expectedCalls) {
-  assert.equal(fixture.parserCalls, expectedCalls, "custom parser invocation count changed");
-  if (expectedCalls > 0) {
+function verifyParser(fixture, expectedCalls, fallbackCalls) {
+  const expected = fixture.parserCalls === fallbackCalls ? fallbackCalls : expectedCalls;
+  assert.equal(fixture.parserCalls, expected, "custom parser invocation count changed");
+  if (fixture.parserCalls > 0) {
     assert.equal(fixture.parserReceiver, undefined, "custom parser receiver changed");
     assert.equal(fixture.parserRaw, fixture.receipt.raw, "custom parser received different sidecar bytes");
   }
 }
 
-export function registerLockOwnershipParsing({ api, workspace, register, onCleanup }) {
+export function registerLockOwnershipParsing({ api, workspace, register, onCleanup, binding, retainedSidecarRelease = true }) {
+  const retainedRelease = retainedSidecarRelease && (process.platform === "win32"
+    ? typeof binding?.retainWindowsSidecar === "function"
+    : typeof binding?.removeStagedFile === "function" && typeof binding?.stagedFileMatches === "function");
   const directory = path.join(workspace, "lock-ownership-parsing");
   const fixtures = [];
   const payloads = new Map();
@@ -204,7 +209,10 @@ export function registerLockOwnershipParsing({ api, workspace, register, onClean
       after: async (result) => {
         const failures = [];
         await attemptBenchmarkCleanup(failures, () => {
-          verifyParser(fixture, details.customParserCalls);
+          // Windows can decline retention on the fixture's volume, after
+          // closing its handles. That supported Root fallback still parses.
+          verifyParser(fixture, retainedRelease ? details.retainedCustomParserCalls : details.customParserCalls,
+            retainedRelease && process.platform === "win32" ? details.customParserCalls : undefined);
           if (details.method === "verifyStillHeld") {
             assert.equal(result, true, "owned lock verification did not succeed");
             inspectOwnedSidecar(fixture, fixture.receipt);

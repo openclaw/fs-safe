@@ -13,11 +13,31 @@ let native;
 try { native = __loadBundledNativeForTest(); } catch (error) {
   if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
 }
-const cases = ["control", "parent-symlink", "root-replaced", "root-moved"] as const;
+const cases = process.platform === "win32"
+  ? ["control", "root-replaced", "root-moved"] as const
+  : ["control", "parent-symlink", "root-replaced", "root-moved"] as const;
 
 describe.skipIf(!native)("retained sidecar release", () => {
 beforeEach(() => configureFsSafeNative({ mode: "require" }));
 afterEach(() => { configureFsSafeNative({ mode: "auto" }); vi.restoreAllMocks(); });
+
+it.runIf(process.platform === "win32")("settles a Windows ancestor pin before allowing its rename", async () => {
+  const base = await tempRoot("sidecar-retained-ancestor-");
+  const parent = path.join(base, "parent"), directory = path.join(parent, "data");
+  await fs.mkdir(directory, { recursive: true });
+  const lock = await acquireFileLock(path.join(directory, "state"), {
+    lockRoot: await root(directory), payload: () => ({ owner: "original" }),
+  });
+  try {
+    await expect(fs.rename(parent, `${parent}-moved`)).rejects.toMatchObject({
+      code: expect.stringMatching(/^(EPERM|EACCES|EBUSY)$/u),
+    });
+    await expect(lock.verifyStillHeld()).resolves.toBe(true);
+  } finally { await lock.release(); }
+  expect(await fs.readdir(directory)).toEqual([]);
+  await fs.rename(parent, `${parent}-moved`);
+  expect(await fs.readdir(path.join(`${parent}-moved`, "data"))).toEqual([]);
+});
 
 it.each(cases)("releases its created sidecar after %s and permits reacquisition", async kind => {
   const base = await tempRoot("sidecar-retained-release-");

@@ -58,23 +58,33 @@ impl Owner {
         if !self.sidecar { os::stamps(file.0, self.mtime_ns, self.ctime_ns)?; }
         os::no_named_streams(file.0)?;
         if !self.sidecar { os::exclude_writable_sections(file.0, result)?; }
-        self.current()
+        self.current()?;
+        if self.sidecar {
+            // Windows refuses ordinary directory relocation while a descendant
+            // file is open, even with delete sharing. Retain only the parent.
+            self.close_file(result);
+            let parent = self.parents.pop().expect("admitted parent");
+            while let Some(ancestor) = self.parents.pop() {
+                if let Err(error) = ancestor.close() {
+                    result.resources = "close-failed".into(); result.error("close-parent", error);
+                }
+            }
+            self.parents.push(parent);
+            if result.resources == "close-failed" {
+                return Err(native_error("EIO", "sidecar admission could not close temporary handles"));
+            }
+        }
+        Ok(())
     }
-    fn current(&self) -> NativeResult<()> {
+    fn current(&mut self) -> NativeResult<()> {
         if !self.sidecar { os::canonical(self.parent().0, &self.path)?; }
+        os::check_directory(self.parent().0)?;
         os::exact(self.parent().0, self.parent_dev, self.parent_ino, true)?;
+        if self.sidecar && self.file.is_none() {
+            self.file = Some(os::file(self.parent().0, &self.name, true)?);
+        }
         let file = self.file.as_ref().expect("admitted file");
         os::exact(file.0, self.dev, self.ino, false)?;
-        if self.sidecar {
-            // A moved parent keeps authority over only the original named inode.
-            // Never delete the retained file if its old name now belongs to a successor.
-            let named = os::file(self.parent().0, &self.name, true)?;
-            let verified = os::exact(named.0, self.dev, self.ino, false)
-                .and_then(|_| os::regular(named.0, self.size));
-            let closed = named.close();
-            verified?;
-            closed?;
-        }
         os::regular(file.0, self.size)?;
         if !self.sidecar { os::stamps(file.0, self.mtime_ns, self.ctime_ns)?; }
         os::no_named_streams(file.0)?;

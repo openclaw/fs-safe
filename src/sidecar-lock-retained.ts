@@ -34,6 +34,7 @@ export function retainCreatedSidecar(
       BigInt(guard.stat.dev), BigInt(guard.stat.ino), created.dev, created.ino,
       BigInt(Buffer.byteLength(raw)), sha256Hex(raw), 1024 * 1024);
     const admitted = native.admission;
+    if (admitted.status === "unsupported" && admitted.resources === "closed") return undefined;
     if (admitted.status !== "retained") {
       throw new FsSafeError("helper-failed", "could not retain created sidecar lock", { details: { result: admitted } });
     }

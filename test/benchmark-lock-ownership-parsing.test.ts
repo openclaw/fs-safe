@@ -8,11 +8,12 @@ import {
 import { finishBenchmarkInvocation } from "../benchmarks/runner-cleanup.mjs";
 import { acquireFileLock, acquireFileLockSync } from "../src/file-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
+import { __loadBundledNativeForTest, __setNativeLoaderForTest, __resetNativeLoaderForTest, getNativeBinding } from "../src/native.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-afterEach(() => configureFsSafeNative({ mode: "auto" }));
+afterEach(() => { configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); });
 
 type Row = {
   name: string;
@@ -24,13 +25,13 @@ type Row = {
   fixturePlacement: string;
 };
 
-async function fixture() {
-  configureFsSafeNative({ mode: "off" });
+async function fixture(mode: "off" | "require" = "off") {
+  configureFsSafeNative({ mode });
   const workspace = await tempRoot("fs-safe-lock-benchmark-");
   const rows: Row[] = [];
   const cleanups: Array<() => Promise<void>> = [];
   registerLockOwnershipParsing({
-    api: { acquireFileLock, acquireFileLockSync, root }, workspace,
+    api: { acquireFileLock, acquireFileLockSync, root }, workspace, binding: getNativeBinding(),
     register: (name: string, run: Row["run"], options: Omit<Row, "name" | "run">) => {
       rows.push({ name, run, ...options });
     },
@@ -55,6 +56,35 @@ it("exercises all lock ownership benchmark fixtures through the real public meth
   } finally { await f.cleanup(); }
   expect(fs.readdirSync(f.workspace)).toEqual([]);
 }, 30_000);
+
+let native;
+try { native = __loadBundledNativeForTest(); } catch { /* Native CI exercises the retained receipt. */ }
+it.skipIf(!native)("checks parser counts for retained native Root release", async () => {
+  const f = await fixture("require");
+  try {
+    const rows = f.rows.filter(row => row.name.includes("FileLockHandle.release/ownership-parsing/custom-json/root/128B-json"));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) await row.after(await row.run(await row.before()));
+  } finally { await f.cleanup(); }
+  expect(fs.readdirSync(f.workspace)).toEqual([]);
+});
+
+it.skipIf(!native || process.platform !== "win32")("accepts Windows Root fallback when native retention declines the volume", async () => {
+  __setNativeLoaderForTest(() => ({ ...native!, retainWindowsSidecar() {
+    return {
+      admission: { status: "unsupported", phase: "admission", disposition: "not-attempted",
+        namespace: "not-observed", resources: "closed", persistence: "not-proven", errors: [] } as const,
+      settle() { throw new Error("unsupported admission already closed its handles"); },
+    };
+  } }));
+  const f = await fixture("require");
+  try {
+    const rows = f.rows.filter(row => row.name.includes("FileLockHandle.release/ownership-parsing/custom-json/root/128B-json"));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) await row.after(await row.run(await row.before()));
+  } finally { await f.cleanup(); }
+  expect(fs.readdirSync(f.workspace)).toEqual([]);
+});
 
 it("does not let successful cleanup conceal a failed public verification", async () => {
   const f = await fixture();

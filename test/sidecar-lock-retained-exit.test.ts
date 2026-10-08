@@ -14,7 +14,9 @@ let native;
 try { native = __loadBundledNativeForTest(); } catch (error) {
   if (process.env.FS_SAFE_NATIVE_MODE === "require") throw error;
 }
-const cases = ["control", "parent-symlink", "root-replaced", "root-moved"] as const;
+const cases = process.platform === "win32"
+  ? ["control", "root-replaced", "root-moved"] as const
+  : ["control", "parent-symlink", "root-replaced", "root-moved"] as const;
 async function child(base: string, kind: string, action: string) {
   const result = await exec(process.execPath, [
     fileURLToPath(new URL("./fixtures/sidecar-retained-child.mjs", import.meta.url)), base, kind, action,
@@ -24,6 +26,17 @@ async function child(base: string, kind: string, action: string) {
 }
 
 describe.skipIf(!native)("retained sidecar process cleanup", () => {
+  it.runIf(process.platform === "win32").each(["natural", "explicit"])(
+    "closes the Windows ancestor pin on %s exit", async action => {
+      const base = await tempRoot("sidecar-retained-ancestor-exit-");
+      expect(await child(base, "ancestor-pinned", action)).toBe("acquired");
+      const parent = path.join(base, "parent");
+      expect(await fs.readdir(path.join(parent, "data"))).toEqual([]);
+      await fs.rename(parent, `${parent}-moved`);
+      await fs.rename(`${parent}-moved`, parent);
+      expect(await child(base, "control", "reacquire")).toBe("acquired");
+    },
+  );
   it.each(cases.flatMap(kind => ["release", "natural", "explicit"].map(action => ({ kind, action }))))(
     "$action cleanup after $kind permits a fresh process to acquire", async ({ kind, action }) => {
       const base = await tempRoot("sidecar-retained-exit-");

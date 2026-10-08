@@ -270,7 +270,7 @@ existing `Root` capability. `lockPath` must resolve inside that root.
 
 With the maintained native helper, asynchronous acquisition retains cleanup
 authority over only the sidecar it created: an identity-checked parent descriptor
-and file descriptor on POSIX, or shared-delete directory/file handles on Windows
+and file descriptor on POSIX, or a shared-delete parent directory handle on Windows
 (local NTFS). `release()` and process-exit cleanup verify the original named
 entry's exact identity, regular-file type, single link, and complete owner record
 through those retained handles. They then use guarded descriptor-relative removal
@@ -279,6 +279,15 @@ works after the Root moves, is replaced, or its parent becomes a symlink. A fore
 entry at either the original Root path or the retained sidecar name is preserved.
 The retained handles close on success, mismatch, failed acquisition, and exit
 (including `retainOnExit`, which closes handles without deleting).
+Windows opens the named file through the retained parent only for settlement,
+with delete access and sharing; keeping a file handle open would prevent ordinary
+directory relocation. Retained cleanup compares the owner bytes directly and does
+not invoke `parsePayload`; verification and stale-policy reads still do.
+Windows permits renaming that retained parent itself, but refuses renaming an
+ancestor containing the open directory handle, even with delete sharing and no
+data access. Such a refused move leaves the Root and lock in place; release or
+exit cleanup closes the pin so the ancestor can then move. POSIX also supports
+cleanup after a successful ancestor move or symlink swap.
 
 `verifyStillHeld()` retains its Root-based semantics and can still reject a moved
 Root even though `release()` can remove its own sidecar. This creation-specific

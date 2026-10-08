@@ -333,6 +333,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           admissionConflict = true;
           throw Object.assign(new Error("sidecar lock admission changed"), { code: "EEXIST" });
         }
+        // An open descendant file prevents Windows directory relocation. The
+        // native receipt retains its parent and verifies the leaf at settlement.
+        if (retainedSidecar && process.platform === "win32") await handle.close();
         createdHeld = {
           refCount: 1,
           reentrantOwner: requestedReentrantOwner,
