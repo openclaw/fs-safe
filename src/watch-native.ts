@@ -3,7 +3,8 @@ import { getNativeBinding, type NativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import type { RootContext } from "./root-context.js";
 import type { DirectoryIdentity, WatchSnapshot } from "./watch-scan.js";
-import type { WatchStreamPaths } from "./watch-stream.js";
+import { watchStreamPaths } from "./watch-stream.js";
+import type { WatchScope } from "./watch-types.js";
 
 export type NativeWatchHint = { directory: string; name: string; event: "rename" | "change" | "children" | "subtree" };
 export type NativeWatchBatch = { hints: NativeWatchHint[]; overflow: boolean; error?: string };
@@ -52,8 +53,9 @@ export class NativeWatchBackend {
       return result.changed;
     } catch (cause) { throw watchError(cause); }
   }
-  configure(paths: WatchStreamPaths): boolean {
+  configure(snapshot: WatchSnapshot, scopes: readonly WatchScope[]): boolean {
     if (process.platform !== "darwin") return false;
+    const paths = watchStreamPaths(snapshot, scopes);
     const key = JSON.stringify(paths);
     if (this.streamPaths === key) return false;
     try { this.binding.watchConfigure!(this.id!, paths.anchors, paths.exclusions); }
