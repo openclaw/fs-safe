@@ -541,8 +541,9 @@ remain a best-effort sequence, not atomic.
 `onDestinationPublished` runs exactly once after a successful rename resolves,
 before awaited post-rename directory checks or source cleanup. It receives a
 frozen receipt with the resolved absolute destination path and the exact bigint
-device/inode identity observed on the rename source before dispatch: the
-original source for a direct rename, or the staged copy for fallback. Failed
+device/inode identity observed on the rename source after the synchronous
+authority callbacks return and before dispatch: the source selected for a direct
+rename, or the staged copy for fallback. Failed
 rename attempts never emit receipts. The return contract remains `Promise<void>`.
 
 The receipt records an observed identity, not authorization, durable storage,

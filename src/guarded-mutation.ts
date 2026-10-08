@@ -73,11 +73,11 @@ export async function guardedRename(params: {
   await withAsyncDirectoryGuards(
     [sourceGuard, targetGuard],
     async () => {
+      // Authority must survive all awaited guards; do not yield before rename dispatch.
+      params.assertBeforeRename?.();
       if (params.onSourceInspected) {
         params.onSourceInspected(fsSync.lstatSync(params.from, { bigint: true }));
       }
-      // Authority must survive all awaited guards; do not yield before rename dispatch.
-      params.assertBeforeRename?.();
       await fs.rename(params.from, params.to);
       params.onRenamed?.();
     },
