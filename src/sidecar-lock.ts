@@ -139,7 +139,9 @@ function releaseAllLocksSync(state: SidecarLockManagerState, options?: { preserv
     void held.handle.close().catch(() => undefined);
     try {
       const retained = options?.preserveRetained === true && held.retainOnExit;
-      if (!retained && !held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
+      if (held.retainedSidecar) {
+        held.retainedSidecar.settle(!retained);
+      } else if (!retained && !held.lockRoot && snapshotMatchesSync(held.lockPath, held.snapshot)) {
         fsSync.rmSync(held.lockPath, { force: true });
       }
     } catch {
@@ -232,6 +234,15 @@ async function releaseHeldLock(
   }
   held.releasePromise = (async () => {
     await held.handle.close().catch(() => undefined);
+    if (held.retainedSidecar) {
+      try {
+        held.retainedSidecar.settle(true);
+      } finally {
+        if (state.held.get(normalizedTargetPath) === held) state.held.delete(normalizedTargetPath);
+        stopSidecarLockMonitoring(held);
+      }
+      return;
+    }
     await removeSidecarLockIfUnchanged(held.lockPath, held.snapshot, {
       lockRoot: held.lockRoot,
       parsePayload: held.parsePayload,

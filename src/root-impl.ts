@@ -95,7 +95,7 @@ import { admitMoveSourceStat, movePathNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { createCopyPublicationObserver, onCopyPublication, onCopySourceAdmission, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
-import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
+import { createInputOptions, rethrowCreateInputError, rootWriteInput, retainSidecarCreated, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { assertNoWindowsPathAlias, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
@@ -1140,10 +1140,10 @@ async function commitPinnedWriteInRoot(
           await verifyAtomicWriteResult({
             root,
             targetPath: pinned.targetPath,
-            fd,
-            expectedIdentity,
+            fd, expectedIdentity,
             parentGuard,
           });
+          params[retainSidecarCreated]?.(fd, parentGuard);
         } catch (error) {
           emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
           throw error;

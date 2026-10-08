@@ -3,18 +3,25 @@ import { FsSafeError } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import type { RootCreateOptions, RootCreateStreamOptions, RootWriteOptions } from "./root-options.js";
+import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 
 // Lock records need exclusive creation, not private-before-visible publication.
 // Keep this composition hook off the public Root options and package exports.
 const exclusiveSidecarCreate = Symbol("exclusiveSidecarCreate");
 export const sidecarExclusiveCreate = Object.freeze({ [exclusiveSidecarCreate]: true as const });
+export const retainSidecarCreated = Symbol("retainSidecarCreated");
 
 export type RootWriteParams = RootWriteOptions & RootCreateOptions & RootCreateStreamOptions & {
   relativePath: string;
   data: string | Buffer | AsyncIterable<Uint8Array>;
   strictFileSync?: boolean;
   [exclusiveSidecarCreate]?: true;
+  [retainSidecarCreated]?: (fd: number, parent: AnyAsyncDirectoryGuard) => void;
 };
+
+export function sidecarRetainedCreate(retain: NonNullable<RootWriteParams[typeof retainSidecarCreated]>) {
+  return { ...sidecarExclusiveCreate, [retainSidecarCreated]: retain };
+}
 
 class CreateInputError extends FsSafeError {
   constructor(readonly rejection: unknown) {

@@ -2,11 +2,13 @@ import type { NativeFileHandle } from "./native-operations.js";
 import type { Root } from "./root-impl.js";
 import type { SidecarLockSnapshot } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockHandle } from "./sidecar-lock-types.js";
+import type { RetainedSidecar } from "./sidecar-lock-retained.js";
 
 export type HeldSidecarLock = {
   refCount: number;
   reentrantOwner?: string;
   handle: NativeFileHandle;
+  retainedSidecar?: RetainedSidecar;
   lockPath: string;
   snapshot: SidecarLockSnapshot;
   acquiredAt: number;

@@ -32,27 +32,27 @@ pub(super) fn path_parts(path: &str) -> NativeResult<Vec<&str>> {
     Ok(if path.len() == 3 { Vec::new() } else { parts })
 }
 
-pub(super) fn root(path: &str) -> NativeResult<OwnedHandle> {
+pub(super) fn root(path: &str, sidecar: bool) -> NativeResult<OwnedHandle> {
     let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
     // Fixed local drives only; network, removable and namespace aliases are unsupported.
     if unsafe { GetDriveTypeW(wide.as_ptr()) } != 3 /* DRIVE_FIXED */ {
         return Err(native_error("ENOTSUP", "retained files require a fixed local NTFS drive"));
     }
     let handle = unsafe { CreateFileW(wide.as_ptr(), FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE, null(), OPEN_EXISTING,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | if sidecar { FILE_SHARE_DELETE } else { 0 }, null(), OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null_mut()) };
     if handle == INVALID_HANDLE_VALUE { return Err(win_error(unsafe { GetLastError() }, "retain volume root")); }
     Ok(OwnedHandle(handle))
 }
 
-pub(super) fn directory(parent: HANDLE, name: &str) -> NativeResult<OwnedHandle> {
+pub(super) fn directory(parent: HANDLE, name: &str, sidecar: bool) -> NativeResult<OwnedHandle> {
     open_retained_child(parent, name, FILE_LIST_DIRECTORY, FILE_DIRECTORY_FILE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE)
+        FILE_SHARE_READ | FILE_SHARE_WRITE | if sidecar { FILE_SHARE_DELETE } else { 0 })
 }
 
-pub(super) fn file(parent: HANDLE, name: &str) -> NativeResult<OwnedHandle> {
+pub(super) fn file(parent: HANDLE, name: &str, sidecar: bool) -> NativeResult<OwnedHandle> {
     open_retained_child(parent, name, FILE_GENERIC_READ | DELETE,
-        FILE_NON_DIRECTORY_FILE, FILE_SHARE_READ)
+        FILE_NON_DIRECTORY_FILE, FILE_SHARE_READ | if sidecar { FILE_SHARE_WRITE | FILE_SHARE_DELETE } else { 0 })
 }
 
 pub(super) fn check_directory(handle: HANDLE) -> NativeResult<()> {
@@ -104,8 +104,11 @@ pub(super) fn exact(handle: HANDLE, dev: u64, ino: u64, directory: bool) -> Nati
 pub(super) fn regular(handle: HANDLE, size: u64) -> NativeResult<()> {
     let info = guarded_handle_information(handle, "inspect retained regular file")?;
     if info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
-        || info.nNumberOfLinks != 1 || ((info.nFileSizeHigh as u64) << 32 | info.nFileSizeLow as u64) != size {
-        return Err(native_error("path-mismatch", "retained file type, link count or size changed"));
+        || info.nNumberOfLinks != 1 {
+        return Err(native_error("path-mismatch", "retained file type or link count changed"));
+    }
+    if ((info.nFileSizeHigh as u64) << 32 | info.nFileSizeLow as u64) != size {
+        return Err(native_error("path-mismatch", "retained file size changed"));
     }
     if info.dwFileAttributes & FILE_ATTRIBUTE_READONLY != 0 {
         return Err(native_error("EACCES", "retained file is read-only"));

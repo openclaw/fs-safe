@@ -167,9 +167,11 @@ describe("sidecar lock natural process exit", () => {
     expect(JSON.parse(raw)).toEqual({ owner: "caller" });
   });
 
-  it("attempts failed Root cleanup once without an unhandled rejection or shutdown loop", async () => {
+  it("attempts failed fallback Root cleanup once without an unhandled rejection or shutdown loop", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-failure-");
     const output = await runChild(directory, `
+      const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
+      configureFsSafeNative({ mode: "off" });
       const lock = await acquireFileLock(targetPath, options);
       const raw = await fs.readFile(lock.lockPath, "utf8");
       await acquireFileLock(path.join(directory, "healthy.json"), options);
@@ -281,9 +283,11 @@ describe("sidecar lock natural process exit", () => {
     }
   });
 
-  it("joins an explicit release already in flight", async () => {
+  it("joins a fallback explicit release already in flight", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-in-flight-");
     const output = await runChild(directory, `
+      const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
+      configureFsSafeNative({ mode: "off" });
       const lock = await acquireFileLock(targetPath, options);
       const remove = capability.remove.bind(capability);
       let removals = 0;

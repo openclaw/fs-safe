@@ -34,38 +34,49 @@ impl RetainedFileResult {
 struct Owner {
     parents: Vec<OwnedHandle>, file: Option<OwnedHandle>, path: String, name: String,
     dev: u64, ino: u64, parent_dev: u64, parent_ino: u64, size: u64, mtime_ns: u64, ctime_ns: u64, digest: String,
+    sidecar: bool,
 }
 impl Owner {
     fn parent(&self) -> &OwnedHandle { self.parents.last().expect("admitted parent") }
     fn admit(&mut self, result: &mut RetainedFileResult) -> NativeResult<()> {
         let parts = os::path_parts(&self.path)?;
         os::basename(&self.name)?;
-        self.parents.push(os::root(&self.path[..3])?);
+        self.parents.push(os::root(&self.path[..3], self.sidecar)?);
         os::check_directory(self.parent().0)?;
         os::check_ntfs(self.parent().0)?;
         for part in parts {
-            let next = os::directory(self.parent().0, part)?;
+            let next = os::directory(self.parent().0, part, self.sidecar)?;
             self.parents.push(next);
             os::check_directory(self.parent().0)?;
         }
         os::canonical(self.parent().0, &self.path)?;
         os::exact(self.parent().0, self.parent_dev, self.parent_ino, true)?;
-        self.file = Some(os::file(self.parent().0, &self.name)?);
+        self.file = Some(os::file(self.parent().0, &self.name, self.sidecar)?);
         let file = self.file.as_ref().unwrap();
         result.identity = Some(os::exact(file.0, self.dev, self.ino, false)?);
         os::regular(file.0, self.size)?;
-        os::stamps(file.0, self.mtime_ns, self.ctime_ns)?;
+        if !self.sidecar { os::stamps(file.0, self.mtime_ns, self.ctime_ns)?; }
         os::no_named_streams(file.0)?;
-        os::exclude_writable_sections(file.0, result)?;
+        if !self.sidecar { os::exclude_writable_sections(file.0, result)?; }
         self.current()
     }
     fn current(&self) -> NativeResult<()> {
-        os::canonical(self.parent().0, &self.path)?;
+        if !self.sidecar { os::canonical(self.parent().0, &self.path)?; }
         os::exact(self.parent().0, self.parent_dev, self.parent_ino, true)?;
         let file = self.file.as_ref().expect("admitted file");
         os::exact(file.0, self.dev, self.ino, false)?;
+        if self.sidecar {
+            // A moved parent keeps authority over only the original named inode.
+            // Never delete the retained file if its old name now belongs to a successor.
+            let named = os::file(self.parent().0, &self.name, true)?;
+            let verified = os::exact(named.0, self.dev, self.ino, false)
+                .and_then(|_| os::regular(named.0, self.size));
+            let closed = named.close();
+            verified?;
+            closed?;
+        }
         os::regular(file.0, self.size)?;
-        os::stamps(file.0, self.mtime_ns, self.ctime_ns)?;
+        if !self.sidecar { os::stamps(file.0, self.mtime_ns, self.ctime_ns)?; }
         os::no_named_streams(file.0)?;
         if os::digest(file.0, self.size)? != self.digest {
             return Err(native_error("path-mismatch", "retained bytes do not match producer digest"));
@@ -91,7 +102,7 @@ impl Owner {
         }.into();
     }
     fn observe(&self, result: &mut RetainedFileResult) {
-        match os::file(self.parent().0, &self.name) {
+        match os::file(self.parent().0, &self.name, self.sidecar) {
             Err(error) if error.status == "ENOENT" => { result.namespace = "absent".into(); result.status = "name-absent-after-settlement".into(); },
             Err(error) => { result.namespace = "unknown".into(); result.error("observe", error); },
             Ok(file) => {
@@ -119,6 +130,9 @@ impl NativeRetainedFile {
         result.resources = "closed".into();
         if remove {
             match owner.current() {
+                Err(error) if owner.sidecar && error.status == "ENOENT" => {
+                    result.status = "name-absent-after-settlement".into(); result.namespace = "absent".into();
+                },
                 Err(error) => { result.status = if error.status == "path-mismatch" { "preserved-mismatch" } else { "failed" }.into(); result.error("verify", error); },
                 Ok(()) => match os::disposition(owner.file.as_ref().unwrap().0) {
                     Ok(()) => { result.disposition = "accepted".into(); result.status = "disposition-accepted".into(); },
@@ -151,6 +165,21 @@ impl Drop for NativeRetainedFile {
 #[allow(clippy::too_many_arguments)]
 pub fn retain_windows_file(path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
     dev: BigInt, ino: BigInt, size: BigInt, mtime_ns: BigInt, ctime_ns: BigInt, digest: String, max_bytes: u32) -> NativeRetainedFile {
+    retain_file(path, name, parent_dev, parent_ino, dev, ino, size, mtime_ns, ctime_ns, digest, max_bytes, false)
+}
+
+// Same guarded retained owner, with sharing that permits relocation and exact
+// named-entry/byte verification at settlement instead of directory-path custody.
+#[napi(js_name = "retainWindowsSidecar")]
+#[allow(clippy::too_many_arguments)]
+pub fn retain_windows_sidecar(path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
+    dev: BigInt, ino: BigInt, size: BigInt, digest: String, max_bytes: u32) -> NativeRetainedFile {
+    retain_file(path, name, parent_dev, parent_ino, dev, ino, size, 0u64.into(), 0u64.into(), digest, max_bytes, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn retain_file(path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
+    dev: BigInt, ino: BigInt, size: BigInt, mtime_ns: BigInt, ctime_ns: BigInt, digest: String, max_bytes: u32, sidecar: bool) -> NativeRetainedFile {
     let mut result = RetainedFileResult::new();
     let mut owner = None;
     let admission = (|| -> NativeResult<()> {
@@ -162,7 +191,7 @@ pub fn retain_windows_file(path: String, name: String, parent_dev: BigInt, paren
         owner = Some(Owner { parents: Vec::new(), file: None, path, name,
             dev: exact_identity_component(&dev, "device")?, ino: exact_identity_component(&ino, "inode")?,
             parent_dev: exact_identity_component(&parent_dev, "parent device")?, parent_ino: exact_identity_component(&parent_ino, "parent inode")?, size, mtime_ns: exact_identity_component(&mtime_ns, "mtimeNs")?,
-            ctime_ns: exact_identity_component(&ctime_ns, "ctimeNs")?, digest });
+            ctime_ns: exact_identity_component(&ctime_ns, "ctimeNs")?, digest, sidecar });
         owner.as_mut().unwrap().admit(&mut result)
     })();
     match admission {

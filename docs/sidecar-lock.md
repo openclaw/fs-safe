@@ -35,7 +35,7 @@ try {
 
 The lock file sits next to the protected resource. If a process crashes mid-lock, the next acquirer notices the held entry, inspects its payload (PID, host, acquired-at timestamp), and decides — via `shouldReclaim` (defaulting to "is the lock older than `staleMs`?") — whether it should keep waiting or fail.
 
-On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their retained Root capability and ownership receipt. The synchronous `process.on("exit")` handler provides last-chance cleanup for raw locks and raw-path reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it. Locks acquired with `retainOnExit: true` are exempt from both handlers: their sidecar stays in place after exit and is governed only by the caller's own stale policy. Because exit handlers are globally deduplicated across package copies, `retainOnExit` fails closed with `helper-unavailable` if an older copy that cannot honor it registered the handlers first.
+On natural event-loop shutdown, a globally deduplicated `process.on("beforeExit")` handler attempts asynchronous cleanup of held Root-backed locks through their creation receipt (or the Root capability when native retention is unavailable). The synchronous `process.on("exit")` handler also cleans retained native sidecars, raw locks, and raw-path reclaim guards. Changed sidecars and failed Root cleanup remain in place; cleanup does not keep retrying during shutdown unless another acquisition re-arms it. Locks acquired with `retainOnExit: true` are exempt from both handlers: their sidecar stays in place after exit and is governed only by the caller's own stale policy. Because exit handlers are globally deduplicated across package copies, `retainOnExit` fails closed with `helper-unavailable` if an older copy that cannot honor it registered the handlers first.
 
 Asynchronous Root-backed stale recovery uses a regular file at the
 `.reclaim` name, created, verified, and removed through that Root. Its ownership
@@ -57,17 +57,17 @@ even if guard ownership has also changed.
 Root guard; let its original attempt settle before retrying that guarded path.
 It stops compromise monitoring for forgotten holders, including callbacks from checks already in flight.
 
-Always release locks in a `finally` block. Application-managed graceful shutdown can await `release()` or `manager.drain()` before terminating. Explicit `process.exit()`, uncaught failures, crashes, default signal handling, and fatal termination (including `SIGKILL`) do not reliably run asynchronous Root cleanup and may leave sidecars. Recover only after an application-owned liveness policy proves the holder cannot still be writing.
+Always release locks in a `finally` block. Application-managed graceful shutdown can await `release()` or `manager.drain()` before terminating. Explicit `process.exit()` runs synchronous cleanup for retained native sidecars, but cannot run asynchronous fallback Root cleanup. Uncaught failures, crashes, default signal handling, and fatal termination (including `SIGKILL`) may leave sidecars. Recover only after an application-owned liveness policy proves the holder cannot still be writing.
 
 Exit cleanup tolerates shared managers created by older package copies that lack reclaim-guard state, and continues through later manager domains. Handler ownership remains first-registration-wins: loading an updated copy does not replace an older copy's registered handler. First registration is committed only after Node accepts the listener; synchronous `newListener` reentry fails closed and a thrown registration rolls back so a later acquisition can retry. Restart with the updated copy registering first to obtain the fix. After building, `node scripts/legacy-lock-exit-proof.mjs` checks clean exit, removal of legacy and modern raw locks, and preservation of a retained lock using synthetic temporary files.
 
-Each new sidecar also carries an internal random ownership token encoded as JSON trailing whitespace. `JSON.parse()` and every payload callback still see exactly the caller-provided object. Only the process that successfully created the sidecar keeps that token as release authority; merely reading token-shaped bytes from disk does not enable this mode. Release compares the in-memory token and exact serialized bytes, and requires the pathname to remain a regular file, instead of requiring an opened descriptor and pathname lookup to report the same inode identity. This preserves ownership checks on filesystems such as Docker Desktop VirtioFS where those two views can legitimately differ. Sidecars created by older releases have no token and retain the legacy identity-plus-content check. Raw acquisition, snapshot, and exit cleanup capture bigint device/inode values; unsafe numeric identities from older in-process receipts cannot authorize cleanup. If Windows reports a zero device or inode for either identity observation, that check is inconclusive and removal is skipped.
+Each new sidecar also carries an internal random ownership token encoded as JSON trailing whitespace. `JSON.parse()` and every payload callback still see exactly the caller-provided object. Only the process that successfully created the sidecar keeps that token as release authority; merely reading token-shaped bytes from disk does not enable this mode. Raw and JavaScript fallback release compare the in-memory token and exact serialized bytes, and require the pathname to remain a regular file, instead of requiring an opened descriptor and pathname lookup to report the same inode identity. Retained native Root locks additionally require the exact created inode and a single link, as described below. This preserves ownership checks on filesystems such as Docker Desktop VirtioFS where those two views can legitimately differ. Sidecars created by older releases have no token and retain the legacy identity-plus-content check. Raw acquisition, snapshot, and exit cleanup capture bigint device/inode values; unsafe numeric identities from older in-process receipts cannot authorize cleanup. If Windows reports a zero device or inode for either identity observation, that check is inconclusive and removal is skipped.
 
 Last-chance raw-lock exit cleanup requires known Windows device and inode values from both pathname observations and the opened descriptor. A zero value leaves the sidecar in place, including for token-owned locks. Known descriptor/path identity differences remain supported; a pathname identity change during the read still prevents cleanup.
 
 The raw sidecar bytes are not a canonical JSON representation: tools that trim or rewrite the trailing whitespace invalidate the ownership token, so release leaves the changed sidecar in place and fails closed. The token distinguishes cooperating acquisitions; it is not a secret and does not make pathname compare-and-remove atomic against a hostile process that can replace files outside the lock protocol.
 
-`release()` propagates an I/O failure that prevents deletion of an unchanged, owned sidecar; it never reports successful cleanup while leaving that lock behind. The handle and manager retain the exact cleanup receipt after a failure, so the same handle can retry `release()` and `manager.drain()` can retry retained cleanup. A changed sidecar remains an ownership mismatch rather than a deletion failure and is left untouched. If both a `withFileLock()` or `withFileLockSync()` callback and release fail, the release error is the primary `SuppressedError.error` and the callback failure remains available as `SuppressedError.suppressed`. Failed asynchronous acquisition cleanup uses the same shape, with the cleanup error primary and the acquisition failure suppressed. On Node runtimes without the global `SuppressedError` constructor, fs-safe returns the equivalent `Error` shape with the same name and properties.
+`release()` propagates an I/O failure that prevents deletion of an unchanged, owned sidecar; it never reports successful cleanup while leaving that lock behind. Raw and JavaScript fallback handles and managers retain the cleanup receipt after an I/O failure, so the same handle can retry `release()` and `manager.drain()` can retry cleanup. Retained native Root locks settle once and close their retained handles on every outcome, including failure; a failed deletion requires application-owned recovery. A changed sidecar is left untouched. Retained native Root release reports `FsSafeError` code `path-mismatch`, distinguishing a changed identity from a changed owner record; this includes a replacement inode containing an exact copy of the original bytes. If both a `withFileLock()` or `withFileLockSync()` callback and release fail, the release error is the primary `SuppressedError.error` and the callback failure remains available as `SuppressedError.suppressed`. Failed asynchronous acquisition cleanup uses the same shape, with the cleanup error primary and the acquisition failure suppressed. On Node runtimes without the global `SuppressedError` constructor, fs-safe returns the equivalent `Error` shape with the same name and properties.
 
 ## API
 
@@ -265,10 +265,33 @@ its separate canonical-path mutation queue. The synchronous APIs implement the
 same owner/refcount rules; a mismatched synchronous acquisition blocks the
 calling thread according to its retry and timeout options.
 
-Pass `lockRoot` to place sidecar create, read, verification, and removal behind
-an existing `Root` capability. `lockPath` must resolve inside that root.
-Identity-conditioned removal remains the only release and reclaim deletion
-path.
+Pass `lockRoot` to admit sidecar creation, reads, and verification through an
+existing `Root` capability. `lockPath` must resolve inside that root.
+
+With the maintained native helper, asynchronous acquisition retains cleanup
+authority over only the sidecar it created: an identity-checked parent descriptor
+and file descriptor on POSIX, or shared-delete directory/file handles on Windows
+(local NTFS). `release()` and process-exit cleanup verify the original named
+entry's exact identity, regular-file type, single link, and complete owner record
+through those retained handles. They then use guarded descriptor-relative removal
+or Windows disposition-delete, without resolving the Root again. Cleanup therefore
+works after the Root moves, is replaced, or its parent becomes a symlink. A foreign
+entry at either the original Root path or the retained sidecar name is preserved.
+The retained handles close on success, mismatch, failed acquisition, and exit
+(including `retainOnExit`, which closes handles without deleting).
+
+`verifyStillHeld()` retains its Root-based semantics and can still reject a moved
+Root even though `release()` can remove its own sidecar. This creation-specific
+cleanup receipt does not authorize other Root operations or stale reclamation;
+those continue to enforce current confinement and mutation policy. As with the
+sidecar protocol generally, the POSIX final identity check and unlink are not an
+atomic compare-and-delete against an uncooperative process racing the same name.
+
+When native retention is unavailable or explicitly disabled, release keeps the
+existing Root-based fail-closed behavior; a moved Root can leave a sidecar requiring
+application-owned recovery. Use the matching maintained native package to obtain
+relocation-safe cleanup. Synchronous Root locks keep their existing Root authority.
+Identity-conditioned removal remains the only release and reclaim deletion path.
 Root mutation refusals during stale removal propagate unchanged, including
 `null`, `undefined`, and errors carrying `ENOENT`; they do not become missing-sidecar retries.
 
