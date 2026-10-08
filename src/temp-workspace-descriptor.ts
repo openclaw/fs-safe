@@ -29,8 +29,6 @@ type OpenedDirectory = {
   proc: boolean;
 };
 
-type InitialTempWorkspaceChildReceipt = Readonly<{ stat: fsSync.BigIntStats }>;
-
 export type RetainedDirectory = {
   fd: number;
   access: DirectoryDescriptorAccess;
@@ -133,13 +131,13 @@ export class TempWorkspaceRetainedChild {
   #modeLease = false;
   #proc: boolean;
   #transferAuthorized = false;
-  #initialReceipt: InitialTempWorkspaceChildReceipt | undefined;
+  #initialReceipt: Readonly<fsSync.BigIntStats> | undefined;
 
   private constructor(
     dir: string,
     identity: FileIdentityStat,
     descriptor: OpenedDirectory,
-    initialReceipt?: InitialTempWorkspaceChildReceipt,
+    initialReceipt?: Readonly<fsSync.BigIntStats>,
   ) {
     if (typeof identity.dev !== "bigint" || typeof identity.ino !== "bigint") {
       throw new FsSafeError("path-mismatch", "temp workspace child identity is incomplete");
@@ -185,9 +183,8 @@ export class TempWorkspaceRetainedChild {
       // the synchronous caller validates it and decides whether to correct.
       const stat = fsSync.fstatSync(descriptor.fd, { bigint: true });
       Object.freeze(stat);
-      const receipt = Object.freeze({ stat });
       return {
-        retained: new TempWorkspaceRetainedChild(dir, stat, descriptor, receipt),
+        retained: new TempWorkspaceRetainedChild(dir, stat, descriptor, stat),
         stat,
       };
     } catch (error) {
@@ -208,7 +205,7 @@ export class TempWorkspaceRetainedChild {
     // Clear first so validation failures, procfs checks, and later admission
     // can never reuse the creation observation.
     this.#initialReceipt = undefined;
-    return receipt?.stat;
+    return receipt;
   }
 
   finalizeAdmission(
@@ -217,13 +214,11 @@ export class TempWorkspaceRetainedChild {
   ): TempWorkspaceIdentityStat {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
-    if (this.#fd === undefined) {
-      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
-    }
+    const fd = this.#requireDescriptor();
     // A failed revalidation must never leave an earlier receipt transferable.
     this.#transferAuthorized = false;
     const current = inspectTempWorkspaceDescriptorIdentitySync(
-      this.#fd,
+      fd,
       this.#identity,
       this.#numericIdentity,
     );
@@ -236,6 +231,13 @@ export class TempWorkspaceRetainedChild {
     validateAdmittedTempWorkspaceChild(named, ownerUid, mode);
     this.#transferAuthorized = true;
     return named;
+  }
+
+  #requireDescriptor(): number {
+    if (this.#fd === undefined) {
+      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
+    }
+    return this.#fd;
   }
 
   #assertModeLeaseReleased(): void {
@@ -307,10 +309,7 @@ export class TempWorkspaceRetainedChild {
   ): Promise<void> {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
-    if (this.#fd === undefined) {
-      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
-    }
-    const fd = this.#fd;
+    const fd = this.#requireDescriptor();
     this.#transferAuthorized = false;
     this.#modeLease = true;
     try {
@@ -344,10 +343,7 @@ export class TempWorkspaceRetainedChild {
     assertParent: () => void,
   ): void {
     this.#assertModeLeaseReleased();
-    if (this.#fd === undefined) {
-      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
-    }
-    const fd = this.#fd;
+    const fd = this.#requireDescriptor();
     this.#transferAuthorized = false;
     this.#modeLease = true;
     try {
@@ -374,9 +370,7 @@ export class TempWorkspaceRetainedChild {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
     if (this.canEnumerate) return true;
-    if (this.#fd === undefined) {
-      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
-    }
+    this.#requireDescriptor();
     // Opening or validating a replacement crosses a new pathname boundary.
     // Even failure must revoke any earlier final-admission receipt.
     this.#transferAuthorized = false;
@@ -400,7 +394,7 @@ export class TempWorkspaceRetainedChild {
 
     // A failed close leaves descriptor ownership indeterminate. Relinquish the
     // old descriptor before closing it so factory cleanup never retries that fd.
-    const previous = this.#fd;
+    const previous = this.#fd!;
     this.#fd = undefined;
     try {
       fsSync.closeSync(previous);
@@ -422,16 +416,13 @@ export class TempWorkspaceRetainedChild {
   } {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
-    if (this.#fd === undefined) {
-      throw new FsSafeError("path-mismatch", "temp workspace child descriptor is unavailable");
-    }
+    const fd = this.#requireDescriptor();
     if (!this.#transferAuthorized) {
       throw new FsSafeError(
         "path-mismatch",
         "temp workspace child has not completed final admission",
       );
     }
-    const fd = this.#fd;
     this.#fd = undefined;
     if (retainDescriptor && !this.canEnumerate) {
       closeAfterAdmissionFailure(

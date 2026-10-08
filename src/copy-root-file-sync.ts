@@ -104,7 +104,6 @@ function copyRootFileWithAdmissionSync(
   const native = getNativeBinding();
   const nativeCopy = process.platform !== "win32" && native?.copyFileExclusiveSync && native.removeStagedFile
     ? native.copyFileExclusiveSync.bind(native) : undefined;
-  let nativeTarget = false;
   try {
     const source = cache.admit(sourcePath);
     target = cache.admit(targetPath, true);
@@ -134,7 +133,6 @@ function copyRootFileWithAdmissionSync(
       }
     };
     const selectedMode = mode ?? (preserveSourceMode ? Number(sourceIdentity.mode & 0o777n) : 0o600 & ~process.umask());
-    let method: CopiedRootFileSync["method"] = "copy";
     let copied: NativeFileCopyResult | undefined;
     verifySource();
     target.assertCurrent();
@@ -148,7 +146,6 @@ function copyRootFileWithAdmissionSync(
       copied = nativeCopy(opened.fd, parent.fd, path.basename(target.path), clone,
         maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined);
       targetOwner = ownFileDescriptorSync(copied.fd, closeNative);
-      nativeTarget = true;
     } else {
       if (clone === "always") throw new FsSafeError("unsupported-platform", "synchronous native file cloning is unavailable");
       targetOwner = createFileWithAdmissionSync(target.path,
@@ -168,12 +165,11 @@ function copyRootFileWithAdmissionSync(
     if (copied?.errorCode) {
       throw copyError(Object.assign(new Error(copied.errorMessage), { code: copied.errorCode }));
     }
-    if (copied) {
-      if (!["clone", "copy-file-range", "copy"].includes(copied.method)) {
-        throw new FsSafeError("helper-failed", "native copy returned an unknown method");
-      }
-      method = copied.method as CopiedRootFileSync["method"];
-    } else {
+    const method = copied ? copied.method : "copy";
+    if (method !== "clone" && method !== "copy-file-range" && method !== "copy") {
+      throw new FsSafeError("helper-failed", "native copy returned an unknown method");
+    }
+    if (!copied) {
       copyFileDescriptorSync(opened.fd, targetOwner.fd, { maxBytes });
     }
     verifySource();
@@ -197,7 +193,7 @@ function copyRootFileWithAdmissionSync(
     const cleanup: unknown[] = [];
     if (targetOwner && target) {
       try {
-        if (nativeTarget && parentOpen) {
+        if (parentOpen) {
           const removed = native!.removeStagedFile!(parentOwner!.fd, path.basename(target.path), targetOwner.fd);
           if (removed === "preserved") throw new FsSafeError("path-mismatch", "copy cleanup preserved a replacement");
         } else if (identity) {
