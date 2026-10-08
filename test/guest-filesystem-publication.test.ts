@@ -118,6 +118,36 @@ describe.skipIf(process.platform === "win32")("guest exclusive publication", () 
     expect(await fs.readdir(root)).toEqual([]);
   });
 
+  it.each(["replacement", "third-link"])("preserves create staging after fallback %s interference", async fault => {
+    const root = await tempRoot("fs-safe-guest-create-link-race-");
+    const setup = [
+      "import ctypes",
+      "sys.platform = 'linux'",
+      "class Libc: pass",
+      "ctypes.CDLL = lambda *args, **kwargs: Libc()",
+      "original_link = os.link",
+      "def race(src, dst, **kwargs):",
+      "    original_link(src, dst, **kwargs)",
+      ...(fault === "third-link" ? [
+        "    original_link(src, 'third', src_dir_fd=kwargs['src_dir_fd'], dst_dir_fd=kwargs['src_dir_fd'])",
+      ] : [
+        "    os.rename(src, 'saved', src_dir_fd=kwargs['src_dir_fd'], dst_dir_fd=kwargs['src_dir_fd'])",
+        "    fd = os.open(src, os.O_CREAT | os.O_WRONLY, 0o600, dir_fd=kwargs['src_dir_fd'])",
+        "    os.write(fd, b'replacement')",
+        "    os.close(fd)",
+      ]),
+      "os.link = race",
+    ].join("\n");
+    const result = runGuest(["create", root, "", "value", "0"], "original", setup);
+    expect(result.status).toBe(1);
+    expect(result.stderr.toString()).toContain("changed");
+    const entries = await fs.readdir(root);
+    expect(entries).toHaveLength(2);
+    const staging = entries.find(name => name.startsWith(".openclaw-create-"))!;
+    expect(await fs.readFile(path.join(root, staging, "payload"), "utf8")).toBe(fault === "replacement" ? "replacement" : "original");
+    expect(await fs.readFile(path.join(root, "value"), "utf8")).toBe("original");
+  });
+
   it.each(["write", "create"])("cleans %s staging after a prepublication failure", async (operation) => {
     const root = await tempRoot("fs-safe-guest-write-failure-");
     if (operation === "write") await fs.writeFile(path.join(root, "value"), "original");
