@@ -143,6 +143,7 @@ const contract = (name, object) => {
 const cleanups = [];
 const context = {
   api, workspace, native, binding, measuredFeatures, measuredProfiles,
+  retainedSidecarRelease: fs.existsSync(path.join(dist, "sidecar-lock-retained.js")),
   PermissionCommandError,
   register, exclude, contract, args, onCleanup: (fn) => cleanups.push(fn),
 };

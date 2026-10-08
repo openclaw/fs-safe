@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
+import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile } from "./native-operations.js";
@@ -46,7 +47,8 @@ import type { HeldSidecarLock, SidecarLockAcquisitionContext } from "./sidecar-l
 import { resolveSidecarLockPaths } from "./sidecar-lock-target.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
-import { sidecarExclusiveCreate } from "./root-create-input.js";
+import { sidecarRetainedCreate } from "./root-create-input.js";
+import { cleanupCreatedSidecar, retainCreatedSidecar, type RetainedSidecar } from "./sidecar-lock-retained.js";
 import { stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
 
 export type { HeldSidecarLock } from "./sidecar-lock-admission.js";
@@ -191,6 +193,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         continue;
       }
       let handle: HeldSidecarLock["handle"] | null = null;
+      let retainedSidecar: RetainedSidecar | undefined;
       let createdSnapshot: SidecarLockSnapshot | null = null, createdHeld: HeldSidecarLock | undefined;
       let admissionConflict = false;
       let exclusiveCreateConflict = false;
@@ -257,7 +260,13 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           const relativeLockPath = relativeSidecarLockPath(lockRoot, lockPath);
           const observation = fileObservation();
           try {
-            await observation.run(() => lockRoot.create(relativeLockPath, raw, { ...sidecarExclusiveCreate, mkdir: true, mode: 0o600 }));
+            await observation.run(() => lockRoot.create(relativeLockPath, raw, {
+              mkdir: true, mode: 0o600,
+              ...sidecarRetainedCreate({
+                retain(fd, parent, nativeParent) { retainedSidecar = retainCreatedSidecar(lockPath, raw, fd, parent, nativeParent); },
+                cleanup(fd, parent, identity) { cleanupCreatedSidecar(lockPath, raw, fd, parent, identity); },
+              }),
+            }));
           } catch (error) {
             // Only this invocation's failed exclusive open grants denial retry authority.
             lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&
@@ -271,6 +280,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           createdSnapshot = { raw, payload, ownershipToken };
           const opened = await openSidecarRoot(lockRoot, relativeLockPath, "unlinked");
           if (!opened) {
+            retainedSidecar?.settle(true, false);
             await waitForRetry();
             continue;
           }
@@ -304,7 +314,11 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
         }
         const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd, { bigint: true }), ownershipToken };
         createdSnapshot = snapshot;
+        if (retainedSidecar && !sameFileIdentityForCleanup(retainedSidecar.identity, snapshot.stat)) {
+          throw new FsSafeError("path-mismatch", "created sidecar lock identity changed before admission");
+        }
         if (snapshot.stat.nlink === 0n) {
+          retainedSidecar?.settle(true, false);
           await handle.close();
           handle = null;
           await waitForRetry();
@@ -320,10 +334,14 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           admissionConflict = true;
           throw Object.assign(new Error("sidecar lock admission changed"), { code: "EEXIST" });
         }
+        // An open descendant file prevents Windows directory relocation. The
+        // native receipt retains its parent and verifies the leaf at settlement.
+        if (retainedSidecar && process.platform === "win32") await handle.close();
         createdHeld = {
           refCount: 1,
           reentrantOwner: requestedReentrantOwner,
           handle,
+          retainedSidecar,
           lockPath,
           snapshot,
           acquiredAt: Date.now(),
@@ -390,7 +408,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             await handle.close().catch(() => undefined);
           }
           // Root records use the creator receipt; partial raw writes use fd identity.
-          if (failedSnapshot) {
+          if (retainedSidecar) {
+            retainedSidecar.settle(true, false);
+          } else if (failedSnapshot) {
             await removeSidecarLockIfUnchanged(lockPath, failedSnapshot, {
               lockRoot,
               parsePayload: conditionalSidecarLockParser(

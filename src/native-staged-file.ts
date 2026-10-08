@@ -171,7 +171,8 @@ class NativeStagedFile implements StagedFile {
     }
     const identity = published.staged.identity;
     try {
-      await params.verifyPublished?.(staged.#file(), identity, parentGuard);
+      if (exclusive) await params.verifyPublished?.(staged.#file(), identity, parentGuard, { fd: parentFd, binding });
+      else await params.verifyPublished?.(staged.#file(), identity, parentGuard);
     } catch (error) {
       if (params.overwrite === false && params.input.kind !== "file" && params.input.stageBeforePublish === true) {
         throw stagedFailure("file", error, { phase: "publish", publication: published });

@@ -5,11 +5,38 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { resolveOpenedFileRealPathForFd } from "./opened-realpath.js";
 import { assertNoUnsafeDeviceReadPath, hasNodeErrorCode, isNotFoundPathError, isSymlinkOpenError } from "./path.js";
-import type { PublishedWriteIdentity } from "./pinned-write-types.js";
+import type { NativeWriteParent, PublishedWriteIdentity } from "./pinned-write-types.js";
+import type { SidecarCreationRetention } from "./root-create-input.js";
+import { createSuppressedError } from "./suppressed-error.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertRootIdentityCurrent, type RootContext } from "./root-context.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
+
+export async function verifyRootWritePublication(params: {
+  fd: number;
+  expectedIdentity: PublishedWriteIdentity;
+  parentGuard: AnyAsyncDirectoryGuard;
+  nativeParent?: NativeWriteParent;
+  retention?: SidecarCreationRetention;
+  verify(): Promise<void>;
+}): Promise<void> {
+  try {
+    await params.verify();
+    params.retention?.retain(params.fd, params.parentGuard, params.nativeParent);
+  } catch (error) {
+    if (params.retention && params.nativeParent) {
+      // Publication already happened. The creator still owns these descriptors
+      // even if opening an additional retained handle failed.
+      try {
+        params.retention.cleanup(params.fd, params.nativeParent, params.expectedIdentity);
+      } catch (cleanupError) {
+        throw createSuppressedError(cleanupError, error, "sidecar retention and creator cleanup both failed");
+      }
+    }
+    throw error;
+  }
+}
 
 export async function verifyAtomicWriteResult(params: {
   root: RootContext;

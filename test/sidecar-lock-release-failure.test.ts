@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFileLockManager, withFileLock } from "../src/file-lock.js";
 import { root } from "../src/root.js";
+import { configureFsSafeNative } from "../src/native-config.js";
 import { createSidecarLockManager } from "../src/sidecar-lock.js";
 import { createSuppressedError } from "../src/suppressed-error.js";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -10,6 +11,7 @@ import { useTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useTempDirs();
 
 afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
 });
 
@@ -55,7 +57,8 @@ describe("asynchronous sidecar lock release failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
-  it("rejects when Root-backed sidecar deletion fails", async () => {
+  it("rejects when fallback Root-backed sidecar deletion fails", async () => {
+    configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-lock-release-root-");
     const targetPath = path.join(directory, "state.json");
     const capability = await root(directory);

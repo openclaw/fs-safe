@@ -1,5 +1,5 @@
 use super::*;
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, os::windows::io::AsRawHandle, path::{Path, PathBuf}};
 use crate::test_support::temp_path;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
@@ -197,7 +197,7 @@ fn namespace_query_failure_is_unknown_not_foreign() {
     assert_ne!(result.errors[0].code, "path-mismatch");
     let foreign_path = f.directory.join("foreign");
     fs::write(&foreign_path, b"foreign!").unwrap();
-    let foreign = os::file(retained.parent().0, "foreign").unwrap();
+    let foreign = os::file(retained.parent().0, "foreign", false).unwrap();
     let mut foreign_result = RetainedFileResult::new();
     retained.observe_identity(foreign.0, &mut foreign_result);
     assert_eq!(foreign_result.namespace, "foreign");
@@ -206,4 +206,76 @@ fn namespace_query_failure_is_unknown_not_foreign() {
     assert_eq!(owner.settle(false).resources, "closed");
     assert_eq!(fs::read(&f.file).unwrap(), b"original");
     assert_eq!(fs::read(&foreign_path).unwrap(), b"foreign!");
+}
+
+impl Fixture {
+    fn retain_sidecar(&self) -> NativeRetainedFile {
+        let (pd, pi, _, _, _) = facts(&self.directory);
+        let (d, i, s, _, _) = facts(&self.file);
+        let parent = crate::test_support::directory(&self.directory);
+        retain_file(self.directory.to_string_lossy().trim_start_matches(r"\\?\").into(), "backup".into(),
+            pd.into(), pi.into(), d.into(), i.into(), s.into(), 0u64.into(), 0u64.into(),
+            "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5".into(), 1024,
+            Some(Ok(parent.as_raw_handle())))
+    }
+}
+
+#[test]
+fn sidecar_follows_moved_parent_but_preserves_same_byte_successor() {
+    let mut f = Fixture::new();
+    let mut owner = f.retain_sidecar(); assert_retained(&owner);
+    let moved = f.directory.with_extension("moved");
+    fs::rename(&f.directory, &moved).unwrap();
+    f.directory = moved;
+    f.file = f.directory.join("backup");
+    let result = owner.settle(true);
+    assert_eq!(result.resources, "closed");
+    assert_eq!(result.namespace, "absent");
+    assert!(!f.file.exists());
+    fs::write(&f.file, b"original").unwrap();
+    let mut owner = f.retain_sidecar(); assert_retained(&owner);
+    fs::rename(&f.file, f.directory.join("old")).unwrap();
+    fs::write(&f.file, b"original").unwrap();
+    let result = owner.settle(true);
+    assert_eq!(result.status, "preserved-mismatch");
+    assert_eq!(result.resources, "closed");
+    assert_eq!(fs::read(&f.file).unwrap(), b"original");
+    assert!(f.directory.join("old").exists());
+}
+
+#[test]
+fn sidecar_handles_close_on_every_outcome() {
+    const CHILD: &str = "FS_SAFE_RETAINED_SIDECAR_LEAK_CHILD";
+    // Count in an isolated test process so concurrent Rust tests cannot skew it.
+    if std::env::var_os(CHILD).is_none() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "retained_file::tests::sidecar_handles_close_on_every_outcome", "--test-threads=1"])
+            .env(CHILD, "1").output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+        return;
+    }
+    fn count() -> u32 {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+        let mut count = 0;
+        assert_ne!(unsafe { GetProcessHandleCount(GetCurrentProcess(), &mut count) }, 0);
+        count
+    }
+    let f = Fixture::new();
+    let mut warm = f.retain_sidecar(); assert_retained(&warm);
+    assert_eq!(warm.settle(false).resources, "closed");
+    let before = count();
+    for index in 0..40 {
+        fs::write(&f.file, b"original").unwrap();
+        let mut owner = f.retain_sidecar(); assert_retained(&owner);
+        if index % 4 == 0 { fs::write(&f.file, b"modified").unwrap(); }
+        assert_eq!(owner.settle(index % 4 != 1).resources, "closed");
+    }
+    // A failed admission must settle the full directory chain too.
+    for _ in 0..20 {
+        fs::write(&f.file, b"different").unwrap();
+        let failed = f.retain_sidecar();
+        assert_eq!(failed.result.status, "preserved-mismatch");
+        assert_eq!(failed.result.resources, "closed");
+    }
+    assert_eq!(count(), before, "retained sidecar handles leaked");
 }

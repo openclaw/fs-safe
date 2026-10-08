@@ -253,7 +253,8 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     expect(manager.heldEntries()).toEqual([]);
   });
 
-  it("retains both failures when reopening and removing a created Root sidecar fail", async () => {
+  it("retains both failures when reopening and removing a fallback Root sidecar fail", async () => {
+    configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("fs-safe-sidecar-root-open-cleanup-failure-");
     const lockRoot = await root(directory);
     const targetPath = path.join(directory, "state.json");

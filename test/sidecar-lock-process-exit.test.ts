@@ -167,9 +167,11 @@ describe("sidecar lock natural process exit", () => {
     expect(JSON.parse(raw)).toEqual({ owner: "caller" });
   });
 
-  it("attempts failed Root cleanup once without an unhandled rejection or shutdown loop", async () => {
+  it("attempts failed fallback Root cleanup once without an unhandled rejection or shutdown loop", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-failure-");
     const output = await runChild(directory, `
+      const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
+      configureFsSafeNative({ mode: "off" });
       const lock = await acquireFileLock(targetPath, options);
       const raw = await fs.readFile(lock.lockPath, "utf8");
       await acquireFileLock(path.join(directory, "healthy.json"), options);
@@ -281,9 +283,11 @@ describe("sidecar lock natural process exit", () => {
     }
   });
 
-  it("joins an explicit release already in flight", async () => {
+  it("joins a fallback explicit release already in flight", async () => {
     const directory = await tempRoot("fs-safe-lock-exit-in-flight-");
     const output = await runChild(directory, `
+      const { configureFsSafeNative } = await import("@openclaw/fs-safe/config");
+      configureFsSafeNative({ mode: "off" });
       const lock = await acquireFileLock(targetPath, options);
       const remove = capability.remove.bind(capability);
       let removals = 0;
@@ -363,17 +367,27 @@ describe("sidecar lock natural process exit", () => {
       await manager.acquire(targetPath, options);
       let cycles = 0;
       let acquired = false;
+      let checkCleanup = false;
+      let settled = false;
       process.on("beforeExit", () => {
         cycles++;
-        if (cycles !== 2) return;
+        // Retained Windows cleanup can finish without scheduling I/O. Give
+        // either backend a checkpoint, then observe cleanup before reacquiring.
+        if (!checkCleanup) {
+          checkCleanup = true;
+          setImmediate(() => {});
+          return;
+        }
         assert.equal(manager.heldEntries().length, 0);
+        if (acquired) { settled = true; return; }
+        checkCleanup = false;
         setImmediate(() => {
           void manager.acquire(targetPath, options).then(() => { acquired = true; });
         });
       });
-      process.on("exit", () => console.log(JSON.stringify({ cycles, acquired })));
+      process.on("exit", () => console.log(JSON.stringify({ cycles, acquired, settled })));
     `);
-    expect(JSON.parse(output)).toEqual({ cycles: 4, acquired: true });
+    expect(JSON.parse(output)).toMatchObject({ acquired: true, settled: true });
     await expectAbsent(directory);
   });
 });

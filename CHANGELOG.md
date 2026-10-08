@@ -8,6 +8,7 @@
 
 ### Fixes
 
+- **Root-backed file locks:** native asynchronous release and exit cleanup follow the created lock's retained identity after its Root moves, preserving replacement files and reporting ownership mismatches. ([#879](https://github.com/openclaw/fs-safe/pull/879)) Thanks @axiom-ncis.
 - **Temp directory diagnostics:** name rejected roots and ancestors, explain ownership, mode, or symlink failures, and provide safe recovery guidance, including for root-run appliances. Thanks @joequant. ([#877](https://github.com/openclaw/fs-safe/pull/877))
 - **Guest directory publication:** publish staged workspaces when Linux filesystems reject `RENAME_NOREPLACE`, with checked file link/unlink fallback and directory rename that can only replace a concurrently created empty directory. ([#876](https://github.com/openclaw/fs-safe/pull/876)) Thanks @valkyriweb.
 - **Guest cross-device moves:** preserve the admitted source file's permissions instead of leaving the destination with a broader default mode. ([#869](https://github.com/openclaw/fs-safe/pull/869))

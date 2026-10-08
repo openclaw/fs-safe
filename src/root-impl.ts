@@ -73,7 +73,7 @@ import { registerTempPathForExit, type TempPathRegistration } from "./temp-clean
 import { removePathInRootFallback, validateRemoveOptions } from "./root-remove.js";
 import { removePathInRootNative } from "./root-remove-native.js";
 import { serializePathWrite } from "./write-queue.js";
-import { verifyAtomicWriteResult } from "./root-write-verification.js";
+import { verifyAtomicWriteResult, verifyRootWritePublication } from "./root-write-verification.js";
 import {
   assertRootWritePathSelectionSync,
   assertRootWriteSelectionSync,
@@ -95,7 +95,7 @@ import { admitMoveSourceStat, movePathNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { createCopyPublicationObserver, onCopyPublication, onCopySourceAdmission, type CopyPublicationOptions } from "./copy-publication.js";
 import { writeAllToFile } from "./write-file-handle.js";
-import { createInputOptions, rethrowCreateInputError, rootWriteInput, type RootWriteParams } from "./root-create-input.js";
+import { createInputOptions, rethrowCreateInputError, rootWriteInput, retainSidecarCreated, type RootWriteParams } from "./root-create-input.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution, readSymlinkResolution, type MutationSymlinkPolicy, type SymlinkPolicy } from "./root-symlink-policy.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { assertNoWindowsPathAlias, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
@@ -1134,15 +1134,13 @@ async function commitPinnedWriteInRoot(
       rootIdentity: root.rootIdentity,
       mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
-      verifyPublished: async (fd, expectedIdentity, parentGuard) => {
+      verifyPublished: async (fd, expectedIdentity, parentGuard, nativeParent) => {
         verifyingPublication = true;
         try {
-          await verifyAtomicWriteResult({
-            root,
-            targetPath: pinned.targetPath,
-            fd,
-            expectedIdentity,
-            parentGuard,
+          await verifyRootWritePublication({
+            fd, expectedIdentity, parentGuard,
+            nativeParent, retention: params[retainSidecarCreated],
+            verify: () => verifyAtomicWriteResult({ root, targetPath: pinned.targetPath, fd, expectedIdentity, parentGuard }),
           });
         } catch (error) {
           emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
