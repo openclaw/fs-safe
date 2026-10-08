@@ -35,6 +35,18 @@ mode, correction uses a verified directory descriptor.
 An initial mode-descriptor admission error is preserved if closing that rejected
 descriptor also fails; close failures after successful admission remain reportable.
 
+These rules apply equally to effective UID 0: root-owned `0700` or `0755` temp
+roots beneath root-owned sticky `1777` `/tmp` are accepted. Passing `/tmp` itself
+as `rootDir` is rejected because the workspace root must be private. Permission
+and ownership errors name the rejected directory (including an unsafe ancestor),
+the observed mode or owner UID, the expected property, and a recovery path.
+Prefer `resolveSecureTempRoot()` or a dedicated directory owned by the effective
+user with mode `0700`. For a non-sticky writable ancestor, have its administrator
+restore appropriate permissions (`1777` for shared system temp) or move the root
+under trusted ancestry. Do not make shared `/tmp` private or take ownership of
+another user's directory. A caller's preferred root takes precedence over
+`TMPDIR`; changing `TMPDIR` only changes the resolver's fallback location.
+
 On Linux, non-identity `/proc/self/uid_map` and `/proc/self/gid_map` evidence
 permits ancestors whose UID and GID equal unmapped kernel overflow IDs,
 provided the same ancestor mode checks pass.

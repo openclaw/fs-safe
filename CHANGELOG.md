@@ -8,6 +8,7 @@
 
 ### Fixes
 
+- **Temp directory diagnostics:** name rejected roots and ancestors, explain ownership, mode, or symlink failures, and provide safe recovery guidance, including for root-run appliances. Thanks @joequant. ([openclaw#167033](https://github.com/openclaw/openclaw/issues/167033))
 - **Guest cross-device moves:** preserve the admitted source file's permissions instead of leaving the destination with a broader default mode. ([#869](https://github.com/openclaw/fs-safe/pull/869))
 - **Move receipts:** publication receipts capture the source identity after synchronous authorization callbacks return, so a source replaced during authorization is reported accurately. ([#868](https://github.com/openclaw/fs-safe/pull/868))
 - **Atomic copy fallback:** report a failed restoration as a failure even when the underlying error carries a restored receipt. ([#851](https://github.com/openclaw/fs-safe/pull/851))
