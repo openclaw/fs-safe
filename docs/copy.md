@@ -257,3 +257,44 @@ replacement entries. This helper creates directly at the destination name, so
 other processes may observe partial bytes until it returns. It does not promise
 crash durability or a coherent snapshot of concurrent in-place source edits.
 Use a private capture directory and keep sources unchanged while capturing.
+
+### Batches of synchronous guarded copies
+
+`createRootFileCopyBatchSync()` on `advanced` returns a disposable
+`RootFileCopyBatchSync`. Its `copyFile(options)` takes the same
+`CopyRootFileSyncOptions` and returns the same owned `CopiedRootFileSync` as
+`copyRootFileSync`:
+
+```ts
+import { createRootFileCopyBatchSync } from "@openclaw/fs-safe/advanced";
+
+using batch = createRootFileCopyBatchSync();
+for (const name of ["plugin.js", "package.json"]) {
+  using copied = batch.copyFile({
+    source: { rootPath: "/srv/plugins", absolutePath: `/srv/plugins/${name}` },
+    destination: { rootPath: "/srv/capture", absolutePath: `/srv/capture/${name}` },
+    clone: "auto",
+    maxBytes: 16 * 1024 * 1024,
+  });
+  console.log(copied.bytes, copied.sourceIdentity);
+}
+```
+
+On canonical POSIX paths, the batch retains root and ancestor directory
+identities across files. Every use still checks those identities without
+following directory symlinks; root and parent canonical paths are rechecked.
+Source opens, source and destination file identities, hardlink policy, exclusive
+creation, bounds, permissions, and cleanup are checked separately for every file.
+No source descriptor, file contents, or successful file-admission result is cached.
+An ancestor replacement rejects even when the leaf parent has not changed.
+Windows and noncanonical path spellings keep the full per-file resolver and its
+alias handling. There is no option to bypass validation.
+
+Keep the batch scoped to one capture or materialization, with unchanged source
+and destination directory topology. `close()` and `Symbol.dispose` idempotently
+release its retained metadata; later calls reject with `invalid-path`. Returned
+file descriptors remain independently caller-owned. Successful earlier files
+are not rolled back if a later copy fails. A failed copy keeps the ordinary
+identity-checked cleanup contract; the batch is not an atomic tree transaction
+or a coherent snapshot of concurrent edits. The single-file helper also reuses
+directory admissions for the duration of its one copy.

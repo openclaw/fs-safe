@@ -31,6 +31,26 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       rootReadCases.push({ name: `depth=${depth}/${size}`, relative, payload, divisor });
     }
   }
+  if (typeof a.createRootFileCopyBatchSync === "function") {
+    add("createRootFileCopyBatchSync", () => a.createRootFileCopyBatchSync(), { sync: true, after: batch => batch.close() });
+    const batch = a.createRootFileCopyBatchSync();
+    contract("RootFileCopyBatchSync", batch);
+    onCleanup(() => batch.close());
+    const target = path.join(w, "batch-copy.json");
+    add("RootFileCopyBatchSync.copyFile", () => batch.copyFile({
+      source: { rootPath: w, absolutePath: input },
+      destination: { rootPath: w, absolutePath: target },
+      maxBytes: data.length,
+    }), {
+      sync: true,
+      before: () => fs.rmSync(target, { force: true }),
+      after: copied => { try { copied?.close(); } finally { fs.rmSync(target, { force: true }); } },
+      verify: copied => { assert.equal(copied.bytes, data.length); assert.deepEqual(fs.readFileSync(copied.fd), data); },
+    });
+    for (const [name, dispose] of [["close", value => value.close()], ["[Symbol.dispose]", value => value[Symbol.dispose]()]]) {
+      add(`RootFileCopyBatchSync.${name}`, dispose, { sync: true, before: () => a.createRootFileCopyBatchSync() });
+    }
+  }
   const safe = await a.root(w);
   const directoryStat = fs.lstatSync(w, { bigint: true });
   const directoryIdentity = { dev: directoryStat.dev, ino: directoryStat.ino, realPath: fs.realpathSync.native(w) };

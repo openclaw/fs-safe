@@ -1,24 +1,21 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
+import { createCopyPathAdmissionCache, type CopyPath } from "./copy-path-admission.js";
 import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { createFileWithAdmissionSync } from "./create.js";
 import { ownFileDescriptorSync, type OwnedFileDescriptorSync } from "./create-owned-file.js";
 import { creationAdmissionFromParent, removeRecordedCreationFileSync } from "./creation-boundary.js";
-import { assertSyncDirectoryGuard, captureDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { copyFileDescriptorSync } from "./file-handle-transfer.js";
 import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
 import { getNativeBinding } from "./native.js";
-import { realpathSync } from "./realpath.js";
 import { openRootFileSync } from "./root-file.js";
-import { resolveRootPathSync, ROOT_PATH_ALIAS_POLICIES } from "./root-path.js";
 import { inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { openStagedDirectory } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 
-type CopyPath = { rootPath: string; absolutePath: string };
 export type CopyRootFileSyncOptions = {
   source: CopyPath;
   destination: CopyPath;
@@ -50,43 +47,36 @@ function copyError(error: unknown): FsSafeError {
   );
 }
 
-function admitCopyPath(input: CopyPath, create = false) {
-  if (!path.isAbsolute(input.rootPath) || !path.isAbsolute(input.absolutePath)) {
-    throw new FsSafeError("invalid-path", "copy roots and paths must be absolute");
-  }
-  const root = captureDirectoryGuard(realpathSync(input.rootPath), "native", { bigint: true });
-  const resolve = () => {
-    const parent = create ? resolveRootPathSync({
-      ...input, absolutePath: path.dirname(input.absolutePath), boundaryLabel: "copy parent",
-      rejectSymlinks: true, rejectFinalSymlink: true,
-    }) : undefined;
-    const selected = resolveRootPathSync({
-      ...input, boundaryLabel: "copy", rejectSymlinks: !create, rejectFinalSymlink: !create,
-      policy: create ? ROOT_PATH_ALIAS_POLICIES.unlinkTarget : undefined,
-    });
-    if (parent && path.dirname(selected.canonicalPath) !== parent.canonicalPath) {
-      throw new FsSafeError("path-mismatch", "copy destination parent changed");
-    }
-    return selected;
-  };
-  const selected = resolve();
-  const parent = captureDirectoryGuard(path.dirname(selected.canonicalPath), "native", { bigint: true });
-  const assertCurrent = () => {
-    assertSyncDirectoryGuard(root);
-    assertSyncDirectoryGuard(parent);
-    const current = resolve();
-    if (current.rootCanonicalPath !== root.realPath || current.canonicalPath !== selected.canonicalPath) {
-      throw new FsSafeError("path-mismatch", "copy path changed during operation");
-    }
-    assertSyncDirectoryGuard(root);
-    assertSyncDirectoryGuard(parent);
-  };
-  assertCurrent();
-  return { path: selected.canonicalPath, parent, assertCurrent };
-}
-
 /** Exclusively copies an admitted source and transfers the owned destination fd. */
 export function copyRootFileSync(options: CopyRootFileSyncOptions): CopiedRootFileSync {
+  return copyRootFileWithAdmissionSync(options, createCopyPathAdmissionCache());
+}
+
+export type RootFileCopyBatchSync = {
+  copyFile(options: CopyRootFileSyncOptions): CopiedRootFileSync;
+  close(): void;
+  [Symbol.dispose](): void;
+};
+
+/** Reuses directory admissions while retaining fresh checks for every copy. */
+export function createRootFileCopyBatchSync(): RootFileCopyBatchSync {
+  const cache = createCopyPathAdmissionCache();
+  let closed = false;
+  const close = () => { closed = true; cache.clear(); };
+  return Object.freeze({
+    copyFile(options: CopyRootFileSyncOptions) {
+      if (closed) throw new FsSafeError("invalid-path", "copy batch is closed");
+      return copyRootFileWithAdmissionSync(options, cache);
+    },
+    close,
+    [Symbol.dispose]: close,
+  });
+}
+
+function copyRootFileWithAdmissionSync(
+  options: CopyRootFileSyncOptions,
+  cache: ReturnType<typeof createCopyPathAdmissionCache>,
+): CopiedRootFileSync {
   // Snapshot caller options before the first filesystem observation.
   const sourceInput = options.source;
   const sourcePath = { rootPath: sourceInput.rootPath, absolutePath: sourceInput.absolutePath };
@@ -109,22 +99,22 @@ export function copyRootFileSync(options: CopyRootFileSyncOptions): CopiedRootFi
   let targetOwner: OwnedFileDescriptorSync | undefined;
   let parentOwner: OwnedFileDescriptorSync | undefined;
   let parentOpen = false;
-  let target: ReturnType<typeof admitCopyPath> | undefined;
+  let target: ReturnType<typeof cache.admit> | undefined;
   let identity: BigIntStats | undefined;
   const native = getNativeBinding();
   const nativeCopy = process.platform !== "win32" && native?.copyFileExclusiveSync && native.removeStagedFile
     ? native.copyFileExclusiveSync.bind(native) : undefined;
   let nativeTarget = false;
   try {
-    const source = admitCopyPath(sourcePath);
-    target = admitCopyPath(targetPath, true);
+    const source = cache.admit(sourcePath);
+    target = cache.admit(targetPath, true);
     // Preserve exclusive-create collision semantics for dangling Windows leaves.
     assertExclusiveCreateLeaf(targetPath.absolutePath);
     if (fs.lstatSync(target.path, { throwIfNoEntry: false })) {
       throw new FsSafeError("already-exists", "copy destination already exists");
     }
     const opened = openRootFileSync({
-      ...sourcePath, boundaryLabel: "copy source", maxBytes,
+      ...sourcePath, rootRealPath: source.rootCanonicalPath, boundaryLabel: "copy source", maxBytes,
       rejectHardlinks: sourceHardlinks !== "allow",
     });
     if (!opened.ok) throw opened.error ?? new FsSafeError("helper-failed", "copy source admission failed");

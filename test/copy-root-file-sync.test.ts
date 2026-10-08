@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyRootFileSync, openRootFileSync, type CopyRootFileSyncOptions } from "../src/advanced.js";
+import { copyRootFileSync as copySingle, createRootFileCopyBatchSync, openRootFileSync, type CopyRootFileSyncOptions } from "../src/advanced.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { loadTestNative } from "./helpers/native-probe.js";
@@ -41,6 +41,12 @@ function sourceIdentity(fd: number) {
   const { dev, ino } = fs.fstatSync(fd, { bigint: true });
   return { dev, ino };
 }
+
+describe.each(["single", "batch"])("guarded copy %s", shape => {
+  let batch: ReturnType<typeof createRootFileCopyBatchSync>;
+  beforeEach(() => { batch = createRootFileCopyBatchSync(); });
+  afterEach(() => batch.close());
+  const copyRootFileSync = (options: CopyRootFileSyncOptions) => shape === "batch" ? batch.copyFile(options) : copySingle(options);
 
 describe.each([false, true])("expected source identity (native=%s)", useNative => {
   beforeEach(context => {
@@ -372,4 +378,6 @@ describe.runIf(native)("native synchronous copying", () => {
       expect(fs.readFileSync(copied.fd).equals(Buffer.from(f.content))).toBe(true);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
+});
+
 });
