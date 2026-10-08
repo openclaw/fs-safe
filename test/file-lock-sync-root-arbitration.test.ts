@@ -9,7 +9,7 @@ vi.mock("../src/file-lock-sync-root-mutation.js", () => ({
   removeFileLockSyncRootFile: mutation.removeFileLockSyncRootFile,
 }));
 
-import { cleanupCreatedRootSyncLock } from "../src/file-lock-sync-root-arbitration.js";
+import { cleanupCreatedRootSyncLock } from "../src/file-lock-sync-root-acquire.js";
 
 const lockRootPath = Object.freeze({}) as never;
 const receipt = Object.freeze({}) as never;

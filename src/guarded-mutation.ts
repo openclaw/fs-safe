@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  assertAsyncDirectoryGuard,
+  assertDirectoryGuard,
   assertSyncDirectoryGuard,
   createAsyncDirectoryGuard,
   createSyncDirectoryGuard,
@@ -19,13 +19,13 @@ export async function withAsyncDirectoryGuards<T>(
   } = {},
 ): Promise<T> {
   for (const guard of guards) {
-    await assertAsyncDirectoryGuard(guard);
+    assertDirectoryGuard(guard, "native");
   }
   const result = await mutate();
   if (options.verifyAfter !== false) {
     try {
       for (const guard of guards) {
-        await assertAsyncDirectoryGuard(guard);
+        assertDirectoryGuard(guard, "native");
       }
     } catch (error) {
       if (options.onPostGuardFailure) {
