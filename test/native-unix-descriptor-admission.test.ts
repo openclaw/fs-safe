@@ -18,7 +18,7 @@ if (unix && required && !available) {
 }
 
 const methods = [
-  "fstatIdentity", "probeTreeClone", "mkdirChildBeneath", "createStagedFile",
+  "probeTreeClone", "mkdirChildBeneath", "createStagedFile",
   "stagedFileMatches", "removeStagedFile", "removeOwnedTree", "removeOwnedTreeSync",
   "sha256File", "cloneFileExclusive", "cloneTree", "openBeneath", "extractArchiveNative",
   ...(process.platform === "linux" ? ["copyFileRangeExclusive", "copyFileContents"] : []),

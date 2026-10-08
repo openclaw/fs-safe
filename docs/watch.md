@@ -152,8 +152,9 @@ FSEvents drops, including during recursive deletion. A shallow tree anchored abo
 a busy unselected subtree still receives recursive traffic; pending hints fold
 under pressure, while genuine FSEvents drops can still overflow.
 Absolute hints are reduced lexically against the admitted canonical Root;
-outside paths never become detail. Dropped/wrapped streams, RootChanged and
-Unmount trigger guarded reconciliation. Pathname hints can reflect activity
+outside paths never become detail. Dropped/wrapped streams, RootChanged, Unmount
+and notifications naming the Root itself trigger guarded reconciliation without detail.
+Pathname hints can reflect activity
 after a swap, but the Root is never replaced and names require guarded admission.
 Removal synchronously stops, invalidates and releases the stream on its queue.
 
