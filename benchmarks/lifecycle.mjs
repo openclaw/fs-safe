@@ -101,6 +101,7 @@ export async function registerLifecycle({ api: a, workspace: w, native, binding,
     const directoryIdentity = fs.statSync(directory);
     onCleanup(() => fs.closeSync(rootFd));
     add("native.fstatIdentity/directory", () => binding.fstatIdentity(rootFd), {
+      skip: typeof binding.fstatIdentity === "function" ? undefined : "Windows-only identity projection",
       sync: true,
       verify: (identity) => {
         assert.equal(identity.isDirectory, true);

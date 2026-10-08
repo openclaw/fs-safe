@@ -22,13 +22,8 @@ import {
   assertFileLockSyncRootPathsCurrent,
   captureFileLockSyncRootAuthority,
   normalizeFileLockSyncTargetWithRoot,
+  type FileLockSyncRootPath,
 } from "./file-lock-sync-root.js";
-import {
-  cleanupCreatedRootSyncLock,
-  FileLockSyncRootArbitrationCollision,
-  tryReuseCurrentRootSyncHeldLock,
-  type FileLockSyncRootArbitration,
-} from "./file-lock-sync-root-arbitration.js";
 import {
   fileLockSyncRootSnapshotStillCurrent,
   type FileLockSyncRootDirectoryReceipt,
@@ -49,8 +44,47 @@ import {
   ensureRootSyncExitCleanupRegistered,
   getRootSyncHeldLocks,
   readRootSidecarSnapshotSync,
+  verifyRootSyncHeldLock,
   type RootSyncHeldLock,
 } from "./file-lock-sync-root-held.js";
+
+class FileLockSyncRootArbitrationCollision extends FsSafeError {
+  constructor() {
+    super("path-mismatch", "file lock arbitration changed during local creation");
+  }
+}
+
+export function cleanupCreatedRootSyncLock(
+  lockRootPath: FileLockSyncRootPath,
+  fd: number,
+  receipt: FileLockSyncRootFileReceipt,
+  timer?: NodeJS.Timeout,
+): void {
+  let timerCleanupFailed = false;
+  let timerCleanupError: unknown;
+  try {
+    if (timer) clearInterval(timer);
+  } catch (error) {
+    timerCleanupFailed = true;
+    timerCleanupError = error;
+  }
+  try {
+    fs.closeSync(fd);
+    if (!removeFileLockSyncRootFile(lockRootPath, receipt)) {
+      throw new FsSafeError("path-mismatch", "created sidecar lock changed before cleanup");
+    }
+  } catch (fileCleanupError) {
+    if (timerCleanupFailed) {
+      throw createSuppressedError(
+        timerCleanupError,
+        fileCleanupError,
+        "unpublished lock timer and file cleanup both failed",
+      );
+    }
+    throw fileCleanupError;
+  }
+  if (timerCleanupFailed) throw timerCleanupError;
+}
 
 export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unknown>>(
   targetPath: string,
@@ -78,16 +112,31 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   const heldLocks = getRootSyncHeldLocks();
   const currentTargetHolder = () => heldLocks.get(normalizedTargetPath) ??
     foreignSyncHeldLock("root", normalizedTargetPath);
-  const arbitration: FileLockSyncRootArbitration = Object.freeze({
-    authority,
-    heldLocks,
-    lockRootPath,
-    normalizedTargetPath,
-    reentrantOwner: options.reentrantOwner,
-  });
+  const tryReuseCurrentHeld = (): FileLockSyncHandle | undefined => {
+    const held = heldLocks.get(normalizedTargetPath);
+    const reusable = held && !foreignSyncHeldLock("root", normalizedTargetPath) &&
+      options.reentrantOwner !== undefined && held.reentrantOwner !== undefined &&
+      options.reentrantOwner === held.reentrantOwner &&
+      authority.adapter === held.rootAuthority.adapter &&
+      lockRootPath.relativePath === held.rootPath.relativePath &&
+      path.relative(lockRootPath.path, held.rootPath.path) === "" &&
+      held.releaseState !== "released";
+    if (!reusable) return undefined;
+    if (!verifyRootSyncHeldLock(held)) {
+      throw new FsSafeError("path-mismatch", "held sidecar lock changed before reentrant reuse");
+    }
+    // The parser can reenter acquisition; recheck the exact held entry before reuse.
+    if (heldLocks.get(normalizedTargetPath) !== held || held.releaseState === "released" ||
+      foreignSyncHeldLock("root", normalizedTargetPath)) {
+      throw new FsSafeError("path-mismatch", "held sidecar lock changed during reentrant reuse");
+    }
+    held.refCount += 1;
+    held.revision += 1;
+    return createRootSyncHeldLockHandle(held);
+  };
   if (heldLocks.has(normalizedTargetPath) && !foreignSyncHeldLock("root", normalizedTargetPath)) {
     assertFileLockSyncRootPathsCurrent(guardedPaths);
-    const initiallyReusable = tryReuseCurrentRootSyncHeldLock(arbitration);
+    const initiallyReusable = tryReuseCurrentHeld();
     if (initiallyReusable) return initiallyReusable;
   }
 
@@ -97,7 +146,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
   let ownedReclaimGuard: FileLockSyncRootDirectoryReceipt | undefined;
   let reclaimCleanupAttempted = false;
   const reuseCurrentHeld = (): FileLockSyncHandle | undefined =>
-    ownedReclaimGuard ? undefined : tryReuseCurrentRootSyncHeldLock(arbitration);
+    ownedReclaimGuard ? undefined : tryReuseCurrentHeld();
   const releaseReclaimGuard = (): void => {
     const receipt = ownedReclaimGuard;
     if (!receipt) return;
