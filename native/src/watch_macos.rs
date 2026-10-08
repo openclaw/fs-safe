@@ -151,17 +151,14 @@ impl Owner {
         if relative.split(|b| *b == b'/').any(|s| s.is_empty() || s == b"." || s == b"..") {
             return;
         }
-        let mut directory = String::new();
-        for component in relative.split(|b| *b == b'/') {
-            let Ok(component) = std::str::from_utf8(component) else {
-                // Keep the nearest decodable directory, never a lossy child spelling.
-                pending.push_children(directory, Some(flags));
-                return;
-            };
-            if !directory.is_empty() { directory.push('/'); }
-            directory.push_str(component);
+        match std::str::from_utf8(relative) {
+            Ok(relative) => pending.push_path(relative, flags & (0x100 | 0x200 | 0x800) != 0, Some(flags)),
+            Err(error) => {
+                // The validated UTF-8 prefix ends within the undecodable component.
+                let prefix = std::str::from_utf8(&relative[..error.valid_up_to()]).unwrap();
+                pending.push_children(prefix.rsplit_once('/').map_or("", |(parent, _)| parent).into(), Some(flags));
+            }
         }
-        pending.push_path(&directory, flags & (0x100 | 0x200 | 0x800) != 0, Some(flags));
     }
 }
 
