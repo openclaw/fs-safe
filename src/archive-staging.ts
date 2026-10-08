@@ -278,47 +278,29 @@ async function prepareOutputPath(
   });
   checkExtractionDeadline(params.deadline);
 
-  if (params.isDirectory) {
-    await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", params.outPath);
+  const relativePath = params.isDirectory ? relPath : path.posix.dirname(relPath);
+  if (params.isDirectory || relativePath !== ".") {
+    const directoryPath = params.isDirectory ? params.outPath : path.dirname(params.outPath);
+    await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", directoryPath);
     checkExtractionDeadline(params.deadline);
     await ownExtractionDestinationMutation(params.deadline, async () => {
       await assertOutputGuards();
       checkExtractionDeadline(params.deadline);
-      await mkdirArchiveOutput({
-        targetRoot,
-        relativePath: relPath,
-        originalPath: params.originalPath,
-      });
+      await mkdirArchiveOutput({ targetRoot, relativePath, originalPath: params.originalPath });
       checkExtractionDeadline(params.deadline);
       await assertDirectoryIdentityGuard(destinationGuard);
       checkExtractionDeadline(params.deadline);
-      await assertResolvedInsideDestination({
-        destinationRealDir: params.destinationRealDir,
-        targetPath: params.outPath,
-        originalPath: params.originalPath,
-      });
-      checkExtractionDeadline(params.deadline);
-    });
-    return;
-  }
-
-  const parentRel = path.posix.dirname(relPath);
-  if (parentRel !== ".") {
-    await getFsSafeTestHooks()?.beforeArchiveOutputMutation?.("mkdir", path.dirname(params.outPath));
-    checkExtractionDeadline(params.deadline);
-    await ownExtractionDestinationMutation(params.deadline, async () => {
-      await assertOutputGuards();
-      checkExtractionDeadline(params.deadline);
-      await mkdirArchiveOutput({
-        targetRoot,
-        relativePath: parentRel,
-        originalPath: params.originalPath,
-      });
-      checkExtractionDeadline(params.deadline);
-      await assertDirectoryIdentityGuard(destinationGuard);
-      checkExtractionDeadline(params.deadline);
+      if (params.isDirectory) {
+        await assertResolvedInsideDestination({
+          destinationRealDir: params.destinationRealDir,
+          targetPath: params.outPath,
+          originalPath: params.originalPath,
+        });
+        checkExtractionDeadline(params.deadline);
+      }
     });
   }
+  if (params.isDirectory) return;
   await assertResolvedInsideDestination({
     destinationRealDir: params.destinationRealDir,
     targetPath: path.dirname(params.outPath),

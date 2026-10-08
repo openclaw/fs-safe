@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { configureFsSafeNative, root } from "../src/index.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { resolveOpenedFileRealPathForFd, resolveOpenedFileRealPathForHandle } from "../src/opened-realpath.js";
 import { realpathSync } from "../src/realpath.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
@@ -12,7 +12,7 @@ import { resolveRootContext } from "../src/root-context.js";
 import * as verification from "../src/root-write-verification.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
-import { loadTestNative } from "./helpers/native-probe.js";
+import { loadTestNative, loadWindowsSimulationNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -149,7 +149,7 @@ for (const route of routes) {
         if (route === "windows fallback" && operation === "write") await fs.writeFile(target, "old");
         const context = await resolveRootContext(directory);
         const capability = await root(directory);
-        const binding = route.includes("native") ? __loadBundledNativeForTest() : undefined;
+        const binding = route.includes("native") ? loadWindowsSimulationNative() : undefined;
         if (route.startsWith("windows")) Object.defineProperty(process, "platform", { value: "win32" });
         let published = false;
         let callbackStarted = false;
@@ -264,7 +264,7 @@ for (const backend of ["fallback", "native"] as const) {
         const payload = "mode-zero-proof";
         const swapped = behavior === "same bytes" || behavior === "different bytes";
         if (operation === "write") await fs.writeFile(target, "old", { mode: 0o600 });
-        const binding = backend === "native" ? __loadBundledNativeForTest() : undefined;
+        const binding = backend === "native" ? loadWindowsSimulationNative() : undefined;
         if (binding) __setNativeLoaderForTest(() => binding);
         configureFsSafeNative({ mode: backend === "native" ? "require" : "off" });
         // POSIX hosts exercise the Windows branch; Windows CI runs its real mechanism.

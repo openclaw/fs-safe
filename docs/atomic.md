@@ -258,7 +258,9 @@ opened, removed, or replaced. A successor at that name is left untouched.
 `details.cleanup: "restored"` means the retained original file's bytes and mode
 were restored and synchronized, not that the pathname still names it. The existing
 `writing` receipt identifies that file; no `published` receipt is emitted for a
-failed replacement. Restoration I/O failures report `"restore-failed"`.
+failed replacement. Restoration I/O failures report `"restore-failed"`, even if
+the thrown error itself carries a `cleanup: "restored"` receipt from another
+operation; the cause retains both the replacement and restoration failures.
 
 Callback refusals, detected identity/type/link changes, and other metadata errors
 remain terminal. Failed descriptor revalidation also stops restoration. These
