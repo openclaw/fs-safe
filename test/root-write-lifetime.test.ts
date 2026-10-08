@@ -3,12 +3,12 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative, root } from "../src/index.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import * as verification from "../src/root-write-verification.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
-import { loadTestNative } from "./helpers/native-probe.js";
+import { loadTestNative, loadWindowsSimulationNative } from "./helpers/native-probe.js";
 
 const nativeAvailable = Boolean(loadTestNative("required-env"));
 const { tempRoot } = useRealTempDirs();
@@ -105,7 +105,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
     `publication cleanup: ${backend}`,
     () => {
       it.skipIf(backend !== "native")("surfaces a successful publication's close failure and closes the other native descriptors", async () => {
-        const binding = __loadBundledNativeForTest();
+        const binding = loadWindowsSimulationNative();
         const descriptors: number[] = [];
         const sentinel = Object.assign(new Error("close failed after publication"), { code: "EIO" });
         let retainedFd: number | undefined;
@@ -214,7 +214,7 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
         let retainedFd: number | undefined;
         let closed = false;
         if (backend === "native") {
-          const binding = __loadBundledNativeForTest();
+          const binding = loadWindowsSimulationNative();
           __setNativeLoaderForTest(() => ({
             ...binding,
             closeOwnedFd(fd) {
@@ -321,7 +321,7 @@ describe.skipIf(process.platform === "win32" || !nativeAvailable)("private nativ
   it.each(["success", "EIO", "EACCES", "EPERM", "EEXIST"])(
     "retains the separate Windows leaf descriptor for %s verification (branch simulation)",
     async (outcome) => {
-      const binding = __loadBundledNativeForTest();
+      const binding = loadWindowsSimulationNative();
       __setNativeLoaderForTest(() => binding);
       configureFsSafeNative({ mode: "require" });
       Object.defineProperty(process, "platform", { value: "win32" });
