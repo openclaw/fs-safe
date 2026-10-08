@@ -20,36 +20,6 @@ export function nativeOpenFlags(flags: number): number {
   );
 }
 
-export function writeNativeFd(fd: number, data: Buffer): void {
-  let offset = 0;
-  while (offset < data.byteLength) {
-    const written = fsSync.writeSync(fd, data, offset, data.byteLength - offset);
-    if (written <= 0) {
-      throw Object.assign(new Error("native file write made no progress"), { code: "EIO" });
-    }
-    offset += written;
-  }
-}
-
-function wrapNativeFd(
-  fd: number,
-  closeFd: (fd: number) => void,
-): NativeFileHandle {
-  let open = true;
-  return {
-    fd,
-    async close() {
-      if (open) {
-        open = false;
-        closeFd(fd);
-      }
-    },
-    async writeFile(data, encoding) {
-      writeNativeFd(fd, Buffer.isBuffer(data) ? data : Buffer.from(data, encoding ?? "utf8"));
-    },
-  };
-}
-
 export function removeNativeCreatedFileIfStillPinned(params: {
   parentPath: string;
   parentFd: number;
@@ -119,7 +89,28 @@ export async function createNativeExclusiveFile(
     fd = opened.fd;
     fsSync.fchmodSync(fd, mode);
     created = fsSync.fstatSync(fd, { bigint: true });
-    return wrapNativeFd(fd, closeFd);
+    const ownedFd = fd;
+    let open = true;
+    return {
+      fd: ownedFd,
+      async close() {
+        if (open) {
+          open = false;
+          closeFd(ownedFd);
+        }
+      },
+      async writeFile(data, encoding) {
+        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data, encoding ?? "utf8");
+        let offset = 0;
+        while (offset < buffer.byteLength) {
+          const written = fsSync.writeSync(ownedFd, buffer, offset, buffer.byteLength - offset);
+          if (written <= 0) {
+            throw Object.assign(new Error("native file write made no progress"), { code: "EIO" });
+          }
+          offset += written;
+        }
+      },
+    };
   } catch (error) {
     if (fd !== undefined) {
       try {
