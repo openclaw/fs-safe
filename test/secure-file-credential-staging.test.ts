@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const ARCHIVES = [
-  ["22.23.2", "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"],
+  ["22.23.3", "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"],
   ["24.21.0", "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"],
 ] as const;
 const temporaryDirectories: string[] = [];
@@ -102,7 +102,7 @@ describe.skipIf(process.platform !== "linux")("credential-proof shell policies",
     expect(result.stdout).toBe(`https://nodejs.org/dist/v${version}/node-v${version}-linux-x64.tar.xz\n${digest}\n`);
   });
 
-  it.each(["22", "v22.23.2", "24.21.0/../other", "22.23.2\nextra"])("rejects unsupported archive selector %j", async (version) => {
+  it.each(["22", "v22.23.3", "24.21.0/../other", "22.23.3\nextra"])("rejects unsupported archive selector %j", async (version) => {
     const result = runPolicy(await policy(), 'node_version="$1"; select_node_archive; printf executed', [version]);
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("executed");
@@ -150,7 +150,7 @@ describe.skipIf(process.platform !== "linux")("credential-proof shell policies",
     // Replace only the parser at the test boundary. No network, root ownership or Node execution.
     const source = (await policy()).replaceAll("/usr/bin/tar", "fixture_tar");
     const result = runPolicy(source, `
-stage_root="$1"; defect="$2"; archive=fixture; node_version=22.23.2
+stage_root="$1"; defect="$2"; archive=fixture; node_version=22.23.3
 select_node_archive
 reads=0
 inspect_file() {

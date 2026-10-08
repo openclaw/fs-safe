@@ -15,7 +15,7 @@ concurrency:
 env:
   NODE_VERSION: 24
   NPM_VERSION: 12.0.2
-  PNPM_VERSION: 12.4.2
+  PNPM_VERSION: 12.10.1
 
 jobs:
   validate:
@@ -146,7 +146,7 @@ jobs:
 
       - name: Set up Zig
         if: startsWith(matrix.cross, 'zig')
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
 
@@ -176,7 +176,7 @@ jobs:
         run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --cross-compile --output-dir ../artifacts
 
       - name: Upload binding
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binding-${{ matrix.label }}
           path: artifacts/*.node
@@ -212,7 +212,7 @@ jobs:
         run: pnpm build
 
       - name: Download all seven bindings
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: binding-*
           path: artifacts
@@ -225,7 +225,7 @@ jobs:
         run: pnpm package:collect
 
       - name: Upload release package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-package
           path: release-artifacts/*
@@ -305,7 +305,7 @@ jobs:
         run: npm install --global npm@${{ env.NPM_VERSION }}
 
       - name: Download release package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-package
           path: release-artifacts
@@ -340,7 +340,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download release package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-package
           path: release-artifacts
@@ -354,7 +354,7 @@ jobs:
           node scripts/append-release-proof.mjs release-notes.md release-artifacts/manifest.json "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
 
       - name: Upload release proof
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-proof-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-notes.md
