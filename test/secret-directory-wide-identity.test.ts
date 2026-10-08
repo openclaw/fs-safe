@@ -1,3 +1,4 @@
+import { loadWindowsSimulationNative } from "./helpers/native-probe.js";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -96,7 +97,7 @@ for (const route of ["fallback", "Windows fallback", "native", "Windows native"]
     () => {
       function configureRoute() {
         if (route.includes("native")) {
-          const binding = __loadBundledNativeForTest();
+          const binding = loadWindowsSimulationNative();
           __setNativeLoaderForTest(() => binding);
         }
         if (route.startsWith("Windows")) Object.defineProperty(process, "platform", { value: "win32" });

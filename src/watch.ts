@@ -6,7 +6,6 @@ import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { mergeWatchRescan, watchRescanScopes } from "./watch-rescan.js";
-import { watchStreamPaths } from "./watch-stream.js";
 import { admittedNativeChanges, changedEntries, excludedWatchPath, guardedHintChanges, scopedChanges } from "./watch-hints.js";
 import path from "node:path";
 import { watchBinding, NativeWatchBackend, type NativeWatchBatch, type NativeWatchHint } from "./watch-native.js";
@@ -253,7 +252,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
           if (backend === candidate) onHint(g, batch);
         }, maxPendingPaths, persistent);
         backend = candidate;
-        if (snapshot) candidate.configure(watchStreamPaths(snapshot, g.scopes));
+        if (snapshot) candidate.configure(snapshot, g.scopes);
         const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
           if (backend === candidate) onHint(g, batch);
         }, (path, flags) => candidate.testEvent(path, flags));
@@ -302,7 +301,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       }
       try {
         const entriesChanged = backend?.entries(next);
-        const streamsChanged = backend?.configure(watchStreamPaths(next, g.scopes));
+        const streamsChanged = backend?.configure(next, g.scopes);
         if (entriesChanged || streamsChanged) {
           // Complete a guarded pass with the new transport before publishing readiness.
           // Bound handovers under churn; later passes still reconcile ongoing changes.

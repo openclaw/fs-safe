@@ -107,7 +107,7 @@ entries, including symlinks, without following them. A force removal tolerates
 a missing leaf but does not suppress failure to open its parent.
 
 Write preserves an existing regular file's mode and otherwise creates private
-files. Copy preserves the source mode. Exclusive create publishes a mode-0600
+files. Copy and cross-device file moves preserve the admitted source descriptor's mode. Exclusive create publishes a mode-0600
 file from a private staging directory. Staging names retain the `.openclaw-*`
 prefixes and use short random suffixes independent of the destination basename,
 so legal names near the filesystem's component limit also work for writes and

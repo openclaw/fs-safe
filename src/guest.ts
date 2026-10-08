@@ -401,7 +401,7 @@ export const GUEST_FILESYSTEM_PYTHON = [
   "                break",
   "            write_all(temp_fd, chunk)",
   "        try:",
-  "            os.fchmod(temp_fd, stat.S_IMODE(src_stat.st_mode))",
+  "            os.fchmod(temp_fd, stat.S_IMODE(src_file_stat.st_mode))",
   "        except AttributeError:",
   "            pass",
   "        os.fsync(temp_fd)",

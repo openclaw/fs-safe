@@ -3,10 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "../src/secret.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
-import { loadTestNative } from "./helpers/native-probe.js";
+import { loadTestNative, loadWindowsSimulationNative } from "./helpers/native-probe.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -30,7 +30,7 @@ describe.skipIf(!nativeAvailable)("native Windows final-mode ownership", () => {
       const rootDir = await tempRoot("fs-safe-native-mode-owner-");
       const target = path.join(rootDir, "token");
       const saved = path.join(rootDir, "published");
-      const binding = __loadBundledNativeForTest();
+      const binding = loadWindowsSimulationNative();
       const fstat = fsSync.fstatSync.bind(fsSync);
       const identities = new Map<string, bigint>();
       const base = 1n << 53n;
