@@ -367,17 +367,27 @@ describe("sidecar lock natural process exit", () => {
       await manager.acquire(targetPath, options);
       let cycles = 0;
       let acquired = false;
+      let checkCleanup = false;
+      let settled = false;
       process.on("beforeExit", () => {
         cycles++;
-        if (cycles !== 2) return;
+        // Retained Windows cleanup can finish without scheduling I/O. Give
+        // either backend a checkpoint, then observe cleanup before reacquiring.
+        if (!checkCleanup) {
+          checkCleanup = true;
+          setImmediate(() => {});
+          return;
+        }
         assert.equal(manager.heldEntries().length, 0);
+        if (acquired) { settled = true; return; }
+        checkCleanup = false;
         setImmediate(() => {
           void manager.acquire(targetPath, options).then(() => { acquired = true; });
         });
       });
-      process.on("exit", () => console.log(JSON.stringify({ cycles, acquired })));
+      process.on("exit", () => console.log(JSON.stringify({ cycles, acquired, settled })));
     `);
-    expect(JSON.parse(output)).toEqual({ cycles: 4, acquired: true });
+    expect(JSON.parse(output)).toMatchObject({ acquired: true, settled: true });
     await expectAbsent(directory);
   });
 });
