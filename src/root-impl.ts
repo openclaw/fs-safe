@@ -43,7 +43,6 @@ import { admitPathInsideRoot } from "./root-boundary.js";
 import { listDirectoryPath, openRootDirectoryListing } from "./root-directory-list.js";
 import { statResolvedPathInRoot } from "./root-path-stat.js";
 import { entriesInRoot, type RootEntriesOptions } from "./root-entries.js";
-import { assertMoveMutationAllowed } from "./root-move-preflight.js";
 import {
   assertRootIdentityCurrent,
   assertRootIdentityCurrentSync,
@@ -548,11 +547,14 @@ export class RootHandle implements Root {
     ) ?? {};
     const overwrite = options.overwrite ?? false;
     const requireNative = isFsSafeNativeRequired();
-    await assertMoveMutationAllowed(this.context, {
-      fromRelative,
-      toRelative,
-      denyMutations,
-    });
+    // Deny both routes before source alias or identity admission.
+    for (const relativePath of [fromRelative, toRelative]) {
+      const { resolved } = await resolvePathInRoot(this.context, relativePath, {
+        aliasErrorCode: "path-alias",
+        allowFinalSymlink: true,
+      });
+      await assertMutationNotDenied(resolved, denyMutations, { protectAncestors: true });
+    }
     await movePathFallback(this.context, {
       requireNative,
       fromRelative,
@@ -1358,7 +1360,7 @@ async function listPathFallback(
 
 async function movePathFallback(
   root: RootContext,
-  params: RootMoveOptions & Parameters<typeof assertMoveMutationAllowed>[1] & {
+  params: RootMoveOptions & Record<"fromRelative" | "toRelative", string> & {
     overwrite: boolean;
     requireNative: boolean;
   },
