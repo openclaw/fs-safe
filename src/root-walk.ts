@@ -217,7 +217,9 @@ export async function* walkRoot(
     let failed = false;
     let operationError: unknown;
     try {
-      const relativeDirectory = directory.split(path.sep).join(path.posix.sep);
+      const relativeDirectory = path.posix.normalize(directory.split(path.sep).join(path.posix.sep));
+      const childPrefix = relativeDirectory === "." || relativeDirectory === "./" ? ""
+        : relativeDirectory.endsWith("/") ? relativeDirectory : `${relativeDirectory}/`;
       while (true) {
         let next: Awaited<ReturnType<RootDirectoryListing["next"]>>;
         try {
@@ -229,9 +231,7 @@ export async function* walkRoot(
         }
         if (next === undefined) return;
         const name = next.kind === "entry" ? next.entry.name : next.name;
-        const child = directory
-          ? path.posix.join(relativeDirectory, name)
-          : name;
+        const child = childPrefix + name;
         if (next.kind === "limit") {
           yield onLimit(child);
           return;
