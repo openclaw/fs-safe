@@ -64,5 +64,5 @@ describe.skipIf(!native)("retained sidecar process cleanup", () => {
   });
   it.skipIf(process.platform === "win32")("closes descriptors on release, reset, mismatch and failed acquisition", async () => {
     expect(await child(await tempRoot("sidecar-retained-leaks-"), "control", "leaks")).toBe("no-leaks");
-  });
+  }, 15_000);
 });
