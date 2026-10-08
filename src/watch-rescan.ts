@@ -47,13 +47,9 @@ export function mergeWatchRescan(scopes: readonly WatchScope[], before: WatchSna
     for (const name of before.childPaths?.get(directory)?.values() ?? []) selected.add(name);
     for (const name of slice.childPaths?.get(directory)?.values() ?? []) selected.add(name);
   }
-  for (const [name, previous] of before.entries) {
-    if (!selected.has(name)) continue;
-    const current = slice.entries.get(name);
-    if ((previous.startsWith("directory:") || current?.startsWith("directory:")) && identity(previous) !== identity(current)) return;
-  }
-  for (const [name, current] of slice.entries) {
-    if (selected.has(name) && current.startsWith("directory:") && identity(current) !== identity(before.entries.get(name))) return;
+  for (const name of selected) {
+    const previous = before.entries.get(name), current = slice.entries.get(name);
+    if ((previous?.startsWith("directory:") || current?.startsWith("directory:")) && identity(previous) !== identity(current)) return;
   }
   // Exclusion changes can retire or admit a subtree, including callback-driven changes.
   for (const [name, kind] of before.excluded ?? []) if (selected.has(name) && kind === "directory" && slice.entries.has(name)) return;

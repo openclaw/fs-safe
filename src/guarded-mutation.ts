@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  assertAsyncDirectoryGuard,
+  assertDirectoryGuard,
   assertSyncDirectoryGuard,
   createAsyncDirectoryGuard,
   createSyncDirectoryGuard,
@@ -19,13 +19,13 @@ export async function withAsyncDirectoryGuards<T>(
   } = {},
 ): Promise<T> {
   for (const guard of guards) {
-    await assertAsyncDirectoryGuard(guard);
+    assertDirectoryGuard(guard, "native");
   }
   const result = await mutate();
   if (options.verifyAfter !== false) {
     try {
       for (const guard of guards) {
-        await assertAsyncDirectoryGuard(guard);
+        assertDirectoryGuard(guard, "native");
       }
     } catch (error) {
       if (options.onPostGuardFailure) {
@@ -73,11 +73,11 @@ export async function guardedRename(params: {
   await withAsyncDirectoryGuards(
     [sourceGuard, targetGuard],
     async () => {
+      // Authority must survive all awaited guards; do not yield before rename dispatch.
+      params.assertBeforeRename?.();
       if (params.onSourceInspected) {
         params.onSourceInspected(fsSync.lstatSync(params.from, { bigint: true }));
       }
-      // Authority must survive all awaited guards; do not yield before rename dispatch.
-      params.assertBeforeRename?.();
       await fs.rename(params.from, params.to);
       params.onRenamed?.();
     },

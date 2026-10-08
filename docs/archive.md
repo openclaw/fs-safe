@@ -702,6 +702,9 @@ await extractArchive({
 
 ## `readArchiveEntry`
 
+The byte limit is selected and validated once before reading the archive; changing
+the options object during a read does not change the active limit.
+
 `readArchiveEntry(archivePath, entryPath, { maxBytes, kind? })` reads one
 regular-file entry into a bounded `Buffer` without extracting a tree. It reads
 the input through an identity-checked descriptor, rejects a requested link or

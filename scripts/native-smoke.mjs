@@ -21,8 +21,8 @@ try {
   const { fd } = native.openBeneath(rootFd, "nested/source", fs.constants.O_RDONLY);
   try {
     console.log("native smoke: fstat");
-    const identity = native.fstatIdentity(fd);
-    if (!identity.isFile || identity.size !== 6) throw new Error("unexpected native identity");
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size !== 6) throw new Error("unexpected native identity");
   } finally {
     native.closeOwnedFd(fd);
   }
