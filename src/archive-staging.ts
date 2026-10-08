@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  assertAsyncDirectoryGuard,
+  assertDirectoryGuard,
   createAsyncDirectoryGuard,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
@@ -56,9 +56,9 @@ export async function createDirectoryIdentityGuard(dir: string): Promise<Archive
   }
 }
 
-export async function assertDirectoryIdentityGuard(guard: ArchiveDirectoryGuard): Promise<void> {
+export function assertDirectoryIdentityGuard(guard: ArchiveDirectoryGuard): void {
   try {
-    await assertAsyncDirectoryGuard(guard);
+    assertDirectoryGuard(guard, "native");
   } catch (err) {
     if (err instanceof FsSafeError || isNotFoundPathError(err)) {
       throw new ArchiveSecurityError(
@@ -264,7 +264,7 @@ async function prepareOutputPath(
     // The merge's callback verifies this same original destination guard.
     if (existingDestinationGuard && assertGuards) await assertGuards();
     else {
-      await assertDirectoryIdentityGuard(destinationGuard);
+      assertDirectoryIdentityGuard(destinationGuard);
       checkExtractionDeadline(params.deadline);
       await assertGuards?.();
     }
@@ -288,7 +288,7 @@ async function prepareOutputPath(
       checkExtractionDeadline(params.deadline);
       await mkdirArchiveOutput({ targetRoot, relativePath, originalPath: params.originalPath });
       checkExtractionDeadline(params.deadline);
-      await assertDirectoryIdentityGuard(destinationGuard);
+      assertDirectoryIdentityGuard(destinationGuard);
       checkExtractionDeadline(params.deadline);
       if (params.isDirectory) {
         await assertResolvedInsideDestination({
@@ -350,11 +350,11 @@ export async function withStagedArchiveDestination<T>(params: {
   const stagingGuard = await createDirectoryIdentityGuard(stagingDir);
   try {
     await fs.chmod(stagingDir, ARCHIVE_STAGING_MODE).catch(() => undefined);
-    await assertDirectoryIdentityGuard(stagingGuard);
+    assertDirectoryIdentityGuard(stagingGuard);
     return await params.run(stagingDir);
   } finally {
     try {
-      await assertDirectoryIdentityGuard(stagingGuard);
+      assertDirectoryIdentityGuard(stagingGuard);
       await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
     } catch {
       // Preserve staging when its identity cannot be verified; pathname cleanup is unsafe.
