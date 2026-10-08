@@ -48,7 +48,7 @@ import { resolveSidecarLockPaths } from "./sidecar-lock-target.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { sleep } from "./timing.js";
 import { sidecarRetainedCreate } from "./root-create-input.js";
-import { retainCreatedSidecar, type RetainedSidecar } from "./sidecar-lock-retained.js";
+import { cleanupCreatedSidecar, retainCreatedSidecar, type RetainedSidecar } from "./sidecar-lock-retained.js";
 import { stopSidecarLockMonitoring } from "./sidecar-lock-handle.js";
 
 export type { HeldSidecarLock } from "./sidecar-lock-admission.js";
@@ -262,8 +262,9 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           try {
             await observation.run(() => lockRoot.create(relativeLockPath, raw, {
               mkdir: true, mode: 0o600,
-              ...sidecarRetainedCreate((fd, parent) => {
-                retainedSidecar = retainCreatedSidecar(lockPath, raw, fd, parent);
+              ...sidecarRetainedCreate({
+                retain(fd, parent, nativeParent) { retainedSidecar = retainCreatedSidecar(lockPath, raw, fd, parent, nativeParent); },
+                cleanup(fd, parent, identity) { cleanupCreatedSidecar(lockPath, raw, fd, parent, identity); },
               }),
             }));
           } catch (error) {

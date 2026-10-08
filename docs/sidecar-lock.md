@@ -279,6 +279,12 @@ works after the Root moves, is replaced, or its parent becomes a symlink. A fore
 entry at either the original Root path or the retained sidecar name is preserved.
 The retained handles close on success, mismatch, failed acquisition, and exit
 (including `retainOnExit`, which closes handles without deleting).
+If retention itself fails after creation, rollback checks the original identity
+and owner bytes through the creator's still-open descriptors before removing the
+claim. A changed entry is preserved and both the retention and cleanup errors are
+reported; cleanup never falls back to token-only deletion of a replacement.
+Retention duplicates the already-admitted parent authority instead of walking
+its pathname again or requiring extra access to its ancestors.
 Windows opens the named file through the retained parent only for settlement,
 with delete access and sharing; keeping a file handle open would prevent ordinary
 directory relocation. Retained cleanup compares the owner bytes directly and does

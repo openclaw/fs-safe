@@ -218,7 +218,9 @@ export async function runPinnedWriteWindows(
     }
     if (params.sync !== false) syncFileBestEffortSync(parentFd);
     // Verification follows publication and final chmod, outside rollback handling.
-    await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard);
+    if (params.overwrite === false && params.input.kind === "buffer" && params.input.stageBeforePublish === false) {
+      await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard, { fd: parentFd, binding });
+    } else await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard);
     completed = true;
     return { dev: targetIdentity.dev, ino: targetIdentity.ino };
   } catch (error) {

@@ -73,7 +73,7 @@ import { registerTempPathForExit, type TempPathRegistration } from "./temp-clean
 import { removePathInRootFallback, validateRemoveOptions } from "./root-remove.js";
 import { removePathInRootNative } from "./root-remove-native.js";
 import { serializePathWrite } from "./write-queue.js";
-import { verifyAtomicWriteResult } from "./root-write-verification.js";
+import { verifyAtomicWriteResult, verifyRootWritePublication } from "./root-write-verification.js";
 import {
   assertRootWritePathSelectionSync,
   assertRootWriteSelectionSync,
@@ -1134,16 +1134,14 @@ async function commitPinnedWriteInRoot(
       rootIdentity: root.rootIdentity,
       mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
-      verifyPublished: async (fd, expectedIdentity, parentGuard) => {
+      verifyPublished: async (fd, expectedIdentity, parentGuard, nativeParent) => {
         verifyingPublication = true;
         try {
-          await verifyAtomicWriteResult({
-            root,
-            targetPath: pinned.targetPath,
-            fd, expectedIdentity,
-            parentGuard,
+          await verifyRootWritePublication({
+            fd, expectedIdentity, parentGuard,
+            nativeParent, retention: params[retainSidecarCreated],
+            verify: () => verifyAtomicWriteResult({ root, targetPath: pinned.targetPath, fd, expectedIdentity, parentGuard }),
           });
-          params[retainSidecarCreated]?.(fd, parentGuard);
         } catch (error) {
           emitWriteBoundaryWarning(`post-write verification failed: ${String(error)}`);
           throw error;

@@ -32,22 +32,28 @@ pub(super) fn path_parts(path: &str) -> NativeResult<Vec<&str>> {
     Ok(if path.len() == 3 { Vec::new() } else { parts })
 }
 
-pub(super) fn root(path: &str, sidecar: bool) -> NativeResult<OwnedHandle> {
+pub(super) fn fixed_drive(path: &str) -> NativeResult<()> {
     let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
     // Fixed local drives only; network, removable and namespace aliases are unsupported.
     if unsafe { GetDriveTypeW(wide.as_ptr()) } != 3 /* DRIVE_FIXED */ {
         return Err(native_error("ENOTSUP", "retained files require a fixed local NTFS drive"));
     }
+    Ok(())
+}
+
+pub(super) fn root(path: &str) -> NativeResult<OwnedHandle> {
+    fixed_drive(path)?;
+    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
     let handle = unsafe { CreateFileW(wide.as_ptr(), FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | if sidecar { FILE_SHARE_DELETE } else { 0 }, null(), OPEN_EXISTING,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, null(), OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null_mut()) };
     if handle == INVALID_HANDLE_VALUE { return Err(win_error(unsafe { GetLastError() }, "retain volume root")); }
     Ok(OwnedHandle(handle))
 }
 
-pub(super) fn directory(parent: HANDLE, name: &str, sidecar: bool) -> NativeResult<OwnedHandle> {
+pub(super) fn directory(parent: HANDLE, name: &str) -> NativeResult<OwnedHandle> {
     open_retained_child(parent, name, FILE_LIST_DIRECTORY, FILE_DIRECTORY_FILE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | if sidecar { FILE_SHARE_DELETE } else { 0 })
+        FILE_SHARE_READ | FILE_SHARE_WRITE)
 }
 
 pub(super) fn file(parent: HANDLE, name: &str, sidecar: bool) -> NativeResult<OwnedHandle> {

@@ -2,7 +2,8 @@
 use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use crate::{NativeResult, native_error, exact_identity_component};
-use crate::windows::OwnedHandle;
+use crate::windows::{OwnedHandle, duplicate_handle, root_handle};
+use windows_sys::Win32::Foundation::HANDLE;
 #[path = "retained_file_windows.rs"]
 mod os;
 
@@ -41,13 +42,19 @@ impl Owner {
     fn admit(&mut self, result: &mut RetainedFileResult) -> NativeResult<()> {
         let parts = os::path_parts(&self.path)?;
         os::basename(&self.name)?;
-        self.parents.push(os::root(&self.path[..3], self.sidecar)?);
-        os::check_directory(self.parent().0)?;
-        os::check_ntfs(self.parent().0)?;
-        for part in parts {
-            let next = os::directory(self.parent().0, part, self.sidecar)?;
-            self.parents.push(next);
+        if self.sidecar {
+            os::fixed_drive(&self.path[..3])?;
             os::check_directory(self.parent().0)?;
+            os::check_ntfs(self.parent().0)?;
+        } else {
+            self.parents.push(os::root(&self.path[..3])?);
+            os::check_directory(self.parent().0)?;
+            os::check_ntfs(self.parent().0)?;
+            for part in parts {
+                let next = os::directory(self.parent().0, part)?;
+                self.parents.push(next);
+                os::check_directory(self.parent().0)?;
+            }
         }
         os::canonical(self.parent().0, &self.path)?;
         os::exact(self.parent().0, self.parent_dev, self.parent_ino, true)?;
@@ -63,13 +70,6 @@ impl Owner {
             // Windows refuses ordinary directory relocation while a descendant
             // file is open, even with delete sharing. Retain only the parent.
             self.close_file(result);
-            let parent = self.parents.pop().expect("admitted parent");
-            while let Some(ancestor) = self.parents.pop() {
-                if let Err(error) = ancestor.close() {
-                    result.resources = "close-failed".into(); result.error("close-parent", error);
-                }
-            }
-            self.parents.push(parent);
             if result.resources == "close-failed" {
                 return Err(native_error("EIO", "sidecar admission could not close temporary handles"));
             }
@@ -175,21 +175,22 @@ impl Drop for NativeRetainedFile {
 #[allow(clippy::too_many_arguments)]
 pub fn retain_windows_file(path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
     dev: BigInt, ino: BigInt, size: BigInt, mtime_ns: BigInt, ctime_ns: BigInt, digest: String, max_bytes: u32) -> NativeRetainedFile {
-    retain_file(path, name, parent_dev, parent_ino, dev, ino, size, mtime_ns, ctime_ns, digest, max_bytes, false)
+    retain_file(path, name, parent_dev, parent_ino, dev, ino, size, mtime_ns, ctime_ns, digest, max_bytes, None)
 }
 
 // Same guarded retained owner, with sharing that permits relocation and exact
 // named-entry/byte verification at settlement instead of directory-path custody.
 #[napi(js_name = "retainWindowsSidecar")]
 #[allow(clippy::too_many_arguments)]
-pub fn retain_windows_sidecar(path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
+pub fn retain_windows_sidecar(parent_fd: i32, path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
     dev: BigInt, ino: BigInt, size: BigInt, digest: String, max_bytes: u32) -> NativeRetainedFile {
-    retain_file(path, name, parent_dev, parent_ino, dev, ino, size, 0u64.into(), 0u64.into(), digest, max_bytes, true)
+    retain_file(path, name, parent_dev, parent_ino, dev, ino, size, 0u64.into(), 0u64.into(), digest, max_bytes, Some(root_handle(parent_fd)))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn retain_file(path: String, name: String, parent_dev: BigInt, parent_ino: BigInt,
-    dev: BigInt, ino: BigInt, size: BigInt, mtime_ns: BigInt, ctime_ns: BigInt, digest: String, max_bytes: u32, sidecar: bool) -> NativeRetainedFile {
+    dev: BigInt, ino: BigInt, size: BigInt, mtime_ns: BigInt, ctime_ns: BigInt, digest: String, max_bytes: u32,
+    parent: Option<NativeResult<HANDLE>>) -> NativeRetainedFile {
     let mut result = RetainedFileResult::new();
     let mut owner = None;
     let admission = (|| -> NativeResult<()> {
@@ -198,7 +199,12 @@ fn retain_file(path: String, name: String, parent_dev: BigInt, parent_ino: BigIn
             || !digest.bytes().all(|x| x.is_ascii_digit() || (b'a'..=b'f').contains(&x)) {
             return Err(native_error("EINVAL", "invalid bounded retained-file digest contract"));
         }
-        owner = Some(Owner { parents: Vec::new(), file: None, path, name,
+        let sidecar = parent.is_some();
+        let parents = match parent {
+            Some(parent) => vec![duplicate_handle(parent?, "retain sidecar parent")?],
+            None => Vec::new(),
+        };
+        owner = Some(Owner { parents, file: None, path, name,
             dev: exact_identity_component(&dev, "device")?, ino: exact_identity_component(&ino, "inode")?,
             parent_dev: exact_identity_component(&parent_dev, "parent device")?, parent_ino: exact_identity_component(&parent_ino, "parent inode")?, size, mtime_ns: exact_identity_component(&mtime_ns, "mtimeNs")?,
             ctime_ns: exact_identity_component(&ctime_ns, "ctimeNs")?, digest, sidecar });

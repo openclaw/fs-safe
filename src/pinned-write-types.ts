@@ -2,6 +2,9 @@ import type { CopyFileInput } from "./copy-file-input.js";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
+import type { NativeBinding } from "./native-binding.js";
+
+export type NativeWriteParent = Readonly<{ fd: number; binding: NativeBinding }>;
 
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding; stageBeforePublish?: boolean }
@@ -81,5 +84,6 @@ export type PinnedWriteParams = {
     fd: number,
     identity: PublishedWriteIdentity,
     parentGuard: AnyAsyncDirectoryGuard,
+    nativeParent?: NativeWriteParent,
   ) => Promise<void>;
 };

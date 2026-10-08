@@ -1,5 +1,5 @@
 use super::*;
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, os::windows::io::AsRawHandle, path::{Path, PathBuf}};
 use crate::test_support::temp_path;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
@@ -212,9 +212,11 @@ impl Fixture {
     fn retain_sidecar(&self) -> NativeRetainedFile {
         let (pd, pi, _, _, _) = facts(&self.directory);
         let (d, i, s, _, _) = facts(&self.file);
-        retain_windows_sidecar(self.directory.to_string_lossy().trim_start_matches(r"\\?\").into(), "backup".into(),
-            pd.into(), pi.into(), d.into(), i.into(), s.into(),
-            "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5".into(), 1024)
+        let parent = crate::test_support::directory(&self.directory);
+        retain_file(self.directory.to_string_lossy().trim_start_matches(r"\\?\").into(), "backup".into(),
+            pd.into(), pi.into(), d.into(), i.into(), s.into(), 0u64.into(), 0u64.into(),
+            "0682c5f2076f099c34cfdd15a9e063849ed437a49677e6fcc5b4198c76575be5".into(), 1024,
+            Some(Ok(parent.as_raw_handle())))
     }
 }
 

@@ -34,6 +34,16 @@ if (action === "leaks") {
   for (let i = 0; i < 20; i++) await assert.rejects(manager.acquire(target, options), error => error === failure);
   capability.open = open;
   const native = getNativeBinding();
+  const retentionFailure = Object.assign(new Error("retained open failed"), { code: "EMFILE" });
+  __setNativeLoaderForTest(() => ({ ...native, openBeneath(parentFd, name, flags) {
+    if (name === "state.lock" && (flags & fs.constants.O_NONBLOCK) !== 0) throw retentionFailure;
+    return native.openBeneath(parentFd, name, flags);
+  } }));
+  for (let i = 0; i < 10; i++) {
+    await assert.rejects(manager.acquire(target, options), error => error === retentionFailure);
+    assert.equal(fs.existsSync(`${target}.lock`), false);
+  }
+  __resetNativeLoaderForTest();
   const ioFailure = Object.assign(new Error("retained unlink failed"), { code: "EIO" });
   __setNativeLoaderForTest(() => ({ ...native, removeStagedFile() { throw ioFailure; } }));
   for (let i = 0; i < 20; i++) {
