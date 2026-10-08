@@ -82,20 +82,6 @@ function shouldStop(result: WalkDirectoryResult, options: Pick<WalkDirectoryOpti
   return options.maxEntries !== undefined && result.scannedEntryCount >= Math.max(0, options.maxEntries);
 }
 
-function buildEntry(params: Pick<WalkDirectoryEntry, "relativePath" | "dirent" | "depth" | "kind"> & {
-  fullPath: string;
-}): WalkDirectoryEntry {
-  const fullPath = params.fullPath;
-  return {
-    name: params.dirent.name,
-    path: fullPath,
-    relativePath: params.relativePath,
-    depth: params.depth,
-    kind: params.kind,
-    dirent: params.dirent,
-  };
-}
-
 function recordFailedDir(
   result: WalkDirectoryResultWithFailures,
   root: string,
@@ -189,7 +175,7 @@ export function walkDirectorySync(
         const kind = resolveKind(fullPath, dirent, symlinks);
         if (!kind) continue;
         const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
-        const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
+        const entry: WalkDirectoryEntry = { name: dirent.name, path: fullPath, relativePath, depth, kind, dirent };
         if (options.include?.(entry) ?? true) {
           result.entries.push(entry);
         }
@@ -274,7 +260,7 @@ export async function walkDirectory(
         const kind = resolveKind(fullPath, dirent, symlinks);
         if (!kind) continue;
         const relativePath = relativeDir ? `${relativeDir}${path.sep}${dirent.name}` : dirent.name;
-        const entry = buildEntry({ relativePath, fullPath, dirent, depth, kind });
+        const entry: WalkDirectoryEntry = { name: dirent.name, path: fullPath, relativePath, depth, kind, dirent };
         const include = options.include;
         const included: unknown = include == null ? true : Reflect.apply(include, options, [entry]);
         if ((isObjectResult(included) ? await included : included) ?? true) {
