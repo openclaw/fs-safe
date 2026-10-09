@@ -38,6 +38,35 @@ it.each([0, 1, 7, 64 * 1024])("keeps an unpooled bounded read private after a sh
 });
 
 describe.skipIf(!native)("native buffered ZIP reads", () => {
+  it.each([0, 3, 10])("retains raw UNIX attributes from creator %s for policy admission", async creatorSystem => {
+    const entries = [
+      { name: "file", mode: 0o107640, kind: "file" },
+      { name: "directory", mode: 0o047755, kind: "directory" },
+      { name: "link/", mode: 0o120777, kind: "symlink" },
+      { name: "unsupported", mode: 0o160777, kind: "other" },
+    ];
+    const bytes = zipRecords(entries.map(entry => ({
+      name: entry.name, attributes: (entry.mode << 16) >>> 0, creatorSystem,
+    })));
+    const owned = Buffer.allocUnsafeSlow(bytes.length); bytes.copy(owned);
+    const reader = await native!.openZipBufferNative(owned, resolveTarMeterLimits());
+    expect(reader.entries).toMatchObject(entries.map(entry => ({
+      path: entry.name, mode: entry.mode, kind: entry.kind, size: 7,
+    })));
+  });
+
+  it.each([
+    ["ASCII", Buffer.from("plain"), "plain"],
+    ["UTF-8", Buffer.from("café"), "café"],
+    ["CP437", Buffer.from([0x63, 0x61, 0x66, 0x82]), "café"],
+  ])("retains decoded %s names after native metadata inspection", async (_encoding, raw, decoded) => {
+    const bytes = zipRecords([{ name: raw, body: "contents" }]);
+    const owned = Buffer.allocUnsafeSlow(bytes.length); bytes.copy(owned);
+    const reader = await native!.openZipBufferNative(owned, resolveTarMeterLimits());
+    expect(reader.entries).toMatchObject([{ path: decoded, index: 0, kind: "file", size: 8 }]);
+    await expect(reader.readEntry(0, 8)).resolves.toEqual(Buffer.from("contents"));
+  });
+
   it.each(["index", "path", "size", "mode", "kind"] as const)("rejects unrelated %s manifest disagreement before reading", async field => {
     const dir = await tempRoot("fs-safe-native-buffer-metadata-");
     const archivePath = path.join(dir, "input.zip");

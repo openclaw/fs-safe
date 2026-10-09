@@ -210,8 +210,15 @@ fn inspect_tar_reader<R: Read>(mut reader: TarMetadataMeter<R>) -> Result<Vec<Ar
     Ok(result)
 }
 
+fn zip_mode<R: Read>(file: &zip::read::ZipFile<'_, R>) -> u32 {
+    // Admission compares raw attributes, including special bits and UNIX types
+    // from non-UNIX creators; zip's permission helper sanitizes these in v9.
+    let raw_mode = file.get_metadata().external_attributes >> 16;
+    if raw_mode != 0 { raw_mode } else { file.unix_mode().unwrap_or(0) }
+}
+
 fn zip_kind<R: Read>(file: &zip::read::ZipFile<'_, R>) -> &'static str {
-    let mode = file.unix_mode().unwrap_or(0);
+    let mode = zip_mode(file);
     // Attribute-only directories need no terminal separator. Keep high-word
     // symlinks first, including modes recorded by non-UNIX creators.
     if mode & 0o170000 == 0o120000 {
@@ -221,7 +228,7 @@ fn zip_kind<R: Read>(file: &zip::read::ZipFile<'_, R>) -> &'static str {
         || file.is_dir()
     {
         "directory"
-    } else if file.is_file() {
+    } else if mode & 0o120000 != 0o120000 {
         "file"
     } else {
         "other"
@@ -255,16 +262,17 @@ fn inspect_zip_entries<R: Read + Seek>(
         let file = archive
             .by_index(index)
             .map_err(|error| io_error("read zip entry", error))?;
-        manifest_bytes = manifest_bytes.checked_add(file.name().len() as u64)
+        let name = file.name().map_err(|error| io_error("read zip entry name", error))?;
+        manifest_bytes = manifest_bytes.checked_add(name.len() as u64)
             .filter(|total| *total <= max_path_bytes)
             .ok_or_else(|| Error::from_reason("archive-manifest-size-exceeds-limit"))?;
         result.push(ArchiveEntryData {
             index: u32::try_from(index)
                 .map_err(|_| Error::new(Status::InvalidArg, "too many archive entries"))?,
-            path: file.name().to_owned(),
+            path: name.into_owned(),
             kind: zip_kind(&file).to_owned(),
             size: file.size(),
-            mode: file.unix_mode().unwrap_or(0),
+            mode: zip_mode(&file),
             offset: 0,
         });
     }
