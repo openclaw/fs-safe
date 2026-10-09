@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureCrc32, zipRecords, unicodePath } from "../../test/helpers/zip-records.ts";
 
-// Generated on demand: no binary fixtures, large decoded payloads, or dependencies.
+// Generated on demand: no large decoded payloads or additional dependencies.
 export function syntheticCorpus({ large = false } = {}) {
   const cases = [];
   const add = (id, records, options = {}, extra = {}) => cases.push({ id, bytes: zipRecords(records, options), ...extra });
@@ -123,11 +124,22 @@ export async function writeCorpus(directory, options) {
     await fs.writeFile(path.join(directory, `${entry.id}.zip`), bytes);
     manifest.push({ ...entry, producer: "synthetic", bytes: bytes.length });
   }
+  if (options?.producers) {
+    const catalog = JSON.parse(await fs.readFile(new URL("./producer-fixtures.json", import.meta.url), "utf8"));
+    if (catalog.schema !== 1 || !Array.isArray(catalog.fixtures) || catalog.fixtures.length > 64) throw new Error("invalid producer catalog");
+    for (const { base64, ...entry } of catalog.fixtures) {
+      if (!/^[a-z0-9-]+$/.test(entry.id) || typeof base64 !== "string" || base64.length > 256 * 1024 || manifest.some(record => record.id === entry.id)) throw new Error("invalid producer fixture");
+      const bytes = Buffer.from(base64, "base64");
+      if (bytes.length !== entry.bytes || createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error(`producer checksum mismatch: ${entry.id}`);
+      await fs.writeFile(path.join(directory, `${entry.id}.zip`), bytes);
+      manifest.push(entry);
+    }
+  }
   await fs.writeFile(path.join(directory, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (!process.argv[2]) throw new Error("usage: node scripts/zip-differential/corpus.mjs <output> [--large]");
-  console.log(JSON.stringify({ cases: (await writeCorpus(path.resolve(process.argv[2]), { large: process.argv.includes("--large") })).length }));
+  if (!process.argv[2]) throw new Error("usage: node scripts/zip-differential/corpus.mjs <output> [--large] [--producers]");
+  console.log(JSON.stringify({ cases: (await writeCorpus(path.resolve(process.argv[2]), { large: process.argv.includes("--large"), producers: process.argv.includes("--producers") })).length }));
 }
