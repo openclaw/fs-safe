@@ -56,11 +56,11 @@ describe.skipIf(!native)("native buffered ZIP reads", () => {
   });
 
   it.each([
-    ["ASCII", Buffer.from("plain"), "plain"],
-    ["UTF-8", Buffer.from("café"), "café"],
-    ["CP437", Buffer.from([0x63, 0x61, 0x66, 0x82]), "café"],
-  ])("retains decoded %s names after native metadata inspection", async (_encoding, raw, decoded) => {
-    const bytes = zipRecords([{ name: raw, body: "contents" }]);
+    ["ASCII", Buffer.from("plain"), "plain", 0],
+    ["UTF-8", Buffer.from("café"), "café", 0x800],
+    ["CP437", Buffer.from([0x63, 0x61, 0x66, 0x82]), "café", 0],
+  ] as const)("retains decoded %s names after native metadata inspection", async (_encoding, raw, decoded, flags) => {
+    const bytes = zipRecords([{ name: raw, body: "contents", flags }]);
     const owned = Buffer.allocUnsafeSlow(bytes.length); bytes.copy(owned);
     const reader = await native!.openZipBufferNative(owned, resolveTarMeterLimits());
     expect(reader.entries).toMatchObject([{ path: decoded, index: 0, kind: "file", size: 8 }]);
