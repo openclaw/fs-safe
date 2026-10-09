@@ -5,6 +5,7 @@ use napi_derive::napi;
 
 mod archive;
 mod archive_gzip;
+mod archive_zip_name;
 mod task;
 #[cfg(test)]
 mod test_support;

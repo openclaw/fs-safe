@@ -262,7 +262,10 @@ fn inspect_zip_entries<R: Read + Seek>(
         let file = archive
             .by_index(index)
             .map_err(|error| io_error("read zip entry", error))?;
-        let name = file.name().map_err(|error| io_error("read zip entry name", error))?;
+        // ZIP 9 guesses UTF-8 for legacy bytes. Preserve the flag-based contract;
+        // validated Unicode Path overrides already set the decoder's UTF-8 flag.
+        let name = crate::archive_zip_name::decode(file.name_raw(), file.get_metadata().flags.as_u16() & 0x800 != 0)
+            .map_err(|error| io_error("read zip entry name", error))?;
         manifest_bytes = manifest_bytes.checked_add(name.len() as u64)
             .filter(|total| *total <= max_path_bytes)
             .ok_or_else(|| Error::from_reason("archive-manifest-size-exceeds-limit"))?;
@@ -372,6 +375,7 @@ fn count_central_directory_entries<R: Read + Seek>(
         .map_err(|error| io_error("seek zip directory", error))?;
     let mut consumed = 0_u64;
     let mut count = 0_u64;
+    let mut metadata = Vec::new();
     while consumed < size {
         let mut header = [0_u8; 46];
         file.read_exact(&mut header)
@@ -382,9 +386,10 @@ fn count_central_directory_entries<R: Read + Seek>(
                 "invalid zip central directory entry",
             ));
         }
-        let variable = u16::from_le_bytes([header[28], header[29]]) as u64
-            + u16::from_le_bytes([header[30], header[31]]) as u64
-            + u16::from_le_bytes([header[32], header[33]]) as u64;
+        let name_length = u16::from_le_bytes([header[28], header[29]]) as usize;
+        let extra_length = u16::from_le_bytes([header[30], header[31]]) as usize;
+        let comment_length = u16::from_le_bytes([header[32], header[33]]) as u64;
+        let variable = (name_length + extra_length) as u64 + comment_length;
         consumed = consumed
             .checked_add(46 + variable)
             .ok_or_else(|| Error::new(Status::InvalidArg, "zip directory size overflow"))?;
@@ -394,7 +399,14 @@ fn count_central_directory_entries<R: Read + Seek>(
                 "truncated zip central directory",
             ));
         }
-        file.seek(SeekFrom::Current(variable as i64))
+        // ZIP 9 silently ignores invalid Unicode Path fields. Validate original
+        // bytes before it replaces names; the reusable buffer is at most 128 KiB.
+        metadata.resize(name_length + extra_length, 0);
+        file.read_exact(&mut metadata).map_err(|error| io_error("read zip name metadata", error))?;
+        crate::archive_zip_name::validate_metadata(&metadata[..name_length],
+            u16::from_le_bytes([header[8], header[9]]), &metadata[name_length..])
+            .map_err(|error| io_error("read zip name metadata", error))?;
+        file.seek(SeekFrom::Current(comment_length as i64))
             .map_err(|error| io_error("skip zip directory entry", error))?;
         count += 1;
         if count > max_entries as u64 {
