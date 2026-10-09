@@ -242,7 +242,10 @@ impl FileCopyTask {
 }
 
 fn unsupported(code: &str) -> bool {
-    matches!(code, "ENOTSUP" | "ENOSYS" | "EXDEV" | "EINVAL")
+    // Mirror the FICLONE capability set (ficlone_unavailable): seccomp/LSM
+    // or a filesystem without reflink support can deny the clone with
+    // EPERM/ENOTTY, which must select the byte-copy fallback in auto mode.
+    matches!(code, "ENOTSUP" | "ENOSYS" | "EXDEV" | "EINVAL" | "EPERM" | "ENOTTY")
 }
 
 #[cfg(target_os = "linux")]

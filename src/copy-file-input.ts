@@ -78,8 +78,9 @@ export async function createNativeCopyFile(
     if (code === "too-large") {
       throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes`, { cause: error });
     }
-    if (code === "ENOTSUP" && input.clone !== "always") return undefined;
-    if (code === "ENOTSUP") {
+    const cloneCapabilityMiss = code === "ENOTSUP" || code === "EPERM" || code === "ENOTTY";
+    if (cloneCapabilityMiss && input.clone !== "always") return undefined;
+    if (cloneCapabilityMiss) {
       throw new FsSafeError("unsupported-platform", "native file cloning is unsupported", { cause: error });
     }
     throw new FsSafeError("helper-failed", "native file copy failed", { cause: error });
@@ -91,7 +92,7 @@ export async function createNativeCopyFile(
 export function assertNativeCopyCompleted(input: CopyFileInput, copied?: NativeFileCopyResult): void {
   if (copied?.errorCode) {
     if (copied.errorCode === "Cancelled" || copied.errorCode === "ABORT_ERR") input.signal?.throwIfAborted();
-    const unsupported = ["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL"].includes(copied.errorCode);
+    const unsupported = ["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL", "EPERM", "ENOTTY"].includes(copied.errorCode);
     throw new FsSafeError(
       copied.errorCode === "too-large" ? "too-large" : unsupported ? "unsupported-platform" : "helper-failed",
       copied.errorMessage ?? "native file copy failed",
