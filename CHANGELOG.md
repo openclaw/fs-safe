@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Portable ZIP extraction:** accept safe relative root-directory markers such as `./` from libarchive and other producers without turning them into absolute paths; root markers remain skipped before callbacks and publication.
+
 ## 0.25.0 - 2026-10-08
 
 ### Highlights

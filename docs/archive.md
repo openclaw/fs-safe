@@ -244,6 +244,9 @@ remaining components are skipped before the filter callback, but still count
 toward `maxEntries` and undergo traversal validation. JavaScript TAR extraction
 copies the admitted payload range to this accepted output path, so depth checks,
 collision checks, writes, and mode application agree.
+ZIP directories naming the relative archive root (for example `./`) follow the
+same skip rule on both backends. Portable preflight retains their relative `./`
+spelling; a literal absolute `/` entry is still rejected.
 
 An `entryFilter` sees the validated **canonical effective archive path before
 stripping**, entry kind, and declared size. On every JavaScript and native
