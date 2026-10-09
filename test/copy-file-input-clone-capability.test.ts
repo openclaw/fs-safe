@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { assertNativeCopyCompleted, createNativeCopyFile, type CopyFileInput } from "../src/copy-file-input.js";
 
-// Regression: on filesystems/kernel builds where FICLONE is denied with EPERM
-// (PVE LXC ext4 without the reflink feature, or a host kernel without
-// CONFIG_EXT4_FS_REFLINK) or ENOTTY, the native layer classifies it as a clone
-// capability miss. The JS layer must agree, so callers can fall back to a byte
-// copy (auto) or report unsupported-platform (always) instead of hard-failing
-// the whole operation with "native file copy failed".
+// Regression: on bindings that do not normalize FICLONE capability errors
+// (fs-safe < 0.23.1, e.g. the 0.21.1 that OpenClaw 2026.9.x bundles), a FICLONE
+// denial with EPERM (seccomp/LSM policy, or a filesystem without the reflink
+// feature) or ENOTTY reaches the JS layer as a rejected copyFileExclusive
+// promise. The createNativeCopyFile catch path must classify that as a
+// clone-capability miss so callers select the byte-copy fallback (auto) or
+// report unsupported-platform (always) instead of hard-failing the operation
+// with "native file copy failed".
+//
+// NOTE: this deliberately does NOT widen assertNativeCopyCompleted's
+// completed-result list. Completed-result errorCodes carry genuine transfer
+// failures (a denied pread/pwrite/fchmod can carry raw EPERM) that must stay
+// helper-failed. FICLONE capability misses surface via the catch path, not the
+// completed result.
 function capabilityError(code: "EPERM" | "ENOTTY"): NodeJS.ErrnoException {
   const error = new Error(
     code === "EPERM"
@@ -32,7 +40,7 @@ function input(clone: "auto" | "always"): CopyFileInput {
   return { kind: "file", handle: { fd: 3 } as never, size: 4, clone, verifySource: async () => undefined };
 }
 
-describe("native copy clone-capability miss classification", () => {
+describe("native copy clone-capability miss classification (catch path)", () => {
   it.each(["EPERM", "ENOTTY"] as const)("%s in auto mode selects the byte-copy fallback", async code => {
     const binding = bindingFor(capabilityError(code));
     await expect(createNativeCopyFile(binding, input("auto"), 7, "stage", undefined)).resolves.toEqual(undefined);
@@ -45,10 +53,13 @@ describe("native copy clone-capability miss classification", () => {
     });
   });
 
-  it.each(["EPERM", "ENOTTY"] as const)("%s from a completed native result is unsupported-platform", async code => {
-    const result = { fd: 9, method: "clone" as const, errorCode: code, errorMessage: "FICLONE denied" };
+  it.each(["EPERM", "ENOTTY"] as const)("%s from a completed native result is NOT reclassified (stays helper-failed)", async code => {
+    // A completed-result errorCode reflects the whole transfer, not just the
+    // clone. A genuine transfer failure carrying this errno must stay
+    // helper-failed: the completed-result list is intentionally not widened.
+    const result = { fd: 9, method: "copy-file-range" as const, errorCode: code, errorMessage: "transfer denied" };
     expect(() => assertNativeCopyCompleted(input("always"), result)).toThrow(
-      expect.objectContaining({ code: "unsupported-platform", message: "FICLONE denied" }),
+      expect.objectContaining({ code: "helper-failed", message: "transfer denied" }),
     );
   });
 });

@@ -92,7 +92,7 @@ export async function createNativeCopyFile(
 export function assertNativeCopyCompleted(input: CopyFileInput, copied?: NativeFileCopyResult): void {
   if (copied?.errorCode) {
     if (copied.errorCode === "Cancelled" || copied.errorCode === "ABORT_ERR") input.signal?.throwIfAborted();
-    const unsupported = ["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL", "EPERM", "ENOTTY"].includes(copied.errorCode);
+    const unsupported = ["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EINVAL"].includes(copied.errorCode);
     throw new FsSafeError(
       copied.errorCode === "too-large" ? "too-large" : unsupported ? "unsupported-platform" : "helper-failed",
       copied.errorMessage ?? "native file copy failed",
