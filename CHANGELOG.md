@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Native ZIP names:** preserve CP437 decoding for unflagged legacy filenames after the ZIP 9 upgrade, including collision rejection and bounded entry selection; continue rejecting invalid Unicode Path checksums and encodings before decoder normalization.
+
+### Compatibility
+
+- **Native ZIP metadata:** invalid UTF-8-flagged names now reject instead of decoding lossily or falling back to CP437. Public ZIP extraction, preflight, and reads already reject these names during physical admission.
+
 ## 0.25.0 - 2026-10-08
 
 ### Highlights
