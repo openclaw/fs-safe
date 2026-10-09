@@ -1,0 +1,50 @@
+# ZIP decoder differential corpus
+
+This opt-in harness compares the published package with a built checkout through
+the archive subpath's extraction, preflight/listing, count hint, and bounded-read
+APIs. It runs `off`, `require`, and `auto` in separate processes and also records
+the native buffer manifest as a separately labelled diagnostic. ZIP fallback is
+JSZip; the bundled WASM parser handles TAR, not ZIP.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pnpm native:build
+mkdir -p /tmp/zip-baseline
+pnpm --dir /tmp/zip-baseline --ignore-workspace add --save-exact @openclaw/fs-safe@0.25.0
+node scripts/zip-differential/corpus.mjs /tmp/zip-corpus --large
+node scripts/zip-differential/compare.mjs \
+  /tmp/zip-baseline/node_modules/@openclaw/fs-safe . /tmp/zip-corpus /tmp/zip-results
+```
+
+Use task-owned scratch directories. The generator writes only inside its output
+directory; the observers extract into disposable OS temporary directories. Cases
+are synthetic and contain no personal data. Without `--large`, generation omits
+the 65,536-entry ZIP64 archive. With it, default-limit extraction/reads must reject
+that archive while raised-limit preflight and skip-only extraction exercise its
+complete directory. No multi-gigabyte payload is allocated.
+
+Results retain names, physical order, callback kinds/sizes, original published
+modes, content hashes, and error names/codes/messages. Lists over 1,000 entries
+retain their count, first/last entry and a hash over the complete ordered list.
+Only temporary-root spellings are normalized. The native binding hashes must
+differ between versions; missing native bindings, process failures and timeouts
+fail the run. A successful run is an observation, not a compatibility verdict:
+every row in `differences.json` starts `UNCLASSIFIED` and needs investigation as
+an intended documented tightening, harmless representation change, or regression.
+
+The native manifest diagnostic bypasses public physical admission. A difference
+there does not establish a public behavior change: check the corresponding public
+surfaces. No consumer should bypass admission to reproduce the diagnostic.
+
+Run the existing ZIP mutation, collision, and limit properties for a bounded
+duration with a new reproducible fast-check seed each iteration:
+
+```sh
+node scripts/zip-differential/fuzz.mjs 1800 /tmp/zip-fuzz
+```
+
+The runner requires a built native binding, retains seed-labelled logs, stops at
+the first failed property or process timeout, and records elapsed time. Replay a
+failure by setting `FS_SAFE_PROPERTY_SEED` to its reported seed when invoking the
+same Vitest test/name filter. Normal tests retain their fixed default seed.
