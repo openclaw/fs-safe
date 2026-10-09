@@ -185,7 +185,7 @@
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-alpha.6",
     "@napi-rs/cli": "3.10.8",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "5.0.3",
     "fast-check": "^4.10.2",
     "istanbul-lib-coverage": "3.2.2",
@@ -194,7 +194,7 @@
     "sigstore": "5.0.0",
     "tar": "7.5.22",
     "typescript": "^7.0.2",
-    "vite": "8.3.3",
+    "vite": "8.3.4",
     "vitest": "^5.0.3"
   },
   "engines": {
