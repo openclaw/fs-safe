@@ -13,6 +13,7 @@ pnpm native:build
 mkdir -p /tmp/zip-baseline
 pnpm --dir /tmp/zip-baseline --ignore-workspace add --save-exact @openclaw/fs-safe@0.25.0
 node scripts/zip-differential/corpus.mjs /tmp/zip-corpus --large
+node scripts/zip-differential/producers.mjs /tmp/zip-corpus
 node scripts/zip-differential/compare.mjs \
   /tmp/zip-baseline/node_modules/@openclaw/fs-safe . /tmp/zip-corpus /tmp/zip-results
 ```
@@ -23,6 +24,17 @@ are synthetic and contain no personal data. Without `--large`, generation omits
 the 65,536-entry ZIP64 archive. With it, default-limit extraction/reads must reject
 that archive while raised-limit preflight and skip-only extraction exercise its
 complete directory. No multi-gigabyte payload is allocated.
+
+The optional producer step uses installed Info-ZIP (including `-X`, `-y` and a
+synthetic-password encrypted entry), Python zipfile, Java jar, 7-Zip, libarchive,
+macOS ditto with a synthetic extended attribute, and Windows PowerShell
+Compress-Archive. It also wraps a real zstd frame in a ZIP method-93 record.
+`producers-<platform>.json` distinguishes generated, unavailable and failed tools;
+missing tools are coverage gaps, not passing producer tests. Merge the generated
+archives and manifests from the three OSes to replay identical bytes everywhere.
+The normal test suite exercises a small deterministic subset through the public
+APIs; full differentials, real producers, ZIP64 high entry counts and timed fuzzing
+remain opt-in.
 
 Results retain names, physical order, callback kinds/sizes, original published
 modes, content hashes, and error names/codes/messages. Lists over 1,000 entries

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { zipRecords, unicodePath, zipExtra } from "../../test/helpers/zip-records.ts";
+import { fixtureCrc32, zipRecords, unicodePath } from "../../test/helpers/zip-records.ts";
 
 // Generated on demand: no binary fixtures, large decoded payloads, or dependencies.
 export function syntheticCorpus({ large = false } = {}) {
@@ -22,7 +22,7 @@ export function syntheticCorpus({ large = false } = {}) {
     ["utf8-truncated", Buffer.from([0xe2, 0x82]), 0x800],
     ["empty-name", "", 0], ["dot", ".", 0], ["parent", "../escape", 0],
     ["absolute", "/zip9-escape", 0], ["drive", "C:/zip9-escape", 0],
-    ["drive-relative", "C:zip9-escape", 0], ["unc", "\\\\server\\share\\escape", 0],
+    ["drive-relative", "C:zip9-escape", 0], ["unc", "\\\\localhost\\C$\\zip9-escape", 0],
     ["backslash", "nested\\payload", 0], ["nul", "payload\0hidden", 0],
     ["long-component", "a".repeat(256), 0], ["max-name", "a".repeat(65535), 0],
     ["long-path", Array(12).fill("a".repeat(64)).join("/"), 0],
@@ -42,7 +42,15 @@ export function syntheticCorpus({ large = false } = {}) {
   one("unicode-local-disagrees", { extra: unicodePath(Buffer.from("payload"), "one"), localExtra: unicodePath(Buffer.from("payload"), "two") });
   const badCrc = unicodePath(Buffer.from("payload"), "alternate"); badCrc[5] ^= 1;
   one("unicode-bad-crc", { extra: badCrc });
-  one("unicode-invalid-utf8", { extra: zipExtra(0x7075, Buffer.from([1, 0, 0, 0, 0, 0xff])) });
+  const invalidUnicode = unicodePath(Buffer.from("payload"), "x"); invalidUnicode[9] = 0xff;
+  one("unicode-invalid-utf8", { extra: invalidUnicode });
+  one("flagged-unicode-bad-crc", { flags: 0x800, extra: badCrc });
+  const invalidRaw = Buffer.from([0xff]);
+  one("invalid-utf8-with-override", { name: invalidRaw, flags: 0x800, extra: unicodePath(invalidRaw, "safe") });
+  add("legacy-unicode-collision", [{ name: "keep" }, { name: Buffer.from("é") }, { name: "├⌐", flags: 0x800 }]);
+  for (const [index, name] of ["./", ".\\", ".", "././"].entries()) {
+    add(`root-directory-${index}`, [{ name, body: "", attributes: 0x41ed0010 }, { name: "payload" }]);
+  }
   for (const [id, names] of [
     ["duplicate", ["payload", "payload"]], ["case-collision", ["A", "a"]],
     ["directory-file-collision", ["A/", "a"]], ["nfc-collision", ["café", "cafe\u0301"]],
@@ -92,6 +100,14 @@ export function syntheticCorpus({ large = false } = {}) {
   const secondCd = overlap.indexOf(Buffer.from("PK\x01\x02"), overlap.indexOf(Buffer.from("PK\x01\x02")) + 4);
   overlap.writeUInt32LE(0, secondCd + 42);
   cases.push({ id: "overlapping-local-entry", bytes: overlap });
+  const overlappingPayloads = zipRecords([{ name: "first" }, { name: "other" }]);
+  const overlapCd = overlappingPayloads.indexOf(Buffer.from("PK\x01\x02"));
+  const payload = overlappingPayloads.subarray(35, overlapCd);
+  for (const [crcOffset, compressedOffset, sizeOffset] of [[14, 18, 22], [overlapCd + 16, overlapCd + 20, overlapCd + 24]]) {
+    overlappingPayloads.writeUInt32LE(fixtureCrc32(payload), crcOffset);
+    overlappingPayloads.writeUInt32LE(payload.length, compressedOffset); overlappingPayloads.writeUInt32LE(payload.length, sizeOffset);
+  }
+  cases.push({ id: "overlapping-payloads", bytes: overlappingPayloads });
   const huge = zipRecords([{ name: "payload", zip64: true }], { zip64: true });
   huge.writeBigUInt64LE(0x100000001n, 30 + 7 + 4);
   huge.writeBigUInt64LE(0x100000001n, huge.indexOf(Buffer.from("PK\x01\x02")) + 46 + 7 + 4);

@@ -19,6 +19,19 @@ const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const compact = entries => entries.length > 1000 ? { count: entries.length, sha256: hash(JSON.stringify(entries)), first: entries[0], last: entries.at(-1) } : entries;
 const scratch = await fs.mkdtemp(path.join(tmpdir(), "fs-safe-zip-differential-"));
 const canonicalScratch = await fs.realpath(scratch);
+// Monitor each absolute/drive interpretation used by the generated corpus.
+// The UNC case targets this machine's C$ share, never a third-party server.
+const externalProbes = process.platform === "win32"
+  ? [...new Set([path.resolve("/zip9-escape"), "C:\\zip9-escape", path.resolve("C:zip9-escape")])]
+  : ["/zip9-escape", "/localhost/C$/zip9-escape"];
+async function assertNoExternalOutput() {
+  for (const probe of externalProbes) {
+    let present = false;
+    try { await fs.lstat(probe); present = true; }
+    catch (error) { if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error; }
+    assert.equal(present, false, `external ZIP probe exists: ${probe}; preserve it for investigation`);
+  }
+}
 function errorResult(error) {
   if (error?.code === "helper-unavailable" || /timed out|panic/i.test(String(error?.message))) throw error;
   return { ok: false, name: error?.name ?? typeof error, code: error?.code ?? null,
@@ -72,6 +85,8 @@ if (mode !== "off") {
 }
 const nativeLimits = { maxEntries: 70000, maxMetaEntryBytes: 1024 * 1024, maxManifestBytes: 64 * 1024 * 1024, maxDecodedBytes: 16 * 1024 * 1024 };
 try {
+  // Refuse pre-existing probe paths before testing; never overwrite unknown data.
+  await assertNoExternalOutput();
   const manifest = JSON.parse(await fs.readFile(path.join(corpusDirectory, "manifest.json"), "utf8"));
   assert.ok(Array.isArray(manifest) && manifest.length > 0, "corpus must be nonempty");
   assert.ok(manifest.every(record => /^[a-z0-9-]+$/.test(record.id)), "invalid corpus case id");
@@ -111,6 +126,7 @@ try {
       return compact(reader.entries);
     });
     assert.equal(await fs.readFile(path.join(scratch, "escape"), "utf8"), "confinement sentinel");
+    await assertNoExternalOutput();
     assert.deepEqual((await fs.readdir(scratch)).sort(), ["escape", "input.zip"]);
     observations.push(observed);
     console.log(JSON.stringify({ case: record.id, mode }));
