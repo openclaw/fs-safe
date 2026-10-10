@@ -16,7 +16,9 @@ if [ "$FS_SAFE_FREEBSD_TARGET" = "freebsd-arm64" ]; then
   git -C "$source_dir" fetch --depth 1 https://github.com/pnpm/pnpm.git "$revision"
   git -C "$source_dir" checkout --detach -q FETCH_HEAD
   test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
-  (cd "$source_dir" && cargo build --locked --release -p pnpm-cli --bin pnpm)
+  # Bootstrap from the locked registry sources, before pnpm can materialize its
+  # own .pnpm/crates directory. Cargo discovers config from the working directory.
+  cargo build --manifest-path "$source_dir/Cargo.toml" --locked --release -p pnpm-cli --bin pnpm
   install -m 755 "$source_dir/target/release/pnpm" "$(npm root --global)/pnpm/pnpm"
 fi
 
