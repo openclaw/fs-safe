@@ -588,6 +588,8 @@ await fs.remove("scratch/finished-job", {
 Budgets must be non-negative safe integers or explicit `Infinity`, and require
 `recursive: true`. Omitted budgets retain their finite defaults. An entry or
 depth limit throws `too-large` before processing the over-budget entry.
+Once the parent is admitted, `maxEntries: 0` rejects before inspecting even a
+missing requested entry; `force: true` does not bypass that budget.
 
 The default filesystem order streams each directory once, using memory and open
 handles proportional to depth rather than directory width. Sorted order also
