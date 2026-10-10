@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { fstatSync, openSync, readFileSync } from "node:fs";
+import { fstatSync, readFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { once } from "node:events";
@@ -9,6 +9,7 @@ import { root } from "@openclaw/fs-safe/root";
 import { configureFsSafeNative } from "@openclaw/fs-safe/config";
 import { sha256File } from "@openclaw/fs-safe/durability";
 import { probeTreeClone } from "@openclaw/fs-safe/copy";
+import { createPipe } from "@openclaw/fs-safe/pipe";
 
 assert.equal(process.platform, "freebsd");
 const expected = JSON.parse(readFileSync("expected.json", "utf8"));
@@ -19,7 +20,7 @@ const directory = await fs.mkdtemp(path.join(process.cwd(), "freebsd-proof-"));
 try {
   const native = expected.omitted ? undefined : rootRequire(expected.host.package);
   if (native) {
-    assert.deepEqual(Object.keys(native).sort(), ["canonicalizePath", "closeOwnedFd"]);
+    assert.deepEqual(Object.keys(native).sort(), ["canonicalizePath", "closeOwnedFd", "createPipe"]);
     const file = path.join(directory, "original");
     const link = path.join(directory, "link");
     await fs.writeFile(file, "native canonicalization");
@@ -28,13 +29,24 @@ try {
       assert.equal(native.canonicalizePath(link, ordinary).path, await fs.realpath(file));
       assert.equal(native.canonicalizePath(path.join(directory, "missing"), ordinary).errno, 2);
     }
-    // Transfer this fixture descriptor to the native closer. The Worker below
-    // disables automatic raw-fd tracking so cleanup has exactly one owner.
-    const transferred = openSync(file, "r");
-    native.closeOwnedFd(transferred);
-    assert.throws(() => fstatSync(transferred), { code: "EBADF" });
+    const pipe = createPipe();
+    const reader = pipe.reader.fd;
+    try {
+      assert.equal(pipe.atomicCloseOnExec, true);
+      assert.ok(fstatSync(reader).isFIFO());
+      writeSync(pipe.writer.fd, "native pipe");
+      pipe.writer.close();
+      assert.equal(readFileSync(reader, "utf8"), "native pipe");
+    } finally {
+      pipe.reader.close();
+      pipe.writer.close();
+    }
+    assert.throws(() => fstatSync(reader), { code: "EBADF" });
     assert.throws(() => native.closeOwnedFd(-1), { code: "EBADF" });
-    rows.push("native-exports", "native-canonicalization", "native-close", "native-negative-close");
+    rows.push("native-exports", "native-canonicalization", "native-pipe-close", "native-negative-close");
+  } else {
+    assert.throws(createPipe, { code: "helper-unavailable" });
+    rows.push("missing-pipe");
   }
   for (const mode of ["off", "auto"]) {
     configureFsSafeNative({ mode });
@@ -59,7 +71,7 @@ try {
   await fs.rm(directory, { recursive: true, force: true });
 }
 if (isMainThread) {
-  const worker = new Worker(new URL(import.meta.url), { trackUnmanagedFds: false });
+  const worker = new Worker(new URL(import.meta.url));
   const [[workerRows], [exitCode]] = await Promise.all([once(worker, "message"), once(worker, "exit")]);
   assert.equal(exitCode, 0);
   assert.deepEqual(workerRows, rows);

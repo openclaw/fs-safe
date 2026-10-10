@@ -8,6 +8,8 @@ include!("bindings.rs");
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 mod pipe;
 #[cfg(target_os = "freebsd")]
+pub use pipe::{NativePipe, create_pipe};
+#[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "freebsd")]
 pub use freebsd::close_owned_fd;

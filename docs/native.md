@@ -27,8 +27,8 @@ instead of substituting a weaker implementation.
 
 ## FreeBSD 14.4 and newer
 
-The FreeBSD x64 and arm64 packages provide native descriptor close and POSIX
-canonicalization. The larger Linux/macOS/Windows filesystem backend is excluded
+The FreeBSD x64 and arm64 packages provide native anonymous pipes, descriptor
+close and POSIX canonicalization. The larger Linux/macOS/Windows filesystem backend is excluded
 from these binaries: its Unix gates contain platform-specific resolver, clone,
 copy, observation and cleanup implementations. FreeBSD does not export stubs for
 those operations. In `auto`, each operation selects its existing guarded JavaScript
@@ -37,7 +37,7 @@ or WASM backend; in `require`, a missing required capability fails with
 
 | Native capability | FreeBSD binding |
 |---|---|
-| `closeOwnedFd`, `canonicalizePath` | Implemented; real descriptor and pathname syscalls |
+| `createPipe`, `closeOwnedFd`, `canonicalizePath` | Implemented; real pipe, descriptor and pathname syscalls |
 | Beneath open/create/mkdir/link, replace/no-replace rename and identity-fenced rename | Absent; guarded fallback where supported |
 | Directory observations, retained files/symlinks, entry publication, owned-tree and root removal | Absent; guarded fallback or explicit native-only rejection |
 | File/tree clone, native copy/hash, archive inspection/extraction and buffer readers | Absent; JavaScript/WASM fallback where supported |
@@ -52,6 +52,8 @@ can be prepared separately with `pnpm build`. There is no qualified FreeBSD Bun
 artifact in the runtime matrix. FreeBSD arm64 builds pnpm 12.10.1 from its
 pinned release source because pnpm does not publish a native binary for that
 target; the package-manager version remains identical.
+Reopening pipe descriptors through `/dev/fd` requires the standard `fdescfs`
+mount there; the VM proof mounts it before testing reopen, inheritance and EOF.
 
 ## The beneath model
 

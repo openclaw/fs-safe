@@ -81,10 +81,14 @@ jobs:
             git --version
             git config --global --add safe.directory "$GITHUB_WORKSPACE"
             test "$(git rev-parse HEAD)" = "$FS_SAFE_EXPECTED_SOURCE_COMMIT"
+            if ! mount -p | awk '$2 == "/dev/fd" && $3 == "fdescfs" { found=1 } END { exit !found }'; then
+              mount -t fdescfs fdesc /dev/fd
+            fi
             pnpm --version
             pnpm install --frozen-lockfile
             cargo test --locked -p fs-safe-native
             pnpm native:build:freebsd
+            FS_SAFE_NATIVE_MODE=require node scripts/freebsd-pipe-proof.mjs
             pnpm package:smoke
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
