@@ -110,6 +110,7 @@ for (const mode of ["off", "auto", "require"]) {
     });
   }
   const unavailable = (mode === "require" && expected.omitted)
+    || (mode === "require" && process.platform === "freebsd")
     || (process.platform === "darwin" && (mode === "off" || expected.omitted));
   for (const [name, files] of [["batch", [prefixLive, prefixMissing, prefixLive]], ["empty", []]]) {
     if (unavailable) {

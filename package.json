@@ -160,6 +160,7 @@
     "docs:check": "node scripts/check-doc-examples.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
     "native:build": "pnpm --filter @openclaw/fs-safe-native-build build",
+    "native:build:freebsd": "node scripts/build-freebsd.mjs",
     "native:test": "cargo test --workspace",
     "pack:check": "pnpm build && node scripts/check-pack.mjs",
     "public-api:update": "pnpm build && node scripts/check-pack.mjs --update-public-api",
@@ -179,6 +180,8 @@
   "optionalDependencies": {
     "@openclaw/fs-safe-darwin-arm64": "0.25.0",
     "@openclaw/fs-safe-darwin-x64": "0.25.0",
+    "@openclaw/fs-safe-freebsd-arm64": "0.25.0",
+    "@openclaw/fs-safe-freebsd-x64": "0.25.0",
     "@openclaw/fs-safe-linux-arm64-gnu": "0.25.0",
     "@openclaw/fs-safe-linux-arm64-musl": "0.25.0",
     "@openclaw/fs-safe-linux-x64-gnu": "0.25.0",

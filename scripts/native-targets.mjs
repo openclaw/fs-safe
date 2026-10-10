@@ -67,6 +67,22 @@ export const nativeTargets = [
     rust: "x86_64-pc-windows-msvc",
     artifact: "fs-safe-native.win32-x64-msvc.node",
   },
+  {
+    label: "freebsd-x64",
+    package: "@openclaw/fs-safe-freebsd-x64",
+    os: "freebsd",
+    cpu: "x64",
+    rust: "x86_64-unknown-freebsd",
+    artifact: "fs-safe-native.freebsd-x64.node",
+  },
+  {
+    label: "freebsd-arm64",
+    package: "@openclaw/fs-safe-freebsd-arm64",
+    os: "freebsd",
+    cpu: "arm64",
+    rust: "aarch64-unknown-freebsd",
+    artifact: "fs-safe-native.freebsd-arm64.node",
+  },
 ];
 
 export function nativePackageDirectory(target) {
@@ -75,7 +91,7 @@ export function nativePackageDirectory(target) {
 
 export function hostNativeTarget() {
   const platformArch = `${process.platform}-${process.arch}`;
-  if (platformArch === "darwin-x64" || platformArch === "darwin-arm64") {
+  if (["darwin-x64", "darwin-arm64", "freebsd-x64", "freebsd-arm64"].includes(platformArch)) {
     return nativeTargets.find((target) => target.label === platformArch);
   }
   if (platformArch === "win32-x64" || platformArch === "win32-arm64") {

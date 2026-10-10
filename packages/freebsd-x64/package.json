@@ -1,0 +1,29 @@
+{
+  "name": "@openclaw/fs-safe-freebsd-x64",
+  "version": "0.25.0",
+  "description": "FreeBSD 14.4+ x64 native binding for @openclaw/fs-safe.",
+  "license": "MIT",
+  "author": "OpenClaw Team <dev@openclaw.ai>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openclaw/fs-safe.git",
+    "directory": "packages/freebsd-x64"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "os": [
+    "freebsd"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "fs-safe-native.node",
+  "files": [
+    "fs-safe-native.node"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

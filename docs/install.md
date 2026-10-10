@@ -126,7 +126,7 @@ Use the main entry for the common surface, or the focused subpaths when you want
 
 `@openclaw/fs-safe` bundles an import-free WASM build of its Rust TAR parser and zstd/bzip2 codecs for guarded [archive extraction and bounded entry reads](archive.md). Plain TAR, gzip, zstd, and bzip2 work in `off` and missing-native `auto`, including installs with all optional dependencies omitted; gzip uses Node's built-in decoder. These archive fallbacks need no runtime interpreter, download, or consumer compiler. ZIP fallback uses lazily loaded optional `jszip` and reports a missing-dependency error without it. Public subpaths remain safe to import with all optional dependencies omitted, but imports do not prove native availability. Native `require` remains strict, and an available native operation's failure never triggers a WASM retry.
 
-There are no peer dependencies. Exact-version optional packages carry the eight
+There are no peer dependencies. Exact-version optional packages carry the
 native targets and npm-compatible OS, CPU, and Linux libc filters install only
 the matching binary. Windows ARM64 Node selects
 `@openclaw/fs-safe-win32-arm64-msvc`; x64 Node on the same host selects the x64
@@ -186,7 +186,9 @@ available native operation's error never triggers a command retry. See
 ### Supported native platforms
 
 Prebuilt bindings cover Linux x64/arm64 (GNU glibc **2.28 or newer**, or musl),
-macOS x64/arm64, and Windows x64/arm64. The GNU baseline includes RHEL 8, Rocky Linux 8,
+macOS x64/arm64, Windows x64/arm64, and FreeBSD 14.4+ x64/arm64. FreeBSD provides the
+[documented subset](native.md#freebsd-144-and-newer); its other operations retain
+guarded fallbacks in `auto`. The GNU baseline includes RHEL 8, Rocky Linux 8,
 and AlmaLinux 8. A compatible Node 22+ runtime and the kernel/filesystem features
 required by each operation are still necessary; a loadable addon alone does not
 guarantee every native capability. Systems older than glibc 2.28 are outside the

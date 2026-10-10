@@ -263,6 +263,14 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           return run([process.execPath], ["--input-type=module", "--eval", hashScript, mode, missing ? "missing" : "present"], directory, env);
         }
         const cases = { omitted, nativePackages: installed.nativePackages, cloneMetadata: installed.cloneMetadata };
+        if (process.platform === "freebsd") {
+          const probe = join(directory, "freebsd-probe.mjs");
+          writeFileSync(probe, readFileSync(new URL("./consumer-freebsd-probe.mjs", import.meta.url)));
+          cases.freebsd = JSON.parse(await run([process.execPath, probe], [], directory, env));
+          managerProof.cases.push(cases);
+          console.log(`${manager}@${version} FreeBSD ${omitted ? "omitted optionals" : host.label}: ${JSON.stringify(cases)}`);
+          continue;
+        }
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");

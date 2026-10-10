@@ -12,6 +12,7 @@
 ### Fixes
 
 - **Windows creation diagnostics:** retain native Win32 error numbers through private directory and file creation failures, including the command fallback, without changing semantic error codes.
+- **FreeBSD native packages:** add x64 and arm64 packages for FreeBSD 14.4+, with native canonicalization and explicit capability absence for unported operations.
 - **Partial native bindings:** select guarded fallbacks when an operation's native capabilities are absent, and report typed capability errors in required mode before mutation.
 - **Android/Termux publication:** publish staged no-replace copies and writes when hardlinks are refused, using a verified empty placeholder before atomic replacement; include `EACCES` in the public hardlink-to-copy fallback classifier. Reported in [openclaw/openclaw#167791](https://github.com/openclaw/openclaw/issues/167791). ([#888](https://github.com/openclaw/fs-safe/pull/888))
 - **Native ZIP names:** preserve CP437 decoding for unflagged legacy filenames after the ZIP 9 upgrade, including collision rejection and bounded entry selection; continue rejecting invalid Unicode Path checksums and encodings before decoder normalization. ([#885](https://github.com/openclaw/fs-safe/pull/885))

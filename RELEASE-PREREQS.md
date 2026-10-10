@@ -4,7 +4,7 @@ Maintainer checklist for the protected, tag-driven [release workflow](.github/wo
 
 ## Package setup
 
-A release publishes nine packages:
+A release publishes the root package and every platform package in `scripts/native-targets.mjs`:
 
 - `@openclaw/fs-safe`: JavaScript, declarations, and documentation; no embedded native binaries.
 - `@openclaw/fs-safe-darwin-arm64`
@@ -15,8 +15,10 @@ A release publishes nine packages:
 - `@openclaw/fs-safe-linux-x64-musl`
 - `@openclaw/fs-safe-win32-arm64-msvc`
 - `@openclaw/fs-safe-win32-x64-msvc`
+- `@openclaw/fs-safe-freebsd-x64`
+- `@openclaw/fs-safe-freebsd-arm64`
 
-The `native/` npm workspace and Rust crate are private build inputs, not additional published packages. The eight native packages are platform-filtered optional dependencies of the root package.
+The `native/` npm workspace and Rust crate are private build inputs, not additional published packages. The native packages are platform-filtered optional dependencies of the root package.
 
 Each published package must have this trusted publisher configured in npm:
 
@@ -32,7 +34,7 @@ Use the existing package and publisher configuration; do not bootstrap or reconf
 
 ## Prepare the release candidate
 
-Update the root package version, all eight native package versions, all eight exact root optional-dependency pins, the private native npm workspace version, and the crate version in `native/Cargo.toml`. The root `Cargo.toml` is an unversioned workspace.
+Update the root package version, all native package versions and exact root optional-dependency pins, the private native npm workspace version, and the crate version in `native/Cargo.toml`. The root `Cargo.toml` is an unversioned workspace.
 
 Regenerate the lockfiles rather than editing them by hand:
 
@@ -78,7 +80,7 @@ pnpm docs:site
 git diff --check
 ```
 
-Host-native package proof additionally uses `pnpm native:build` followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires all eight real bindings assembled by the release workflow and must run through pnpm.
+Host-native package proof additionally uses `pnpm native:build` (`pnpm native:build:freebsd` on FreeBSD) followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires every real binding assembled by the release workflow and must run through pnpm. FreeBSD builds and installed-package smoke run inside 14.4 VMs for x64 and arm64; ARM64 uses QEMU CPU emulation with a real FreeBSD kernel.
 
 Do not commit generated `dist/` files, native binaries, or release artifacts.
 
@@ -88,7 +90,7 @@ Merge the reviewed release preparation into `main` after its exact-head CI is gr
 
 The workflow checks tag format, annotation, protection, main ancestry, matching package/crate versions and pins, and dated changelog content. Main ancestry alone does not guarantee the tag points to latest main, and the workflow does not wait for a separate CI run; maintainers must enforce both conditions before tagging.
 
-The automated order is source validation, eight-target native build, assembly and nine-package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
+The automated order is source validation, all-target native build, assembly and package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
 
 Package publication and release-proof generation use batches of at most four packages under their unchanged 90-minute job ceilings. Every platform package must finish publication and byte-identity, registry-signature, and provenance verification before root publication starts. A failed batch settles its in-flight operations, then stops without starting another batch or publishing the root. Final release proof retains manifest order and is appended only after every package verifies.
 
@@ -98,7 +100,7 @@ If a version already exists, the publishing helper verifies it instead of republ
 
 ## Verify the completed release
 
-For the root and all eight native packages, verify the exact version, expected `latest` dist-tag, canonical registry tarball URL, integrity, publication time, registry signatures, and workflow-bound provenance. Confirm the public GitHub Release and protected annotated tag exist and point to the intended commit.
+For the root and all native packages, verify the exact version, expected `latest` dist-tag, canonical registry tarball URL, integrity, publication time, registry signatures, and workflow-bound provenance. Confirm the public GitHub Release and protected annotated tag exist and point to the intended commit.
 
 The Release body must match the finalized changelog and include npm version links, registry tarball links, integrity, attestation proof, and the successful Actions run. Download the workflow's collected package artifacts promptly; their retention is bounded.
 
