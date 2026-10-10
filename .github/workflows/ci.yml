@@ -1415,11 +1415,17 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --version 0.23.4 --locked
-
       - name: Add Rust targets
         run: rustup target add ${{ matrix.target }} wasm32-unknown-unknown
+
+      - name: Cache cargo-zigbuild
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}-cargo-zigbuild-0.23.4
+          cache-targets: "false"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --version 0.23.4 --locked
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -1505,14 +1511,10 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache Cargo and cargo-audit
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-quality-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-audit-0.22.2
 
       - name: Clippy
         run: cargo clippy --workspace --locked -- -D warnings
