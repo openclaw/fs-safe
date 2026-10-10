@@ -13,6 +13,7 @@ import {
   removeNativeCreatedFileIfStillPinned,
 } from "./native-operations.js";
 import { writePinnedInput } from "./pinned-write-input.js";
+import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
@@ -103,6 +104,9 @@ export async function runPinnedWriteWindows(
   try {
     tempName = `.fs-safe-${randomUUID()}.tmp`;
     params.assertBeforeMutation?.();
+    const copied = params.input.kind === "file" && !params.private
+      ? await createNativeCopyFile(binding, params.input, parentFd, tempName, params.maxBytes)
+      : undefined;
     if (params.private) {
       const parentIdentity = fsSync.fstatSync(parentFd, { bigint: true });
       privateHandle = await createFileHandle(path.join(parentPath, tempName), {
@@ -115,6 +119,8 @@ export async function runPinnedWriteWindows(
         },
       });
       tempFd = privateHandle.fd;
+    } else if (copied) {
+      tempFd = copied.fd;
     } else {
       tempFd = binding.openBeneath(
         parentFd,
@@ -126,11 +132,12 @@ export async function runPinnedWriteWindows(
     }
     const verificationIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(tempFd!, { bigint: true }));
     tempIdentity = verificationIdentity;
+    if (params.input.kind === "file") assertNativeCopyCompleted(params.input, copied);
     // Creation is requested at 0600 in the binding, but a restrictive umask
     // can remove owner access. Keep the unpublished inode private and
     // reopenable until the published name has been identity-fenced.
     fsSync.fchmodSync(tempFd, 0o600);
-    await writePinnedInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
+    if (!copied) await writePinnedInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
     if (params.sync !== false) {
       if (params.strictFileSync) fsSync.fsyncSync(tempFd);
       else syncFileBestEffortSync(tempFd);

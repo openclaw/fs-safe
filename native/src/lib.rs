@@ -33,6 +33,8 @@ mod copy_windows;
 mod copy_linux;
 #[cfg(unix)]
 mod file_copy;
+#[cfg(windows)]
+mod file_copy_windows;
 mod owned_tree;
 #[cfg(all(test, unix))]
 mod root_creation_tests;

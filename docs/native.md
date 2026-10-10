@@ -80,6 +80,11 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   this layer only through the host executable's paired libuv descriptor bridge;
   missing or partial exports fail with `ENOTSUP` instead of trying a raw HANDLE
   or add-on CRT descriptor namespace.
+  `Root.copyIn` uses the same ReFS integrity, sparse-file, and cluster-aligned
+  block-clone operations as tree cloning, through retained source and destination
+  parent handles. The exclusive stage enters the existing guarded publication
+  path; transfer failures retain its cleanup receipt. It does not inherit the
+  tree API's source metadata policy.
 
 The internal macOS `inspectDarwinAcl(fd)` capability reports `absent`, `empty`,
 or `present` for the opened object's extended ACL. It synchronously borrows the

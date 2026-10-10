@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support guarded `Root.copyIn` block cloning on Windows ReFS and Dev Drive, with exclusive publication, cancellation cleanup, and automatic byte-copy fallback for unavailable clone capabilities.
+
 ### Features
 
 - **Native filesystem capabilities:** add Linux write leases on caller-owned descriptors, no-follow Darwin ACL inspection with separate file and directory inheritance facts, and Windows sharing-lock, attribute, and physical-extent test fixtures.

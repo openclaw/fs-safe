@@ -373,12 +373,13 @@ describe.each(["off", "require"] as const)("Root.copyIn publication callbacks wi
 });
 
 describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
-  it.runIf(process.platform === "win32")("refuses clone=always with the Windows binding before destination creation", async () => {
+  it.runIf(process.platform === "win32")("refuses clone=always on an unsupported Windows volume", async () => {
     configureFsSafeNative({ mode: "require" });
     const copy = await fixture();
-    await expect(copy.destination.copyIn("nested/target", copy.sourcePath, {
+    expect(probeTreeClone(copy.destinationDirectory)).toBeUndefined();
+    await expect(copy.destination.copyIn("target", copy.sourcePath, {
       clone: "always", overwrite: false,
-    })).rejects.toMatchObject({ code: "helper-unavailable" });
+    })).rejects.toMatchObject({ code: "unsupported-platform" });
     expect(await fs.readdir(copy.destinationDirectory)).toEqual([]);
     expect(await fs.readFile(copy.sourcePath, "utf8")).toBe(copy.content);
   });

@@ -192,6 +192,16 @@ Byte copying retains fractional file and directory access/modification timestamp
 
 After building the host native binding, run `pnpm test test/clone.test.ts test/copy-tree.test.ts`. APFS tests can use the normal macOS temporary directory. For Btrfs, ReFS, XFS, or ZFS, set `FS_SAFE_CLONE_TEST_ROOT` to an existing writable directory on that filesystem. The test creates and cleans only its own temporary children. An explicitly configured unsupported directory fails the test rather than silently skipping platform proof. XFS and ZFS metadata tests require the `attr` and `acl` utilities.
 
+The `ReFS copyIn` CI workflow creates a disposable 2 GiB expanding VHD on
+Windows Server 2025 x64 and Windows 11 ARM64. It formats the latter as a Dev
+Drive, verifies that the mounted filesystem is ReFS, and sets
+`FS_SAFE_CLONE_TEST_ROOT`. `test/root-copy-refs.test.ts` runs the built package on
+the main thread and in a real Node Worker, checks shared physical extents with
+`readWindowsFileExtents`, independent writes, exclusive publication, byte limits,
+cancellation cleanup, and revocation between file copies. Both jobs also run the
+tree clone suite, then detach and delete the VHD even after failure. A failed
+volume setup fails the job; it never substitutes NTFS or skips the ReFS proof.
+
 Run `node scripts/clone-xfs-proof.mjs MOUNT` on a real XFS volume to verify the public API, hashes, independent writes, and shared physical extents. It requires `filefrag` from `e2fsprogs`. Add `no-reflink` for an XFS fixture formatted with reflinks disabled; strict copying must fail and automatic copying must succeed through byte copying.
 
 Run `node scripts/clone-zfs-proof.mjs MOUNT POOL` on a dedicated, otherwise idle Linux ZFS pool with compression and deduplication disabled. It verifies both `copyTree` and `Root.copyIn` through hashes and changes in the documented `bclonesaved` pool counter. It requires `zfs`, `zpool`, and `findmnt`, including permission to run `zpool sync`. Add `no-reflink` for a pool without block cloning to verify strict refusal and automatic byte fallback. The script creates and removes only its temporary directory; it does not create pools or change their properties.
