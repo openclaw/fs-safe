@@ -129,6 +129,8 @@ export interface NativeWindowsDirectoryReceipt {
 
 export interface NativeDarwinAclFacts {
   state: "absent" | "empty" | "present";
+  inheritsToFiles?: boolean;
+  inheritsToDirectories?: boolean;
 }
 
 type NativeTwoPathArgs = [

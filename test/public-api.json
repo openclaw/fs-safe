@@ -488,6 +488,7 @@
         "formatOctal",
         "formatPermissionDetail",
         "formatPermissionRemediation",
+        "inspectDarwinAcl",
         "inspectPathPermissions",
         "isGroupReadable",
         "isGroupWritable",
@@ -500,6 +501,7 @@
       ],
       "types": [
         "CreatePrivateDirectoryOptions",
+        "DarwinAclInspection",
         "OwnerAndDaclResult",
         "PermissionCheck",
         "PermissionCheckOptions",

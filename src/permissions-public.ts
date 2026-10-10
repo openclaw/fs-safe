@@ -25,3 +25,4 @@ export {
   type WindowsAceFlags,
 } from "./owner-dacl.js";
 export { readOwnerAndDaclBatch } from "./owner-dacl-batch.js";
+export { inspectDarwinAcl, type DarwinAclInspection } from "./darwin-acl.js";
