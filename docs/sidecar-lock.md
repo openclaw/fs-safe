@@ -72,21 +72,29 @@ The raw sidecar bytes are not a canonical JSON representation: tools that trim o
 ## API
 
 ```ts
-function acquireFileLock<TPayload>(
+import type {
+  FileLockAcquireOptions,
+  FileLockHandle,
+  FileLockManager,
+  FileLockSyncAcquireOptions,
+  FileLockSyncHandle,
+} from "@openclaw/fs-safe/file-lock";
+
+declare function acquireFileLock<TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockAcquireOptions<TPayload>,
 ): Promise<FileLockHandle>;
 
-function withFileLock<T, TPayload>(
+declare function withFileLock<T, TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockAcquireOptions<TPayload>,
   fn: () => Promise<T>,
 ): Promise<T>;
 
-function createFileLockManager(key: string): FileLockManager;
+declare function createFileLockManager(key: string): FileLockManager;
 
-function acquireFileLockSync<TPayload>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>): FileLockSyncHandle;
-function withFileLockSync<T, TPayload>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>, fn: () => T): T;
+declare function acquireFileLockSync<TPayload extends Record<string, unknown>>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>): FileLockSyncHandle;
+declare function withFileLockSync<T, TPayload extends Record<string, unknown>>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>, fn: () => T): T;
 ```
 
 `managerKey` is an optional identifier used to keep state isolated across multiple lock domains in the same process. Use distinct keys for distinct domains (`"snapshot"`, `"compact"`, `"build"`). If omitted, fs-safe derives one from the target path.

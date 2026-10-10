@@ -308,8 +308,8 @@ cases, and synthetic-fixture scope to `release-artifacts/consumer-proof.json`.
 ## Docs
 
 `pnpm docs:check` runs examples against the built package and compiles every
-TypeScript block in `README.md` and the custom stale-lock policy example against
-its declarations. Run `pnpm build` first.
+TypeScript block in `README.md`, the lock API signatures, and the custom stale-lock
+policy example against its declarations. Run `pnpm build` first.
 The compiler supplies typed application context for excerpted variables such as
 `download`; package API calls and callback values remain fully type-checked.
 

@@ -27,7 +27,8 @@ declare global {
     const markdown = await fs.readFile(path.join(repoRoot, file), "utf8");
     let selected = 0;
     for (const block of markdown.matchAll(/```(?:ts|typescript)\n([\s\S]*?)```/gu)) {
-      if (file !== "README.md" && !block[1].includes("shouldReclaim:")) continue;
+      if (file !== "README.md" && !block[1].includes("shouldReclaim:") &&
+        !block[1].includes("declare function acquireFileLock<")) continue;
       const line = markdown.slice(0, block.index).split("\n").length + 1;
       const name = `${path.basename(file, ".md")}-line-${line}.mts`;
       await fs.writeFile(path.join(directory, name), `export {};\n${block[1]}`);
