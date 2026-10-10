@@ -85,8 +85,10 @@ const metadataHelperSha256 = hash(new URL("./consumer-proof-metadata.mjs", impor
 assert.equal(probeSha256, expected.windowsSecurity.probeSha256);
 assert.equal(metadataHelperSha256, expected.metadataHelperSha256);
 
-assert.equal(expected.platforms.length, 8);
-assert.equal(new Set(expected.platforms).size, 8);
+const platformPackages = Object.keys(expected.rootPkg.optionalDependencies)
+  .filter((name) => name.startsWith("@openclaw/fs-safe-"));
+assert.deepEqual([...expected.platforms].sort(), platformPackages.sort());
+assert.equal(new Set(expected.platforms).size, platformPackages.length);
 const physical = new Set();
 function inspectPackages(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
