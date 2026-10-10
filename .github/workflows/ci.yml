@@ -963,6 +963,17 @@ jobs:
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # LLVM setup exports temporary paths; key its pinned toolchain source instead.
+          key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+          env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
+          workspaces: |
+            . -> target
+            . -> target/archive-wasm-allocator-tests
+          save-if: ${{ matrix.node == 24 }}
+
       - name: Set up portable archive LLVM
         uses: ./.github/actions/setup-archive-llvm
 
@@ -1037,6 +1048,16 @@ jobs:
 
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # LLVM setup exports temporary paths; key its pinned toolchain source instead.
+          key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+          env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
+          workspaces: |
+            . -> target
+            . -> target/archive-wasm-allocator-tests
 
       - name: Set up portable archive LLVM
         uses: ./.github/actions/setup-archive-llvm
@@ -1568,6 +1589,17 @@ jobs:
 
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # LLVM setup exports temporary paths; key its pinned toolchain source instead.
+          key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+          env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
+          workspaces: |
+            . -> target
+            . -> target/archive-wasm-allocator-tests
+          save-if: ${{ matrix.node == 24 }}
 
       - name: Set up portable archive LLVM
         uses: ./.github/actions/setup-archive-llvm
