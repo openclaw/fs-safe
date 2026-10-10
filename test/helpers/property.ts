@@ -34,9 +34,14 @@ export const windowsArchivePortabilityName = fc.constantFrom(
 );
 
 export function propertyParameters(numRuns: number): Parameters<unknown> {
+  const seedText = process.env.FS_SAFE_PROPERTY_SEED;
+  const seed = seedText === undefined ? PROPERTY_SEED : Number(seedText);
+  if (!Number.isInteger(seed) || seed < -0x80000000 || seed > 0x7fffffff) {
+    throw new Error("FS_SAFE_PROPERTY_SEED must be a signed 32-bit integer");
+  }
   return {
     numRuns,
-    seed: PROPERTY_SEED,
+    seed,
     verbose: 2,
   };
 }
