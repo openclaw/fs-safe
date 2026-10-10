@@ -298,9 +298,11 @@ function provenancePolicy(statement, version) {
       { code: "untrusted-provenance-policy" },
     );
   }
+  const identity = `${NPM_PROVENANCE_REPOSITORY}/${NPM_PROVENANCE_WORKFLOW_PATH}@${expectedRef}`;
   return {
     certificateIssuer: NPM_PROVENANCE_CERTIFICATE_ISSUER,
-    certificateIdentityURI: `${NPM_PROVENANCE_REPOSITORY}/${NPM_PROVENANCE_WORKFLOW_PATH}@${expectedRef}`,
+    // JavaScript $ also matches before a final newline; require absolute end too.
+    certificateIdentityURI: `^${identity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$(?![\\s\\S])`,
   };
 }
 

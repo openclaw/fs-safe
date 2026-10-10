@@ -31,7 +31,7 @@ describe("npm registry verification", () => {
       fixture.bundle,
       {
         certificateIdentityURI:
-          "https://github.com/openclaw/fs-safe/.github/workflows/release.yml@refs/tags/v9.9.9",
+          "^https://github\\.com/openclaw/fs-safe/\\.github/workflows/release\\.yml@refs/tags/v9\\.9\\.9$(?![\\s\\S])",
         certificateIssuer: "https://token.actions.githubusercontent.com",
       },
     );
@@ -39,6 +39,31 @@ describe("npm registry verification", () => {
       registryTarballUrl(artifact.name, artifact.version),
       expect.anything(),
     );
+  });
+
+  it("matches only the literal certificate identity, including version metacharacters", async () => {
+    const artifact = { ...testArtifact(), version: "9.9.9+build.1" };
+    const fixture = registryFixture(artifact);
+    await verifyPublishedPackageOnce(artifact, {
+      fetchImpl: fixture.fetchImpl,
+      verifyBundle: fixture.verifyBundle,
+    });
+    const policy = fixture.verifyBundle.mock.calls[0]![1];
+    const pattern = new RegExp(policy.certificateIdentityURI);
+    const identity = `https://github.com/openclaw/fs-safe/.github/workflows/release.yml@refs/tags/v${artifact.version}`;
+    expect(pattern.test(identity)).toBe(true);
+    for (const impostor of [
+      identity.replace("github.com", "githubXcom"),
+      identity.replace("/.github/", "/Xgithub/"),
+      identity.replace("release.yml", "releaseXyml"),
+      identity.replace("9.9.9+build.1", "9x9x9buildx1"),
+      `prefix${identity}`,
+      `${identity}/suffix`,
+      `${identity}\n`,
+      `${identity}\r\n`,
+    ]) {
+      expect(pattern.test(impostor), impostor).toBe(false);
+    }
   });
 
   it("accepts canonical tarball bytes when packument integrity conflicts and logs both values", async () => {
