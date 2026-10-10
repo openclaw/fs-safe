@@ -172,7 +172,8 @@ describe.skipIf(process.platform === "win32")("guest no-replace fallback", () =>
     expect(await fs.readFile(path.join(root, "target"), "utf8")).toBe(fault === "target" ? "replacement" : "original");
   });
 
-  it.each(["file", "symlink"])("does not report a destination collision for a source swapped to %s", async kind => {
+  // Darwin can follow a trailing source slash; only Linux uses this fallback in production.
+  it.skipIf(process.platform !== "linux").each(["file", "symlink"])("does not report a destination collision for a source swapped to %s", async kind => {
     const root = await tempRoot("fs-safe-guest-source-type-error-");
     await fs.mkdir(path.join(root, "source"));
     await fs.writeFile(path.join(root, "referent"), "unrelated");
