@@ -27,11 +27,11 @@ import {
 
 ## Constants
 
-```ts
-DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;  // 16 KiB
-PRIVATE_SECRET_DIR_MODE = 0o700;
-PRIVATE_SECRET_FILE_MODE = 0o600;
-```
+| Exported constant | Value |
+|---|---|
+| `DEFAULT_SECRET_FILE_MAX_BYTES` | `16 * 1024` (16 KiB) |
+| `PRIVATE_SECRET_DIR_MODE` | `0o700` |
+| `PRIVATE_SECRET_FILE_MODE` | `0o600` |
 
 The 16 KiB cap is intentionally aggressive — credentials should be small. If you need bigger, pass `maxBytes` explicitly.
 

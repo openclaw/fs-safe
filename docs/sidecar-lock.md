@@ -74,21 +74,29 @@ The raw sidecar bytes are not a canonical JSON representation: tools that trim o
 ## API
 
 ```ts
-function acquireFileLock<TPayload>(
+import type {
+  FileLockAcquireOptions,
+  FileLockHandle,
+  FileLockManager,
+  FileLockSyncAcquireOptions,
+  FileLockSyncHandle,
+} from "@openclaw/fs-safe/file-lock";
+
+declare function acquireFileLock<TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockAcquireOptions<TPayload>,
 ): Promise<FileLockHandle>;
 
-function withFileLock<T, TPayload>(
+declare function withFileLock<T, TPayload extends Record<string, unknown>>(
   targetPath: string,
   options: FileLockAcquireOptions<TPayload>,
   fn: () => Promise<T>,
 ): Promise<T>;
 
-function createFileLockManager(key: string): FileLockManager;
+declare function createFileLockManager(key: string): FileLockManager;
 
-function acquireFileLockSync<TPayload>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>): FileLockSyncHandle;
-function withFileLockSync<T, TPayload>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>, fn: () => T): T;
+declare function acquireFileLockSync<TPayload extends Record<string, unknown>>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>): FileLockSyncHandle;
+declare function withFileLockSync<T, TPayload extends Record<string, unknown>>(targetPath: string, options: FileLockSyncAcquireOptions<TPayload>, fn: () => T): T;
 ```
 
 `managerKey` is an optional identifier used to keep state isolated across multiple lock domains in the same process. Use distinct keys for distinct domains (`"snapshot"`, `"compact"`, `"build"`). If omitted, fs-safe derives one from the target path.
@@ -143,7 +151,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   shouldReclaim?: (params: {
     lockPath: string;
     normalizedTargetPath: string;
-    payload: Record<string, unknown> | null;
+    payload: unknown;
     staleMs: number;
     nowMs: number;
     heldByThisProcess: boolean;
@@ -152,7 +160,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
     lockPath: string;
     normalizedTargetPath: string;
     raw: string;
-    payload: Record<string, unknown> | null;
+    payload: unknown;
   }) => boolean | Promise<boolean>;
   metadata?: Record<string, unknown>;    // attached to heldEntries() output for diagnostics
   parsePayload?: (raw: string) => unknown;
@@ -544,23 +552,31 @@ holder still alive":
 
 ```ts
 import { kill } from "node:process";
+import { acquireFileLock } from "@openclaw/fs-safe/file-lock";
 
 const handle = await acquireFileLock(targetPath, {
   staleMs: 60_000,
   payload: () => ({ pid: process.pid }),
-  shouldReclaim: ({ payload, nowMs, staleMs }) => {
-    if (!payload) return true;
-    const pid = Number(payload.pid);
-    if (!Number.isFinite(pid)) return true;
+  shouldReclaim: ({ payload }) => {
+    if (!payload || typeof payload !== "object" || !("pid" in payload)) return true;
+    const pid = payload.pid;
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return true;
     try {
       kill(pid, 0);
       return false;                     // process still alive — keep waiting
-    } catch {
-      return true;                      // process gone — fail closed for recovery
+    } catch (error) {
+      return error !== null && typeof error === "object" &&
+        "code" in error && error.code === "ESRCH"; // only a missing process is stale
     }
   },
 });
 ```
+
+The observed payload is `unknown`, even when this caller writes a typed payload.
+Validate it before reading fields. Permission failures such as `EPERM` do not
+prove that the holder exited. PID checks assume a shared local PID namespace;
+PID reuse can keep a stale lock waiting. This callback classifies staleness,
+not ownership or permission to remove another holder's lock.
 
 `heldByThisProcess` is true when this manager already holds the lock. A `true` result marks the observed sidecar as stale; `staleRecovery` then decides whether acquisition fails closed or attempts caller-approved removal.
 
