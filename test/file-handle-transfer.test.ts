@@ -26,6 +26,25 @@ describe("borrowed FileHandle copying", () => {
     expect(targetNext).toEqual(f.content.subarray(3, 4));
   });
 
+  it("keeps descriptor observations off the asynchronous filesystem queue", async () => {
+    const f = await fixture();
+    const sourceStat = vi.spyOn(f.source, "stat");
+    const targetStat = vi.spyOn(f.target, "stat");
+    expect(await copyFileHandle(f.source, f.target)).toBe(f.content.length);
+    expect(sourceStat).not.toHaveBeenCalled();
+    expect(targetStat).not.toHaveBeenCalled();
+    expect((await fs.readFile(f.targetPath)).subarray(0, f.content.length)).toEqual(f.content);
+  });
+
+  it.each(["source", "target"] as const)("preserves closed %s handle errors without mutation", async (name) => {
+    const f = await fixture();
+    await f[name].close();
+    const expected = await f[name].stat({ bigint: true }).catch(error => error) as NodeJS.ErrnoException;
+    await expect(copyFileHandle(f.source, f.target))
+      .rejects.toMatchObject({ code: expected.code, syscall: expected.syscall });
+    expect(await fs.readFile(f.targetPath, "utf8")).toBe(f.prior);
+  });
+
   it("completes positive short reads and writes without changing the source observer bytes", async () => {
     const f = await fixture(Buffer.alloc(317).map((_, index) => index % 251), "");
     const read = f.source.read.bind(f.source);
@@ -172,7 +191,7 @@ describe("borrowed FileHandle copying", () => {
 
   it("enforces zero, exact, invalid, and initially exceeded byte budgets before target mutation", async () => {
     const f = await fixture("1234", "unchanged");
-    const inspect = vi.spyOn(f.source, "stat");
+    const inspect = vi.spyOn(fsSync, "fstatSync");
     for (const maxBytes of [-1, NaN, 1.5]) {
       await expect(copyFileHandle(f.source, f.target, { maxBytes })).rejects.toBeInstanceOf(RangeError);
     }
@@ -216,7 +235,7 @@ describe("borrowed FileHandle copying", () => {
   it("rejects an already aborted signal before inspecting the borrowed handles", async () => {
     const f = await fixture();
     const aborted = new Error("synthetic pre-abort");
-    const inspect = vi.spyOn(f.source, "stat");
+    const inspect = vi.spyOn(fsSync, "fstatSync");
     await expect(copyFileHandle(f.source, f.target, {
       signal: AbortSignal.abort(aborted), maxBytes: -1,
     })).rejects.toBe(aborted);
