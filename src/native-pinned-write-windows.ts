@@ -14,7 +14,7 @@ import {
 } from "./native-operations.js";
 import { writePinnedInput } from "./pinned-write-input.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
-import type { NativeBinding } from "./native.js";
+import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -78,6 +78,7 @@ export async function runPinnedWriteWindows(
   parentFd: number,
   parentGuard: AnyAsyncDirectoryGuard,
 ): Promise<FileIdentityStat> {
+  assertNativeCapabilities(binding, "openBeneath", "renameNoReplace", "renameReplace", "fstatIdentity");
   const closeFd = captureNativeFdClose(binding);
   const parentPath = parentGuard.realPath;
   let tempFd: number | undefined;

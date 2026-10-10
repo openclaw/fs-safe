@@ -33,6 +33,12 @@ See [Archive extraction](archive.md) for native, bundled WASM, and ZIP backends.
 Native archive-operation failures are terminal; `auto` does not retry them through a
 fallback. `require` rejects missing bindings or required capabilities.
 
+A loaded binding may provide only a subset of native operations. Each operation
+checks its required capabilities before native dispatch: missing capabilities
+select the existing guarded fallback in `auto`, or report `helper-unavailable`
+in `require`. A failure from an available native method is still an operation
+failure; it is not treated as a missing capability.
+
 Windows owner/DACL inspection, private-directory creation, and secure reads can
 use [PowerShell fallbacks](install.md#windows-security-fallback) in `auto` and
 `off`; `require` stays strict, and native operation failures remain terminal.

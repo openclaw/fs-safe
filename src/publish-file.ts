@@ -19,7 +19,7 @@ import {
   type FileIdentityStat,
 } from "./file-identity.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
-import { getNativeBinding, requireNativeBinding, type NativeBinding } from "./native.js";
+import { getNativeBinding, requireNativeBinding, selectNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import {
@@ -119,16 +119,18 @@ async function copyPinnedSource(params: {
   if (params.native && params.targetNativeParent) {
     const closeFd = captureNativeFdClose(params.native);
     for (const method of ["clone", "copy-file-range"] as const) {
+      const native = selectNativeBinding(params.native, method === "clone" ? "cloneFileExclusive" : "copyFileRangeExclusive");
+      if (!native) continue;
       let nativeFd: number | undefined;
       try {
         if (method === "clone") {
-          nativeFd = params.native.cloneFileExclusive(
+          nativeFd = native.cloneFileExclusive(
             params.source.fd,
             params.targetNativeParent.handle.fd,
             params.targetNativeParent.basename,
           );
         } else {
-          const copied = await params.native.copyFileRangeExclusive(
+          const copied = await native.copyFileRangeExclusive(
             params.source.fd,
             params.targetNativeParent.handle.fd,
             params.targetNativeParent.basename,
@@ -345,15 +347,15 @@ export async function publishFileExclusive(params: {
     assertSourceCurrent();
 
     const native = strategy === "rename-noreplace"
-      ? requireNativeBinding()
-      : getNativeBinding();
+      ? requireNativeBinding("renameNoReplace")
+      : getNativeBinding("linkBeneath");
     if (native) {
       sourceNativeParent = await openNativeParent(sourcePath);
       targetNativeParent = await openNativeParent(targetPath);
     }
 
     if (strategy === "rename-noreplace") {
-      const binding = requireNativeBinding();
+      const binding = requireNativeBinding("renameNoReplace");
       try {
         const fallback = nativeMoveNoReplace(binding, [
           sourceNativeParent!.handle.fd, sourceNativeParent!.basename,
@@ -398,7 +400,7 @@ export async function publishFileExclusive(params: {
     }
 
     try {
-      if (native) {
+      if (native?.linkBeneath) {
         native.linkBeneath(
           sourceNativeParent!.handle.fd,
           sourceNativeParent!.basename,

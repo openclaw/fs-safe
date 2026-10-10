@@ -52,7 +52,7 @@ export async function createNativeExclusiveFile(
   targetPath: string,
   mode: number,
 ): Promise<NativeFileHandle | undefined> {
-  const binding = getNativeBinding();
+  const binding = getNativeBinding("openBeneath");
   if (!binding) {
     return undefined;
   }
@@ -67,7 +67,7 @@ export async function createNativeExclusiveFile(
   let fd: number | undefined;
   let created: BigIntStats | undefined;
   try {
-    let opened: ReturnType<NativeBinding["openBeneath"]>;
+    let opened: ReturnType<NonNullable<NativeBinding["openBeneath"]>>;
     try {
       opened = binding.openBeneath(
         parent.fd,

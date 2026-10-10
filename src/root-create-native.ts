@@ -74,10 +74,10 @@ function unavailable(): never {
 
 async function withNativeDirectory<T>(
   params: Creation,
-  operation: (binding: NativeBinding, fd: number, assertCurrent: () => void) => Promise<T>,
+  operation: (binding: NativeBinding & Required<Pick<NativeBinding, "openBeneath" | "mkdirChildBeneath">>, fd: number, assertCurrent: () => void) => Promise<T>,
   discard?: (value: T) => Promise<void>,
 ): Promise<T> {
-  const binding = getNativeBinding();
+  const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath || (params.private && process.platform === "win32")) return unavailable();
   const directoryTarget = params.directory === params.target;
   const canonicalTarget = async (target: string) => directoryTarget
@@ -205,7 +205,7 @@ export async function tryOpenCreateRootNative(params: Creation & {
   existingFlags: number;
   mode: number;
 }): Promise<{ handle: FileHandle; cleanupCreated(): Promise<void>; releaseCreationParent(): void }> {
-  const binding = getNativeBinding();
+  const binding = getNativeBinding("openBeneath", "mkdirChildBeneath", "removeStagedFile", "openCreateBeneath");
   if (!binding?.removeStagedFile || !binding.openCreateBeneath) return unavailable();
   const access = (params.existingFlags & fs.constants.O_RDWR) ? 0o600 : 0o200;
   if (typeof params.mode !== "number") throw Object.assign(new TypeError("mode must be a number"), { code: "ERR_INVALID_ARG_TYPE" });

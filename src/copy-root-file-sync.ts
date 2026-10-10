@@ -101,7 +101,7 @@ function copyRootFileWithAdmissionSync(
   let parentOpen = false;
   let target: ReturnType<typeof cache.admit> | undefined;
   let identity: BigIntStats | undefined;
-  const native = getNativeBinding();
+  const native = process.platform !== "win32" ? getNativeBinding("copyFileExclusiveSync", "removeStagedFile") : getNativeBinding();
   const nativeCopy = process.platform !== "win32" && native?.copyFileExclusiveSync && native.removeStagedFile
     ? native.copyFileExclusiveSync.bind(native) : undefined;
   try {

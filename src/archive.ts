@@ -243,7 +243,7 @@ export async function extractArchive(params: ExtractArchiveOptions): Promise<voi
   const label = kind === "zip" ? "extract zip" : "extract tar";
   const limits = resolveExtractLimits(params.limits);
   const tarLimits = resolveTarMeterLimits(limits);
-  const native = getNativeBinding();
+  const native = getNativeBinding("inspectArchiveNative", "extractArchiveNative");
   assertNoWindowsPathAlias(archivePath, "filesystem", "archive source uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(destDir, "filesystem", "archive destination uses a Windows filesystem namespace alias");
   // Read the declared public fields before private adapters copy options: class
@@ -318,7 +318,7 @@ function throwMappedNativeArchiveError(error: unknown): never {
 }
 
 async function extractNativeArchive(params: StagedArchiveExtractOptions & {
-  binding: NativeBinding;
+  binding: NativeBinding & Required<Pick<NativeBinding, "inspectArchiveNative" | "extractArchiveNative">>;
   kind: ArchiveKind;
   tarLimits: TarMeterLimits;
 }): Promise<void> {
@@ -392,7 +392,7 @@ export async function inspectTarArchive(params: InspectTarArchiveOptions): Promi
   const onFiltered = resolveArchiveFilteredEntryPolicy(params.onFiltered);
   const limits = resolveExtractLimits(params.limits);
   const tarLimits = resolveTarMeterLimits(limits);
-  const native = getNativeBinding();
+  const native = getNativeBinding("inspectArchiveNative");
   assertNoWindowsPathAlias(archivePath, "filesystem", "archive source uses a Windows filesystem namespace alias");
   return await withExtractionDeadline(params.timeoutMs, "inspect tar", async (deadline) => {
     const staged = await stageArchiveFileForExtraction({ archivePath, limits, deadline });

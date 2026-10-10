@@ -24,7 +24,7 @@ export async function readCloneFileMetadata(
   files: readonly string[],
 ): Promise<(CloneFileMetadata | undefined)[]> {
   const paths = files.map(assertAbsolutePathInput);
-  const native = process.platform === "darwin" ? requireNativeBinding() : getNativeBinding();
+  const native = process.platform === "darwin" ? requireNativeBinding("readCloneFileMetadata") : getNativeBinding("readCloneFileMetadata");
   if (!native) return paths.map(() => undefined);
   const results = await native.readCloneFileMetadata(paths);
   return results.map((result) => {

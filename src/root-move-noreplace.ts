@@ -107,7 +107,7 @@ export async function movePathNative(
     if (!isNotFoundPathError(error)) throw error;
     // Advisory fast rejection only. renameNoReplace owns the collision decision.
   }
-  const binding = requireNativeBinding();
+  const binding = requireNativeBinding("openBeneath", overwrite ? "renameReplaceWithIdentity" : "renameNoReplace");
   if (typeof (overwrite ? binding.renameReplaceWithIdentity : binding.renameNoReplace) !== "function") {
     throw new FsSafeError("helper-unavailable", "native move is unavailable");
   }

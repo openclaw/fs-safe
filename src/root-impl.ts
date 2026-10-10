@@ -20,6 +20,7 @@ import { runPinnedWriteHelper, runPinnedWriteWithRenamePolicy } from "./pinned-w
 import type { PinnedWriteInput } from "./pinned-write-types.js";
 import { preparePinnedWriteMutationAdmission, snapshotPinnedMutationPolicy } from "./pinned-mutation-admission.js";
 import { getNativeBinding } from "./native.js";
+import { getPinnedWriteNativeBinding } from "./native-pinned-write.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
@@ -1078,7 +1079,7 @@ async function writeFileInRoot(
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
       !params.private && input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
-      (params.renameIdentity === "verify-content-with-lock" || !getNativeBinding())
+      (params.renameIdentity === "verify-content-with-lock" || !getPinnedWriteNativeBinding())
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
       return;

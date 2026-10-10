@@ -19,7 +19,7 @@ export function getNativeDirectoryObservationBackend(
   enabled = true,
 ): NativeDirectoryObservationBackend | undefined {
   if (!enabled) return undefined;
-  const binding = getNativeBinding();
+  const binding = getNativeBinding("observeDirectory");
   return binding && typeof binding.observeDirectory === "function"
     ? binding as NativeDirectoryObservationBackend
     : undefined;

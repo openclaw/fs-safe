@@ -5,17 +5,27 @@ import { runPinnedWriteWindows } from "./native-pinned-write-windows.js";
 import { capturePolicyAwareNativeParent } from "./native-policy-parent.js";
 import { openNativeParentAdmission, openNativeRootAdmission } from "./native-parent-admission.js";
 import { assertNativeStaging, writeNativeStage, type NativeStagingBinding } from "./native-staged-file.js";
-import type { NativeBinding } from "./native.js";
+import { assertNativeCapabilities, getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { cachedNoReplaceUnavailable } from "./native-noreplace.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import type { describeStagedDirectory } from "./staged-directory.js";
 
+const writeCapabilities = ["openBeneath", "mkdirBeneath", "renameNoReplace", "renameReplace"] as const;
+const posixWriteCapabilities = [...writeCapabilities, "createStagedFile", "stagedFileMatches", "removeStagedFile"] as const;
+
+export function getPinnedWriteNativeBinding(): NativeBinding | undefined {
+  return process.platform === "win32"
+    ? getNativeBinding(...writeCapabilities, "fstatIdentity")
+    : getNativeBinding(...posixWriteCapabilities);
+}
+
 export async function runPinnedWriteNative(
   binding: NativeBinding, params: PinnedWriteParams,
   fallback: (input: PinnedWriteParams["input"]) => Promise<FileIdentityStat>,
 ): Promise<FileIdentityStat> {
+  assertNativeCapabilities(binding, ...writeCapabilities);
   const closeFd = captureNativeFdClose(binding);
   const windows = process.platform === "win32";
   if (!windows) {

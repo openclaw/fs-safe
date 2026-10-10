@@ -32,7 +32,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
-import { getNativeBinding, type NativeBinding } from "./native.js";
+import { assertNativeCapabilities, getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeArchiveEntry } from "./native-binding.js";
 import { admitZipBuffer } from "./archive-zip-admission.js";
 import type { ZipDirectoryEntry } from "./archive-zip-directory.js";
@@ -223,9 +223,14 @@ async function readNativeBufferEntry(
   try {
     const signal = new AbortController().signal;
     const limits = resolveTarMeterLimits();
-    const reader = kind === "zip"
-      ? await native.openZipBufferNative(buffer, limits, AbortSignal.any([signal]))
-      : await native.openTarBufferNative(buffer, kind, limits, AbortSignal.any([signal]));
+    let reader;
+    if (kind === "zip") {
+      assertNativeCapabilities(native, "openZipBufferNative");
+      reader = await native.openZipBufferNative(buffer, limits, AbortSignal.any([signal]));
+    } else {
+      assertNativeCapabilities(native, "openTarBufferNative");
+      reader = await native.openTarBufferNative(buffer, kind, limits, AbortSignal.any([signal]));
+    }
     const manifest = reader.entries;
     if (kind === "zip") validateNativeZipManifest(manifest, zipEntries);
     const selected = selectNativeEntry(manifest, requested, displayPath);
@@ -253,7 +258,7 @@ export async function readArchiveEntry(
   const buffer = await readArchiveInput(archivePath);
   const zipEntries: ZipDirectoryEntry[] = [];
   if (kind === "zip") admitZipBuffer(buffer, resolveExtractLimits(), entry => { zipEntries.push(entry); });
-  const native = getNativeBinding();
+  const native = getNativeBinding(kind === "zip" ? "openZipBufferNative" : "openTarBufferNative");
   if (native) return await readNativeBufferEntry(native, buffer, kind, requestedEntry, entryPath, maxBytes, zipEntries);
   return kind === "zip" ? await readZipEntry(buffer, requestedEntry, maxBytes, zipEntries)
     : await readTarEntry(buffer, requestedEntry, maxBytes, kind);

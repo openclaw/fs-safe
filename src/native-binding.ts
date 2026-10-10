@@ -179,18 +179,18 @@ export interface NativeBinding {
   /** Linux/Windows byte transfer; callers retain both admitted descriptors until settlement. */
   copyFileContents?(sourceFd: number, targetFd: number, signal?: AbortSignal): Promise<void>;
   /** Internal: same private, immutable input ownership as the ZIP buffer reader. */
-  openTarBufferNative(buffer: Buffer, kind: string, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
+  openTarBufferNative?(buffer: Buffer, kind: string, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
     readonly entries: NativeArchiveEntry[];
     readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
   }>;
   /** Internal: input remains private, unpooled and immutable until the reader is released. */
-  openZipBufferNative(buffer: Buffer, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
+  openZipBufferNative?(buffer: Buffer, limits: TarMeterLimits, signal?: AbortSignal): Promise<{
     readonly entries: NativeArchiveEntry[];
     readEntry(index: number, maxBytes: number, signal?: AbortSignal): Promise<Buffer>;
   }>;
-  readCloneFileMetadata(paths: string[]): Promise<(Buffer | null)[]>;
-  probeTreeClone(parentFd: number): "apfs" | "btrfs" | "refs" | "xfs" | "zfs" | null;
-  cloneTree(
+  readCloneFileMetadata?(paths: string[]): Promise<(Buffer | null)[]>;
+  probeTreeClone?(parentFd: number): "apfs" | "btrfs" | "refs" | "xfs" | "zfs" | null;
+  cloneTree?(
     sourceFd: number | null,
     parentFd: number,
     basename: string,
@@ -225,13 +225,13 @@ export interface NativeBinding {
     clone: CopyCloneMode,
     maxBytes: number | undefined,
   ): NativeFileCopyResult;
-  cloneFileExclusive(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
-  copyFileRangeExclusive(
+  cloneFileExclusive?(sourceFd: number, targetRootFd: number, targetRelPath: string): number;
+  copyFileRangeExclusive?(
     sourceFd: number,
     targetRootFd: number,
     targetRelPath: string,
   ): Promise<NativeCopyResult>;
-  createPrivateDirectory(path: string): void;
+  createPrivateDirectory?(path: string): void;
   /** Internal Windows creation receipts use full FILE_ID_INFO, never Node's projection. */
   inspectWindowsDirectory?(path: string, requirePrivate: boolean): NativeWindowsDirectoryReceipt;
   createPrivateDirectoryWithParentIdentity?(
@@ -251,7 +251,7 @@ export interface NativeBinding {
     expectedParentIdentity: string,
     expectedLinks: number,
   ): void;
-  extractArchiveNative(
+  extractArchiveNative?(
     path: string,
     kind: string,
     rootFd: number,
@@ -259,20 +259,20 @@ export interface NativeBinding {
     limits: TarMeterLimits,
     signal: AbortSignal,
   ): Promise<void>;
-  fstatIdentity(fd: number): NativeFileIdentity;
-  inspectArchiveNative(
+  fstatIdentity?(fd: number): NativeFileIdentity;
+  inspectArchiveNative?(
     path: string,
     kind: string,
     limits: TarMeterLimits,
     signal: AbortSignal,
   ): Promise<NativeArchiveEntry[]>;
-  linkBeneath(...args: NativeTwoPathArgs): void;
+  linkBeneath?(...args: NativeTwoPathArgs): void;
   /** Direct-child mkdir; true is receipt provenance only, never cleanup ownership. */
   mkdirChildBeneath?(parentFd: number, basename: string, mode: number): boolean;
   mkdirOpenChildBeneath?(parentFd: number, basename: string, mode: number, flags: number): { fd: number; created: boolean };
-  mkdirBeneath(rootFd: number, relPath: string, mode: number): void;
-  openBeneath(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
-  readOwnerAndDacl(path: string): NativeWindowsSecurityFacts;
+  mkdirBeneath?(rootFd: number, relPath: string, mode: number): void;
+  openBeneath?(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
+  readOwnerAndDacl?(path: string): NativeWindowsSecurityFacts;
   /** Internal Windows-only inspection of the exact borrowed Node descriptor. */
   inspectWindowsSecureFileHandle?(fd: number): NativeWindowsDescriptorSecurityFacts;
   ownedTreeRemovalAvailable?(parentFd: number): boolean;
@@ -297,7 +297,7 @@ export interface NativeBinding {
     sourceParentFd: number, sourceBasename: string, sourceFd: number,
     targetParentFd: number, targetBasename: string,
   ): NativePublicationTransition;
-  renameNoReplace(...args: NativeTwoPathArgs): void;
+  renameNoReplace?(...args: NativeTwoPathArgs): void;
   /** Linux auto-mode fallback through already-admitted direct-child parents. */
   moveNoReplaceFallback?(
     ...args: [...paths: NativeTwoPathArgs, expectedSourceDev: bigint, expectedSourceIno: bigint]
@@ -306,9 +306,11 @@ export interface NativeBinding {
   renameNoReplaceWithIdentity?(
     ...args: [...paths: NativeTwoPathArgs, expectedSourceDev: bigint, expectedSourceIno: bigint]
   ): void;
-  renameReplace(...args: NativeTwoPathArgs): void;
-  sha256File(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
+  renameReplace?(...args: NativeTwoPathArgs): void;
+  sha256File?(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
 }
+
+export type CapableNativeBinding<K extends keyof NativeBinding> = NativeBinding & Required<Pick<NativeBinding, K>>;
 
 export function captureNativeFdClose(binding: NativeBinding): (fd: number) => void {
   if (typeof binding.closeOwnedFd !== "function") {

@@ -4,7 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
-import { getNativeBinding, type NativeBinding } from "./native.js";
+import { getNativeBinding, selectNativeBinding, type NativeBinding } from "./native.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
@@ -70,11 +70,12 @@ export async function hashFileHandle(
   if (stat.size > maxBytes) {
     throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
   }
-  if (native) {
+  const hasher = selectNativeBinding(native, "sha256File");
+  if (hasher) {
     // A completed N-API task can mask later aborts on the same signal.
     const nativeSignal = signal ? AbortSignal.any([signal]) : undefined;
     try {
-      const result = await native.sha256File(
+      const result = await hasher.sha256File(
         handle.fd,
         Number.isFinite(maxBytes) ? maxBytes : undefined,
         nativeSignal,

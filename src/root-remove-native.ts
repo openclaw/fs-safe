@@ -34,7 +34,8 @@ function normalize(error: unknown, details?: FsSafeErrorDetails): unknown {
 export async function removePathInRootNative(
   root: RootContext, target: string, options: InternalRemoveOptions, receipts?: RemovalPathReceipts,
 ): Promise<void> {
-  const binding = getNativeBinding();
+  const binding = getNativeBinding("openBeneath", "rootRemovalStat", "rootRemovalUnlink",
+    ...(options.recursive ? ["openRootRemovalDirectory" as const] : []));
   if (!binding?.rootRemovalStat || !binding.rootRemovalUnlink) {
     unavailable();
   }
