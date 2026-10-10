@@ -35,10 +35,23 @@ pub(crate) fn decode(raw: &[u8], utf8: bool) -> Result<Cow<'_, str>> {
     }).collect()))
 }
 
-pub(crate) fn validate_metadata(raw: &[u8], flags: u16, extra: &[u8]) -> Result<()> {
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = flate2::Crc::new(); crc.update(bytes); crc.sum()
+}
+
+fn invalid_comment(message: &str) -> Error {
+    // Keep the historical native error surface for inert comment metadata.
+    Error::new(ErrorKind::InvalidData, format!("invalid ZIP Unicode Comment {message}"))
+}
+
+pub(crate) fn validate_metadata(raw: &[u8], flags: u16, extra: &[u8], raw_comment: &[u8]) -> Result<()> {
     if flags & 0x800 != 0 { decode(raw, true)?; }
+    let mut current_name = raw;
+    // The native decoder has historically checked comment CRCs against its
+    // decoded comment, including lossy flagged comments, rather than raw bytes.
+    let mut comment = if flags & 0x800 != 0 { String::from_utf8_lossy(raw_comment) }
+        else { decode(raw_comment, false)? };
     let mut offset = 0;
-    let mut name_crc = None;
     while offset + 4 <= extra.len() {
         let id = u16::from_le_bytes([extra[offset], extra[offset + 1]]);
         let length = u16::from_le_bytes([extra[offset + 2], extra[offset + 3]]) as usize;
@@ -47,13 +60,21 @@ pub(crate) fn validate_metadata(raw: &[u8], flags: u16, extra: &[u8]) -> Result<
         let Some(field) = extra.get(offset..offset + length) else { break; };
         if id == 0x7075 {
             if field.len() < 5 { return Err(invalid("truncated ZIP Unicode Path field")); }
-            let checksum = *name_crc.get_or_insert_with(|| {
-                let mut crc = flate2::Crc::new(); crc.update(raw); crc.sum()
-            });
+            let checksum = crc32(current_name);
             if checksum != u32::from_le_bytes(field[1..5].try_into().unwrap()) {
                 return Err(invalid("ZIP Unicode Path CRC mismatch"));
             }
             decode(&field[5..], true)?;
+            // Advancing after each field both matches decoder order and bounds
+            // total hashing by the original text plus the extra-field payloads.
+            current_name = &field[5..];
+        } else if id == 0x6375 {
+            if field.len() < 5 { return Err(invalid_comment("field is truncated")); }
+            if crc32(comment.as_bytes()) != u32::from_le_bytes(field[1..5].try_into().unwrap()) {
+                return Err(invalid_comment("CRC mismatch"));
+            }
+            comment = Cow::Borrowed(std::str::from_utf8(&field[5..])
+                .map_err(|_| invalid_comment("UTF-8"))?);
         }
         offset += length;
     }

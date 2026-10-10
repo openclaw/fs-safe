@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- **Native ZIP Unicode fields:** retain rejection of invalid Unicode Comment CRCs and UTF-8 before callbacks or bounded reads, and validate sequential Unicode fields in decoder order without repeated hashing of the original name.
+
 - **Portable ZIP extraction:** accept safe relative root-directory markers such as `./` from libarchive and other producers without turning them into absolute paths; root markers remain skipped before callbacks and publication.
 - **Native ZIP names:** preserve CP437 decoding for unflagged legacy filenames after the ZIP 9 upgrade, including collision rejection and bounded entry selection; continue rejecting invalid Unicode Path checksums and encodings before decoder normalization.
 

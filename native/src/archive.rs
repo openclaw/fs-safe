@@ -399,15 +399,14 @@ fn count_central_directory_entries<R: Read + Seek>(
                 "truncated zip central directory",
             ));
         }
-        // ZIP 9 silently ignores invalid Unicode Path fields. Validate original
-        // bytes before it replaces names; the reusable buffer is at most 128 KiB.
-        metadata.resize(name_length + extra_length, 0);
+        // ZIP 9 silently ignores invalid Unicode fields. Validate original text
+        // before replacement; all three u16-sized fields use at most 192 KiB.
+        let extra_end = name_length + extra_length;
+        metadata.resize(extra_end + comment_length as usize, 0);
         file.read_exact(&mut metadata).map_err(|error| io_error("read zip name metadata", error))?;
         crate::archive_zip_name::validate_metadata(&metadata[..name_length],
-            u16::from_le_bytes([header[8], header[9]]), &metadata[name_length..])
+            u16::from_le_bytes([header[8], header[9]]), &metadata[name_length..extra_end], &metadata[extra_end..])
             .map_err(|error| io_error("read zip name metadata", error))?;
-        file.seek(SeekFrom::Current(comment_length as i64))
-            .map_err(|error| io_error("skip zip directory entry", error))?;
         count += 1;
         if count > max_entries as u64 {
             return Err(Error::from_reason("archive-entry-count-exceeds-limit"));
