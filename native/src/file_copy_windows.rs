@@ -19,7 +19,7 @@ use crate::clone_windows::{clone_file_data, is_refs, reject_named_streams};
 use crate::task::{cancellation, checked_max_bytes};
 use crate::windows::{
     OwnedHandle, ReparsePolicy, duplicate_handle, handle_identity_and_size, handle_is_reparse,
-    mark_handle_for_deletion, nt_open_relative_with_policy, open_independent_reader_handle,
+    mark_clone_handle_for_deletion, nt_open_relative_with_policy, open_independent_reader_handle,
     read_at, root_handle, runtime_fd_from_handle, set_file_information, win_error,
 };
 use crate::{NativeResult, native_error, validate_child_basename};
@@ -47,7 +47,7 @@ unsafe impl Send for CreatedCopy {}
 impl Drop for CreatedCopy {
     fn drop(&mut self) {
         if !self.released {
-            let _ = mark_handle_for_deletion(self.target.0.0);
+            let _ = mark_clone_handle_for_deletion(self.target.0.0);
         }
     }
 }
@@ -115,21 +115,32 @@ impl FileCopyTask {
         Ok(size)
     }
 
+    fn check_clone_streams(&self) -> NativeResult<()> {
+        // A content rejection must never become an automatic byte-copy retry.
+        reject_named_streams(self.source.0.0).map_err(|error| {
+            if error.status == "ENOTSUP" {
+                native_error("EIO", error.reason)
+            } else {
+                error
+            }
+        })
+    }
+
     fn copy(&self) -> NativeResult<CreatedCopy> {
+        self.copy_with_before_source_lock(|| {})
+    }
+
+    fn copy_with_before_source_lock(
+        &self,
+        before_lock: impl FnOnce(),
+    ) -> NativeResult<CreatedCopy> {
         self.check_cancelled()?;
-        let size = self.check_source()?;
+        self.check_source()?;
         if self.clone_mode != "never" {
             if !is_refs(self.parent.0.0)? {
                 return Err(native_error("ENOTSUP", "file cloning requires ReFS"));
             }
-            // A content rejection must never become an automatic byte-copy retry.
-            reject_named_streams(self.source.0.0).map_err(|error| {
-                if error.status == "ENOTSUP" {
-                    native_error("EIO", error.reason)
-                } else {
-                    error
-                }
-            })?;
+            self.check_clone_streams()?;
             if !is_refs(self.source.0.0)?
                 || handle_identity_and_size(self.source.0.0)?.0.0
                     != handle_identity_and_size(self.parent.0.0)?.0.0
@@ -140,6 +151,7 @@ impl FileCopyTask {
                 ));
             }
         }
+        before_lock();
         let clone_source = if self.clone_mode == "never" {
             None
         } else {
@@ -158,6 +170,12 @@ impl FileCopyTask {
             }
             Some(OwnedHandle(handle))
         };
+        // Recheck all content admission after excluding writers, including streams
+        // created since the first sample. Neither length nor stream facts may be stale.
+        if clone_source.is_some() {
+            self.check_clone_streams()?;
+        }
+        let size = self.check_source()?;
         let target = nt_open_relative_with_policy(
             self.parent.0.0,
             &self.name,
@@ -182,6 +200,7 @@ impl FileCopyTask {
                 created.target.0.0,
                 size,
                 &self.cancelled,
+                true,
             ) {
                 if self.clone_mode == "always"
                     || !matches!(
@@ -286,4 +305,99 @@ pub fn copy_file_exclusive(
         })
     })();
     crate::into_napi(env, task).map(AsyncTask::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{directory, unique_path_in};
+    use std::{fs, os::windows::io::AsRawHandle};
+
+    #[test]
+    fn unreturned_copy_stage_is_removed_on_refs() {
+        let explicit = std::env::var_os("FS_SAFE_CLONE_TEST_ROOT");
+        let base = explicit.clone().map_or_else(std::env::temp_dir, Into::into);
+        let base_handle = directory(&base);
+        if !is_refs(base_handle.as_raw_handle()).unwrap() {
+            assert!(explicit.is_none(), "FS_SAFE_CLONE_TEST_ROOT requires ReFS");
+            return;
+        }
+        let scratch = unique_path_in(&base, "unreturned-copy");
+        fs::create_dir(&scratch).unwrap();
+        let parent = directory(&scratch);
+        let target = nt_open_relative_with_policy(
+            parent.as_raw_handle(),
+            "stage",
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE,
+            FILE_CREATE,
+            FILE_NON_DIRECTORY_FILE,
+            ReparsePolicy::Reject,
+        )
+        .unwrap();
+        let created = CreatedCopy {
+            target: RetainedHandle(target),
+            method: "clone",
+            error: None,
+            released: false,
+        };
+        assert!(scratch.join("stage").exists());
+        drop(created);
+        assert!(!scratch.join("stage").exists());
+        drop(parent);
+        fs::remove_dir(scratch).unwrap();
+    }
+
+    #[test]
+    fn clone_admission_is_rechecked_after_excluding_source_writers() {
+        let explicit = std::env::var_os("FS_SAFE_CLONE_TEST_ROOT");
+        let base = explicit.clone().map_or_else(std::env::temp_dir, Into::into);
+        let base_handle = directory(&base);
+        if !is_refs(base_handle.as_raw_handle()).unwrap() {
+            assert!(explicit.is_none(), "FS_SAFE_CLONE_TEST_ROOT requires ReFS");
+            return;
+        }
+        let scratch = unique_path_in(&base, "copy-source-growth");
+        fs::create_dir(&scratch).unwrap();
+        let source_path = scratch.join("source");
+        let grown = vec![0x5a; 128 * 1024 + 1];
+        for (max_bytes, add_stream) in [
+            (grown.len() as u64, false),
+            (grown.len() as u64 - 1, false),
+            (grown.len() as u64, true),
+        ] {
+            fs::write(&source_path, b"small").unwrap();
+            let source = fs::File::open(&source_path).unwrap();
+            let parent = directory(&scratch);
+            let task = FileCopyTask {
+                source: RetainedHandle(
+                    duplicate_handle(source.as_raw_handle(), "retain source").unwrap(),
+                ),
+                parent: RetainedHandle(
+                    duplicate_handle(parent.as_raw_handle(), "retain parent").unwrap(),
+                ),
+                name: "stage".into(),
+                clone_mode: "always".into(),
+                max_bytes,
+                cancelled: Arc::new(AtomicBool::new(false)),
+            };
+            let copied = task.copy_with_before_source_lock(|| {
+                fs::write(&source_path, &grown).unwrap();
+                if add_stream {
+                    fs::write(scratch.join("source:secret"), b"stream").unwrap();
+                }
+            });
+            if add_stream {
+                assert_eq!(copied.err().unwrap().status, "EIO");
+            } else if max_bytes == grown.len() as u64 {
+                let created = copied.unwrap();
+                assert!(created.error.is_none());
+                assert_eq!(fs::read(scratch.join("stage")).unwrap(), grown);
+                drop(created);
+            } else {
+                assert_eq!(copied.err().unwrap().status, "too-large");
+            }
+            assert!(!scratch.join("stage").exists());
+        }
+        fs::remove_dir_all(scratch).unwrap();
+    }
 }

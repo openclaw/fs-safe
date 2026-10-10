@@ -51,8 +51,8 @@ jobs:
       - name: Create disposable ReFS VHD (Dev Drive on ARM64)
         shell: pwsh
         run: ./scripts/setup-refs-test-volume.ps1 -DevDrive:(${{ matrix.arch == 'arm64' && '$true' || '$false' }})
-      - name: Measure tree and file clone tail parity
-        run: node test/fixtures/refs-tail-parity.mjs
+      - name: Test native cleanup and tree cloning on ReFS
+        run: cargo test --workspace --locked
       - name: Prove real ReFS clones, physical sharing, and guarded publication
         env:
           FS_SAFE_NATIVE_MODE: require

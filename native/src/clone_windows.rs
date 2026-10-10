@@ -226,6 +226,18 @@ fn control(
     output: *mut c_void,
     output_size: u32,
 ) -> NativeResult<u32> {
+    control_with_capabilities(handle, code, input, input_size, output, output_size, false)
+}
+
+fn control_with_capabilities(
+    handle: HANDLE,
+    code: u32,
+    input: *const c_void,
+    input_size: u32,
+    output: *mut c_void,
+    output_size: u32,
+    classify_capabilities: bool,
+) -> NativeResult<u32> {
     let mut returned = 0;
     // All callers pass initialized buffers whose lifetimes cover this synchronous call.
     if unsafe {
@@ -242,7 +254,7 @@ fn control(
     } == 0
     {
         let error = unsafe { GetLastError() };
-        if matches!(code, FSCTL_GET_INTEGRITY_INFORMATION | FSCTL_SET_INTEGRITY_INFORMATION
+        if classify_capabilities && matches!(code, FSCTL_GET_INTEGRITY_INFORMATION | FSCTL_SET_INTEGRITY_INFORMATION
             | FSCTL_SET_SPARSE | FSCTL_DUPLICATE_EXTENTS_TO_FILE)
             && matches!(error, ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED
                 | ERROR_INVALID_PARAMETER | ERROR_NOT_SAME_DEVICE)
@@ -326,7 +338,11 @@ pub(crate) fn clone_file_data(
     target: HANDLE,
     size: u64,
     cancelled: &AtomicBool,
+    classify_capabilities: bool,
 ) -> NativeResult<()> {
+    let control = |handle, code, input, input_size, output, output_size| {
+        control_with_capabilities(handle, code, input, input_size, output, output_size, classify_capabilities)
+    };
     let mut integrity = FSCTL_GET_INTEGRITY_INFORMATION_BUFFER::default();
     control(
         source,
@@ -365,8 +381,9 @@ pub(crate) fn clone_file_data(
     // SAFETY: FILE_END_OF_FILE_INFO is the initialized record for this class.
     unsafe { set_file_information(target, FileEndOfFileInfo, &eof) }
         .map_err(|code| win_error(code, "set clone file length"))?;
-    // ReFS permits the final partial cluster beyond EOF while retaining the exact
-    // logical file size. Each request remains below the API's 4 GiB limit.
+    // Keep the existing rounded final request and exact logical EOF. ReFS may
+    // copy the last partial cluster; only complete clusters promise sharing.
+    // Each request remains below the API's 4 GiB limit.
     let mut offset = 0;
     while offset < size {
         check_cancelled(cancelled)?;
@@ -412,7 +429,7 @@ fn clone_file(job: FileJob, cancelled: &AtomicBool) -> NativeResult<()> {
         clone_reparse(source.0, target.0)?;
     } else {
         let size = ((information.nFileSizeHigh as u64) << 32) | information.nFileSizeLow as u64;
-        clone_file_data(source.0, target.0, size, cancelled)?;
+        clone_file_data(source.0, target.0, size, cancelled, false)?;
     }
     let after = metadata(source.0)?;
     let final_information = guarded_handle_information(source.0, "inspect clone source")?;

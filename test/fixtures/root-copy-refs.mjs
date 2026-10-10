@@ -5,8 +5,26 @@ import path from "node:path";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { root } from "../../dist/root.js";
 import { configureFsSafeNative } from "../../dist/config.js";
-import { probeTreeClone } from "../../dist/copy.js";
+import { copyTree, probeTreeClone } from "../../dist/copy.js";
 import { readWindowsFileExtents } from "../../dist/test-hooks.js";
+
+function assertClonedData(source, destination, clusterSize) {
+  const expected = fs.readFileSync(source);
+  assert.deepEqual(fs.readFileSync(destination), expected);
+  assert.equal(fs.statSync(destination).size, expected.length);
+  const original = readWindowsFileExtents(source);
+  const copied = readWindowsFileExtents(destination);
+  const lcnAt = (extents, vcn) => {
+    const extent = extents.find(value => value.vcn <= vcn && vcn < value.vcn + value.clusters);
+    assert.ok(extent && extent.lcn >= 0n, `missing allocated cluster ${vcn}`);
+    return extent.lcn + vcn - extent.vcn;
+  };
+  // ReFS may copy the final partial cluster even after a rounded clone request.
+  // Check every complete cluster, independently of extent coalescing or fragmentation.
+  for (let vcn = 0n; vcn < BigInt(Math.floor(expected.length / clusterSize)); vcn++) {
+    assert.equal(lcnAt(copied, vcn), lcnAt(original, vcn), `${path.basename(source)} full cluster ${vcn}`);
+  }
+}
 
 async function prove() {
   assert.equal(process.platform, "win32");
@@ -54,13 +72,17 @@ async function prove() {
 
     const clusterSize = fs.statfsSync(parent).bsize;
     assert.ok(Number.isSafeInteger(clusterSize) && clusterSize > 0);
-    for (const size of [0, 1, clusterSize - 1, clusterSize + 1]) {
+    for (const size of [0, 1, clusterSize - 1, clusterSize + 1, 4 * 1024 * 1024 + 1]) {
       const partial = path.join(sourceDir, `partial-${size}`);
       const content = Buffer.alloc(size, 0x37);
       fs.writeFileSync(partial, content);
       await target.copyIn(`partial-${size}`, partial, { clone: "always", overwrite: false });
-      assert.deepEqual(fs.readFileSync(path.join(targetDir, `partial-${size}`)), content);
-      if (size > 0) assert.deepEqual(readWindowsFileExtents(path.join(targetDir, `partial-${size}`)), readWindowsFileExtents(partial));
+      assertClonedData(partial, path.join(targetDir, `partial-${size}`), clusterSize);
+    }
+    const tree = path.join(directory, "tree");
+    await copyTree(sourceDir, tree, { clone: "always" });
+    for (const name of fs.readdirSync(sourceDir)) {
+      assertClonedData(path.join(sourceDir, name), path.join(tree, name), clusterSize);
     }
     cases++;
 
@@ -118,7 +140,7 @@ async function prove() {
     assert.equal(fs.existsSync(path.join(targetDir, "cross-always")), false);
     cases++;
     assert.ok(!fs.readdirSync(targetDir).some(name => name.startsWith(".fs-safe-")));
-    return { platform: process.platform, arch: process.arch, mode: isMainThread ? "main" : "worker", cases, clusterSize, sharedExtents: sourceExtents.length };
+    return { platform: process.platform, arch: process.arch, mode: isMainThread ? "main" : "worker", cases, clusterSize, sharedPrefixBytes: 4 * 1024 * 1024, sharedExtents: sourceExtents.length };
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
     fs.rmSync(ordinary, { recursive: true, force: true });
