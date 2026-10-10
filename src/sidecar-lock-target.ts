@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
@@ -25,7 +26,9 @@ export async function resolveSidecarTargetPath(resolved: string, lockRoot?: Root
     assertNoWindowsPathAlias(normalized);
     return normalized;
   }
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true });
+  let parentExists = false;
+  try { parentExists = fsSync.statSync(dir).isDirectory(); } catch { /* Preserve mkdir errors below. */ }
+  if (!parentExists) await fs.mkdir(recursiveMkdirPath(dir), { recursive: true });
   let parent: string;
   try {
     parent = realpathSync.native(dir);
