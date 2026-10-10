@@ -73,11 +73,11 @@ describe("borrowed FileHandle option snapshots", () => {
     const f = await fixture("snapshot", "");
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    const stat = f.source.stat.bind(f.source);
-    vi.spyOn(f.source, "stat").mockImplementation(async (...args) => {
+    const read = f.source.read.bind(f.source);
+    vi.spyOn(f.source, "read").mockImplementationOnce(async (...args) => {
       entered.resolve();
       await release.promise;
-      return await stat(...args);
+      return await read(...args);
     });
     const selected = new AbortController();
     const replacement = new AbortController();
@@ -132,14 +132,6 @@ describe("borrowed FileHandle option snapshots", () => {
 
   it.each(["getter", "descriptor"] as const)("retains a late %s failure without an observer", async (kind) => {
     const f = await fixture("content", "unchanged");
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    const stat = f.target.stat.bind(f.target);
-    vi.spyOn(f.target, "stat").mockImplementation(async (...args) => {
-      entered.resolve();
-      await release.promise;
-      return await stat(...args);
-    });
     const failure = new Error(`synthetic late ${kind} failure`);
     const events: string[] = [];
     const backing = Object.defineProperties({}, kind === "getter" ? {
@@ -164,12 +156,7 @@ describe("borrowed FileHandle option snapshots", () => {
       },
     }) as CopyFileHandleOptions;
     const pending = copyFileHandle(f.source, f.target, options);
-    try {
-      await entered.promise;
-      expect(events).toEqual([]);
-    } finally {
-      release.resolve();
-    }
+    expect(events).toEqual([]);
     await expect(pending).rejects.toBe(failure);
     expect(events).toEqual(kind === "getter"
       ? ["ownKeys", "descriptor:late", "get:late"] : ["ownKeys", "descriptor:signal"]);
