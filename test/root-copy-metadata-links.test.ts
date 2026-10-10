@@ -16,7 +16,12 @@ describe("Root.copyIn metadata and literal links", () => {
       const script = path.join(fixtures, "root-copy-metadata-links.mjs");
       await fs.copyFile(fileURLToPath(new URL("./fixtures/root-copy-metadata-links.mjs", import.meta.url)), script);
       await fs.writeFile(path.join(directory, "package.json"), '{"type":"module"}');
-      const { stdout, stderr } = await promisify(execFile)(process.execPath, [script, "auto"], { timeout: 30_000 });
+      const args = [...(process.versions.bun ? ["--no-install"] : []), script, "auto", "expect-missing"];
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) {
+        if (["NODE_OPTIONS", "NODE_PATH", "BUN_OPTIONS"].includes(key) || key.startsWith("VITEST")) delete env[key];
+      }
+      const { stdout, stderr } = await promisify(execFile)(process.execPath, args, { timeout: 30_000, cwd: directory, env });
       expect(stderr).toBe("");
       expect(stdout).toContain('"thread":"main"');
       expect(stdout).toContain('"thread":"worker"');

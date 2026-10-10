@@ -10,8 +10,10 @@ import { probeTreeClone } from "../../dist/copy.js";
 import { getNativeBinding } from "../../dist/native.js";
 
 const mode = isMainThread ? process.argv[2] ?? "auto" : workerData.mode;
+const expectMissing = isMainThread ? process.argv[3] === "expect-missing" : workerData.expectMissing;
 configureFsSafeNative({ mode });
 const native = getNativeBinding();
+if (expectMissing) assert.equal(native, undefined, "JavaScript-only fixture must not load an addon");
 const nativeLinks = process.platform === "win32"
   ? Boolean(native?.copyLinkExclusive && native.publishCopyLink && native.removeCopyLink)
   : Boolean(native?.createCopySymlink);
@@ -177,7 +179,7 @@ async function run() {
 if (isMainThread) {
   console.log(JSON.stringify(await run()));
   await new Promise((resolve, reject) => {
-    const worker = new Worker(new URL(import.meta.url), { workerData: { mode } });
+    const worker = new Worker(new URL(import.meta.url), { workerData: { mode, expectMissing } });
     worker.on("message", value => console.log(JSON.stringify(value)));
     worker.on("error", reject);
     worker.on("exit", code => code === 0 ? resolve() : reject(Error(`worker exited ${code}`)));
