@@ -244,7 +244,7 @@ updates:
 import { fileStore } from "@openclaw/fs-safe/store";
 
 const files = fileStore({ rootDir: "/safe/workspace/state", private: true });
-const store = files.json("settings.json", { lock: true });
+const store = files.json<{ enabled: boolean }>("settings.json", { lock: true });
 
 await store.updateOr({ enabled: false }, (current) => ({ ...current, enabled: true }));
 ```
