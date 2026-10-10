@@ -22,6 +22,7 @@ import { syncFileBestEffortSync } from "./file-sync.js";
 import { finalizeArchivePublication, type ArchivePublishedDirectory, type ArchivePublishedFile } from "./archive-durability.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { ArchiveSecurityError } from "./archive-errors.js";
 
 export type ArchivePublicationEntry = { path: string; kind: "file" | "directory"; mode: number };
 type MergeParams = {
@@ -119,6 +120,20 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
     assertDirectoryIdentityGuard(destinationGuard);
     check();
     for (const ancestor of ancestors) {
+      // Verify every retained ancestor, including its current name and physical path.
+      // Shallow chains cost less to verify directly than crossing the native bridge.
+      if (ancestors.length >= 4 && ancestor.owner.verifyCanonical) {
+        let verified: boolean;
+        try { verified = await ancestor.owner.verifyCanonical(); }
+        catch (error) {
+          if (error instanceof FsSafeError || isNotFoundPathError(error)) {
+            throw createArchiveSymlinkTraversalError(path.relative(destinationDir, ancestor.guard.dir));
+          }
+          throw error;
+        }
+        check();
+        if (verified) continue;
+      }
       assertDirectoryIdentityGuard(ancestor.guard);
       check();
       await ancestor.owner.verify(check);
@@ -172,15 +187,22 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
           await ownExtractionDestinationMutation(params.deadline, async () => {
             await assertGuards();
             assertSourceFrontier();
-            const owner = await pinNodeDirectoryForMode(destinationPath).catch((error: unknown) => {
+            const guard = await createDirectoryIdentityGuard(destinationPath).catch((error: unknown) => {
+              if (error instanceof ArchiveSecurityError && error.code === "destination-symlink") {
+                throw createArchiveSymlinkTraversalError(originalPath);
+              }
+              throw error;
+            });
+            check();
+            const owner = await pinNodeDirectoryForMode(destinationPath, {
+              expectedIdentity: guard.stat, canonicalPath: guard.realPath,
+            }).catch((error: unknown) => {
               if (error instanceof FsSafeError && (error.code === "not-file" || error.code === "path-mismatch")) {
                 throw createArchiveSymlinkTraversalError(originalPath);
               }
               throw error;
             });
             try {
-              check();
-              const guard = await createDirectoryIdentityGuard(destinationPath);
               check();
               await owner.verify(check);
               ancestors.push({ guard, owner });
