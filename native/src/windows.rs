@@ -55,7 +55,7 @@ pub(crate) fn open_existing_handle(
     path: &[u16],
     access: u32,
     flags: u32,
-    error: impl FnOnce(u32) -> napi::Error<String>,
+    error: impl FnOnce(u32) -> crate::NativeError,
 ) -> NativeResult<OwnedHandle> {
     if path.last() != Some(&0) {
         return Err(native_error(
@@ -322,7 +322,7 @@ fn wide_relative(path: &str) -> NativeResult<Vec<u16>> {
     Ok(wide)
 }
 
-pub(crate) fn win_error(code: u32, operation: &str) -> napi::Error<String> {
+pub(crate) fn win_error(code: u32, operation: &str) -> crate::NativeError {
     let typed = match code {
         ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS => "EEXIST",
         ERROR_DIR_NOT_EMPTY => "ENOTEMPTY",
@@ -335,30 +335,31 @@ pub(crate) fn win_error(code: u32, operation: &str) -> napi::Error<String> {
         ERROR_ACCESS_DENIED => "EPERM",
         _ => "EIO",
     };
-    native_error(
+    let mut error = native_error(
         typed,
         format!("{operation} failed with Windows error {code}"),
-    )
+    );
+    error.errno = Some(code);
+    error
 }
 
-fn nt_error(status: i32, operation: &str) -> napi::Error<String> {
+fn nt_error(status: i32, operation: &str) -> crate::NativeError {
     // SAFETY: converting an NTSTATUS does not dereference application memory.
     win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
 
-fn rename_win_error(code: u32, operation: &str) -> napi::Error<String> {
+fn rename_win_error(code: u32, operation: &str) -> crate::NativeError {
     let typed = match code {
         ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_CALL_NOT_IMPLEMENTED => "ENOTSUP",
         ERROR_INVALID_PARAMETER => "EINVAL",
         _ => return win_error(code, operation),
     };
-    native_error(
-        typed,
-        format!("{operation} failed with Windows error {code}"),
-    )
+    let mut error = win_error(code, operation);
+    error.status = typed.into();
+    error
 }
 
-fn rename_nt_error(status: i32, operation: &str) -> napi::Error<String> {
+fn rename_nt_error(status: i32, operation: &str) -> crate::NativeError {
     // SAFETY: converting an NTSTATUS does not dereference application memory.
     rename_win_error(unsafe { RtlNtStatusToDosError(status) }, operation)
 }
@@ -925,17 +926,15 @@ impl std::fmt::Display for HandleFileIdentity {
     }
 }
 
-fn file_identity_error(code: u32) -> napi::Error<String> {
+fn file_identity_error(code: u32) -> crate::NativeError {
     if matches!(
         code,
         ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER
     ) {
-        native_error(
-            "ENOTSUP",
-            format!(
-                "stable 128-bit Windows file identity is unavailable (Windows error {code})"
-            ),
-        )
+        let mut error = win_error(code, "inspect stable 128-bit Windows file identity");
+        error.status = "ENOTSUP".into();
+        error.reason = format!("stable 128-bit Windows file identity is unavailable (Windows error {code})");
+        error
     } else {
         win_error(code, "inspect stable 128-bit Windows file identity")
     }

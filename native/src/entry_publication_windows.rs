@@ -14,7 +14,7 @@ pub struct PublicationError { pub code: String, pub message: String }
 #[derive(Clone)]
 #[napi(object)]
 pub struct PublicationReply { pub outcome: String, pub error_code: Option<String>, pub error_message: Option<String> }
-fn reply(outcome: &str, error: Option<napi::Error<String>>) -> PublicationReply {
+fn reply(outcome: &str, error: Option<crate::NativeError>) -> PublicationReply {
     let (error_code, error_message) = match error { Some(e) => (Some(e.status), Some(e.reason)), None => (None, None) };
     PublicationReply { outcome: outcome.into(), error_code, error_message }
 }

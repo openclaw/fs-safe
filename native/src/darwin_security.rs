@@ -120,7 +120,7 @@ impl Drop for OwnedFileSec {
     }
 }
 
-fn acl_error(error: std::io::Error, operation: &str) -> napi::Error<String> {
+fn acl_error(error: std::io::Error, operation: &str) -> crate::NativeError {
     match error.raw_os_error() {
         Some(code) if code != 0 => os_error(rustix::io::Errno::from_raw_os_error(code), operation),
         _ => native_error(

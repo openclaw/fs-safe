@@ -182,7 +182,7 @@ fn clone_file(job: FileJob) -> NativeResult<()> {
 #[derive(Default)]
 struct WorkState {
     pending: usize,
-    error: Option<napi::Error<String>>,
+    error: Option<crate::NativeError>,
 }
 
 struct Work<'a> {

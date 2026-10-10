@@ -7,6 +7,8 @@ mod archive;
 mod archive_gzip;
 mod archive_zip_name;
 mod task;
+mod native_failure;
+pub(crate) use native_failure::NativeError;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 mod pipe;
 #[cfg(test)]
@@ -120,13 +122,13 @@ pub struct OpenBeneathResult {
     pub containment: String,
 }
 
-pub(crate) type NativeResult<T> = std::result::Result<T, Error<String>>;
+pub(crate) type NativeResult<T> = std::result::Result<T, NativeError>;
 
-pub(crate) fn native_error(code: impl Into<String>, message: impl ToString) -> Error<String> {
-    Error::new(code.into(), message)
+pub(crate) fn native_error(code: impl Into<String>, message: impl ToString) -> NativeError {
+    NativeError { status: code.into(), reason: message.to_string(), errno: None }
 }
 
-fn invalid_path(message: impl ToString) -> Error<String> {
+fn invalid_path(message: impl ToString) -> NativeError {
     native_error("EINVAL", message)
 }
 
@@ -253,11 +255,7 @@ pub(crate) fn validate_portable_relative_path(path: &str, allow_root: bool) -> N
 pub(crate) fn into_napi<T>(env: Env, result: NativeResult<T>) -> Result<T> {
     match result {
         Ok(value) => Ok(value),
-        Err(error) => {
-            let reason = error.reason;
-            env.throw_error(&reason, Some(error.status.as_ref()))?;
-            Err(Error::new(Status::PendingException, reason))
-        }
+        Err(error) => Err(native_failure::to_napi_error(env, error)?),
     }
 }
 

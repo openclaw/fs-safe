@@ -12,7 +12,7 @@ pub struct NativePipe {
     pub atomic_close_on_exec: bool,
 }
 
-fn last_error(operation: &str) -> napi::Error<String> {
+fn last_error(operation: &str) -> crate::NativeError {
     let error = std::io::Error::last_os_error();
     // Preserve pipe/descriptor-flag failures through the N-API error's code.
     let code = match error.raw_os_error() {

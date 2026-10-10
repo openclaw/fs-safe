@@ -38,6 +38,14 @@ class FsSafeError extends Error {
 
 `cause` is available through the standard `Error` `cause` property when the failure was triggered by a `NodeJS.ErrnoException` (e.g. a wrapped `EACCES`). Inspect it for the original `code` / `errno` / `syscall` if you need finer-grained reporting.
 
+Native Windows failures, including private directory and file creation failures,
+retain the original numeric Win32 error in `errno` (for example, 183 for
+`ERROR_ALREADY_EXISTS` or 5 for `ERROR_ACCESS_DENIED`). This also applies to the
+Windows security command fallback. A wrapped failure retains that number on its
+original `cause`; the semantic `FsSafeError.code` remains the contract. Policy
+checks and preflight rejections that do not execute a failing Windows operation
+have no Win32 error number. Node-managed filesystem errors retain Node's own errno.
+
 Guarded write preparation describes permission, read-only filesystem, and disk-space
 failures with messages such as `permission denied (EACCES)` or
 `no space left on device (ENOSPC)`. Other errno failures include their code in

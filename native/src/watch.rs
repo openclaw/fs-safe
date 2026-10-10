@@ -257,7 +257,7 @@ unsafe extern "C" fn cleanup_env(data: *mut c_void) {
     }
 }
 #[cfg(unix)]
-fn unix_error(operation: &str) -> napi::Error<String> {
+fn unix_error(operation: &str) -> crate::NativeError {
     let code = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
     #[cfg(target_os = "linux")]
     if code == libc::ENOSPC {
@@ -265,7 +265,7 @@ fn unix_error(operation: &str) -> napi::Error<String> {
     }
     crate::unix::os_error(rustix::io::Errno::from_raw_os_error(code), operation)
 }
-fn unavailable() -> napi::Error<String> {
+fn unavailable() -> crate::NativeError {
     native_error("ENOTSUP", "native watch hub is unavailable")
 }
 fn run(receiver: mpsc::Receiver<Command>, started: mpsc::SyncSender<NativeResult<platform::Waker>>) {

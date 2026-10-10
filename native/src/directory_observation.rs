@@ -242,7 +242,7 @@ mod platform {
 
     const INITIAL_PATH_WCHARS: usize = 512;
 
-    fn unavailable_path() -> napi::Error<String> {
+    fn unavailable_path() -> crate::NativeError {
         native_error("OBSERVATION_UNAVAILABLE", "observed directory path changed or could not be resolved")
     }
 

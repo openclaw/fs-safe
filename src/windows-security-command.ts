@@ -98,7 +98,15 @@ function parseReplyValue(stdout: string, operation: CommandOperation): unknown {
     if (typeof response.code !== "string" || !codes.has(response.code) || typeof response.message !== "string") {
       unverified("Windows security command returned an invalid failure");
     }
-    throw Object.assign(new Error(response.message), { code: response.code });
+    if (response.errno !== undefined &&
+      (typeof response.errno !== "number" || !Number.isInteger(response.errno) || response.errno < 0 || response.errno > 0xffff_ffff)) {
+      unverified("Windows security command returned an invalid native error number");
+    }
+    const failure = Object.assign(new Error(response.message), { code: response.code });
+    if (response.errno !== undefined) {
+      Object.defineProperty(failure, "errno", { value: response.errno, enumerable: true, configurable: true, writable: true });
+    }
+    throw failure;
   }
   if (operation === "create" && (!record(response.result) || response.result.created !== true || !isFullIdentity(response.result.identity))) {
     unverified("Windows security command did not verify private-directory creation");

@@ -23,7 +23,7 @@ pub(crate) fn borrowed(fd: i32) -> BorrowedFd<'static> {
     unsafe { BorrowedFd::borrow_raw(fd) }
 }
 
-pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> napi::Error<String> {
+pub(crate) fn os_error(error: rustix::io::Errno, operation: &str) -> crate::NativeError {
     // Collapsing a known namespace rejection into EIO makes callers preserve an
     // unpublished stage as though the rename might have committed.
     let code = match error {
@@ -235,7 +235,7 @@ pub fn link_beneath(
 
 pub(crate) const RENAME_NOREPLACE_UNSUPPORTED: &str = "FS_SAFE_INTERNAL_RENAME_NOREPLACE_UNSUPPORTED";
 
-fn no_replace_error(error: rustix::io::Errno) -> napi::Error<String> {
+fn no_replace_error(error: rustix::io::Errno) -> crate::NativeError {
     #[cfg(target_os = "linux")]
     if matches!(error, rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS)
         || error == rustix::io::Errno::NOTSUP || error == rustix::io::Errno::OPNOTSUPP {
@@ -847,9 +847,9 @@ fn remove_created_target_checked(
 }
 
 fn with_cleanup_error(
-    error: napi::Error<String>,
+    error: crate::NativeError,
     cleanup: NativeResult<()>,
-) -> napi::Error<String> {
+) -> crate::NativeError {
     match cleanup {
         Ok(()) => error,
         Err(cleanup) => native_error(
@@ -993,7 +993,7 @@ fn assert_clone_payload(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn post_clone_security_error(error: napi::Error<String>) -> napi::Error<String> {
+pub(crate) fn post_clone_security_error(error: crate::NativeError) -> crate::NativeError {
     // Once fclonefileat has materialized a payload, a failed security check is
     // not an unsupported-clone signal. Both native and JS callers may otherwise
     // retry ordinary copying for the original errno, even after successful cleanup.
@@ -1399,7 +1399,7 @@ mod macos {
     const O_RESOLVE_BENEATH: i32 = 0x0000_1000;
     static RESOLVE_BENEATH_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
-    fn last_error(operation: &str) -> napi::Error<String> {
+    fn last_error(operation: &str) -> crate::NativeError {
         let error = std::io::Error::last_os_error();
         let code = match error.raw_os_error() {
             Some(libc::EEXIST) => "EEXIST",

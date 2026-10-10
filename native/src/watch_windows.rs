@@ -75,7 +75,7 @@ impl Anchor {
         self.armed = true;
         Ok(())
     }
-    fn fail(&self, error: napi::Error<String>) {
+    fn fail(&self, error: crate::NativeError) {
         let mut pending = self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         pending.overflow();
         pending.error = Some(error.status);
@@ -109,7 +109,7 @@ pub(super) struct Backend {
     anchors: HashMap<usize, Box<Anchor>>,
     next: usize,
 }
-fn read_error(code: u32) -> napi::Error<String> {
+fn read_error(code: u32) -> crate::NativeError {
     if [ERROR_NOTIFY_ENUM_DIR, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND]
         .contains(&code)
     {

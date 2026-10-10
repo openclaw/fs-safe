@@ -577,17 +577,17 @@ fn clone_tree_handles(
     Ok(())
 }
 
-fn cleanup_failed_clone(target: Arc<Directory>, error: napi::Error<String>) -> napi::Error<String> {
+fn cleanup_failed_clone(target: Arc<Directory>, mut error: crate::NativeError) -> crate::NativeError {
     let cleanup = remove_directory_handle(target.0.0, mark_clone_handle_for_deletion)
         .and_then(|()| mark_clone_handle_for_deletion(target.0.0));
     // Disposition can remain pending until other handles close; settle our owner here.
     drop(target);
     match cleanup {
         Ok(()) => error,
-        Err(cleanup) => native_error(
-            error.status,
-            format!("{}; remove partial clone: {}", error.reason, cleanup.reason),
-        ),
+        Err(cleanup) => {
+            error.reason = format!("{}; remove partial clone: {}", error.reason, cleanup.reason);
+            error
+        },
     }
 }
 
@@ -605,7 +605,7 @@ mod tests {
     use windows_sys::Win32::System::Ioctl::FSCTL_GET_RETRIEVAL_POINTERS;
     use crate::test_support::{directory, unique_path_in};
 
-    fn assert_missing(path: &Path, error: &napi::Error<String>) {
+    fn assert_missing(path: &Path, error: &crate::NativeError) {
         let missing = fs::symlink_metadata(path)
             .expect_err(&format!("partial clone remains at {path:?}: {error}"));
         assert_eq!(missing.raw_os_error(), Some(2), "{path:?}: {missing}; {error}");
