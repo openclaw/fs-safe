@@ -83,6 +83,10 @@
       "types": "./dist/secret.d.ts",
       "default": "./dist/secret.js"
     },
+    "./pipe": {
+      "types": "./dist/pipe.d.ts",
+      "default": "./dist/pipe.js"
+    },
     "./permissions": {
       "types": "./dist/permissions-public.d.ts",
       "default": "./dist/permissions-public.js"

@@ -7,6 +7,8 @@ mod archive;
 mod archive_gzip;
 mod archive_zip_name;
 mod task;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+mod pipe;
 #[cfg(test)]
 mod test_support;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]

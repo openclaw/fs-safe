@@ -167,6 +167,8 @@ and error exports. Prefer focused subpaths when a consumer needs a narrower
 contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are grouped under
 `@openclaw/fs-safe/advanced` instead of being separate public leaf contracts.
 
+Use [`@openclaw/fs-safe/pipe`](docs/pipe.md) for native-owned, reopenable anonymous pipes and one-shot child input.
+
 See the [complete subpath catalogue](docs/install.md#subpath-exports) for every entry point and its contents.
 
 ## Failure semantics in the name

@@ -8,6 +8,7 @@ export default {
   test: {
     ...config.test,
     include: [
+      "test/pipe.test.ts",
       "test/realpath.test.ts",
       "test/relative-publication.test.ts",
       "test/replace-directory-authority.test.ts",

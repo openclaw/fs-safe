@@ -1520,7 +1520,7 @@ jobs:
             node scripts/native-mode-smoke.mjs auto
             node scripts/native-mode-smoke.mjs require
             node scripts/native-mode-smoke.mjs off
-            FS_SAFE_NATIVE_MODE=require pnpm test test/native-worker-fd-ownership.test.ts
+            FS_SAFE_NATIVE_MODE=require pnpm test test/pipe.test.ts test/native-worker-fd-ownership.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-remove-native-integration.test.ts test/root-move-replace-native-integration.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/file-hash-options.test.ts
             node scripts/sidecar-contention-proof.mjs require
@@ -1638,7 +1638,7 @@ jobs:
       - name: Prove native descriptor ownership in Node workers
         env:
           FS_SAFE_NATIVE_MODE: require
-        run: pnpm test test/native-worker-fd-ownership.test.ts test/windows-native-fd-bridge.test.ts
+        run: pnpm test test/pipe.test.ts test/native-worker-fd-ownership.test.ts test/windows-native-fd-bridge.test.ts
 
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'

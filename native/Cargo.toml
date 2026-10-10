@@ -29,6 +29,9 @@ rustix = { version = "1.1.5", features = ["fs", "try_close"] }
 libc = "0.2.190"
 rustix = { version = "1.1.5", features = ["fs", "try_close"] }
 
+[target.'cfg(target_os = "freebsd")'.dependencies]
+libc = "0.2.190"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [
   "Wdk_Foundation",
