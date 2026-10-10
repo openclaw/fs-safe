@@ -482,6 +482,15 @@
       ],
       "errorCodes": {}
     },
+    "./pipe": {
+      "runtime": [
+        "createPipe"
+      ],
+      "types": [
+        "OwnedPipeSync"
+      ],
+      "errorCodes": {}
+    },
     "./permissions": {
       "runtime": [
         "createPrivateDirectory",

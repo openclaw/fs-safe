@@ -378,6 +378,13 @@ silently selects the JavaScript fallback in `auto`, throws typed
 `helper-unavailable` in `require`, and is never inspected in `off`. Tests reject
 `child_process`, `exec`, or `spawn` usage in the loader.
 
+## Anonymous pipes
+
+The lean [`pipe` subpath](pipe.md) creates native-owned anonymous pipes. Linux and
+FreeBSD use atomic close-on-exec creation; Darwin reports its non-atomic flag
+setup explicitly. Each end must close through its native owner, including when
+a Node stream uses it in a Worker.
+
 ## Related pages
 
 - [Native helper policy](native-helper.md)

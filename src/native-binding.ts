@@ -167,6 +167,7 @@ export interface NativeBinding {
   watchMemoryStats?(): { registrations: number; pendingSets: number; payloadsLive: number; payloadsCreated: number; payloadsDestroyed: number; threadsafeFunctionsLive: number; threadsafeFunctionsCreated: number; threadsafeFunctionsDestroyed: number };
   /** Internal: consumes only a descriptor returned by this binding. */
   closeOwnedFd(fd: number): void;
+  createPipe?(): { reader: number; writer: number; atomicCloseOnExec: boolean };
   /** Internal Darwin-only synchronous inspection; the caller retains its fd. */
   inspectDarwinAcl?(fd: number, inheritanceTarget?: "file" | "directory"): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */

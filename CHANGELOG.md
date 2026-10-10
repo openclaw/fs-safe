@@ -5,6 +5,7 @@
 ### Features
 
 - **Native filesystem capabilities:** add Linux write leases on caller-owned descriptors, no-follow Darwin ACL inspection with separate file and directory inheritance facts, and Windows sharing-lock, attribute, and physical-extent test fixtures.
+- **Anonymous pipes:** add `@openclaw/fs-safe/pipe` with native-owned, reopenable close-on-exec pipe ends for one-shot child input on POSIX, including safe stream closure in Workers.
 
 ### Fixes
 
