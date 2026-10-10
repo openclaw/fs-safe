@@ -6,13 +6,14 @@ import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
-import { root } from "../src/root.js";
+import { readLocalFileSafely, root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 // Measured fallback calls on macOS; allow two calls for platform variation,
 // except for the exact root.readBytes final-fence ceiling.
 const budgets = {
   "root.readBytes": 16, // one final admission: four identities, canonicalization, and EOF size
+  readLocalFileSafely: 9,
   readRegularFile: 9, // measured 7
   tryReadJson: 10, // measured 8
   replaceFileAtomic: 20, // measured 18
@@ -22,6 +23,7 @@ const budgets = {
 };
 const asyncBudgets = {
   "root.readBytes": 4, // measured 3: open, read, close
+  readLocalFileSafely: 3,
   readRegularFile: 4, // measured 3: open, readFile, close
   tryReadJson: 4, // measured 3: open, readFile, close
   replaceFileAtomic: 9, // measured 8
@@ -74,6 +76,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
       wrap(prototype, Object.getOwnPropertyNames(prototype).filter((key) => key !== "constructor" && key !== "fd"), "h.");
       const operations: Record<keyof typeof budgets, () => Promise<unknown>> = {
         "root.readBytes": () => safe.readBytes("r.txt"),
+        readLocalFileSafely: () => readLocalFileSafely({ filePath: path.join(directory, "r.txt") }),
         readRegularFile: () => readRegularFile({ filePath: path.join(directory, "r.txt") }),
         tryReadJson: () => tryReadJson(path.join(directory, "j.json")),
         replaceFileAtomic: () => replaceFileAtomic({ filePath: path.join(directory, "a.txt"), content: "x" }),
@@ -96,6 +99,12 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         if (name === "root.readBytes") {
           expect.soft(total, breakdown).toBe(16);
           expect.soft(asyncTotal, breakdown).toBe(3); // open, read, close
+        }
+        if (name === "readLocalFileSafely") {
+          expect.soft(total, breakdown).toBe(9);
+          expect.soft(counts.get("s.statSync"), breakdown).toBe(1);
+          expect.soft(counts.get(process.platform === "linux" ? "s.readlinkSync" : "s.realpathSync.native"), breakdown).toBe(1);
+          if (process.platform === "linux") expect.soft(counts.get("s.realpathSync.native"), breakdown).toBeUndefined();
         }
       }
     } finally {
