@@ -26,6 +26,10 @@ describe("opened realpath observations", () => {
       const identity = await handle.stat({ bigint: true });
       const realpath = realpathSync.native;
       const calls: string[] = [];
+      vi.spyOn(fsSync, "readlinkSync").mockImplementation((target) => {
+        calls.push(String(target));
+        throw Object.assign(new Error("no procfs"), { code: "ENOENT" });
+      });
       vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
         const candidate = String(args[0]);
         calls.push(candidate);

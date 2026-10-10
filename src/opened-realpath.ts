@@ -48,7 +48,14 @@ export async function resolveOpenedFileRealPathForFd(
       : [];
   for (const fdPath of fdCandidates) {
     try {
-      const fdRealPath = realpathSync.native(fdPath);
+      // Linux procfs already reports the descriptor's physical pathname. Keep
+      // the fresh identity check without walking that canonical path again.
+      const fdLink = fdPath.startsWith("/proc/") ? fsSync.readlinkSync(fdPath) : undefined;
+      // The deletion suffix can also name a live entry or a symlink. Preserve
+      // canonicalization for that ambiguous spelling, including literal names.
+      const fdRealPath = fdLink !== undefined && !fdLink.endsWith(" (deleted)")
+        ? fdLink : realpathSync.native(fdPath);
+      if (!path.isAbsolute(fdRealPath)) continue;
       const fdRealStat = statOptions ? fsSync.statSync(fdRealPath, statOptions) : fsSync.statSync(fdRealPath);
       if (sameFileIdentity(handleStat, fdRealStat)) {
         return { realPath: fdRealPath, stat: fdRealStat };
