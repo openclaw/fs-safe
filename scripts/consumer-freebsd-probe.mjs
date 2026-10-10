@@ -43,9 +43,9 @@ try {
     assert.equal((await scoped.read(`${mode}/file`)).buffer.toString(), "guarded fallback");
     assert.equal((await sha256File(path.join(directory, mode, "file"))).bytes, 16);
     assert.equal(probeTreeClone(directory), undefined);
-    await assert.rejects(scoped.read("../outside"));
+    await assert.rejects(scoped.read("../outside"), { code: "outside-workspace" });
     await fs.symlink("file", path.join(directory, mode, "alias"));
-    await assert.rejects(scoped.read(`${mode}/alias`));
+    await assert.rejects(scoped.read(`${mode}/alias`), { code: "symlink" });
     rows.push(`${mode}-write-read`, `${mode}-hash`, `${mode}-confinement`);
   }
   configureFsSafeNative({ mode: "require" });
