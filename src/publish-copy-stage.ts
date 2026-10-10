@@ -2,6 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
@@ -102,6 +103,7 @@ function publishThroughPlaceholder(
   assertCurrent();
   let fd: number;
   try {
+    assertExclusiveCreateLeaf(targetPath);
     fd = fs.openSync(targetPath, fs.constants.O_WRONLY | fs.constants.O_CREAT |
       fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
   } catch (error) {
