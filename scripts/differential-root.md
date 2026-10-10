@@ -23,7 +23,7 @@ The seed generates Root reads, opens, inspection, walking, writing, creation,
 append, copying, removal, overwrite moves, and JSON writes. It also exercises
 guarded synchronous copies, reused copy batches, file lock acquisition/release,
 and temp workspace write/read/cleanup. Atomic replacement,
-standalone walking, and hashing select corresponding sync/async APIs.
+standalone walking, hashing, locks and temp workspaces select corresponding sync/async APIs.
 Inputs include missing paths, directories at file positions, contained/dangling
 links, hardlinks, zero and unlimited byte budgets, depth/entry limits, modes,
 encodings, read-only files, dot names, NFC/NFD names, long names, empty content

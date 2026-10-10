@@ -103,7 +103,7 @@ export async function worker(spec, dir, sync) {
               identityMatches: stat.dev === copied.identity.dev && stat.ino === copied.identity.ino };
           } finally { copied.close(); }
         } else if (op.method === 'lock') {
-          const lock = await locks.acquireFileLock(path.join(dir, op.path), {
+          const lock = await locks[sync ? 'acquireFileLockSync' : 'acquireFileLock'](path.join(dir, op.path), {
             lockRoot: safe, payload: () => ({ fixture: true }), retry: { retries: 0 },
           });
           try { value = { held: await lock.verifyStillHeld() }; }
