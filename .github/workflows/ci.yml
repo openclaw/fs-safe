@@ -1089,6 +1089,11 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/root-move-replace-native-integration.test.ts
 
+      - name: Test Root mkdir type errors across native modes
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/differential/mkdir-type.test.ts
+
       # This suite requires recursive removal success on Linux, which needs openat2.
       - name: Test native Root removal
         if: ${{ !matrix.no-openat2 }}
