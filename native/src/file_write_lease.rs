@@ -1,6 +1,6 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use crate::{NativeResult, into_napi};
+use crate::{NativeResult, into_napi, native_error};
 use crate::unix::os_error;
 
 fn lease_command(fd: i32, command: i32, value: i32) -> NativeResult<i32> {
@@ -8,6 +8,9 @@ fn lease_command(fd: i32, command: i32, value: i32) -> NativeResult<i32> {
     let result = unsafe { libc::fcntl(fd, command, value) };
     if result < 0 {
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+        if errno == libc::EAGAIN {
+            return Err(native_error("EAGAIN", "file write lease: resource temporarily unavailable"));
+        }
         return Err(os_error(rustix::io::Errno::from_raw_os_error(errno), "file write lease"));
     }
     Ok(result)
