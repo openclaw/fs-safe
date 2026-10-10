@@ -44,8 +44,11 @@ await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
 
 Default create-only writes can expose incomplete content on the JavaScript
-fallback. Pass `{ atomic: true }` when publication must wait for complete
-content; see [atomic creation](writing.md#atomic-buffered-creation).
+fallback. Pass `{ atomic: true }` to stage complete content before publication.
+When hardlinks are refused, staged publication can still expose an empty
+destination placeholder before replacing it with the completed file. See
+[atomic creation](writing.md#atomic-buffered-creation) and
+[publication without hardlinks](writing.md#publication-without-hardlinks).
 
 ## 3. JSON, with parsing
 

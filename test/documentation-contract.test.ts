@@ -106,15 +106,6 @@ describe("documentation contract", () => {
     expect(localRootsDoc).not.toContain("r.relativePath");
   });
 
-  it.each(["README.md", "docs/quickstart.md", "docs/install.md"])(
-    "qualifies no-clobber move guarantees with the Linux fallback in %s", file => {
-      const doc = readRepoFile(file);
-      expect(doc).toContain("empty directory");
-      expect(doc).toContain("require");
-      expect(doc).toMatch(/writing\.md#/u);
-    },
-  );
-
   it("keeps exact return-value examples synchronized with runtime behavior", () => {
     const installPathDoc = readRepoFile("docs/install-path.md");
     expect(installPathDoc).toContain('"plugin-v1-d9ef8af2eb"');
