@@ -7,7 +7,8 @@ fn lease_command(fd: i32, command: i32, value: i32) -> NativeResult<i32> {
     // The caller owns this descriptor and keeps it open through the call.
     let result = unsafe { libc::fcntl(fd, command, value) };
     if result < 0 {
-        return Err(os_error(rustix::io::Errno::last_os_error(), "file write lease"));
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+        return Err(os_error(rustix::io::Errno::from_raw_os_error(errno), "file write lease"));
     }
     Ok(result)
 }
