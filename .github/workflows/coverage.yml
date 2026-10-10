@@ -153,7 +153,15 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           rustup toolchain install nightly-2026-09-25 --profile minimal --component llvm-tools-preview
-          cargo install cargo-llvm-cov --version 0.9.1 --locked
+
+      - name: Cache cargo-llvm-cov
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: cargo-llvm-cov-0.9.1
+          cache-targets: "false"
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
 
       - name: Set up portable archive LLVM
         uses: ./.github/actions/setup-archive-llvm
