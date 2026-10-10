@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
@@ -21,7 +22,9 @@ export async function overwriteFileHandle(
   const beforeWrite = options.beforeWrite;
   const payload = data.subarray(0, data.byteLength);
   const payloadBytes = payload.byteLength;
-  const stat = await handle.stat();
+  const fd = handle.fd;
+  // Keep FileHandle's closed-handle error while avoiding a metadata I/O hop.
+  const stat = fd < 0 ? await handle.stat() : fs.fstatSync(fd);
   if (!stat.isFile()) {
     throw new FsSafeError("not-file", "overwrite handle must be a regular file");
   }
