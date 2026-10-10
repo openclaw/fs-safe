@@ -11,6 +11,12 @@ import { getNativeBinding } from "../../dist/native.js";
 
 const mode = isMainThread ? process.argv[2] ?? "auto" : workerData.mode;
 configureFsSafeNative({ mode });
+const native = getNativeBinding();
+const nativeLinks = process.platform === "win32"
+  ? Boolean(native?.copyLinkExclusive && native.publishCopyLink && native.removeCopyLink)
+  : Boolean(native?.createCopySymlink);
+if (mode === "require") assert.ok(nativeLinks, "required native link capability must be present");
+const canCopyLinks = process.platform === "linux" || nativeLinks;
 function attributes(file, set) {
   const script = set === undefined
     ? '[int][IO.File]::GetAttributes($env:FS_SAFE_ATTRIBUTE_FILE)'
@@ -88,8 +94,9 @@ async function prove(base, filesystem) {
     for (const type of ["file", "dir"]) {
       const link = path.join(directory, `dangling-${type}`);
       fs.symlinkSync(`absent-${type}`, link, type);
-      if ((process.platform === "win32" || process.platform === "darwin") && mode === "off") {
+      if (!canCopyLinks) {
         await assert.rejects(target.copyIn(`link-${type}`, link, { sourceSymlinks: "copy-link" }), { code: "helper-unavailable" });
+        await assert.rejects(target.copyIn(`overwrite-${type}`, link, { sourceSymlinks: "copy-link", overwrite: true }), { code: "invalid-path" });
         cases++;
         continue;
       }
@@ -129,7 +136,7 @@ async function prove(base, filesystem) {
     await target.copyIn("follow-default", resolved);
     assert.equal(fs.lstatSync(path.join(targetDir, "follow-default")).isSymbolicLink(), false);
     cases++;
-    if (mode !== "off" || process.platform === "linux") {
+    if (canCopyLinks) {
       let revoked = false;
       await assert.rejects(target.copyIn("revoked", resolved, {
         sourceSymlinks: "copy-link",
