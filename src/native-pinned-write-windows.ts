@@ -170,6 +170,8 @@ export async function runPinnedWriteWindows(
       }
       assertFinalSymlinkRejected(path.join(parentPath, params.basename), params.rejectFinalSymlink);
     }
+    // The authority callback itself may have cancelled an otherwise completed copy.
+    if (params.input.kind === "file") params.input.signal?.throwIfAborted();
     try {
       if (params.overwrite === false) {
         binding.renameNoReplace(parentFd, tempName, parentFd, params.basename);
