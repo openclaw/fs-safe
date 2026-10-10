@@ -7,7 +7,7 @@ description: "How fs-safe loads its platform-specific native filesystem primitiv
 
 `@openclaw/fs-safe` declares exact-version optional packages for Linux
 x64/arm64 (glibc or musl), macOS x64/arm64, Windows x64/arm64, and FreeBSD x64/arm64.
-The FreeBSD 14.4+ bindings expose the [qualified subset](native.md#freebsd-144-and-newer).
+The FreeBSD 14.4+ bindings expose the [qualified subset](native.md#freebsd-14-4-and-newer).
 Package-manager
 OS, CPU, and libc filters install only the matching package. The loader requires
 that package lazily, without runtime downloads, postinstall scripts, or a

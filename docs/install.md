@@ -187,7 +187,7 @@ available native operation's error never triggers a command retry. See
 
 Prebuilt bindings cover Linux x64/arm64 (GNU glibc **2.28 or newer**, or musl),
 macOS x64/arm64, Windows x64/arm64, and FreeBSD 14.4+ x64/arm64. FreeBSD provides the
-[documented subset](native.md#freebsd-144-and-newer); its other operations retain
+[documented subset](native.md#freebsd-14-4-and-newer); its other operations retain
 guarded fallbacks in `auto`. The GNU baseline includes RHEL 8, Rocky Linux 8,
 and AlmaLinux 8. A compatible Node 22+ runtime and the kernel/filesystem features
 required by each operation are still necessary; a loadable addon alone does not
