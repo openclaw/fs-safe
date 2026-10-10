@@ -6,6 +6,7 @@ import path from "node:path";
 import { syncDirectory } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
+import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { serializePathWrite } from "./write-queue.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
@@ -87,6 +88,20 @@ async function withQueueEntryLock<T>(
     await withQueueTransferLock(resolvedJsonPath, run));
 }
 
+async function linkQueueGeneration(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.link(sourcePath, targetPath);
+  } catch (error) {
+    // Shared inode identity is recovery evidence; a copy cannot replace it.
+    if (isHardlinkFallbackError(error)) {
+      throw new FsSafeError(
+        "helper-unavailable", "durable queue ownership requires hardlink support", { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 async function claimDurableQueueEntryUnlocked(
   paths: ValidatedDurableQueueEntryPaths,
   options: { skipUnowned?: boolean } = {},
@@ -121,7 +136,7 @@ async function claimDurableQueueEntryUnlocked(
     throw new FsSafeError("path-mismatch", "queue entry is not exclusively owned");
   }
   try {
-    await fs.link(paths.jsonPath, processingPath);
+    await linkQueueGeneration(paths.jsonPath, processingPath);
   } catch (error) {
     if (getErrorCode(error) === "EEXIST") {
       if (!regularQueueFileIdentity(processingPath)) return null;
@@ -285,7 +300,7 @@ export async function moveDurableQueueEntryToFailed(params: {
     if (failed && (!source || !sameFileIdentityForCleanup(source, failed))) {
       throw new FsSafeError("already-exists", "failed queue destination already exists");
     }
-    if (!failed) await fs.link(sourcePath, failedPath);
+    if (!failed) await linkQueueGeneration(sourcePath, failedPath);
     await syncDirectory(path.dirname(failedPath));
     await fs.unlink(sourcePath);
     await syncDirectory(path.dirname(sourcePath));
@@ -376,7 +391,7 @@ async function recoverDurableQueueRetirement(params: {
   if (!sameFileIdentityForCleanup(entry, processing)) {
     const pending = regularQueueFileIdentity(params.jsonPath, "retirement");
     if (!pending) {
-      await fs.link(entryPath, params.jsonPath);
+      await linkQueueGeneration(entryPath, params.jsonPath);
       await syncDirectory(path.dirname(params.jsonPath));
     } else if (sameFileIdentityForCleanup(pending, entry)) {
       await syncDirectory(path.dirname(params.jsonPath));

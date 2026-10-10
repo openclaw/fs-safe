@@ -84,6 +84,17 @@ Batch loading skips invalid entry names, malformed, oversized, or unreadable ent
 
 Failed destinations are create-only. Quarantine publishes the claimed file by hardlink, so the queue and failed directories must share a filesystem with hardlink support. If `failed/<id>.json` already exists, quarantine rejects while preserving both that earlier evidence and the current claimed entry instead of overwriting either file. The `read` callback continues to receive the logical `.json` path even though bytes are read and migrations are written through the claimed path.
 
+Claim, quarantine, and retirement recovery require hardlinks. If a link syscall
+is refused with `EACCES`, `EPERM`, `EXDEV`, `ENOTSUP`, `EOPNOTSUPP`, or `ENOSYS`,
+the operation rejects with `FsSafeError("helper-unavailable")` and retains the
+original error in `cause`. This includes Android/Termux environments that deny
+hardlinks. The refusal leaves the pending entry, processing claim, or retirement
+record intact for retry after the capability or permission problem is resolved;
+it does not acknowledge delivery. Batch loading propagates this capability
+failure too. The queue does not fall back to copying or overwriting rename:
+those operations cannot preserve its shared-inode recovery and create-only
+collision evidence. Enqueue alone does not prove that an entry can be claimed.
+
 Migrations stay bound to the exact processing file opened for that load. The
 read descriptor remains pinned while the callback runs outside the transfer
 lock; after the callback returns, migration reacquires the lock and rechecks the
