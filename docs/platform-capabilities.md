@@ -26,7 +26,7 @@ Lease acquisition does not replace the caller's path identity and age checks.
 
 `inspectDarwinAcl(path)` from `@openclaw/fs-safe/permissions` opens the final
 component without following symlinks, then inspects a descriptor-bound security
-snapshot. It returns one of:
+snapshot. Its `DarwinAclInspection` result is one of:
 
 - `{ kind: "none" }` for a proven absent or empty extended ACL.
 - `{ kind: "present", inheritsToFiles, inheritsToDirectories }` for an ACL with
