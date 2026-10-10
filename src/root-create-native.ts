@@ -12,10 +12,11 @@ import { getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { openNativeRootAdmission } from "./native-parent-admission.js";
 import { capturePolicyAwareNativeParent } from "./native-policy-parent.js";
-import { isNotFoundPathError, isPathInside } from "./path.js";
+import { hasNodeErrorCode, isNotFoundPathError, isPathInside } from "./path.js";
 import { preparePinnedWriteMutationAdmission, type PinnedMutationPolicySnapshot } from "./pinned-mutation-admission.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
+import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import { assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
@@ -191,7 +192,12 @@ export async function tryMkdirRootNative(params: Creation): Promise<boolean> {
   // The protected Windows creator already verifies the admitted parent identity
   // and uses handle-relative NtCreateFile with its protected security descriptor.
   if (params.private && process.platform === "win32") return false;
-  return await withNativeDirectory(params, async (_binding, _fd, assertCurrent) => { assertCurrent(); return true; });
+  try {
+    return await withNativeDirectory(params, async (_binding, _fd, assertCurrent) => { assertCurrent(); return true; });
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
+    throw error;
+  }
 }
 
 export async function tryOpenCreateRootNative(params: Creation & {
