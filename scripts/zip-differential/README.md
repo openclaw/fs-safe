@@ -21,9 +21,10 @@ node scripts/zip-differential/compare.mjs \
 Use task-owned scratch directories. The generator writes only inside its output
 directory; the observers extract into disposable OS temporary directories. Cases
 are synthetic and contain no personal data. Without `--large`, generation omits
-the 65,536-entry ZIP64 archive. With it, default-limit extraction/reads must reject
+the 65,537-entry ZIP64 archive. With it, default-limit extraction/reads must reject
 that archive while raised-limit preflight and skip-only extraction exercise its
-complete directory. No multi-gigabyte payload is allocated.
+complete directory. A filtered extraction must also publish the first and last
+empty files, including physical index 65,536. No multi-gigabyte payload is allocated.
 
 The optional producer step uses installed Info-ZIP (including `-X`, `-y` and a
 synthetic-password encrypted entry), Python zipfile, Java jar, 7-Zip, libarchive,
@@ -54,6 +55,10 @@ differ between versions; missing native bindings, process failures and timeouts
 fail the run. A successful run is an observation, not a compatibility verdict:
 every row in `differences.json` starts `UNCLASSIFIED` and needs investigation as
 an intended documented tightening, harmless representation change, or regression.
+Bounded-read queries include both the baseline's portable and native decoded
+names (at most 24); the candidate replays exactly the same names. Preflight
+records JSZip's exposed directory flag and permissions; admitted kinds come from
+extraction callbacks and the native manifest.
 
 The native manifest diagnostic bypasses public physical admission. A difference
 there does not establish a public behavior change: check the corresponding public

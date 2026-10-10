@@ -132,7 +132,7 @@ export function syntheticCorpus({ large = false } = {}) {
   huge.writeBigUInt64LE(0x100000001n, 30 + 7 + 4);
   huge.writeBigUInt64LE(0x100000001n, huge.indexOf(Buffer.from("PK\x01\x02")) + 46 + 7 + 4);
   cases.push({ id: "zip64-huge-declared", bytes: huge });
-  if (large) add("zip64-65536-entries", Array.from({ length: 65536 }, (_, i) => ({ name: `entry-${i}`, body: "" })), { zip64: true }, { large: true });
+  if (large) add("zip64-65537-entries", Array.from({ length: 65537 }, (_, i) => ({ name: `entry-${i}`, body: "" })), { zip64: true }, { large: true });
   return cases;
 }
 

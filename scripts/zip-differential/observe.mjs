@@ -7,9 +7,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Each package/backend gets a fresh process, so native bindings and config cannot leak.
-const [packageDirectory, corpusDirectory, mode, output] = process.argv.slice(2);
+const [packageDirectory, corpusDirectory, mode, output, queriesFile] = process.argv.slice(2);
 if (!output || !["auto", "require", "off"].includes(mode)) {
-  throw new Error("usage: observe.mjs <package-directory> <corpus-directory> <auto|require|off> <output.json>");
+  throw new Error("usage: observe.mjs <package-directory> <corpus-directory> <auto|require|off> <output.json> [baseline.json]");
 }
 const packageRoot = await fs.realpath(packageDirectory);
 const api = await import(pathToFileURL(path.join(packageRoot, "dist/archive.js")));
@@ -58,17 +58,21 @@ async function tree(directory, prefix = "") {
   }
   return result;
 }
-async function extract(archivePath, entryModes, skip = false, large = false) {
+async function extract(archivePath, entryModes, skip = false, large = false, selectedNames) {
   const destination = await fs.mkdtemp(path.join(scratch, "out-"));
   const callbacks = [];
   const result = await outcome(() => api.extractArchive({ archivePath, destDir: destination,
     kind: "zip", timeoutMs: 30000, entryModes, onFiltered: "skip-entry",
     limits: { maxEntries: large ? 70000 : 50000, maxEntryBytes: 1024 * 1024, maxExtractedBytes: 8 * 1024 * 1024 },
-    entryFilter: entry => { callbacks.push(entry); return skip ? "skip" : "extract"; },
+    entryFilter: entry => { callbacks.push(entry); return skip || (selectedNames && !selectedNames.has(entry.path)) ? "skip" : "extract"; },
   }));
   // Assertions deliberately live outside outcome(): confinement failures fail the harness.
   const files = await tree(destination);
   await fs.rm(destination, { recursive: true, force: true });
+  if (selectedNames) {
+    assert.equal(result.ok, true, "raised-limit ZIP64 sample must extract");
+    assert.deepEqual(files.map(file => file.path).sort(), [...selectedNames].sort(), "ZIP64 first/last payloads must be published");
+  }
   return { ...result, callbacks: compact(callbacks), tree: compact(files) };
 }
 
@@ -91,6 +95,7 @@ try {
   assert.ok(Array.isArray(manifest) && manifest.length > 0, "corpus must be nonempty");
   assert.ok(manifest.every(record => /^[a-z0-9-]+$/.test(record.id)), "invalid corpus case id");
   assert.equal(new Set(manifest.map(record => record.id)).size, manifest.length, "duplicate corpus ids");
+  const queryCases = queriesFile ? new Map(JSON.parse(await fs.readFile(queriesFile, "utf8")).observations.map(record => [record.id, record])) : undefined;
   const observations = [];
   for (const record of manifest) {
     const archivePath = path.join(scratch, "input.zip");
@@ -99,18 +104,36 @@ try {
     await fs.writeFile(path.join(scratch, "escape"), "confinement sentinel");
     const observed = { id: record.id, sha256: hash(bytes) };
     observed.count = await outcome(() => api.readZipCentralDirectoryEntryCount(bytes));
-    const readNames = new Set(["payload"]);
+    const queryCase = queryCases?.get(record.id);
+    if (queryCases) {
+      assert.equal(queryCase?.sha256, observed.sha256, "baseline queries must refer to the same archive bytes");
+      assert.ok(Array.isArray(queryCase.reads) && queryCase.reads.length > 0 && queryCase.reads.length <= 24);
+      assert.ok(queryCase.reads.every(query => typeof query.name === "string" && query.name.length <= 65535));
+    }
+    const readNames = new Set(queryCase ? queryCase.reads.map(query => query.name) : ["payload"]);
     observed.preflight = await outcome(async () => {
       const archive = await api.loadZipArchiveWithPreflight(bytes, record.large ? { maxEntries: 70000 } : undefined);
       return compact(Object.values(archive.files).map(entry => {
-        if (!entry.dir && readNames.size < 12) readNames.add(entry.name);
-        return { name: entry.name, kind: entry.dir ? "directory" : "file", mode: entry.unixPermissions,
+        if (!queryCases && !entry.dir && readNames.size < 12) readNames.add(entry.name);
+        return { name: entry.name, directory: entry.dir, mode: entry.unixPermissions,
           dosPermissions: entry.dosPermissions, size: entry._data?.uncompressedSize };
       }));
     });
     observed.extractClamp = await extract(archivePath, "clamp", false, false);
     observed.extractPreserve = await extract(archivePath, "preserve", false, false);
     observed.extractSkip = await extract(archivePath, "clamp", true, Boolean(record.large));
+    if (record.large) observed.extractLargeSample = await extract(archivePath, "clamp", false, true, new Set(["entry-0", "entry-65536"]));
+    // The baseline's native names also seed reads: portable listing can decode
+    // legacy names differently. The candidate replays these exact queries.
+    if (native) observed.nativeManifest = await outcome(async () => {
+      const owned = Buffer.allocUnsafeSlow(bytes.length); bytes.copy(owned);
+      const reader = await native.openZipBufferNative(owned, nativeLimits);
+      if (!queryCases) for (const entry of reader.entries) {
+        if (readNames.size >= 24) break;
+        if (entry.kind === "file") readNames.add(entry.path);
+      }
+      return compact(reader.entries);
+    });
     observed.reads = [];
     for (const name of readNames) {
       observed.reads.push({ name, result: await outcome(async () => {
@@ -118,13 +141,6 @@ try {
         return { size: data.length, sha256: hash(data) };
       }) });
     }
-    // Supplement public APIs with the native metadata boundary that ZIP 9 changed.
-    // These diagnostics are not public admission and never publish files.
-    if (native) observed.nativeManifest = await outcome(async () => {
-      const owned = Buffer.allocUnsafeSlow(bytes.length); bytes.copy(owned);
-      const reader = await native.openZipBufferNative(owned, nativeLimits);
-      return compact(reader.entries);
-    });
     assert.equal(await fs.readFile(path.join(scratch, "escape"), "utf8"), "confinement sentinel");
     await assertNoExternalOutput();
     assert.deepEqual((await fs.readdir(scratch)).sort(), ["escape", "input.zip"]);
