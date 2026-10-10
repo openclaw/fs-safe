@@ -117,6 +117,10 @@ and requires native support for the atomic collision decision; it fails with
 `helper-unavailable` when unavailable. Pass `overwrite: true` when replacement
 is intended.
 
+Staged JavaScript copies and creates also work when hardlinks are refused
+(including Android/Termux), using a verified empty placeholder before atomic
+replacement. See the [visibility and concurrency tradeoffs](docs/writing.md#publication-without-hardlinks).
+
 See [Writing](docs/writing.md) for copy sources, mutation authority, symlink
 policy, writable handles, and bounded removal, and [Creation](docs/creation.md)
 for private permissions, atomic creation, and durability options.

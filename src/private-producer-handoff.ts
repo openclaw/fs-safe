@@ -2,6 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
+import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { errorCauseOptions } from "./root-errors.js";
@@ -73,13 +74,7 @@ export function normalizeLinkError(error: unknown): unknown {
   if (code === "EEXIST") {
     return new FsSafeError("already-exists", "isolated producer sibling already exists", errorCauseOptions(error));
   }
-  if (
-    code === "EXDEV" ||
-    code === "ENOSYS" ||
-    code === "ENOTSUP" ||
-    code === "EOPNOTSUPP" ||
-    code === "EPERM"
-  ) {
+  if (isHardlinkFallbackError(error)) {
     return new FsSafeError("helper-unavailable", "atomic isolated producer handoff is unavailable", errorCauseOptions(error));
   }
   return error;

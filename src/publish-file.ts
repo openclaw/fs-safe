@@ -34,6 +34,8 @@ import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./wind
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
+import { isHardlinkFallbackError } from "./hardlink-fallback.js";
+export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
 export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "rename-noreplace";
 
@@ -45,11 +47,7 @@ export type PublishFileExclusiveResult = {
   directorySync: DirectorySyncOutcome;
 };
 
-const HARDLINK_FALLBACK_CODES = new Set(["EPERM", "EXDEV", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
 const NATIVE_COPY_FALLBACK_CODES = new Set(["EINVAL", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EPERM", "EXDEV"]);
-export function isHardlinkFallbackError(error: unknown): boolean {
-  return HARDLINK_FALLBACK_CODES.has((error as NodeJS.ErrnoException | undefined)?.code ?? "");
-}
 
 function directoryOpenFlags(): number {
   return (

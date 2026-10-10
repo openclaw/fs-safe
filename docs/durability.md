@@ -224,9 +224,11 @@ count limits need not mean the entire filesystem lacks hard-link support.
 `link-required` and `link-or-copy` do not use `renameat2` and are unchanged.
 
 `"link-required"` propagates an unsupported hardlink failure.
-`"link-or-copy"` falls back only for `EPERM`, `EXDEV`, `ENOTSUP`,
+`"link-or-copy"` falls back only for `EACCES`, `EPERM`, `EXDEV`, `ENOTSUP`,
 `EOPNOTSUPP`, or `ENOSYS`; `isHardlinkFallbackError()` exposes that exact
-classifier. The fallback copies from the pinned source into a `wx` target,
+classifier, including Android/Termux hardlink permission refusals. A genuine
+permission denial still fails the fallback's exclusive target creation; `EEXIST`
+never permits fallback. The fallback copies from the pinned source into a `wx` target,
 fsyncs it, and fences source and target identity and content before reporting
 success. `parentReceipt`, when supplied, must name the target's direct parent.
 
