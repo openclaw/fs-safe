@@ -45,6 +45,23 @@ describe("borrowed FileHandle overwrite", () => {
     },
   );
 
+  it("observes metadata without submitting an asynchronous stat", async () => {
+    const f = await fixture();
+    const stat = vi.spyOn(f.handle, "stat");
+    await overwriteFileHandle(f.handle, Buffer.from("changed!"));
+    expect(stat).not.toHaveBeenCalled();
+    expect(await fs.readFile(f.file, "utf8")).toBe("changed!");
+  });
+
+  it("preserves the FileHandle error for a closed borrowed handle", async () => {
+    const f = await fixture();
+    await f.handle.close();
+    const expected = await f.handle.stat().catch(error => error) as NodeJS.ErrnoException;
+    await expect(overwriteFileHandle(f.handle, Buffer.from("changed!")))
+      .rejects.toMatchObject({ code: expected.code, syscall: expected.syscall });
+    expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
+  });
+
   it("completes positive short prefix reads and writes", async () => {
     const f = await fixture("original content");
     const read = f.handle.read.bind(f.handle);
@@ -68,7 +85,10 @@ describe("borrowed FileHandle overwrite", () => {
   it("rejects an unrepresentable original size before preparation or mutation", async () => {
     const f = await fixture();
     const stat = await f.handle.stat();
-    vi.spyOn(f.handle, "stat").mockResolvedValue(Object.assign(stat, { size: Number.MAX_SAFE_INTEGER + 1 }));
+    const inspect = fsSync.fstatSync;
+    vi.spyOn(fsSync, "fstatSync").mockImplementation(((fd, options) => fd === f.handle.fd
+      ? Object.assign(stat, { size: Number.MAX_SAFE_INTEGER + 1 })
+      : inspect(fd, options)) as typeof fsSync.fstatSync);
     const read = vi.spyOn(f.handle, "read");
     const write = vi.spyOn(f.handle, "write");
     const truncate = vi.spyOn(f.handle, "truncate");
@@ -101,11 +121,11 @@ describe("borrowed FileHandle overwrite", () => {
     const f = await fixture();
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    const stat = f.handle.stat.bind(f.handle);
-    vi.spyOn(f.handle, "stat").mockImplementationOnce(async (...args) => {
+    const read = f.handle.read.bind(f.handle);
+    vi.spyOn(f.handle, "read").mockImplementationOnce(async (...args) => {
       entered.resolve();
       await release.promise;
-      return await stat(...args);
+      return await read(...args);
     });
     let reads = 0;
     const replacement = vi.fn(() => { throw new Error("late admission"); });
