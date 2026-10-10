@@ -208,21 +208,15 @@ describe("atomic create fallback settlement", () => {
 
 
 
-  it.each([false, true])("uses no weaker publication when hardlinks are unavailable (atomic=%s)", async (atomic) => {
+  it.each([false, true])("publishes complete bytes when hardlinks are unavailable (atomic=%s)", async (atomic) => {
     const capability = await workspace();
     const failure = Object.assign(new Error("filesystem does not support hardlinks"), { code: "ENOTSUP" });
     vi.spyOn(fsSync, "linkSync").mockImplementation(() => { throw failure; });
     const pending = capability.create("file", "complete", { atomic });
-    if (atomic) {
-      await expect(pending).rejects.toMatchObject({
-        cause: failure,
-        details: { publication: { status: "indeterminate" }, cleanup: { status: "preserved" } },
-      });
-      await expect(fs.lstat(path.join(capability.rootReal, "file"))).rejects.toMatchObject({ code: "ENOENT" });
-    } else {
-      await expect(pending).resolves.toBeUndefined();
-      expect(await fs.readFile(path.join(capability.rootReal, "file"), "utf8")).toBe("complete");
-    }
+    await expect(pending).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(capability.rootReal, "file"), "utf8")).toBe("complete");
+    expect((await fs.stat(path.join(capability.rootReal, "file"))).nlink).toBe(1);
+    expect(await fs.readdir(capability.rootReal)).toEqual(["file"]);
   });
 
   it.each(["EIO", "EEXIST"])("preserves complete bytes when a committed link reports %s", async (code) => {

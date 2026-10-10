@@ -176,3 +176,29 @@ it.each(["target", "stage"])("aggregates observer and post-rename %s verificatio
     cause: { errors: [observer, expect.objectContaining({ code: "path-mismatch" })] } });
   expect(fs.readFileSync(changed === "target" ? f.targetPath : f.temporaryPath, "utf8")).toBe("foreign bytes");
 });
+
+it("revalidates the staged identity after claiming the placeholder", async () => {
+  const f = await fixture();
+  refuse();
+  afterClaim(f.targetPath, () => {
+    fs.renameSync(f.temporaryPath, path.join(f.directory, "held-stage"));
+    fs.writeFileSync(f.temporaryPath, "foreign stage");
+  });
+  expect(() => f.run()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+  expect(fs.existsSync(f.targetPath)).toBe(false);
+  expect(fs.readFileSync(f.temporaryPath, "utf8")).toBe("foreign stage");
+});
+
+it("reports unverifiable placeholder cleanup when its initial fstat fails", async () => {
+  const f = await fixture();
+  refuse();
+  const fstat = fs.fstatSync;
+  vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+    if (fd !== f.fd) throw errno("EIO");
+    return fstat(fd, options);
+  }) as typeof fs.fstatSync);
+  expect(() => f.run()).toThrow(expect.objectContaining({ code: "helper-failed",
+    details: { publication: "not-published", path: f.targetPath, cleanup: "failed" } }));
+  expect(fs.statSync(f.targetPath).size).toBe(0);
+  expect(fs.readFileSync(f.temporaryPath, "utf8")).toBe("complete bytes");
+});

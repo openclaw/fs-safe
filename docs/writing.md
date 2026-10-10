@@ -254,7 +254,7 @@ complete publication, and an indeterminate link or native rename must preserve n
 recovery. A cleanup or close failure also retains the original operation failure.
 The JavaScript fallback checks the destination again immediately before attempting
 publication. A collision observed there leaves publication unattempted and cleans
-the owned stage. A later collision or other error from the link call remains
+the owned stage. A later collision or unclassified error from the link call remains
 indeterminate, including `EEXIST`; the error code alone does not prove that the
 filesystem left both names unchanged.
 No later verification, mode, or synchronization failure authorizes deleting an
