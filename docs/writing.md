@@ -671,7 +671,8 @@ for the precise parent-pinning guarantee and remaining same-call limitations.
 
 ### `fs.mkdir(rel)`
 
-`mkdir -p`. Creates missing parents.
+`mkdir -p`. Creates missing parents. An existing regular file at the requested
+directory name rejects with `not-file` in every native mode and remains unchanged.
 
 `require` mode creates each missing component relative to a retained directory,
 opens the child without following a final symlink, and checks its identity before
