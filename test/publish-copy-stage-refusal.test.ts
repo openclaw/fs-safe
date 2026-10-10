@@ -142,7 +142,10 @@ it.each(["EACCES", "EPERM"])("preserves a dangling Windows leaf introduced by li
   const f = await fixture();
   const referent = path.join(f.directory, "missing");
   const competitor = path.join(f.directory, "competitor");
-  const link = await fileSymlinkOrSkip(referent, competitor, context);
+  const link = await fileSymlinkOrSkip(referent, competitor, context).catch(error => {
+    fs.closeSync(f.fd);
+    throw error;
+  });
   vi.spyOn(fs, "linkSync").mockImplementation(() => {
     fs.renameSync(competitor, f.targetPath);
     throw errno(code);
