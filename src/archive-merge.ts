@@ -119,6 +119,19 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
     assertDirectoryIdentityGuard(destinationGuard);
     check();
     for (const ancestor of ancestors) {
+      // Verify every retained ancestor, including its current name and physical path.
+      if (ancestor.owner.verifyCanonical) {
+        let verified: boolean;
+        try { verified = await ancestor.owner.verifyCanonical(); }
+        catch (error) {
+          if (error instanceof FsSafeError || isNotFoundPathError(error)) {
+            throw createArchiveSymlinkTraversalError(path.relative(destinationDir, ancestor.guard.dir));
+          }
+          throw error;
+        }
+        check();
+        if (verified) continue;
+      }
       assertDirectoryIdentityGuard(ancestor.guard);
       check();
       await ancestor.owner.verify(check);
@@ -172,15 +185,17 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
           await ownExtractionDestinationMutation(params.deadline, async () => {
             await assertGuards();
             assertSourceFrontier();
-            const owner = await pinNodeDirectoryForMode(destinationPath).catch((error: unknown) => {
+            const guard = await createDirectoryIdentityGuard(destinationPath);
+            check();
+            const owner = await pinNodeDirectoryForMode(destinationPath, {
+              expectedIdentity: guard.stat, canonicalPath: guard.realPath,
+            }).catch((error: unknown) => {
               if (error instanceof FsSafeError && (error.code === "not-file" || error.code === "path-mismatch")) {
                 throw createArchiveSymlinkTraversalError(originalPath);
               }
               throw error;
             });
             try {
-              check();
-              const guard = await createDirectoryIdentityGuard(destinationPath);
               check();
               await owner.verify(check);
               ancestors.push({ guard, owner });

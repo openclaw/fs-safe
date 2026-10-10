@@ -360,6 +360,10 @@ A failure before publication preserves a pre-existing file, and rejection does
 not grant authority to delete a substituted file or alias. Failed extraction does not
 restore overwritten contents. Active destination mutations and their guarded
 cleanup still finish before rejection; no later destination mutation begins.
+On supported native POSIX paths, each active destination ancestor uses its retained
+descriptor plus fresh named-identity and physical-path observations at every guard
+boundary. These checks are never cached or reduced to the deepest directory alone.
+Other paths retain the full pathname checks.
 Portable ZIP output is not eligible for publication until its stream closes or
 the defensive `FileHandle` close succeeds. If that fallback close rejects,
 `extractArchive()` propagates the error and publishes no entry from the staged
