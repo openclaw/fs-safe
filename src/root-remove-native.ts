@@ -43,6 +43,13 @@ export async function removePathInRootNative(
   const openDirectory = binding.openRootRemovalDirectory?.bind(binding);
   const boundary = await captureNonrecursiveRemovalAdmission(root, target, options, receipts);
   if (!boundary) return;
+  if (options.recursive && options.maxEntries === 0) {
+    options.signal?.throwIfAborted();
+    boundary.assertCurrent();
+    throw new FsSafeError("too-large", "recursive removal budget exceeded", {
+      details: { operation: "remove", phase: "inspect", relativePath: "" },
+    });
+  }
   const rootAdmission = await openNativeRootAdmission(binding, {
     rootPath: root.rootReal, rootIdentity: root.rootIdentity, operation: "remove", reportCloseErrors: true, searchOnly: true,
   }).catch(error => { throw normalizeRemoveGuardError(error); });
