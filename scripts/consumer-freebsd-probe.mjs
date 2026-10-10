@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { fstatSync, openSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { once } from "node:events";
@@ -28,8 +28,13 @@ try {
       assert.equal(native.canonicalizePath(link, ordinary).path, await fs.realpath(file));
       assert.equal(native.canonicalizePath(path.join(directory, "missing"), ordinary).errno, 2);
     }
+    // Transfer this fixture descriptor to the native closer. The Worker below
+    // disables automatic raw-fd tracking so cleanup has exactly one owner.
+    const transferred = openSync(file, "r");
+    native.closeOwnedFd(transferred);
+    assert.throws(() => fstatSync(transferred), { code: "EBADF" });
     assert.throws(() => native.closeOwnedFd(-1), { code: "EBADF" });
-    rows.push("native-exports", "native-canonicalization", "native-negative-close");
+    rows.push("native-exports", "native-canonicalization", "native-close", "native-negative-close");
   }
   for (const mode of ["off", "auto"]) {
     configureFsSafeNative({ mode });
@@ -54,7 +59,7 @@ try {
   await fs.rm(directory, { recursive: true, force: true });
 }
 if (isMainThread) {
-  const worker = new Worker(new URL(import.meta.url));
+  const worker = new Worker(new URL(import.meta.url), { trackUnmanagedFds: false });
   const [[workerRows], [exitCode]] = await Promise.all([once(worker, "message"), once(worker, "exit")]);
   assert.equal(exitCode, 0);
   assert.deepEqual(workerRows, rows);
