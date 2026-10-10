@@ -8,7 +8,8 @@ use windows_sys::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NO_INTERMEDIATE_BUFFERING, FILE_OPEN,
 };
 use windows_sys::Win32::Foundation::{
-    ERROR_HANDLE_EOF, ERROR_MORE_DATA, GetLastError, HANDLE,
+    ERROR_HANDLE_EOF, ERROR_MORE_DATA, ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED,
+    ERROR_INVALID_PARAMETER, ERROR_NOT_SAME_DEVICE, GetLastError, HANDLE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, DELETE as DELETE_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
@@ -68,7 +69,7 @@ fn validate_basename(name: &str) -> NativeResult<()> {
     Ok(())
 }
 
-fn is_refs(handle: HANDLE) -> NativeResult<bool> {
+pub(crate) fn is_refs(handle: HANDLE) -> NativeResult<bool> {
     let mut filesystem = [0_u16; 32];
     let mut flags = 0;
     if unsafe {
@@ -145,7 +146,7 @@ fn metadata(handle: HANDLE) -> NativeResult<FILE_BASIC_INFO> {
     Ok(info)
 }
 
-fn reject_named_streams(handle: HANDLE) -> NativeResult<()> {
+pub(crate) fn reject_named_streams(handle: HANDLE) -> NativeResult<()> {
     // The unnamed stream fits easily; a larger response necessarily contains a
     // named stream. Refuse it instead of silently discarding application data.
     let mut storage = [0_u64; 64];
@@ -225,6 +226,18 @@ fn control(
     output: *mut c_void,
     output_size: u32,
 ) -> NativeResult<u32> {
+    control_with_capabilities(handle, code, input, input_size, output, output_size, false)
+}
+
+fn control_with_capabilities(
+    handle: HANDLE,
+    code: u32,
+    input: *const c_void,
+    input_size: u32,
+    output: *mut c_void,
+    output_size: u32,
+    classify_capabilities: bool,
+) -> NativeResult<u32> {
     let mut returned = 0;
     // All callers pass initialized buffers whose lifetimes cover this synchronous call.
     if unsafe {
@@ -240,10 +253,17 @@ fn control(
         )
     } == 0
     {
-        return Err(win_error(
-            unsafe { GetLastError() },
-            &format!("clone control {code:#x}"),
-        ));
+        let error = unsafe { GetLastError() };
+        if classify_capabilities && matches!(code, FSCTL_GET_INTEGRITY_INFORMATION | FSCTL_SET_INTEGRITY_INFORMATION
+            | FSCTL_SET_SPARSE | FSCTL_DUPLICATE_EXTENTS_TO_FILE)
+            && matches!(error, ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED
+                | ERROR_INVALID_PARAMETER | ERROR_NOT_SAME_DEVICE)
+        {
+            let mut error = win_error(error, &format!("clone control {code:#x}"));
+            error.status = "ENOTSUP".into();
+            return Err(error);
+        }
+        return Err(win_error(error, &format!("clone control {code:#x}")));
     }
     Ok(returned)
 }
@@ -314,6 +334,81 @@ fn clone_reparse(source: HANDLE, target: HANDLE) -> NativeResult<()> {
     Ok(())
 }
 
+// Shared by tree cloning and Root.copyIn; handles remain owned by the caller.
+pub(crate) fn clone_file_data(
+    source: HANDLE,
+    target: HANDLE,
+    size: u64,
+    cancelled: &AtomicBool,
+    classify_capabilities: bool,
+) -> NativeResult<()> {
+    let control = |handle, code, input, input_size, output, output_size| {
+        control_with_capabilities(handle, code, input, input_size, output, output_size, classify_capabilities)
+    };
+    let mut integrity = FSCTL_GET_INTEGRITY_INFORMATION_BUFFER::default();
+    control(
+        source,
+        FSCTL_GET_INTEGRITY_INFORMATION,
+        null(),
+        0,
+        (&mut integrity as *mut FSCTL_GET_INTEGRITY_INFORMATION_BUFFER).cast(),
+        size_of::<FSCTL_GET_INTEGRITY_INFORMATION_BUFFER>() as u32,
+    )?;
+    let settings = FSCTL_SET_INTEGRITY_INFORMATION_BUFFER {
+        ChecksumAlgorithm: integrity.ChecksumAlgorithm,
+        Reserved: 0,
+        Flags: integrity.Flags,
+    };
+    control(
+        target,
+        FSCTL_SET_INTEGRITY_INFORMATION,
+        (&settings as *const FSCTL_SET_INTEGRITY_INFORMATION_BUFFER).cast(),
+        size_of::<FSCTL_SET_INTEGRITY_INFORMATION_BUFFER>() as u32,
+        null_mut(),
+        0,
+    )?;
+    control(target, FSCTL_SET_SPARSE, null(), 0, null_mut(), 0)?;
+    let cluster = u64::from(integrity.ClusterSizeInBytes);
+    if !cluster.is_power_of_two() || cluster > 0x8000_0000 {
+        return Err(native_error("EIO", "invalid ReFS clone cluster size"));
+    }
+    let rounded = size
+        .checked_add(cluster - 1)
+        .map(|value| value / cluster * cluster)
+        .filter(|value| *value <= i64::MAX as u64)
+        .ok_or_else(|| native_error("EFBIG", "clone size exceeds Windows range"))?;
+    let eof = FILE_END_OF_FILE_INFO {
+        EndOfFile: size as i64,
+    };
+    // SAFETY: FILE_END_OF_FILE_INFO is the initialized record for this class.
+    unsafe { set_file_information(target, FileEndOfFileInfo, &eof) }
+        .map_err(|code| win_error(code, "set clone file length"))?;
+    // Keep the existing rounded final request and exact logical EOF. ReFS may
+    // copy the last partial cluster; only complete clusters promise sharing.
+    // Each request remains below the API's 4 GiB limit.
+    let mut offset = 0;
+    while offset < size {
+        check_cancelled(cancelled)?;
+        let length = (rounded - offset).min(0x8000_0000);
+        let request = DUPLICATE_EXTENTS_DATA {
+            FileHandle: source,
+            SourceFileOffset: offset as i64,
+            TargetFileOffset: offset as i64,
+            ByteCount: length as i64,
+        };
+        control(
+            target,
+            FSCTL_DUPLICATE_EXTENTS_TO_FILE,
+            (&request as *const DUPLICATE_EXTENTS_DATA).cast(),
+            size_of::<DUPLICATE_EXTENTS_DATA>() as u32,
+            null_mut(),
+            0,
+        )?;
+        offset += length;
+    }
+    Ok(())
+}
+
 fn clone_file(job: FileJob, cancelled: &AtomicBool) -> NativeResult<()> {
     check_cancelled(cancelled)?;
     let (source, information) = open_source(&job)?;
@@ -335,67 +430,8 @@ fn clone_file(job: FileJob, cancelled: &AtomicBool) -> NativeResult<()> {
     if reparse {
         clone_reparse(source.0, target.0)?;
     } else {
-        let mut integrity = FSCTL_GET_INTEGRITY_INFORMATION_BUFFER::default();
-        control(
-            source.0,
-            FSCTL_GET_INTEGRITY_INFORMATION,
-            null(),
-            0,
-            (&mut integrity as *mut FSCTL_GET_INTEGRITY_INFORMATION_BUFFER).cast(),
-            size_of::<FSCTL_GET_INTEGRITY_INFORMATION_BUFFER>() as u32,
-        )?;
-        let settings = FSCTL_SET_INTEGRITY_INFORMATION_BUFFER {
-            ChecksumAlgorithm: integrity.ChecksumAlgorithm,
-            Reserved: 0,
-            Flags: integrity.Flags,
-        };
-        control(
-            target.0,
-            FSCTL_SET_INTEGRITY_INFORMATION,
-            (&settings as *const FSCTL_SET_INTEGRITY_INFORMATION_BUFFER).cast(),
-            size_of::<FSCTL_SET_INTEGRITY_INFORMATION_BUFFER>() as u32,
-            null_mut(),
-            0,
-        )?;
-        control(target.0, FSCTL_SET_SPARSE, null(), 0, null_mut(), 0)?;
         let size = ((information.nFileSizeHigh as u64) << 32) | information.nFileSizeLow as u64;
-        let cluster = u64::from(integrity.ClusterSizeInBytes);
-        if !cluster.is_power_of_two() || cluster > 0x8000_0000 {
-            return Err(native_error("EIO", "invalid ReFS clone cluster size"));
-        }
-        let rounded = size
-            .checked_add(cluster - 1)
-            .map(|value| value / cluster * cluster)
-            .filter(|value| *value <= i64::MAX as u64)
-            .ok_or_else(|| native_error("EFBIG", "clone size exceeds Windows range"))?;
-        let eof = FILE_END_OF_FILE_INFO {
-            EndOfFile: size as i64,
-        };
-        // SAFETY: FILE_END_OF_FILE_INFO is the initialized record for this class.
-        unsafe { set_file_information(target.0, FileEndOfFileInfo, &eof) }
-            .map_err(|code| win_error(code, "set clone file length"))?;
-        // ReFS permits the final partial cluster beyond EOF while retaining the exact
-        // logical file size. Each request remains below the API's 4 GiB limit.
-        let mut offset = 0;
-        while offset < size {
-            check_cancelled(cancelled)?;
-            let length = (rounded - offset).min(0x8000_0000);
-            let request = DUPLICATE_EXTENTS_DATA {
-                FileHandle: source.0,
-                SourceFileOffset: offset as i64,
-                TargetFileOffset: offset as i64,
-                ByteCount: length as i64,
-            };
-            control(
-                target.0,
-                FSCTL_DUPLICATE_EXTENTS_TO_FILE,
-                (&request as *const DUPLICATE_EXTENTS_DATA).cast(),
-                size_of::<DUPLICATE_EXTENTS_DATA>() as u32,
-                null_mut(),
-                0,
-            )?;
-            offset += length;
-        }
+        clone_file_data(source.0, target.0, size, cancelled, false)?;
     }
     let after = metadata(source.0)?;
     let final_information = guarded_handle_information(source.0, "inspect clone source")?;

@@ -74,6 +74,16 @@ Native Windows byte copies can store large zero-filled chunks as sparse ranges w
 
 The ReFS backend rejects files with alternate data streams and unsupported reparse-point types instead of silently losing their contents. Symbolic links and junctions are preserved.
 
+For successful native ReFS clones through `copyTree` or `Root.copyIn`, all full
+clusters are block-cloned; a final partial cluster may be copied. Both preserve exact bytes and logical file size.
+The shared implementation keeps EOF at the source size and rounds only the final
+clone request to the allocation-cluster boundary. Microsoft's
+[block-cloning rules](https://learn.microsoft.com/en-us/windows/win32/fileio/block-cloning#restrictions-and-remarks)
+require cluster-aligned ranges and setting destination EOF before cloning;
+rounding a request does not promise physical sharing of a partial final cluster.
+Windows x64 and ARM64 tests compare every full-cluster LCN for both APIs,
+including the 4 MiB shared prefix of a 4 MiB + 1 byte file.
+
 Failed ReFS clones attempt to remove their partial output through the retained directory handles. On Windows versions that reject the ignore-readonly deletion flag, clone rollback retries without that flag so ordinary output can be removed. It never clears readonly attributes: readonly output can remain, and the original clone error includes the cleanup failure. Other processes retaining output handles can delay deletion beyond settlement; a failed call does not guarantee an absent destination.
 
 XFS and ZFS preserve regular-file and directory modes, timestamps, extended attributes, and ACLs. They reject special files, symlink extended attributes, non-UTF-8 names, and directory nesting deeper than 128 levels. Hardlinked source files become independent reflinked files. Portable byte copying preserves file contents, empty directories, modes where supported, file and directory timestamps, and literal symbolic links; it does not promise ownership, ACL, extended-attribute, alternate-stream, or sparse-layout preservation. On Windows, byte copying rejects unresolved symbolic links because Node does not expose their file/directory link type; resolved links keep their literal target and source type. POSIX dangling links are preserved. Choose a copying policy that meets the caller's metadata requirements; automatic copying can select either path.
@@ -191,6 +201,16 @@ Byte copying retains fractional file and directory access/modification timestamp
 ## Platform tests and benchmarks
 
 After building the host native binding, run `pnpm test test/clone.test.ts test/copy-tree.test.ts`. APFS tests can use the normal macOS temporary directory. For Btrfs, ReFS, XFS, or ZFS, set `FS_SAFE_CLONE_TEST_ROOT` to an existing writable directory on that filesystem. The test creates and cleans only its own temporary children. An explicitly configured unsupported directory fails the test rather than silently skipping platform proof. XFS and ZFS metadata tests require the `attr` and `acl` utilities.
+
+The `ReFS copyIn` CI workflow creates a disposable 2 GiB expanding VHD on
+Windows Server 2025 x64 and Windows 11 ARM64. It formats the latter as a Dev
+Drive, verifies that the mounted filesystem is ReFS, and sets
+`FS_SAFE_CLONE_TEST_ROOT`. `test/root-copy-refs.test.ts` runs the built package on
+the main thread and in a real Node Worker, checks shared physical extents with
+`readWindowsFileExtents`, independent writes, exclusive publication, byte limits,
+cancellation cleanup, and revocation between file copies. Both jobs also run the
+tree clone suite, then detach and delete the VHD even after failure. A failed
+volume setup fails the job; it never substitutes NTFS or skips the ReFS proof.
 
 Run `node scripts/clone-xfs-proof.mjs MOUNT` on a real XFS volume to verify the public API, hashes, independent writes, and shared physical extents. It requires `filefrag` from `e2fsprogs`. Add `no-reflink` for an XFS fixture formatted with reflinks disabled; strict copying must fail and automatic copying must succeed through byte copying.
 

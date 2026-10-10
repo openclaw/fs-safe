@@ -449,11 +449,19 @@ default to `"auto"`:
 | `auto` | Try native file cloning, then copy offload or ordinary byte copying when cloning is unavailable. |
 | `always` | Require native cloning; fail when the binding or filesystem cannot provide it. |
 
-Native file cloning supports APFS and supported Linux filesystems. On Linux, a
+Native file cloning supports APFS, supported Linux filesystems, and Windows ReFS
+(including Dev Drive). On Linux, a
 `FICLONE` request denied with `EPERM`, as container seccomp profiles commonly
 do, counts as unavailable cloning: `auto` copies bytes and `always` fails with
-`unsupported-platform`. Windows currently uses byte copying for `never` and
-`auto`; `always` fails. Clone choice
+`unsupported-platform`. On Windows, `always` requires source and destination on
+the same ReFS volume; other volumes report `unsupported-platform`. `auto` falls
+back to bytes only for unavailable cloning capabilities, and `never` copies bytes.
+ReFS named streams are rejected rather than silently discarded by cloning.
+For successful native ReFS clones through either `copyIn` or `copyTree`, all full
+clusters are block-cloned; a final partial cluster may be copied. Exact tail bytes and logical file size are
+preserved. See the [shared ReFS contract](copy.md) and Microsoft's
+[cluster-alignment and EOF requirements](https://learn.microsoft.com/en-us/windows/win32/fileio/block-cloning#restrictions-and-remarks).
+Clone choice
 does not change modes, durability, root confinement, or source and publication
 identity checks. The shared strategy does not replace Root's guarded regular-file
 contract with `copyTree`'s caller-owned immutable-tree and metadata contract.

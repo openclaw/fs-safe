@@ -121,7 +121,7 @@ impl OwnedHandle {
         Ok(())
     }
 
-    fn into_raw(mut self) -> HANDLE {
+    pub(crate) fn into_raw(mut self) -> HANDLE {
         let handle = self.0;
         self.0 = null_mut();
         handle
@@ -307,6 +307,10 @@ fn runtime_fd_from_handle_with_bridge(
     // libuv owns the HANDLE after a successful conversion.
     let _ = handle.into_raw();
     Ok(fd)
+}
+
+pub(crate) fn runtime_fd_from_handle(handle: OwnedHandle) -> NativeResult<i32> {
+    runtime_fd_from_handle_with_bridge(handle, uv_bridge()?)
 }
 
 pub fn close_owned_fd(fd: i32) -> NativeResult<()> {
