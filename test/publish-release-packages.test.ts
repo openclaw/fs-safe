@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { REGISTRY_RETRY_DELAYS_MS } from "../scripts/npm-registry-verification.mjs";
 import { publishOrVerify } from "../scripts/publish-or-verify.mjs";
 import { publishReleasePackages } from "../scripts/publish-release-packages.mjs";
+import { RELEASE_PACKAGE_CONCURRENCY } from "../scripts/release-package-batches.mjs";
 
 const temporaryDirectories: string[] = [];
-const NOMINAL_NON_SLEEP_HEADROOM_MS = 10 * 60_000 + 30_000;
 
 async function releaseArtifacts(packageNames: readonly string[]) {
   const directory = await mkdtemp(join(tmpdir(), "fs-safe-publish-release-test-"));
@@ -111,18 +111,43 @@ describe("publish-release-packages", () => {
     ]);
   });
 
-  it("pins both 90-minute caps and their nominal headroom over retry sleeps", async () => {
+  it("finishes all platform verification before publishing root, with at most four in flight", async () => {
+    const platforms = Array.from({ length: 11 }, (_, index) => `@openclaw/fs-safe-platform-${index}`);
+    const artifacts = await releaseArtifacts(["@openclaw/fs-safe", ...platforms]);
+    const completed: string[] = [];
+    let active = 0;
+    let maximum = 0;
+    await publishReleasePackages({ artifactsDir: artifacts.directory, publish: async ({ packageName }) => {
+      if (packageName === "@openclaw/fs-safe") expect(completed).toEqual(platforms);
+      maximum = Math.max(maximum, ++active);
+      await Promise.resolve();
+      active--;
+      completed.push(packageName);
+    } });
+    expect(maximum).toBe(4);
+    expect(completed).toEqual([...platforms, "@openclaw/fs-safe"]);
+  });
+
+  it("never publishes root or later batches after a platform verification failure", async () => {
+    const platforms = Array.from({ length: 11 }, (_, index) => `@openclaw/fs-safe-platform-${index}`);
+    const artifacts = await releaseArtifacts(["@openclaw/fs-safe", ...platforms]);
+    const publish = vi.fn(async ({ packageName }) => {
+      if (packageName === platforms[1]) throw new Error("provenance mismatch");
+    });
+    await expect(publishReleasePackages({ artifactsDir: artifacts.directory, publish })).rejects.toThrow("provenance mismatch");
+    expect(publish.mock.calls.map(([options]) => options.packageName)).toEqual(platforms.slice(0, 4));
+  });
+
+  it("keeps both 90-minute caps with bounded retry sleeps for expanded manifests", async () => {
     const workflow = (await readFile(".github/workflows/release.yml", "utf8")).replaceAll("\r\n", "\n");
     const platformPackageCount = (await readdir("packages", { withFileTypes: true })).filter((entry) =>
       entry.isDirectory(),
     ).length;
-    const releasePackageCount = platformPackageCount + 1;
     const perPackageRetrySleepMs = REGISTRY_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
-    const sequentialRetrySleepMs = releasePackageCount * perPackageRetrySleepMs;
 
-    expect(releasePackageCount).toBe(9);
     expect(perPackageRetrySleepMs).toBe(530_000);
-    expect(sequentialRetrySleepMs).toBe(4_770_000);
+    expect(RELEASE_PACKAGE_CONCURRENCY).toBe(4);
+    expect(11 * perPackageRetrySleepMs).toBe(5_830_000);
     for (const [jobName, command] of [
       ["publish", "node scripts/publish-release-packages.mjs release-artifacts"],
       ["release", "node scripts/append-release-proof.mjs"],
@@ -133,8 +158,14 @@ describe("publish-release-packages", () => {
       expect(job).toContain(command);
       expect(jobTimeoutMinutes).toBe(90);
       expect(timeoutMs).toBe(5_400_000);
-      expect(timeoutMs).toBe(sequentialRetrySleepMs + NOMINAL_NON_SLEEP_HEADROOM_MS);
-      expect(timeoutMs).toBeGreaterThan(sequentialRetrySleepMs);
+      for (const count of [platformPackageCount, 10, 11]) {
+        const schedules = jobName === "publish"
+          ? Math.ceil(count / RELEASE_PACKAGE_CONCURRENCY) + 1
+          : Math.ceil((count + 1) / RELEASE_PACKAGE_CONCURRENCY);
+        const retrySleepMs = schedules * perPackageRetrySleepMs;
+        if (count >= 10) expect(retrySleepMs).toBe(jobName === "publish" ? 2_120_000 : 1_590_000);
+        expect(timeoutMs - retrySleepMs).toBeGreaterThanOrEqual(3_280_000);
+      }
     }
   });
 });

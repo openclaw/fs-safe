@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyPublishedPackage } from "./npm-registry-verification.mjs";
+import { mapReleasePackages } from "./release-package-batches.mjs";
 
 export function parseArguments(argv) {
   const [notesPath, manifestPath, repository, runId] = argv;
@@ -36,16 +37,17 @@ export async function appendReleaseProof({
     "| Package | Registry tarball | Verified integrity | Provenance |",
     "|---|---|---|---|",
   ];
-  const proofs = [];
-  for (const artifact of manifest) {
-    const proof = await verifyPackage(artifact, {
+  const proofs = await mapReleasePackages(manifest, (artifact) =>
+    verifyPackage(artifact, {
       fetchImpl,
       log,
       retryDelaysMs,
       verifyBundle,
       wait,
-    });
-    proofs.push(proof);
+    }),
+  );
+  for (const [index, artifact] of manifest.entries()) {
+    const proof = proofs[index];
     lines.push(
       `| [${proof.spec}](https://www.npmjs.com/package/${artifact.name}/v/${artifact.version}) | ` +
         `[tgz](${proof.tarballUrl}) | \`${proof.integrity}\` | ` +

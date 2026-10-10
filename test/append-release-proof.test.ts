@@ -82,6 +82,29 @@ describe("append-release-proof", () => {
     await expect(readFile(files.notesPath, "utf8")).resolves.toBe("# Release\n");
   });
 
+  it("verifies an expanded manifest four at a time and writes proofs in manifest order", async () => {
+    const files = await releaseFiles();
+    const manifest = Array.from({ length: 11 }, (_, index) => ({ name: `@openclaw/fs-safe-platform-${index}`, version: "9.9.9" }));
+    await writeFile(files.manifestPath, JSON.stringify(manifest));
+    let active = 0;
+    let maximum = 0;
+    const proofs = await appendReleaseProof({
+      ...files, repository: "openclaw/fs-safe", runId: "12345",
+      verifyPackage: async (artifact) => {
+        maximum = Math.max(maximum, ++active);
+        await Promise.resolve();
+        active--;
+        return { spec: `${artifact.name}@${artifact.version}`, integrity: "sha512-verified", tarballUrl: "https://registry.npmjs.org/test.tgz", attestationUrl: "https://registry.npmjs.org/proof" };
+      },
+    });
+    expect(maximum).toBe(4);
+    expect(proofs.map((proof) => proof.spec)).toEqual(manifest.map((artifact) => `${artifact.name}@${artifact.version}`));
+    const notes = await readFile(files.notesPath, "utf8");
+    const positions = manifest.map((artifact) => notes.indexOf(`[${artifact.name}@`));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
   it("rejects malformed manifests and parses exactly four CLI arguments", async () => {
     const files = await releaseFiles();
     await writeFile(files.manifestPath, "{}\n", "utf8");

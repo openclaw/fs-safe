@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { publishOrVerify } from "./publish-or-verify.mjs";
+import { mapReleasePackages } from "./release-package-batches.mjs";
 
 export async function publishReleasePackages({
   artifactsDir = "release-artifacts",
@@ -17,9 +18,10 @@ export async function publishReleasePackages({
     throw new Error("release manifest must contain exactly one @openclaw/fs-safe package");
   }
   const platformPackages = manifest.filter((entry) => entry?.name !== "@openclaw/fs-safe");
-  for (const artifact of [...platformPackages, ...rootPackages]) {
-    await publish({ packageName: artifact.name, artifactsDir: directory });
-  }
+  await mapReleasePackages(platformPackages, (artifact) =>
+    publish({ packageName: artifact.name, artifactsDir: directory }),
+  );
+  await publish({ packageName: rootPackages[0].name, artifactsDir: directory });
 }
 
 const entryPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
