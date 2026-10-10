@@ -69,7 +69,11 @@ jobs:
           prepare: |
             set -eu
             pkg install -y git node24 npm-node24 rust
-            npm install --global pnpm@12.10.1
+            if [ "$FS_SAFE_FREEBSD_TARGET" = "freebsd-arm64" ]; then
+              npm install --global @pnpm/wasm@12.10.1
+            else
+              npm install --global pnpm@12.10.1
+            fi
           run: |
             set -eu
             freebsd-version
@@ -80,6 +84,9 @@ jobs:
             rustc --version
             cargo --version
             git --version
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            test "$(git rev-parse HEAD)" = "$FS_SAFE_EXPECTED_SOURCE_COMMIT"
+            pnpm --version
             pnpm install --frozen-lockfile
             cargo test --locked -p fs-safe-native
             pnpm native:build:freebsd
