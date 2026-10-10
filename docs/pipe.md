@@ -36,11 +36,15 @@ modules. Calling `createPipe()` requires a compatible native helper; disabled
 or missing helpers throw `FsSafeError` with `helper-unavailable`. Windows and
 other unsupported platforms throw `unsupported-platform`. Native creation
 failures throw `helper-failed` with the original error as `cause`.
+The cause's `code` preserves the native errno, including `EMFILE` (the process
+descriptor limit) and `ENFILE` (the system-wide limit).
 
 ## Handing the writer to a Node stream
 
 A native-created fd must close through its owner, including in Workers.
 Provide the stream's custom close hook; do not let Node close it directly.
+This is the writer handoff contract: retain the owner in the hook rather than
+detaching its descriptor.
 
 ```ts
 import { createWriteStream, write, writev } from "node:fs";

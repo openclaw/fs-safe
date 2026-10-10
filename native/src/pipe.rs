@@ -13,7 +13,23 @@ pub struct NativePipe {
 }
 
 fn last_error(operation: &str) -> napi::Error<String> {
-    native_error("EIO", format!("{operation}: {}", std::io::Error::last_os_error()))
+    let error = std::io::Error::last_os_error();
+    // Preserve pipe/descriptor-flag failures through the N-API error's code.
+    let code = match error.raw_os_error() {
+        Some(libc::EMFILE) => "EMFILE",
+        Some(libc::ENFILE) => "ENFILE",
+        Some(libc::ENOMEM) => "ENOMEM",
+        Some(libc::EFAULT) => "EFAULT",
+        Some(libc::EINVAL) => "EINVAL",
+        Some(libc::EBADF) => "EBADF",
+        Some(libc::EINTR) => "EINTR",
+        Some(libc::ENOSYS) => "ENOSYS",
+        Some(libc::EPERM) => "EPERM",
+        Some(libc::EACCES) => "EACCES",
+        Some(libc::EAGAIN) => "EAGAIN",
+        _ => "EIO",
+    };
+    native_error(code, format!("{operation}: {error}"))
 }
 
 fn create() -> NativeResult<NativePipe> {

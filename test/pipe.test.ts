@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createPipe } from "../src/pipe.js";
 import { loadTestNative } from "./helpers/native-probe.js";
@@ -37,6 +38,17 @@ describe("pipe import and availability", () => {
 
 describe.runIf(supported && (nativeAvailable || process.env.FS_SAFE_NATIVE_MODE === "require"))(
   "native anonymous pipes", () => {
+    it.each(["main", "worker"])("preserves EMFILE under a child descriptor limit (%s)", thread => {
+      const result = spawnSync("/bin/sh", ["-c",
+        'ulimit -n 64 || exit; exec "$1" "$2" "$3"', "fs-safe-pipe-limit",
+        process.execPath, fileURLToPath(new URL("./fixtures/pipe-descriptor-limit.mjs", import.meta.url)), thread,
+      ], { encoding: "utf8", timeout: 15_000 });
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ thread, failures: ["EMFILE", "EMFILE"], recovered: true });
+      expect(result.stderr).toBe("");
+    });
+
     it("satisfies the real descriptor contract on the main thread", async () => {
       expect(nativeAvailable).toBe(true);
       expect(await provePipe()).toEqual(completed);
