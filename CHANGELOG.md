@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Portable ZIP extraction:** accept safe relative root-directory markers such as `./` from libarchive and other producers without turning them into absolute paths; root markers remain skipped before callbacks and publication.
 - **Native ZIP names:** preserve CP437 decoding for unflagged legacy filenames after the ZIP 9 upgrade, including collision rejection and bounded entry selection; continue rejecting invalid Unicode Path checksums and encodings before decoder normalization.
 
 ### Compatibility
