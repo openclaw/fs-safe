@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { readRepoFile } from "../scripts/documented-imports.mjs";
 
 async function documentedPolicy(kill: (pid: number, signal: number) => void) {
-  const markdown = readFileSync(new URL("../docs/sidecar-lock.md", import.meta.url), "utf8");
+  const markdown = readRepoFile("docs/sidecar-lock.md");
   const section = markdown.split("## Stale policy: `shouldReclaim`")[1];
   const example = section?.match(/```ts\n([\s\S]*?)```/u)?.[1];
   if (!example) throw new Error("missing stale-lock policy example");

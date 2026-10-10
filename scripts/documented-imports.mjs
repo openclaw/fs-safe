@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function readRepoFile(relativePath) {
-  return fsSync.readFileSync(path.join(repoRoot, relativePath), "utf8");
+export function readRepoFile(relativePath) {
+  return fsSync.readFileSync(path.join(repoRoot, relativePath), "utf8").replaceAll("\r\n", "\n");
 }
 
 export function markdownFiles() {

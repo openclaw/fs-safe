@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { readRepoFile } from "./documented-imports.mjs";
 
 const require = createRequire(import.meta.url);
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -24,7 +25,7 @@ declare global {
 `);
   let count = 0;
   for (const file of ["README.md", "docs/sidecar-lock.md"]) {
-    const markdown = await fs.readFile(path.join(repoRoot, file), "utf8");
+    const markdown = readRepoFile(file);
     let selected = 0;
     for (const block of markdown.matchAll(/```(?:ts|typescript)\n([\s\S]*?)```/gu)) {
       if (file !== "README.md" && !block[1].includes("shouldReclaim:") &&
