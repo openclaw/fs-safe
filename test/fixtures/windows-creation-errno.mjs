@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
 import { once } from "node:events";
-import { createDirectory, createDirectorySync, createFile, createFileSync } from "@openclaw/fs-safe/advanced";
+import { createDirectory, createDirectorySync, createFileSync } from "@openclaw/fs-safe/advanced";
 import { FsSafeError } from "@openclaw/fs-safe/errors";
+import { createFileHandle } from "../../dist/create.js";
 import { resolveWindowsSystemCommand } from "../../dist/windows-command.js";
 
 async function prove(scenario) {
@@ -44,7 +45,7 @@ async function prove(scenario) {
       return { scenario, errno: [183, 183], preflightErrno: null };
     }
 
-    assert.equal(scenario, "denied");
+    assert.ok(scenario === "directory-denied" || scenario === "file-denied");
     const parent = path.join(root, "denied");
     fs.mkdirSync(parent);
     const identity = execFileSync(resolveWindowsSystemCommand("whoami.exe"), ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
@@ -57,8 +58,9 @@ async function prove(scenario) {
         ["directory", () => createDirectorySync(path.join(parent, "directory-sync"), { private: true })],
         ["directory", () => createDirectory(path.join(parent, "directory-async"), { private: true })],
         ["file", () => createFileSync(path.join(parent, "file-sync"), { private: true })],
-        ["file", () => createFile(path.join(parent, "file-async"), { private: true })],
+        ["file", () => createFileHandle(path.join(parent, "file-async"), { private: true })],
       ]) {
+        if (!scenario.startsWith(kind)) continue;
         const error = await capture(operation);
         const wrapped = kind === "file" && process.env.FS_SAFE_NATIVE_MODE === "off";
         if (wrapped) {
@@ -74,13 +76,15 @@ async function prove(scenario) {
     } finally {
       icacls("/remove:d", `*${sid}`);
     }
-    return { scenario, errno: [5, 5, 5, 5], preserved: true };
+    return { scenario, errno: [5, 5], preserved: true };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
-if (isMainThread && process.argv[2] === "worker") {
+if (isMainThread && process.argv[2] === "imports") {
+  console.log(JSON.stringify({ imports: true }));
+} else if (isMainThread && process.argv[2] === "worker") {
   const worker = new Worker(new URL(import.meta.url), { workerData: { scenario: process.argv[3] } });
   let result;
   worker.on("message", (message) => { result = message; });
