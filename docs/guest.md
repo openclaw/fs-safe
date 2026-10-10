@@ -56,6 +56,8 @@ can replace only an **empty directory created concurrently**; non-empty
 directories and non-directory targets are refused as `EEXIST`. An existing
 empty directory observed by the absence check is also refused. No empty claim
 directory is exposed before publishing the completed source.
+An `ENOTDIR` rename failure rechecks the source before reporting a destination
+collision; a detected source substitution reports `ESTALE` instead of `EEXIST`.
 
 Identity checks and mutation remain separate, not source-name compare-and-swap.
 The fallback verifies the published identity afterward. A file fallback failure
