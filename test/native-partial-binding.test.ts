@@ -6,7 +6,8 @@ import { partialBindingProof } from "./fixtures/partial-native-binding.mjs";
 
 const expected = ["auto-open", "auto-probe", "auto-hash", "auto-write", "auto-tree-copy",
   "require-open", "require-probe", "require-hash", "require-write", "require-tree-copy",
-  "auto-terminal-error", "require-terminal-error", "complete-capability-set"];
+  "auto-terminal-error", "require-terminal-error", "complete-capability-set",
+  "copy-capabilities-win32", "copy-capabilities-linux", "auto-copy-in", "require-copy-in"];
 
 it("selects complete capabilities and preserves terminal errors on the main thread", async () => {
   expect(await partialBindingProof()).toEqual(expected);

@@ -79,6 +79,8 @@ it.each(operations.flatMap(operation => [true, false].map(mkdir => ({ operation,
     expect(f.calls.openBeneath).toHaveBeenCalled();
     expect(f.calls.mkdirChildBeneath).not.toHaveBeenCalled();
     expect(f.calls.mkdirBeneath).not.toHaveBeenCalled();
+    if (operation === "copy") expect(f.calls.copyFileExclusive).toHaveBeenCalledOnce();
+    else expect(f.calls.copyFileExclusive).not.toHaveBeenCalled();
     expect(await fs.readFile(path.join(parent, "value"), "utf8")).toBe("payload");
     expect(await fs.readdir(parent)).toEqual(["value"]);
   },

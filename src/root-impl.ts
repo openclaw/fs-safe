@@ -1079,7 +1079,7 @@ async function writeFileInRoot(
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
       !params.private && input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
-      (params.renameIdentity === "verify-content-with-lock" || !getPinnedWriteNativeBinding())
+      (params.renameIdentity === "verify-content-with-lock" || !getPinnedWriteNativeBinding({ input }))
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
       return;

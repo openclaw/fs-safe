@@ -121,7 +121,7 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   if (normalizedParams.onRenameIdentityMismatch === "verify-content") {
     return await runPinnedWriteFallback(normalizedParams);
   }
-  const native = getPinnedWriteNativeBinding();
+  const native = getPinnedWriteNativeBinding(normalizedParams);
   if (native) {
     return await runPinnedWriteNative(native, normalizedParams,
       input => runPinnedWriteFallback({ ...normalizedParams, input }));

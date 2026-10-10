@@ -388,6 +388,7 @@ describe.skipIf(!nativeAvailable)("Root.copyIn native transfer", () => {
     configureFsSafeNative({ mode: "require" });
     const native = __loadBundledNativeForTest();
     const copyFile = native.copyFileExclusive;
+    if (process.platform === "win32") expect(copyFile).toBeTypeOf("function");
     let method: string | undefined;
     if (copyFile) {
       const observeCopy: typeof copyFile = async (...args) => {
