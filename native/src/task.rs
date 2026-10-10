@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use napi::bindgen_prelude::{AbortSignal, Task, ToNapiValue, TypeName};
-use napi::{Env, Error, JsError, Result, Status};
+use napi::{Env, Error, Result, Status};
 
 use crate::NativeResult;
 
@@ -31,7 +31,7 @@ impl<T: Send + ToNapiValue + TypeName + 'static> Task for NativeTask<T> {
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<T> {
-        output.map_err(|error| Error::from(JsError::from(error).into_unknown(env)))
+        crate::into_napi(env, output)
     }
 }
 

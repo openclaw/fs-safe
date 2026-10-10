@@ -16,6 +16,7 @@ export default {
       "test/native-rename-authority.test.ts",
       "test/native-integration.test.ts",
       "test/windows-native-fd-bridge.test.ts",
+      "test/windows-native-creation-errno.test.ts",
       "test/darwin-acl-native.test.ts",
       "test/platform-capabilities.test.ts",
       "test/native-loader.test.ts",

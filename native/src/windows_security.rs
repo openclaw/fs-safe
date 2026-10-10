@@ -260,17 +260,19 @@ mod windows {
             .collect())
     }
 
-    fn win_error(code: u32, operation: &str) -> napi::Error<String> {
+    fn win_error(code: u32, operation: &str) -> crate::NativeError {
         let typed = match code {
             5 => "EACCES",
             80 | 183 => "EEXIST",
             2 | 3 => "ENOENT",
             _ => "EIO",
         };
-        native_error(
+        let mut error = native_error(
             typed,
             format!("{operation} failed with Windows error {code}"),
-        )
+        );
+        error.errno = Some(code);
+        error
     }
 
     struct TokenSid {
@@ -1315,18 +1317,18 @@ mod windows {
     }
 
     fn with_private_directory_cleanup_error(
-        error: napi::Error<String>,
+        mut error: crate::NativeError,
         cleanup: NativeResult<()>,
-    ) -> napi::Error<String> {
+    ) -> crate::NativeError {
         match cleanup {
             Ok(()) => error,
-            Err(cleanup) => native_error(
-                error.status,
-                format!(
+            Err(cleanup) => {
+                error.reason = format!(
                     "{}; private directory cleanup failed ({}): {}",
                     error.reason, cleanup.status, cleanup.reason
-                ),
-            ),
+                );
+                error
+            },
         }
     }
 
@@ -1388,12 +1390,11 @@ mod windows {
                 ));
             }
             let created =
-                nt_create_directory_relative(parent.0, &name, descriptor_ptr).map_err(|error| {
+                nt_create_directory_relative(parent.0, &name, descriptor_ptr).map_err(|mut error| {
                     if error.status == "EPERM" {
-                        native_error("EACCES", error.reason)
-                    } else {
-                        error
+                        error.status = "EACCES".into();
                     }
+                    error
                 })?;
             let operation = (|| {
                 after_create();

@@ -41,18 +41,19 @@ public static partial class FsSafeWindowsBridge {
 
   sealed class Failure : Exception {
     public readonly string Code;
-    public Failure(string code, string message) : base(message) { Code=code; }
+    public readonly uint? Errno;
+    public Failure(string code, string message, uint? errno=null) : base(message) { Code=code; Errno=errno; }
   }
   static Failure OsFailure(uint error, string operation, bool identity=false, bool fullIdentity=false) {
     // Native security calls retain EACCES; shared handle identity calls use EPERM.
     string code=error==5 ? (identity ? "EPERM" : "EACCES") : error==80 || error==183 ? "EEXIST" : error==2 || error==3 ? "ENOENT" :
       identity && (error==112 || error==39) ? "ENOSPC" : identity && (error==32 || error==33) ? "EBUSY" :
       fullIdentity && (error==1 || error==50 || error==87) ? "ENOTSUP" : "EIO";
-    return new Failure(code, operation+" failed with Windows error "+error);
+    return new Failure(code, operation+" failed with Windows error "+error, error);
   }
   static Failure CreateFailure(uint error) {
     var failure=OsFailure(error,"create private directory",true);
-    return failure.Code=="EPERM" ? new Failure("EACCES",failure.Message) : failure;
+    return failure.Code=="EPERM" ? new Failure("EACCES",failure.Message,failure.Errno) : failure;
   }
   static void Require(bool condition, string code, string message) {
     if (!condition) throw new Failure(code,message);
@@ -305,7 +306,8 @@ public static partial class FsSafeWindowsBridge {
             var failure=primary as Failure;
             throw new Failure(failure==null ? "EIO" : failure.Code,
               (failure==null ? "private directory validation failed" : failure.Message)+
-              "; owned-handle cleanup failed with Windows error "+Marshal.GetLastWin32Error());
+              "; owned-handle cleanup failed with Windows error "+Marshal.GetLastWin32Error(),
+              failure==null ? null : failure.Errno);
           }
           throw;
         }
@@ -330,7 +332,11 @@ public static partial class FsSafeWindowsBridge {
       } else if(operation=="path") result=InspectPath(path);
       else throw new Failure("EINVAL","unknown Windows security operation");
       return Row("ok",true,"result",result);
-    } catch(Failure error) { return Row("ok",false,"code",error.Code,"message",error.Message); }
+    } catch(Failure error) {
+      var reply=Row("ok",false,"code",error.Code,"message",error.Message);
+      if(error.Errno.HasValue) reply.Add("errno",error.Errno.Value);
+      return reply;
+    }
       catch(Exception) { return Row("ok",false,"code","EIO","message","Windows security descriptor processing failed"); }
   }
 }

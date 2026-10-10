@@ -37,7 +37,7 @@ fn matches_identity(left: &Stat, right: &Stat) -> bool {
         && FileType::from_raw_mode(left.st_mode) == FileType::from_raw_mode(right.st_mode)
 }
 
-fn changed() -> napi::Error<String> {
+fn changed() -> crate::NativeError {
     native_error("EXDEV", "beneath component changed during openat walk")
 }
 

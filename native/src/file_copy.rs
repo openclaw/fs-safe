@@ -1,5 +1,5 @@
 use napi::bindgen_prelude::{AbortSignal, AsyncTask, Task};
-use napi::{Env, Error, JsError, Result, Status};
+use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 use rustix::fs::{FileType, Mode, OFlags};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
@@ -37,7 +37,7 @@ pub struct CreatedCopy {
     name: String,
     target: Option<OwnedFd>,
     method: &'static str,
-    error: Option<Error<String>>,
+    error: Option<crate::NativeError>,
 }
 
 impl CreatedCopy {
@@ -84,8 +84,7 @@ impl Task for FileCopyTask {
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        let mut created =
-            output.map_err(|error| Error::from(JsError::from(error).into_unknown(env)))?;
+        let mut created = crate::into_napi(env, output)?;
         if created.error.is_none() {
             created.error = self.check_cancelled().err();
         }
@@ -248,7 +247,7 @@ fn unsupported(code: &str) -> bool {
 #[cfg(target_os = "linux")]
 pub(crate) enum RangeCopyOutcome {
     Complete(u64),
-    Unsupported { offset: u64, error: Error<String> },
+    Unsupported { offset: u64, error: crate::NativeError },
 }
 
 #[cfg(target_os = "linux")]

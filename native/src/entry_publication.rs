@@ -45,7 +45,7 @@ pub struct EntryPublicationTransition {
     pub error_message: Option<String>,
 }
 
-fn failure(outcome: &str, error: napi::Error<String>) -> EntryPublicationTransition {
+fn failure(outcome: &str, error: crate::NativeError) -> EntryPublicationTransition {
     EntryPublicationTransition {
         outcome: outcome.to_owned(), error_code: Some(error.status), error_message: Some(error.reason),
     }

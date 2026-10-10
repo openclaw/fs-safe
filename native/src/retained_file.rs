@@ -27,7 +27,7 @@ impl RetainedFileResult {
     fn new() -> Self { Self { status: "not-attempted".into(), phase: "admission".into(), identity: None,
         disposition: "not-attempted".into(), namespace: "not-observed".into(), resources: "closed".into(),
         persistence: "not-proven".into(), errors: Vec::new() } }
-    fn error(&mut self, phase: &str, error: napi::Error<String>) {
+    fn error(&mut self, phase: &str, error: crate::NativeError) {
         self.errors.push(RetainedFileIssue { phase: phase.into(), code: error.status, message: error.reason });
     }
 }

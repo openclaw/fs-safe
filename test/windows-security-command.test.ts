@@ -67,6 +67,20 @@ afterEach(() => {
 });
 
 describe("Windows security command facts", () => {
+  it("preserves a structured Win32 error number without changing the error code", async () => {
+    childReply({ ok: false, code: "EACCES", errno: 5, message: "native failure" }, { envelope: true });
+    await expect(createPrivateWindowsDirectoryCommand("C:\\private")).rejects.toMatchObject({
+      code: "EACCES", errno: 5,
+    });
+  });
+
+  it.each([-1, 1.5, 0x1_0000_0000, "5", null])("rejects invalid native errno %j", async errno => {
+    childReply({ ok: false, code: "EACCES", errno, message: "native failure" }, { envelope: true });
+    await expect(createPrivateWindowsDirectoryCommand("C:\\private")).rejects.toMatchObject({
+      code: "permission-unverified", message: "Windows security command returned an invalid native error number",
+    });
+  });
+
   it.each([
     { stdout: "null", message: "Windows security command returned an incomplete response", hasCause: false },
     { stdout: "{", message: "Windows security command returned invalid data", hasCause: true },
