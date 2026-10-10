@@ -17,7 +17,7 @@ change(anchor, `        const summaries = [];
           try {
             // Diagnostic only: no aggregate subprocess deadline. Production limits are untouched.
             const { stdout } = await exec(process.execPath, [
-              '--import', fileURLToPath(new URL('./creation-diagnostic-preload.mjs', import.meta.url)),
+              '--import', new URL('./creation-diagnostic-preload.mjs', import.meta.url).href,
               join(directory, 'consumer-creation-probe.mjs'), 'off',
             ], { cwd: directory, env: { ...env, FS_SAFE_CREATION_DIAGNOSTIC_OUTPUT: trace },
               encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
