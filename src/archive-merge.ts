@@ -22,6 +22,7 @@ import { syncFileBestEffortSync } from "./file-sync.js";
 import { finalizeArchivePublication, type ArchivePublishedDirectory, type ArchivePublishedFile } from "./archive-durability.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { ArchiveSecurityError } from "./archive-errors.js";
 
 export type ArchivePublicationEntry = { path: string; kind: "file" | "directory"; mode: number };
 type MergeParams = {
@@ -186,7 +187,12 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
           await ownExtractionDestinationMutation(params.deadline, async () => {
             await assertGuards();
             assertSourceFrontier();
-            const guard = await createDirectoryIdentityGuard(destinationPath);
+            const guard = await createDirectoryIdentityGuard(destinationPath).catch((error: unknown) => {
+              if (error instanceof ArchiveSecurityError && error.code === "destination-symlink") {
+                throw createArchiveSymlinkTraversalError(originalPath);
+              }
+              throw error;
+            });
             check();
             const owner = await pinNodeDirectoryForMode(destinationPath, {
               expectedIdentity: guard.stat, canonicalPath: guard.realPath,
