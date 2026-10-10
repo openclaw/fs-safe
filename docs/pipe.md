@@ -5,6 +5,10 @@ one-shot input to a child process. Both ends are reopenable through
 `/proc/self/fd/N` on Linux and `/dev/fd/N` on Darwin and FreeBSD. This supports
 programs that open an inherited descriptor as a pathname.
 
+On FreeBSD, reopening through `/dev/fd/N` requires `fdescfs` mounted at `/dev/fd`.
+An administrator can mount it with `mount -t fdescfs fdesc /dev/fd`; pipe creation
+itself does not require that mount.
+
 ```ts
 import { createPipe, type OwnedPipeSync } from "@openclaw/fs-safe/pipe";
 

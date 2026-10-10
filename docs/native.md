@@ -49,9 +49,11 @@ behavior on the main thread and a real Worker. ARM64 uses QEMU CPU emulation
 with a real FreeBSD kernel. This is not a Linux cross-build runtime test. Build
 locally on FreeBSD with `pnpm native:build:freebsd`; the JavaScript/WASM distribution
 can be prepared separately with `pnpm build`. There is no qualified FreeBSD Bun
-artifact in the runtime matrix. FreeBSD arm64 builds pnpm 12.10.1 from its
-pinned release source because pnpm does not publish a native binary for that
-target; the package-manager version remains identical.
+artifact in the runtime matrix. FreeBSD x64 installed-package proof covers npm
+and pnpm. FreeBSD arm64 covers npm only because pnpm does not publish a native
+binary for that target. CI prepares the ARM64 proof harness dependencies on Linux
+and syncs them into the VM; consumer installations and runtime proof run inside
+FreeBSD, without running pnpm there.
 Reopening pipe descriptors through `/dev/fd` requires the standard `fdescfs`
 mount there; the VM proof mounts it before testing reopen, inheritance and EOF.
 

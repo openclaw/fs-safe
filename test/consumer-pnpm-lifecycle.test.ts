@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, r
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { isolatedConsumerEnv, resolvePnpmCommand } from "../scripts/consumer-install-smoke.mjs";
+import { isolatedConsumerEnv, resolveConsumerCommands, resolvePnpmCommand } from "../scripts/consumer-install-smoke.mjs";
 
 const directories: string[] = [];
 function temporary() {
@@ -64,6 +64,23 @@ it("rejects absent lifecycle paths and shell/cmd launchers instead of searching 
   }
   expect(() => resolvePnpmCommand("pnpm.mjs")).toThrow("pnpm lifecycle CLI");
   expect(() => resolvePnpmCommand(join(directory, "pnpm.mjs"))).toThrow("pnpm lifecycle CLI");
+});
+
+it("allows npm-only proof on FreeBSD ARM64 without resolving pnpm", () => {
+  vi.stubEnv("npm_execpath", undefined);
+  expect(resolveConsumerCommands("npm-cli.js", { platform: "freebsd", arch: "arm64" }))
+    .toEqual([["npm", [process.execPath, "npm-cli.js"]]]);
+});
+
+it.each([
+  { platform: "freebsd", arch: "x64" },
+  { platform: "linux", arch: "arm64" },
+  { platform: "darwin", arch: "arm64" },
+])("retains mandatory pnpm proof on $platform $arch", (runtime) => {
+  expect(resolveConsumerCommands("npm-cli.js", runtime))
+    .toEqual([["npm", [process.execPath, "npm-cli.js"]], ["pnpm", resolvePnpmCommand()]]);
+  vi.stubEnv("npm_execpath", undefined);
+  expect(() => resolveConsumerCommands("npm-cli.js", runtime)).toThrow("pnpm lifecycle CLI");
 });
 
 it("lets a caller override the package script's default output directory", () => {

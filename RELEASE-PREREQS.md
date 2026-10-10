@@ -80,7 +80,7 @@ pnpm docs:site
 git diff --check
 ```
 
-Host-native package proof additionally uses `pnpm native:build` (`pnpm native:build:freebsd` on FreeBSD) followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires every real binding assembled by the release workflow and must run through pnpm. FreeBSD builds and installed-package smoke run inside 14.4 VMs for x64 and arm64; ARM64 uses QEMU CPU emulation with a real FreeBSD kernel.
+Host-native package proof additionally uses `pnpm native:build` (`pnpm native:build:freebsd` on FreeBSD) followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires every real binding assembled by the release workflow and must run through pnpm. FreeBSD builds and installed-package smoke run inside 14.4 VMs for x64 and arm64; ARM64 uses QEMU CPU emulation with a real FreeBSD kernel. FreeBSD x64 tests npm and pnpm installs. ARM64 tests npm installs only because pnpm publishes no native executable for that target; CI prepares its proof harness dependencies on Linux, syncs the workspace into the VM, and runs `npm run package:smoke` there.
 
 Do not commit generated `dist/` files, native binaries, or release artifacts.
 

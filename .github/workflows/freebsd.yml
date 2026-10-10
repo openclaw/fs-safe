@@ -56,6 +56,13 @@ jobs:
         with:
           name: freebsd-javascript
           path: dist/
+      - uses: ./.github/actions/setup-node-pnpm
+        if: matrix.label == 'freebsd-arm64'
+        with:
+          node-version: 24
+      - name: Prepare ARM64 proof harness dependencies on Linux for VM sync
+        if: matrix.label == 'freebsd-arm64'
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build and prove inside FreeBSD (ARM64 uses QEMU CPU emulation)
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         env:
@@ -86,8 +93,10 @@ jobs:
             cargo test --locked -p fs-safe-native
             node scripts/build-freebsd.mjs --link-workspace
             FS_SAFE_NATIVE_MODE=require node scripts/freebsd-pipe-proof.mjs
-            rm "node_modules/@openclaw/fs-safe-$FS_SAFE_FREEBSD_TARGET"
-            rmdir node_modules/@openclaw node_modules
+            if [ "$FS_SAFE_FREEBSD_TARGET" = "freebsd-x64" ]; then
+              rm "node_modules/@openclaw/fs-safe-$FS_SAFE_FREEBSD_TARGET"
+              rmdir node_modules/@openclaw node_modules
+            fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -102,16 +111,24 @@ jobs:
           path: artifacts/freebsd-native-proof.json
           if-no-files-found: error
           retention-days: 7
-      - name: Verify installed packages inside FreeBSD
+      - name: Verify npm and pnpm installed packages inside FreeBSD x64
+        if: matrix.label == 'freebsd-x64'
         shell: freebsd {0}
         run: |
           set -eu
           export FS_SAFE_EXPECTED_SOURCE_COMMIT='${{ github.event.pull_request.head.sha || github.sha }}'
           export FS_SAFE_FREEBSD_TARGET='${{ matrix.label }}'
-          sh "$GITHUB_WORKSPACE/scripts/setup-freebsd-pnpm.sh"
+          npm install --global pnpm@12.10.1 --ignore-scripts
           pnpm --version
           pnpm install --frozen-lockfile
           pnpm package:smoke
+      - name: Verify npm installed packages inside FreeBSD ARM64
+        if: matrix.label == 'freebsd-arm64'
+        shell: freebsd {0}
+        run: |
+          set -eu
+          export FS_SAFE_EXPECTED_SOURCE_COMMIT='${{ github.event.pull_request.head.sha || github.sha }}'
+          npm run package:smoke
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: platform-package-proof-${{ matrix.label }}
