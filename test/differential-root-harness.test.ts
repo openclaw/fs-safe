@@ -62,7 +62,7 @@ it("does not let a replay override an atomic destination or filesystem adapter",
 
 it("ignores standalone enumeration order while retaining semantic and tree differences", () => {
   const tree = [{ path: "file", kind: "file", content: "78", mode: 0o600 }];
-  const left = { initial: [], results: [{ value: { scannedEntryCount: 2, truncated: false,
+  const left = { initial: [], results: [{ operation: "walkDirectory", value: { scannedEntryCount: 2, truncated: false,
     entries: [{ relativePath: "b" }, { relativePath: "a" }], failedDirs: [] }, tree }], final: tree };
   const reordered = structuredClone(left);
   reordered.results[0]!.value.entries.reverse();

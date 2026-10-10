@@ -1246,6 +1246,21 @@ jobs:
           path: artifacts-differential-ci
           if-no-files-found: ignore
 
+      - name: Compare portable corpus and publication schedules
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          pnpm test test/differential/adversarial.test.ts test/differential/corpus.test.ts
+          node scripts/differential-root.mjs --portable --corpus --runtimes node --no-fallback --out artifacts-differential-portable
+
+      - name: Upload portable differential receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: differential-portable-${{ matrix.os }}
+          path: artifacts-differential-portable
+          if-no-files-found: ignore
+
       - name: Prove Bun watch polling and joined close
         if: ${{ !matrix.no-openat2 }}
         run: bun scripts/watch-runtime-proof.mjs
