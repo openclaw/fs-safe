@@ -6,11 +6,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { decode, encode, firstDifference, generate, shrinkSpec, validateSpec } from "./differential-root-model.mjs";
+import { portableScript, seeds as corpusSeeds } from "../test/differential/corpus.mjs";
 
 const script = fileURLToPath(import.meta.url);
 let values;
 try { ({ values } = parseArgs({ options: {
   ci: { type: "boolean" }, help: { type: "boolean" },
+  corpus: { type: "boolean" }, portable: { type: "boolean" }, "fuzz-ms": { type: "string" },
   runtimes: { type: "string" }, modes: { type: "string" }, variants: { type: "string" },
   seed: { type: "string" }, seeds: { type: "string" }, length: { type: "string" },
   out: { type: "string" }, replay: { type: "string" }, shrink: { type: "boolean" },
@@ -75,6 +77,9 @@ async function main() {
     console.log(`Usage: node scripts/differential-root.mjs [options]
   --ci                    One seed, 24 operations, explicit rejection policy
   --seed N --seeds N       First seed (default 1), count (default 16)
+  --corpus                Replay the small checked-in seed corpus
+  --portable              Use platform-independent operation scripts
+  --fuzz-ms N              Admit new random sequences for at most N ms (opt-in)
   --length N              Operations per sequence (default 32)
   --runtimes node,bun      Runtime executables on PATH
   --modes require,auto,off --variants async,sync
@@ -103,7 +108,8 @@ Build dist and stage the native binding first. Workers never silently skip missi
   const modes = choices(values.modes, ["require", "auto", "off"], ["require", "auto", "off"]);
   const variants = choices(values.variants, ["async", "sync"], ["async", "sync"]);
   const start = integer(values.seed, 1, 1, 0xffffffff);
-  const count = integer(values.seeds, values.ci ? 1 : 16, 1, 1000);
+  const fuzzMs = integer(values['fuzz-ms'], 0, 1, 3_600_000);
+  const count = integer(values.seeds, values.ci ? 1 : fuzzMs ? 1000 : 16, 1, 1000);
   const length = integer(values.length, values.ci ? 24 : 32, 1, 1000);
   const shrinkBudget = integer(values["shrink-budget"], 200, 1, 1000);
   assert.ok(start + count - 1 <= 0xffffffff, "seed range exceeds uint32");
@@ -122,12 +128,15 @@ Build dist and stage the native binding first. Workers never silently skip missi
   fs.mkdirSync(out, { recursive: true });
   assert.deepEqual(fs.readdirSync(out), [], "output directory must be empty to preserve prior evidence");
   const began = Date.now();
-  const summary = { platform: process.platform, profile: values.ci ? "ci" : "broad", lanes, cases: [], divergences: [] };
+  assert.ok(!fuzzMs || (!values.ci && !values.corpus && !replay), "fuzzing cannot combine with ci, corpus or replay");
+  const selectedSeeds = values.corpus ? corpusSeeds : Array.from({ length: replay ? 1 : count }, (_, i) => start + i);
+  const summary = { platform: process.platform, profile: values.portable ? "portable" : values.ci ? "ci" : "broad", lanes, cases: [], divergences: [] };
   const write = (name, data) => fs.writeFileSync(path.join(out, name), encode(data));
   let completed = false;
   try {
-    for (let seed = start; seed < start + (replay ? 1 : count); seed++) {
-      const spec = replay ?? validateSpec(generate(seed, length, values.ci));
+    for (const seed of selectedSeeds) {
+      if (fuzzMs && summary.cases.length && Date.now() - began >= fuzzMs) break;
+      const spec = replay ?? validateSpec(values.portable ? portableScript(seed) : generate(seed, length, values.ci));
       const reports = lanes.map(lane => {
         if (values.verbose) console.log(encode({ running: lane.id, seed }));
         return run(spec, lane);
