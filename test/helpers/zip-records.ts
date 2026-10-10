@@ -31,6 +31,7 @@ export type ZipRecord = {
   flags?: number;
   extra?: Buffer;
   localExtra?: Buffer;
+  comment?: Buffer;
   deflate?: boolean;
   descriptor?: boolean;
   zip64?: boolean;
@@ -51,6 +52,7 @@ export function zipRecords(entries: ZipRecord[], options: {
     sizes.writeBigUInt64LE(BigInt(compressed.length), 8);
     const wide = Buffer.alloc(24); sizes.copy(wide); wide.writeBigUInt64LE(BigInt(offset), 16);
     const extra = Buffer.concat([entry.zip64 ? zipExtra(1, wide) : Buffer.alloc(0), entry.extra ?? Buffer.alloc(0)]);
+    const comment = entry.comment ?? Buffer.alloc(0);
     const localExtra = Buffer.concat([entry.zip64 ? zipExtra(1, sizes) : Buffer.alloc(0), entry.localExtra ?? Buffer.alloc(0)]);
     const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50);
     local.writeUInt16LE(entry.zip64 ? 45 : 20, 4); local.writeUInt16LE(flags, 6);
@@ -76,10 +78,11 @@ export function zipRecords(entries: ZipRecord[], options: {
     central.writeUInt32LE(entry.zip64 ? 0xffffffff : compressed.length, 20);
     central.writeUInt32LE(entry.zip64 ? 0xffffffff : body.length, 24);
     central.writeUInt16LE(name.length, 28); central.writeUInt16LE(extra.length, 30);
+    central.writeUInt16LE(comment.length, 32);
     central.writeUInt32LE(entry.attributes ?? 0x81a40000, 38);
     central.writeUInt32LE(entry.zip64 ? 0xffffffff : offset, 42);
     localParts.push(local, localName, localExtra, compressed, descriptor);
-    centralParts.push(central, name, extra);
+    centralParts.push(central, name, extra, comment);
     offset += local.length + localName.length + localExtra.length + compressed.length + descriptor.length;
   }
   if (options.directorySignature) {

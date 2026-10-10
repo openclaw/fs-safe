@@ -189,6 +189,11 @@ Native legacy decoding is CP437 when neither the UTF-8 flag nor a valid Unicode
 Path override declares UTF-8, even if the raw bytes also happen to form valid
 UTF-8. Invalid flagged UTF-8 and invalid Unicode Path CRC/encoding fail closed;
 the native metadata boundary enforces these checks before decoder normalization.
+Native ZIP inspection also retains rejection of malformed Unicode Comment
+checksums and UTF-8, including in entries unrelated to a requested payload.
+Comment CRCs follow the native decoder's historical decoded-comment semantics;
+valid sequential Unicode overrides retain their decoder order. Public physical
+admission continues to reject duplicate critical Unicode Path fields.
 
 ZIP end-record admission searches the bounded comment window for signatures
 while retaining complete comment-length and ambiguity checks. Dense signature
