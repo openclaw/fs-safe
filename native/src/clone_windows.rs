@@ -259,7 +259,9 @@ fn control_with_capabilities(
             && matches!(error, ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED
                 | ERROR_INVALID_PARAMETER | ERROR_NOT_SAME_DEVICE)
         {
-            return Err(native_error("ENOTSUP", format!("clone control {code:#x} unavailable (Windows error {error})")));
+            let mut error = win_error(error, &format!("clone control {code:#x}"));
+            error.status = "ENOTSUP".into();
+            return Err(error);
         }
         return Err(win_error(error, &format!("clone control {code:#x}")));
     }

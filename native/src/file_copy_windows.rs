@@ -5,7 +5,7 @@ use std::sync::{
 };
 
 use napi::bindgen_prelude::{AbortSignal, AsyncTask, Task};
-use napi::{Env, Error, JsError, Result, Status};
+use napi::{Env, Error, Result, Status};
 use napi_derive::napi;
 use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_NON_DIRECTORY_FILE};
 use windows_sys::Win32::Foundation::{GetLastError, HANDLE, INVALID_HANDLE_VALUE};
@@ -39,7 +39,7 @@ unsafe impl Send for RetainedHandle {}
 pub struct CreatedCopy {
     target: RetainedHandle,
     method: &'static str,
-    error: Option<Error<String>>,
+    error: Option<crate::NativeError>,
     released: bool,
 }
 unsafe impl Send for CreatedCopy {}
@@ -70,15 +70,16 @@ impl Task for FileCopyTask {
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        let mut created =
-            output.map_err(|error| Error::from(JsError::from(error).into_unknown(env)))?;
+        let mut created = crate::into_napi(env, output)?;
         if created.error.is_none() {
             created.error = self.check_cancelled().err();
         }
         // Keep the original cleanup handle until the runtime has adopted its duplicate.
-        let fd = duplicate_handle(created.target.0.0, "retain copy result")
-            .and_then(runtime_fd_from_handle)
-            .map_err(|error| Error::from(JsError::from(error).into_unknown(env)))?;
+        let fd = crate::into_napi(
+            env,
+            duplicate_handle(created.target.0.0, "retain copy result")
+                .and_then(runtime_fd_from_handle),
+        )?;
         created.released = true;
         let (error_code, error_message) = created.error.take().map_or((None, None), |error| {
             (Some(error.status), Some(error.reason))
@@ -117,12 +118,11 @@ impl FileCopyTask {
 
     fn check_clone_streams(&self) -> NativeResult<()> {
         // A content rejection must never become an automatic byte-copy retry.
-        reject_named_streams(self.source.0.0).map_err(|error| {
+        reject_named_streams(self.source.0.0).map_err(|mut error| {
             if error.status == "ENOTSUP" {
-                native_error("EIO", error.reason)
-            } else {
-                error
+                error.status = "EIO".into();
             }
+            error
         })
     }
 
