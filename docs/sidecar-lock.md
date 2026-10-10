@@ -542,23 +542,31 @@ holder still alive":
 
 ```ts
 import { kill } from "node:process";
+import { acquireFileLock } from "@openclaw/fs-safe/file-lock";
 
 const handle = await acquireFileLock(targetPath, {
   staleMs: 60_000,
   payload: () => ({ pid: process.pid }),
-  shouldReclaim: ({ payload, nowMs, staleMs }) => {
-    if (!payload) return true;
-    const pid = Number(payload.pid);
-    if (!Number.isFinite(pid)) return true;
+  shouldReclaim: ({ payload }) => {
+    if (!payload || typeof payload !== "object" || !("pid" in payload)) return true;
+    const pid = payload.pid;
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return true;
     try {
       kill(pid, 0);
       return false;                     // process still alive — keep waiting
-    } catch {
-      return true;                      // process gone — fail closed for recovery
+    } catch (error) {
+      return error !== null && typeof error === "object" &&
+        "code" in error && error.code === "ESRCH"; // only a missing process is stale
     }
   },
 });
 ```
+
+The observed payload is `unknown`, even when this caller writes a typed payload.
+Validate it before reading fields. Permission failures such as `EPERM` do not
+prove that the holder exited. PID checks assume a shared local PID namespace;
+PID reuse can keep a stale lock waiting. This callback classifies staleness,
+not ownership or permission to remove another holder's lock.
 
 `heldByThisProcess` is true when this manager already holds the lock. A `true` result marks the observed sidecar as stale; `staleRecovery` then decides whether acquisition fails closed or attempts caller-approved removal.
 

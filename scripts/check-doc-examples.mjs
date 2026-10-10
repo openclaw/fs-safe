@@ -117,6 +117,7 @@ async function runFilesystemExamples() {
 }
 
 assert.deepEqual(documentedImportFailures(), []);
+await import("./check-doc-types.mjs");
 runPureExamples();
 await runFilesystemExamples();
 console.log("documentation examples match the built package");
