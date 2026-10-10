@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fixtureCrc32, zipRecords, unicodePath } from "../../test/helpers/zip-records.ts";
+import { fixtureCrc32, zipRecords, unicodePath, zipExtra } from "../../test/helpers/zip-records.ts";
+
+function unicodeComment(previous, value) {
+  const header = Buffer.alloc(5); header[0] = 1; header.writeUInt32LE(fixtureCrc32(previous), 1);
+  return zipExtra(0x6375, Buffer.concat([header, Buffer.from(value)]));
+}
 
 // Generated on demand: no large decoded payloads or additional dependencies.
 export function syntheticCorpus({ large = false } = {}) {
@@ -48,6 +53,20 @@ export function syntheticCorpus({ large = false } = {}) {
   one("flagged-unicode-bad-crc", { flags: 0x800, extra: badCrc });
   const invalidRaw = Buffer.from([0xff]);
   one("invalid-utf8-with-override", { name: invalidRaw, flags: 0x800, extra: unicodePath(invalidRaw, "safe") });
+  const comment = Buffer.from("original comment");
+  const commentExtra = unicodeComment(comment, "Unicode comment");
+  const badCommentCrc = Buffer.from(commentExtra); badCommentCrc[5] ^= 1;
+  one("unicode-comment-valid", { comment, extra: commentExtra });
+  one("unicode-comment-bad-crc", { comment, extra: badCommentCrc });
+  one("unicode-comment-invalid-utf8", { comment, extra: unicodeComment(comment, Buffer.from([0xff])) });
+  one("unicode-comment-legacy", { comment: Buffer.from([0x82]), extra: unicodeComment(Buffer.from("é"), "Unicode comment") });
+  one("unicode-comment-legacy-raw-crc", { comment: Buffer.from([0x82]), extra: unicodeComment(Buffer.from([0x82]), "Unicode comment") });
+  one("unicode-comment-flagged-invalid-raw", { flags: 0x800, comment: Buffer.from([0xff]), extra: unicodeComment(Buffer.from("�"), "Unicode comment") });
+  one("unicode-comment-valid-chain", { comment, extra: Buffer.concat([commentExtra, unicodeComment(Buffer.from("Unicode comment"), "last")]) });
+  one("unicode-comment-bad-chain", { comment, extra: Buffer.concat([commentExtra, commentExtra]) });
+  const pathExtra = unicodePath(Buffer.from("payload"), "first");
+  one("unicode-path-valid-chain", { extra: Buffer.concat([pathExtra, unicodePath(Buffer.from("first"), "last")]) });
+  one("unicode-path-bad-chain", { extra: Buffer.concat([pathExtra, pathExtra]) });
   add("legacy-unicode-collision", [{ name: "keep" }, { name: Buffer.from("é") }, { name: "├⌐", flags: 0x800 }]);
   for (const [index, name] of ["./", ".\\", ".", "././"].entries()) {
     add(`root-directory-${index}`, [{ name, body: "", attributes: 0x41ed0010 }, { name: "payload" }]);

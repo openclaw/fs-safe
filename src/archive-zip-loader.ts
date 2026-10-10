@@ -122,10 +122,12 @@ export async function loadAdmittedZipArchive(
   const entries = new Map<string, AdmittedZipEntry>();
   for (const [name, entry, physical] of normalized) {
     const appendSlash = physical.kind === "directory" && !name.endsWith("/");
-    const normalizedName = appendSlash ? `${name}/` : name;
+    // JSZip reduces a relative root marker such as "./" to an empty name.
+    // Keep its directory spelling relative when restoring the terminal slash.
+    const normalizedName = appendSlash ? `${name || "."}/` : name;
     if (Object.hasOwn(files, normalizedName)) collision();
     if (appendSlash) {
-      entry.name = `${entry.name}/`;
+      entry.name = `${entry.name || "."}/`;
     }
     files[normalizedName] = entry;
     entries.set(physical.portableKey, createAdmittedZipEntry(entry, normalizedName, physical));

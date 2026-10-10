@@ -185,6 +185,10 @@ policy to the complete archive, including entries that extraction would strip
 or skip. Known UTF-8 and Unicode Path names are checked during physical admission;
 legacy names retain backend-selected decoding and undergo the same collision
 check before callbacks or selected bytes are returned.
+Native legacy decoding is CP437 when neither the UTF-8 flag nor a valid Unicode
+Path override declares UTF-8, even if the raw bytes also happen to form valid
+UTF-8. Invalid flagged UTF-8 and invalid Unicode Path CRC/encoding fail closed;
+the native metadata boundary enforces these checks before decoder normalization.
 
 ZIP end-record admission searches the bounded comment window for signatures
 while retaining complete comment-length and ambiguity checks. Dense signature
@@ -244,6 +248,9 @@ remaining components are skipped before the filter callback, but still count
 toward `maxEntries` and undergo traversal validation. JavaScript TAR extraction
 copies the admitted payload range to this accepted output path, so depth checks,
 collision checks, writes, and mode application agree.
+ZIP directories naming the relative archive root (for example `./`) follow the
+same skip rule on both backends. Portable preflight retains their relative `./`
+spelling; a literal absolute `/` entry is still rejected.
 
 An `entryFilter` sees the validated **canonical effective archive path before
 stripping**, entry kind, and declared size. On every JavaScript and native
