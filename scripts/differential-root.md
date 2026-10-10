@@ -46,7 +46,8 @@ permission and special bits (`0o7777`) are retained; Windows mode bits are omitt
 Unreadable file bytes are represented by their read error.
 Returned text is preserved literally; only pathname fields are normalized.
 
-The CI profile uses one seed and 24 calls per lane, explicit
+The legacy CI profile retains its existing seed sequence and 24 calls per lane; the
+portable corpus has a separate CI step. The legacy profile uses explicit
 `mutationSymlinks: "reject"`, fresh exclusive-create destinations, and standalone
 walks without an entry budget or followed aliases. It deliberately avoids
 Windows omitted-policy link differences and the separately tested directory

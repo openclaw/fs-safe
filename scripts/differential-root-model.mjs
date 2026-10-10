@@ -13,8 +13,12 @@ function rng(seed) {
 }
 export function generate(seed, length, ci = false) {
   const pick = rng(seed);
-  const paths = ['file', 'empty', 'dir/child', 'new', 'missing/new', 'dir', 'missing', 'file/child', 'link', 'alias/new', 'dangling', 'hard', 'hard-peer', 'deny/new', '.dot', 'café', 'cafe\u0301', '日本語', 'x'.repeat(180), 'readonly'];
-  const methods = ['write', 'create', 'append', 'copyIn', 'read', 'readText', 'open', 'openWritable', 'stat', 'exists', 'list', 'entries', 'walk', 'remove', 'mkdir', 'resolve', 'writeJson', 'createJson', 'move', 'atomic', 'walkDirectory', 'hash', 'copySync', 'copyBatch', 'lock', 'temp'];
+  const paths = ['file', 'empty', 'dir/child', 'new', 'missing/new', 'dir', 'missing', 'file/child', 'link', 'alias/new', 'dangling', 'hard', 'hard-peer', 'deny/new'];
+  const methods = ['write', 'create', 'append', 'copyIn', 'read', 'readText', 'open', 'openWritable', 'stat', 'exists', 'list', 'entries', 'walk', 'remove', 'mkdir', 'resolve', 'writeJson', 'createJson', 'move', 'atomic', 'walkDirectory', 'hash'];
+  if (!ci) {
+    paths.push('.dot', 'café', 'cafe\u0301', '日本語', 'x'.repeat(180), 'readonly');
+    methods.push('copySync', 'copyBatch', 'lock', 'temp');
+  }
   const ops = [];
   const mode = () => pick([undefined, 0o600, 0o640, 0o644, 0o700, 0o777]);
   const cap = () => pick([undefined, 0, 1, 4, 32, Number.MAX_SAFE_INTEGER, Infinity]);
