@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Native filesystem capabilities:** add Linux write leases on caller-owned descriptors, no-follow Darwin ACL inspection with separate file and directory inheritance facts, and Windows sharing-lock, attribute, and physical-extent test fixtures.
+
 ### Fixes
 
 - **Android/Termux publication:** publish staged no-replace copies and writes when hardlinks are refused, using a verified empty placeholder before atomic replacement; include `EACCES` in the public hardlink-to-copy fallback classifier. Reported in [openclaw/openclaw#167791](https://github.com/openclaw/openclaw/issues/167791). ([#888](https://github.com/openclaw/fs-safe/pull/888))

@@ -5,6 +5,9 @@ description: "The platform-specific native bindings, fd-relative beneath model, 
 
 # Native architecture
 
+See [platform filesystem capabilities](platform-capabilities.md) for Linux
+write leases, public Darwin ACL facts, and Windows test fixtures.
+
 `@openclaw/fs-safe` uses native bindings that supply mechanisms Node does
 not expose directly. The Rust layer is deliberately not a second policy engine.
 TypeScript owns trusted-root selection, path validation, archive filtering,
