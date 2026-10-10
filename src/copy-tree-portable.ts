@@ -5,6 +5,8 @@ import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import type { NativeBinding } from "./native-binding.js";
+import { timestampSeconds } from "./copy-metadata.js";
+import { readCopyLinkTarget } from "./copy-link.js";
 import {
   assertStagedDirectoryCurrent,
   exactIdentityMatches,
@@ -12,12 +14,6 @@ import {
 } from "./staged-directory.js";
 
 type Failure = { value: unknown };
-
-function timestampSeconds(nanoseconds: bigint): string {
-  // Dates discard sub-millisecond precision; negative numbers mean "now" in
-  // Node's utimes API. Numeric strings retain fractional, pre-epoch timestamps.
-  return String(Number(nanoseconds / 1_000_000_000n) + Number(nanoseconds % 1_000_000_000n) / 1e9);
-}
 
 /** Byte-copy adapter for the shared immutable-source, caller-owned namespace contract. */
 export async function copyOwnedTree(
@@ -166,7 +162,7 @@ export async function copyOwnedTree(
           const link =
             process.platform === "win32"
               ? await fsp.readlink(childSource)
-              : await fsp.readlink(childSource, { encoding: "buffer" });
+              : await readCopyLinkTarget(childSource);
           let type: "dir" | "file" | undefined;
           if (process.platform === "win32") {
             // Older Node releases infer link type from the destination, where a

@@ -413,6 +413,74 @@ JavaScript turn. If the OS refuses hardlinks, it uses the placeholder-rename
 fallback below. Other processes can briefly observe both linked names or an
 empty placeholder. The source is never hardlinked to the destination.
 
+### Copy metadata and source links
+
+`preserveMetadata: true` restores metadata to the completed staging entry before
+publication. It defaults to `false`; it does not select permissions, ownership,
+ACLs, or extended attributes. Use the existing `preserveSourceMode` option as
+well when source permissions should be selected. An explicit `mode` or Root
+mode default continues to take precedence over `preserveSourceMode`.
+
+| State | `preserveMetadata: true` | Permission selection |
+| --- | --- | --- |
+| POSIX access and modification times | Preserved | Not affected by `mode` |
+| POSIX permission and executable bits | Not selected by this option | Existing `mode` / `preserveSourceMode` rules |
+| Windows creation, access and write times | Preserved by native copying | Not affected by `mode` |
+| Windows hidden, system, archive, temporary, offline, not-content-indexed | Preserved by native copying | Not affected by `mode` |
+| Windows readonly | Not selected by this option | Existing `mode` / `preserveSourceMode` rules |
+| Ownership, ACLs, POSIX extended attributes | Not copied | Existing destination policy |
+| Windows sparse/integrity flags | Not set through metadata copying | Owned by the clone/FSCTL mechanism |
+
+This applies to clones, native byte copies, and JavaScript byte copies. On
+POSIX, native timestamp restoration retains nanoseconds; JavaScript restoration
+uses Node's timestamp precision, as the portable tree copier does. On
+Windows without the native metadata helper, JavaScript can restore only access
+and write times; creation time and the non-permission attributes are not
+preserved. Native `require` mode rejects a missing helper before publication.
+The Windows attribute mask and POSIX timestamp conversion share the
+[tree-copy implementation](copy.md#api); native tree copying has additional
+metadata guarantees that this narrower option does not request.
+
+`sourceSymlinks` defaults to `"reject"`, preserving the existing rejection of
+symlinked absolute string sources with code `symlink` and message
+`symlink not allowed`. There is no follow mode. Set
+`sourceSymlinks: "copy-link"` to copy a source link itself, including a dangling
+file or directory link. Its literal target remains data: copying never resolves
+it. Windows uses the link's own directory attribute and copies the reparse
+payload through the same native mechanism as `copyTree`.
+
+```ts
+await destination.copyIn("template-link", "/srv/templates/template-link", {
+  sourceSymlinks: "copy-link",
+  preserveMetadata: true,
+});
+```
+
+Link destinations are always exclusive. Omit `overwrite` or set it to `false`;
+explicit `overwrite: true` with a link source fails with `invalid-path` before
+mutation. Regular files retain the usual overwrite behavior. Destination Root
+confinement, denied paths, parent-link policy, and mutation-authority checks
+apply to copied links too.
+macOS link permissions use the selected mode on the link itself; Linux link
+permissions remain fixed by the kernel. The link target's permissions are never
+changed.
+
+`"copy-link"` requires an absolute-path string source. A `{ root, relativePath }`
+source fails with `invalid-path` before either source method is called or a
+destination is mutated: its `open` and `stat` capabilities cannot expose literal
+link text or Windows link type without following the link. With the default
+`"reject"`, capability sources continue to use their own Root read policies.
+
+macOS and Windows link copying requires native support and otherwise reports
+`helper-unavailable` before destination mutation. macOS `link(2)` follows its
+source, so it cannot publish dangling symlink inodes exclusively. Linux can
+publish the staged symlink inode with guarded hardlink/unlink when native
+support is off or automatic no-replace rename is unavailable. This has the
+same documented pathname identity windows as the JavaScript write fallback;
+no operation follows the link target. Successful native publication uses
+no-replace rename. No link publication uses the regular-file placeholder
+fallback.
+
 ### Publication without hardlinks
 
 For staged JavaScript no-replace copies and writes, `EACCES`, `EPERM`, `EXDEV`,

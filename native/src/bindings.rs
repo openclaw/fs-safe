@@ -19,6 +19,14 @@ mod clone_linux;
 mod clone_unix;
 #[cfg(windows)]
 mod clone_windows;
+#[cfg(windows)]
+mod copy_metadata_windows;
+#[cfg(windows)]
+mod copy_link_windows;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod copy_link_unix;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod copy_timestamps_unix;
 #[cfg(any(target_os = "linux", windows))]
 mod copy_contents;
 #[cfg(windows)]

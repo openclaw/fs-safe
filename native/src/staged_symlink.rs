@@ -7,7 +7,7 @@ use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 use crate::unix::{borrowed, nonnegative_fd, os_error, validate_child_basename};
 use crate::{NativeResult, into_napi, native_error};
 
-fn open(parent_fd: i32, name: &str) -> NativeResult<i32> {
+pub(crate) fn open(parent_fd: i32, name: &str) -> NativeResult<i32> {
     validate_child_basename(name)?;
     let parent_fd = nonnegative_fd(parent_fd, "retain staged symlink")?;
     // O_SYMLINK is not an only-symlinks filter. Refuse observed devices/FIFOs

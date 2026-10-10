@@ -37,6 +37,7 @@ export async function writePinnedInput(
   maxBytes?: number,
   assertBeforeMutation?: () => void,
 ): Promise<void> {
+  if (input.kind === "link") throw new FsSafeError("helper-failed", "link copying requires the link publication path");
   if (input.kind === "file") {
     await writeCopyFileToFd(typeof target === "number" ? target : target.fd, input, maxBytes, assertBeforeMutation);
     return;

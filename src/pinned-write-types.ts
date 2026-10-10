@@ -1,4 +1,5 @@
 import type { CopyFileInput } from "./copy-file-input.js";
+import type { CopyLinkInput } from "./copy-link.js";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
@@ -9,7 +10,8 @@ export type NativeWriteParent = Readonly<{ fd: number; binding: NativeBinding }>
 export type PinnedWriteInput =
   | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding; stageBeforePublish?: boolean }
   | { kind: "stream"; stream: AsyncIterable<Uint8Array | string>; stageBeforePublish?: boolean }
-  | CopyFileInput;
+  | CopyFileInput
+  | CopyLinkInput;
 
 export type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
 

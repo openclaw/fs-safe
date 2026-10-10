@@ -1230,6 +1230,14 @@ jobs:
           node scripts/platform-import-timings.mjs
           bun scripts/platform-import-timings.mjs
 
+      - name: Prove Root copy metadata and literal links on Node and Bun
+        if: ${{ !matrix.no-openat2 }}
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          node test/fixtures/root-copy-metadata-links.mjs require
+          bun test/fixtures/root-copy-metadata-links.mjs require
+
       - name: Test Bun native compatibility
         if: ${{ !matrix.no-openat2 }}
         run: pnpm test:bun:native

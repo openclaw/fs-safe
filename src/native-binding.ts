@@ -141,6 +141,16 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  readCopyMetadata?(fd: number): Buffer;
+  restoreCopyMetadata?(fd: number, snapshot: Buffer): void;
+  restoreCopyFileTimes?(fd: number, atimeNs: bigint, mtimeNs: bigint): void;
+  copyLinkExclusive?(sourceParent: number, sourceName: string, parent: number, name: string,
+    dev: bigint, ino: bigint, preserveMetadata: boolean, mode: number): { dev: bigint; ino: bigint };
+  publishCopyLink?(parent: number, name: string, destination: string, dev: bigint, ino: bigint): void;
+  removeCopyLink?(parent: number, name: string, dev: bigint, ino: bigint): void;
+  createCopySymlink?(parent: number, name: string, target: Buffer, mode: number, atimeNs?: bigint, mtimeNs?: bigint): {
+    dev: bigint; ino: bigint; errorCode?: string; errorMessage?: string;
+  };
   tryAcquireWriteLease?(fd: number): boolean;
   isFileWriteLeaseHeld?(fd: number): boolean;
   releaseFileWriteLease?(fd: number): void;
