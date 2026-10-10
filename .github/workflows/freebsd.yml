@@ -69,11 +69,7 @@ jobs:
           prepare: |
             set -eu
             pkg install -y git node24 npm-node24 rust
-            if [ "$FS_SAFE_FREEBSD_TARGET" = "freebsd-arm64" ]; then
-              npm install --global @pnpm/wasm@12.10.1
-            else
-              npm install --global pnpm@12.10.1
-            fi
+            sh "$GITHUB_WORKSPACE/scripts/setup-freebsd-pnpm.sh"
           run: |
             set -eu
             freebsd-version

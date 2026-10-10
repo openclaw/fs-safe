@@ -49,9 +49,9 @@ behavior on the main thread and a real Worker. ARM64 uses QEMU CPU emulation
 with a real FreeBSD kernel. This is not a Linux cross-build runtime test. Build
 locally on FreeBSD with `pnpm native:build:freebsd`; the JavaScript/WASM distribution
 can be prepared separately with `pnpm build`. There is no qualified FreeBSD Bun
-artifact in the runtime matrix. FreeBSD arm64 uses the official
-`@pnpm/wasm@12.10.1` CLI distribution because pnpm does not publish a native
-binary for that target; the package-manager version remains identical.
+artifact in the runtime matrix. FreeBSD arm64 builds pnpm 12.10.1 from its
+pinned release source because pnpm does not publish a native binary for that
+target; the package-manager version remains identical.
 
 ## The beneath model
 
