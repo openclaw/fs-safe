@@ -90,7 +90,7 @@ try {
         Object.assign(fs, original);
         fsSync.lstatSync = originalSync.lstatSync;
       }
-      assert.ok(swapped, "replacement witness must execute");
+      assert.ok(swapped, `${operation}/${component}: replacement witness must execute (${inspections} observations)`);
       assert.equal(failure?.code, "path-mismatch");
       assert.equal(events.filter((event) => event.event === "open").length, 0);
       assert.deepEqual(await fs.readdir(target), ["replacement"]);
