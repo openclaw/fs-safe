@@ -13,6 +13,21 @@
 - **Native ZIP names:** preserve CP437 decoding for unflagged legacy filenames after the ZIP 9 upgrade, including collision rejection and bounded entry selection; continue rejecting invalid Unicode Path checksums and encodings before decoder normalization. ([#885](https://github.com/openclaw/fs-safe/pull/885))
 - **Native ZIP Unicode fields:** retain rejection of invalid Unicode Comment CRCs and UTF-8 before callbacks or bounded reads, and validate sequential Unicode fields in decoder order without repeated hashing of the original name. ([#887](https://github.com/openclaw/fs-safe/pull/887))
 - **Portable ZIP extraction:** accept safe relative root-directory markers such as `./` from libarchive and other producers without turning them into absolute paths; root markers remain skipped before callbacks and publication. ([#886](https://github.com/openclaw/fs-safe/pull/886))
+- **Durable JSON queues on Android/Termux:** claim, failed-entry quarantine, and retirement recovery report typed `helper-unavailable` errors when hardlinks are refused, preserving pending, claimed, and retirement evidence for retry. ([#889](https://github.com/openclaw/fs-safe/pull/889))
+- **Windows exclusive publication:** preserve dangling destination symlinks when a refused hard link falls back to placeholder publication. ([#894](https://github.com/openclaw/fs-safe/pull/894))
+- **Native mkdir collisions:** `Root.mkdir` consistently reports `not-file` for an existing regular-file destination in native require mode. ([#895](https://github.com/openclaw/fs-safe/pull/895))
+- **Guest directory publication:** report a changed source identity instead of a false destination collision when a Linux fallback rename refuses a substituted source. ([#898](https://github.com/openclaw/fs-safe/pull/898))
+- **Native recursive removal:** honor a zero entry budget before ignoring a missing target, including with `force`. ([#904](https://github.com/openclaw/fs-safe/pull/904))
+
+### Performance
+
+- **Linux opened-file verification:** read ordinary procfs descriptor paths directly instead of walking realpath, keeping identity checks and deleted-path canonicalization; `readLocalFileSafely` is 25–28% faster on deep paths. ([#899](https://github.com/openclaw/fs-safe/pull/899))
+- **Borrowed handles and locks:** keep descriptor metadata inspection off the asynchronous I/O queue for small overwrites (26–28% faster) and copies (31–34% faster), and skip a redundant parent `mkdir` when acquiring sidecar locks (15–18% faster). ([#901](https://github.com/openclaw/fs-safe/pull/901), [#902](https://github.com/openclaw/fs-safe/pull/902), [#906](https://github.com/openclaw/fs-safe/pull/906))
+- **Deep archive extraction:** native extraction verifies every retained ancestor through its open descriptor instead of repeated realpath walks: about 16% faster at depth 8 and 5–6% at depth 4, with every ancestor substitution check retained. ([#912](https://github.com/openclaw/fs-safe/pull/912))
+
+### Docs and Tooling
+
+- **Docs accuracy:** correct native-mode migration guidance for removed Python settings and bundled TAR fallbacks, clarify Root streaming ownership, create-only visibility, and Linux no-clobber move fallback limits, and fix the JSON-store and stale-lock examples so denied process probes keep live locks; README and docs examples are now type-checked in CI. ([#897](https://github.com/openclaw/fs-safe/pull/897), [#900](https://github.com/openclaw/fs-safe/pull/900), [#903](https://github.com/openclaw/fs-safe/pull/903))
 
 ### Compatibility
 
