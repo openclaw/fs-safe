@@ -68,7 +68,7 @@ jobs:
           envs: FS_SAFE_EXPECTED_SOURCE_COMMIT FS_SAFE_FREEBSD_TARGET
           prepare: |
             set -eu
-            pkg install -y node24 npm-node24 rust
+            pkg install -y git node24 npm-node24 rust
             npm install --global pnpm@12.10.1
           run: |
             set -eu
@@ -79,6 +79,7 @@ jobs:
             node -e 'if (`freebsd-${process.arch}` !== process.env.FS_SAFE_FREEBSD_TARGET) process.exit(1)'
             rustc --version
             cargo --version
+            git --version
             pnpm install --frozen-lockfile
             cargo test --locked -p fs-safe-native
             pnpm native:build:freebsd
