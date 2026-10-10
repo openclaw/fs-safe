@@ -531,6 +531,7 @@
         "createFileLockManager",
         "drainFileLockManagerForTest",
         "resetFileLockManagerForTest",
+        "tryAcquireWriteLease",
         "withFileLock",
         "withFileLockSync"
       ],
@@ -543,6 +544,7 @@
         "FileLockStaleRecovery",
         "FileLockSyncAcquireOptions",
         "FileLockSyncHandle",
+        "FileWriteLease",
         "SidecarLockCompromisedInfo"
       ],
       "errorCodes": {}

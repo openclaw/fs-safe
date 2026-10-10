@@ -56,6 +56,8 @@ mod unix;
 #[cfg(target_os = "linux")]
 mod linux_open;
 #[cfg(target_os = "linux")]
+mod file_write_lease;
+#[cfg(target_os = "linux")]
 mod move_noreplace;
 #[cfg(all(test, target_os = "linux"))]
 mod move_noreplace_tests;

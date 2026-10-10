@@ -139,6 +139,9 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  tryAcquireWriteLease?(fd: number): boolean;
+  isFileWriteLeaseHeld?(fd: number): boolean;
+  releaseFileWriteLease?(fd: number): void;
   rootRemovalStat?(parent: number, name: string): NativeRootRemovalEntry;
   rootRemovalUnlink?(parent: number, name: string, dev: bigint, ino: bigint, directory: boolean): void;
   openRootRemovalDirectory?(parent: number, name: string, dev: bigint, ino: bigint): NativeRootRemovalDirectory;
