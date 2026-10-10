@@ -1,7 +1,6 @@
 name: FreeBSD
 
 on:
-  pull_request:
   workflow_call:
 
 permissions:
