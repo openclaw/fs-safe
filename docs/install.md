@@ -186,7 +186,7 @@ available native operation's error never triggers a command retry. See
 ### Supported native platforms
 
 Prebuilt bindings cover Linux x64/arm64 (GNU glibc **2.28 or newer**, or musl),
-macOS x64/arm64, and Windows x64. The GNU baseline includes RHEL 8, Rocky Linux 8,
+macOS x64/arm64, and Windows x64/arm64. The GNU baseline includes RHEL 8, Rocky Linux 8,
 and AlmaLinux 8. A compatible Node 22+ runtime and the kernel/filesystem features
 required by each operation are still necessary; a loadable addon alone does not
 guarantee every native capability. Systems older than glibc 2.28 are outside the
