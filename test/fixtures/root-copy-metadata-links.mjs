@@ -17,7 +17,11 @@ if (expectMissing) assert.equal(native, undefined, "JavaScript-only fixture must
 const nativeLinks = process.platform === "win32"
   ? Boolean(native?.copyLinkExclusive && native.publishCopyLink && native.removeCopyLink)
   : Boolean(native?.createCopySymlink);
+const nativeMetadata = process.platform === "win32"
+  ? Boolean(native?.readCopyMetadata && native.restoreCopyMetadata)
+  : Boolean(native?.restoreCopyFileTimes);
 if (mode === "require") assert.ok(nativeLinks, "required native link capability must be present");
+if (mode === "require") assert.ok(nativeMetadata, "required native metadata capability must be present");
 const canCopyLinks = process.platform === "linux" || nativeLinks;
 function attributes(file, set) {
   const script = set === undefined
@@ -46,7 +50,13 @@ async function prove(base, filesystem) {
     const target = await root(targetDir);
     const atime = new Date("2001-02-03T04:05:06.000Z");
     const mtime = new Date("2002-03-04T05:06:07.000Z");
-    if (process.platform === "win32") attributes(source, 0x3127);
+    if (process.platform === "win32") {
+      attributes(source, 0x3127);
+      execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+        '[IO.File]::SetCreationTimeUtc($env:FS_SAFE_ATTRIBUTE_FILE, [DateTime]::new(2000,1,2,3,4,5,[DateTimeKind]::Utc))'], {
+        env: { ...process.env, FS_SAFE_ATTRIBUTE_FILE: source },
+      });
+    }
     else fs.chmodSync(source, 0o451);
     const before = fs.statSync(source);
     for (const clone of filesystem === "refs" ? ["never", "auto", "always"] : ["never", "auto"]) {
@@ -61,9 +71,12 @@ async function prove(base, filesystem) {
       assert.ok(Math.abs(copied.atimeMs - atime.getTime()) <= 1, `atime ${clone}`);
       assert.ok(Math.abs(copied.mtimeMs - mtime.getTime()) <= 1, `mtime ${clone}`);
       if (process.platform === "win32") {
-        if (mode !== "off") {
+        if (nativeMetadata) {
           assert.ok(Math.abs(copied.birthtimeMs - before.birthtimeMs) <= 1, `creation time ${clone}`);
           assert.equal(attributes(path.join(targetDir, output)) & 0x3127, 0x3127);
+        } else {
+          assert.ok(Math.abs(copied.birthtimeMs - before.birthtimeMs) > 60_000, "fallback cannot restore creation time");
+          assert.equal(attributes(path.join(targetDir, output)) & 0x3106, 0, "fallback cannot restore native-only attributes");
         }
       } else assert.equal(copied.mode & 0o777, 0o451);
       assert.equal(fs.readFileSync(path.join(targetDir, output)).length, 128 * 1024 + 7);
