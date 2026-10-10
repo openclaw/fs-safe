@@ -2,20 +2,28 @@
 
 ## Unreleased
 
-- Support guarded `Root.copyIn` block cloning on Windows ReFS and Dev Drive, with exclusive publication, cancellation cleanup, and automatic byte-copy fallback for unavailable clone capabilities.
+## 0.26.0 - 2026-10-10
+
+### Highlights
+
+- **New platforms:** native packages for FreeBSD x64/arm64 and Windows ARM64. ([#905](https://github.com/openclaw/fs-safe/pull/905), [#893](https://github.com/openclaw/fs-safe/pull/893))
+- **Native capabilities:** anonymous pipes, Linux write leases, Darwin ACL inspection, ReFS block cloning, and metadata- and link-preserving `Root.copyIn`. ([#892](https://github.com/openclaw/fs-safe/pull/892), [#896](https://github.com/openclaw/fs-safe/pull/896), [#920](https://github.com/openclaw/fs-safe/pull/920), [#921](https://github.com/openclaw/fs-safe/pull/921))
+- **Android/Termux publication:** staged no-replace copies and writes work when the OS refuses hard links. ([#888](https://github.com/openclaw/fs-safe/pull/888))
+- **Performance:** faster deep archive extraction, borrowed-handle copies and overwrites, sidecar locks, and Linux descriptor verification, with identity checks retained. ([#912](https://github.com/openclaw/fs-safe/pull/912), [#906](https://github.com/openclaw/fs-safe/pull/906), [#902](https://github.com/openclaw/fs-safe/pull/902), [#901](https://github.com/openclaw/fs-safe/pull/901), [#899](https://github.com/openclaw/fs-safe/pull/899))
 
 ### Features
 
-- **Guarded file copying:** add `Root.copyIn` metadata preservation and exclusive literal-link copying, including dangling Windows file and directory links; keep permission selection separate from timestamps and attributes.
+- **ReFS file copies:** support guarded `Root.copyIn` block cloning on Windows ReFS and Dev Drive, with exclusive publication, cancellation cleanup, and automatic byte-copy fallback for unavailable clone capabilities. ([#920](https://github.com/openclaw/fs-safe/pull/920))
+- **Guarded file copying:** add `Root.copyIn` metadata preservation and exclusive literal-link copying, including dangling Windows file and directory links; keep permission selection separate from timestamps and attributes. ([#921](https://github.com/openclaw/fs-safe/pull/921))
 
-- **Native filesystem capabilities:** add Linux write leases on caller-owned descriptors, no-follow Darwin ACL inspection with separate file and directory inheritance facts, and Windows sharing-lock, attribute, and physical-extent test fixtures.
-- **Anonymous pipes:** add `@openclaw/fs-safe/pipe` with native-owned, reopenable close-on-exec pipe ends for one-shot child input on POSIX, including safe stream closure in Workers.
+- **Native filesystem capabilities:** add Linux write leases on caller-owned descriptors, no-follow Darwin ACL inspection with separate file and directory inheritance facts, and Windows sharing-lock, attribute, and physical-extent test fixtures. ([#896](https://github.com/openclaw/fs-safe/pull/896))
+- **Anonymous pipes:** add `@openclaw/fs-safe/pipe` with native-owned, reopenable close-on-exec pipe ends for one-shot child input on POSIX, including safe stream closure in Workers. ([#892](https://github.com/openclaw/fs-safe/pull/892))
 
 ### Fixes
 
-- **Windows creation diagnostics:** retain native Win32 error numbers through private directory and file creation failures, including the command fallback, without changing semantic error codes.
-- **FreeBSD native packages:** add x64 and arm64 packages for FreeBSD 14.4+, with native anonymous pipes and canonicalization, and explicit capability absence for unported operations.
-- **Partial native bindings:** select guarded fallbacks when an operation's native capabilities are absent, and report typed capability errors in required mode before mutation.
+- **Windows creation diagnostics:** retain native Win32 error numbers through private directory and file creation failures, including the command fallback, without changing semantic error codes. ([#919](https://github.com/openclaw/fs-safe/pull/919))
+- **FreeBSD native packages:** add x64 and arm64 packages for FreeBSD 14.4+, with native anonymous pipes and canonicalization, and explicit capability absence for unported operations. ([#905](https://github.com/openclaw/fs-safe/pull/905))
+- **Partial native bindings:** select guarded fallbacks when an operation's native capabilities are absent, and report typed capability errors in required mode before mutation. ([#905](https://github.com/openclaw/fs-safe/pull/905))
 - **Android/Termux publication:** publish staged no-replace copies and writes when hardlinks are refused, using a verified empty placeholder before atomic replacement; include `EACCES` in the public hardlink-to-copy fallback classifier. Reported in [openclaw/openclaw#167791](https://github.com/openclaw/openclaw/issues/167791). ([#888](https://github.com/openclaw/fs-safe/pull/888))
 - **Native ZIP names:** preserve CP437 decoding for unflagged legacy filenames after the ZIP 9 upgrade, including collision rejection and bounded entry selection; continue rejecting invalid Unicode Path checksums and encodings before decoder normalization. ([#885](https://github.com/openclaw/fs-safe/pull/885))
 - **Native ZIP Unicode fields:** retain rejection of invalid Unicode Comment CRCs and UTF-8 before callbacks or bounded reads, and validate sequential Unicode fields in decoder order without repeated hashing of the original name. ([#887](https://github.com/openclaw/fs-safe/pull/887))
@@ -38,7 +46,7 @@
 
 ### Compatibility
 
-- **Windows ARM64:** add a native ARM64 package with real Windows 11 ARM64 and x64-emulation validation, including private ACL creation and Worker descriptor ownership.
+- **Windows ARM64:** add a native ARM64 package with real Windows 11 ARM64 and x64-emulation validation, including private ACL creation and Worker descriptor ownership. ([#893](https://github.com/openclaw/fs-safe/pull/893))
 
 - **Native ZIP metadata:** invalid UTF-8-flagged names now reject instead of decoding lossily or falling back to CP437. Public ZIP extraction, preflight, and reads already reject these names during physical admission. ([#885](https://github.com/openclaw/fs-safe/pull/885))
 
