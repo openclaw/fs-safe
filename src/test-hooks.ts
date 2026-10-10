@@ -1,5 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import type { FileIdentityStat } from "./file-identity.js";
+export { holdWindowsSharingLock, setWindowsFileAttributes, readWindowsFileExtents } from "./windows-test-hooks.js";
 
 export type FsSafeTestHooks = {
   beforeWatchRegistration?: (path: string) => void | Promise<void>;

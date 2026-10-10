@@ -488,6 +488,7 @@
         "formatOctal",
         "formatPermissionDetail",
         "formatPermissionRemediation",
+        "inspectDarwinAcl",
         "inspectPathPermissions",
         "isGroupReadable",
         "isGroupWritable",
@@ -500,6 +501,7 @@
       ],
       "types": [
         "CreatePrivateDirectoryOptions",
+        "DarwinAclInspection",
         "OwnerAndDaclResult",
         "PermissionCheck",
         "PermissionCheckOptions",
@@ -531,6 +533,7 @@
         "createFileLockManager",
         "drainFileLockManagerForTest",
         "resetFileLockManagerForTest",
+        "tryAcquireWriteLease",
         "withFileLock",
         "withFileLockSync"
       ],
@@ -543,6 +546,7 @@
         "FileLockStaleRecovery",
         "FileLockSyncAcquireOptions",
         "FileLockSyncHandle",
+        "FileWriteLease",
         "SidecarLockCompromisedInfo"
       ],
       "errorCodes": {}
@@ -799,7 +803,10 @@
     "./test-hooks": {
       "runtime": [
         "__setFsSafeTestHooksForTest",
-        "getFsSafeTestHooks"
+        "getFsSafeTestHooks",
+        "holdWindowsSharingLock",
+        "readWindowsFileExtents",
+        "setWindowsFileAttributes"
       ],
       "types": [
         "FsSafeTestHooks"

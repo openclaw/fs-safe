@@ -10,6 +10,9 @@
 
 Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.
 
+Platform-specific additions include [Linux write leases, Darwin ACL inspection,
+and Windows test fixtures](docs/platform-capabilities.md).
+
 Think Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), but for Node. Hand `root()` a trusted directory and you get back a handle whose every method resolves relative paths against it and defends against `..`, symlink swaps, hardlink aliases, and TOCTOU rename races. The exact containment strength is reported per mechanism: Linux `openat2` opens are kernel-atomic; guarded Linux fallback, macOS, Windows, and JavaScript paths are best-effort.
 
 ```ts

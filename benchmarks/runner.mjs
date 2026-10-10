@@ -1,5 +1,6 @@
 import { registerEntryPublication } from "./entry-publication.mjs";
 import { registerRetainedFile } from "./retained-file.mjs";
+import { registerPlatformCapabilities } from "./platform-capabilities.mjs";
 import { registerWatch } from "./watch.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -156,6 +157,7 @@ try {
   await registerPaths(context);
   await registerLifecycle(context);
   registerRetainedFile(context);
+  registerPlatformCapabilities(context);
   registerEntryPublication(context);
   await registerDarwinClone(context);
   await registerArchives(context);

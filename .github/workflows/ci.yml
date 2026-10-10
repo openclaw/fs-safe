@@ -1056,6 +1056,11 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Prove platform capabilities on the main thread and in Workers
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/platform-capabilities.test.ts
+
       - name: Prove unsupported no-replace publication fallback
         env:
           FS_SAFE_NATIVE_MODE: require
@@ -1183,6 +1188,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+
+      - name: Measure cold platform entry-point imports
+        if: ${{ !matrix.no-openat2 }}
+        run: |
+          node scripts/platform-import-timings.mjs
+          bun scripts/platform-import-timings.mjs
 
       - name: Test Bun native compatibility
         if: ${{ !matrix.no-openat2 }}
@@ -1470,6 +1481,7 @@ jobs:
             pnpm archive:wasm:allocator-tests
             pnpm test test/archive-codec-wasm-abi.test.ts test/archive-codec-wasm-allocator.test.ts test/archive-wasm-build.test.ts test/archive-wasm-abi.test.ts
             pnpm native:build
+            FS_SAFE_NATIVE_MODE=require pnpm test test/platform-capabilities.test.ts
             FS_SAFE_TEST_WATCH_EVENTS=1 pnpm test test/watch*.test.ts --maxWorkers=1 --testTimeout=30000
             node scripts/temp-workspace-quarantine-swap-proof.mjs
             pnpm package:smoke
@@ -1568,6 +1580,11 @@ jobs:
 
       - name: Build and stage host binding
         run: pnpm native:build
+
+      - name: Prove platform capabilities on the main thread and in Workers
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/platform-capabilities.test.ts
 
       - name: Verify root-only npm and pnpm consumer installs
         env:

@@ -59,6 +59,7 @@ struct OwnedFileSec(NonNull<c_void>);
 enum InheritanceTarget {
     File,
     Directory,
+    DirectoryOnly,
 }
 
 /// Frozen facts from one descriptor-bound fstatx_np call. Callers must obtain a
@@ -162,6 +163,7 @@ fn entry_inherits(entry: NonNull<c_void>, target: InheritanceTarget) -> NativeRe
     }
     let flags: &[i32] = match target {
         InheritanceTarget::File => &[ACL_ENTRY_FILE_INHERIT],
+        InheritanceTarget::DirectoryOnly => &[ACL_ENTRY_DIRECTORY_INHERIT],
         // Conservatively reject file-inheriting entries on a directory parent
         // as well, including entries intended only for later descendants.
         InheritanceTarget::Directory => &[ACL_ENTRY_FILE_INHERIT, ACL_ENTRY_DIRECTORY_INHERIT],
@@ -358,7 +360,7 @@ pub(crate) fn clear_private_clone_acl(fd: BorrowedFd<'_>) -> NativeResult<()> {
     Ok(())
 }
 
-fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult<AclState> {
+fn inspection_target(inheritance_target: Option<&str>) -> NativeResult<Option<InheritanceTarget>> {
     let target = match inheritance_target {
         None => None,
         Some("file") => Some(InheritanceTarget::File),
@@ -370,6 +372,12 @@ fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult
             ));
         }
     };
+    Ok(target)
+}
+
+#[cfg(test)]
+fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult<AclState> {
+    let target = inspection_target(inheritance_target)?;
     let (_, filesec) = read_descriptor_security(fd)?;
     filesec_acl_state(&filesec, target)
 }
@@ -377,6 +385,8 @@ fn inspect_descriptor(fd: i32, inheritance_target: Option<&str>) -> NativeResult
 #[napi(object)]
 pub struct DarwinAclFacts {
     pub state: String,
+    pub inherits_to_files: bool,
+    pub inherits_to_directories: bool,
 }
 
 #[napi(js_name = "inspectDarwinAcl")]
@@ -388,9 +398,16 @@ pub fn inspect_darwin_acl(
     // Synchronously borrow the caller's fd; dup/close would release record locks.
     into_napi(
         env,
-        inspect_descriptor(fd, inheritance_target.as_deref()).map(|state| DarwinAclFacts {
-            state: state.as_str().to_owned(),
-        }),
+        (|| {
+            let target = inspection_target(inheritance_target.as_deref())?;
+            let (_, filesec) = read_descriptor_security(fd)?;
+            // Each scan decodes a private copy of the same descriptor-bound snapshot.
+            Ok(DarwinAclFacts {
+                state: filesec_acl_state(&filesec, target)?.as_str().to_owned(),
+                inherits_to_files: filesec_acl_state(&filesec, Some(InheritanceTarget::File))? == AclState::Present,
+                inherits_to_directories: filesec_acl_state(&filesec, Some(InheritanceTarget::DirectoryOnly))? == AclState::Present,
+            })
+        })(),
     )
 }
 

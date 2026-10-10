@@ -7,6 +7,7 @@ import {
   type SidecarLockStaleRecovery,
 } from "./sidecar-lock.js";
 import { getFsSafeLockConfig } from "./lock-config.js";
+export { tryAcquireWriteLease, type FileWriteLease } from "./file-write-lease.js";
 export {
   acquireFileLockSync,
   withFileLockSync,

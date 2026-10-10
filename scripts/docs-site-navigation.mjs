@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const sections = [
-  ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "config.md"]],
+  ["Start", ["index.md", "install.md", "quickstart.md", "security-model.md", "native-helper.md", "native.md", "platform-capabilities.md", "config.md"]],
   ["Root API", ["root.md", "reading.md", "writing.md", "entries.md", "walk.md", "watch.md", "path-scope.md"]],
   ["Atomic & temp", ["atomic.md", "staged-file.md", "staged-symlink.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]],
   ["Stores", ["store.md", "json-store.md", "file-store.md"]],

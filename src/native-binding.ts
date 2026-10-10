@@ -129,6 +129,8 @@ export interface NativeWindowsDirectoryReceipt {
 
 export interface NativeDarwinAclFacts {
   state: "absent" | "empty" | "present";
+  inheritsToFiles?: boolean;
+  inheritsToDirectories?: boolean;
 }
 
 type NativeTwoPathArgs = [
@@ -139,6 +141,12 @@ type NativeTwoPathArgs = [
 ];
 
 export interface NativeBinding {
+  tryAcquireWriteLease?(fd: number): boolean;
+  isFileWriteLeaseHeld?(fd: number): boolean;
+  releaseFileWriteLease?(fd: number): void;
+  holdWindowsSharingLock?(path: string): { close(): void };
+  setWindowsFileAttributes?(path: string, attrs: { readOnly?: boolean; hidden?: boolean; system?: boolean }): void;
+  readWindowsFileExtents?(path: string): { vcn: bigint; lcn: bigint; clusters: bigint }[];
   rootRemovalStat?(parent: number, name: string): NativeRootRemovalEntry;
   rootRemovalUnlink?(parent: number, name: string, dev: bigint, ino: bigint, directory: boolean): void;
   openRootRemovalDirectory?(parent: number, name: string, dev: bigint, ino: bigint): NativeRootRemovalDirectory;
