@@ -52,7 +52,7 @@ export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyM
   signal?: AbortSignal;
   preserveSourceMode?: boolean;
   preserveMetadata?: boolean;
-  sourceSymlinks?: "follow" | "copy-link";
+  sourceSymlinks?: "reject" | "copy-link";
   onDestinationPublished?: (receipt: RootCopyPublicationReceipt) => void;
 };
 

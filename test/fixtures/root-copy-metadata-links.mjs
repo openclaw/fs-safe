@@ -148,8 +148,15 @@ async function prove(base, filesystem) {
     }
     const resolved = path.join(directory, "resolved-link");
     fs.symlinkSync("source", resolved, "file");
-    await target.copyIn("follow-default", resolved);
-    assert.equal(fs.lstatSync(path.join(targetDir, "follow-default")).isSymbolicLink(), false);
+    for (const [name, options] of [["reject-default", undefined], ["reject-explicit", { sourceSymlinks: "reject" }]]) {
+      await assert.rejects(target.copyIn(name, resolved, options), {
+        name: "FsSafeError", code: "symlink", message: "symlink not allowed",
+      });
+      assert.equal(fs.existsSync(path.join(targetDir, name)), false);
+      cases++;
+    }
+    await assert.rejects(target.copyIn("reject-follow", resolved, { sourceSymlinks: "follow" }), { code: "invalid-path" });
+    assert.equal(fs.existsSync(path.join(targetDir, "reject-follow")), false);
     cases++;
     if (canCopyLinks) {
       let revoked = false;

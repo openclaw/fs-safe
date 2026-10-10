@@ -2,7 +2,6 @@ import fsSync, { type BigIntStats } from "node:fs";
 import type { OpenResult } from "./root-impl.js";
 import type { RootContext } from "./root-context.js";
 import type { RootCopyOptions, RootCopySource, HardlinkPolicy } from "./root-options.js";
-import type { SymlinkPolicy } from "./root-symlink-policy.js";
 import { assertCopySourceCurrent, resolveFileCopyCloneMode } from "./copy-file-input.js";
 import { resolveCopyCloneMode } from "./copy-policy.js";
 import { captureCopyMetadata } from "./copy-metadata.js";
@@ -29,12 +28,12 @@ type RootCopyParams = RootCopyOptions & {
 };
 
 export async function copyFileInRoot(root: RootContext, params: RootCopyParams,
-  openVerifiedLocalFile: (path: string, options: { hardlinks?: HardlinkPolicy; symlinks?: SymlinkPolicy }) => Promise<{ opened: OpenResult; identity: BigIntStats }>,
+  openVerifiedLocalFile: (path: string, options: { hardlinks?: HardlinkPolicy }) => Promise<{ opened: OpenResult; identity: BigIntStats }>,
 ): Promise<void> {
   params.signal?.throwIfAborted();
   resolveCopyCloneMode(params.clone, "never");
-  if (params.sourceSymlinks !== undefined && params.sourceSymlinks !== "follow" && params.sourceSymlinks !== "copy-link") {
-    throw new FsSafeError("invalid-path", "sourceSymlinks must be follow or copy-link");
+  if (params.sourceSymlinks !== undefined && params.sourceSymlinks !== "reject" && params.sourceSymlinks !== "copy-link") {
+    throw new FsSafeError("invalid-path", "sourceSymlinks must be reject or copy-link");
   }
   if (params.sourceSymlinks === "copy-link") {
     if (typeof params.source !== "string") {
@@ -58,7 +57,6 @@ export async function copyFileInRoot(root: RootContext, params: RootCopyParams,
     assertNoWindowsPathAlias(params.source, "filesystem", "source path uses a Windows filesystem namespace alias");
     ({ opened: source, identity: sourceIdentity } = await openVerifiedLocalFile(params.source, {
       hardlinks: params.sourceHardlinks,
-      symlinks: params.sourceSymlinks === "copy-link" ? "follow-parents-within-root" : "follow-within-root",
     }));
   } else {
     source = await params.source.root.open(params.source.relativePath, params.sourceHardlinks === undefined ? undefined : { hardlinks: params.sourceHardlinks });

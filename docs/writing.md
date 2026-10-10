@@ -441,7 +441,9 @@ The Windows attribute mask and POSIX timestamp conversion share the
 [tree-copy implementation](copy.md#api); native tree copying has additional
 metadata guarantees that this narrower option does not request.
 
-`sourceSymlinks` defaults to `"follow"` for absolute string sources. Set
+`sourceSymlinks` defaults to `"reject"`, preserving the existing rejection of
+symlinked absolute string sources with code `symlink` and message
+`symlink not allowed`. There is no follow mode. Set
 `sourceSymlinks: "copy-link"` to copy a source link itself, including a dangling
 file or directory link. Its literal target remains data: copying never resolves
 it. Windows uses the link's own directory attribute and copies the reparse
@@ -466,8 +468,8 @@ changed.
 `"copy-link"` requires an absolute-path string source. A `{ root, relativePath }`
 source fails with `invalid-path` before either source method is called or a
 destination is mutated: its `open` and `stat` capabilities cannot expose literal
-link text or Windows link type without following the link. With `"follow"`,
-capability sources continue to use their own Root read policies.
+link text or Windows link type without following the link. With the default
+`"reject"`, capability sources continue to use their own Root read policies.
 
 macOS and Windows link copying requires native support and otherwise reports
 `helper-unavailable` before destination mutation. macOS `link(2)` follows its
