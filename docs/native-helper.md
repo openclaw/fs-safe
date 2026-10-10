@@ -109,10 +109,12 @@ is authoritative for operation and platform guarantees.
 
 ## Migration from the Python helper
 
-The deprecated configuration bridge maps Python settings to native modes and
-warns once; it never executes Python. Follow the
+The Python configuration bridge has been removed. Old Python environment
+settings are ignored without a warning, so an old `require` or `off` setting
+does not select the corresponding native policy. Configure
+`FS_SAFE_NATIVE_MODE` or `configureFsSafeNative()` explicitly. Follow the
 [0.5 migration checklist](migrating-to-0.5.md#2-replace-python-helper-configuration)
-for aliases, warning behavior, and precedence.
+for the removed settings and current precedence.
 
 ## Related pages
 
