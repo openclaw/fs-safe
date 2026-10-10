@@ -1,5 +1,7 @@
 # File lock
 
+For [Linux kernel write leases](platform-capabilities.md#linux-write-leases), `FileWriteLease.isHeld() === false` means “do not act on the file,” including while the kernel is still processing a lease break. The caller’s `SIGIO` handler still owns break notification.
+
 `acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
 
 On Windows, both the target and an explicitly supplied `lockPath` reject NTFS
