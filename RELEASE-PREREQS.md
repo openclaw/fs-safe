@@ -4,7 +4,7 @@ Maintainer checklist for the protected, tag-driven [release workflow](.github/wo
 
 ## Package setup
 
-A release publishes eight packages:
+A release publishes nine packages:
 
 - `@openclaw/fs-safe`: JavaScript, declarations, and documentation; no embedded native binaries.
 - `@openclaw/fs-safe-darwin-arm64`
@@ -13,9 +13,10 @@ A release publishes eight packages:
 - `@openclaw/fs-safe-linux-arm64-musl`
 - `@openclaw/fs-safe-linux-x64-gnu`
 - `@openclaw/fs-safe-linux-x64-musl`
+- `@openclaw/fs-safe-win32-arm64-msvc`
 - `@openclaw/fs-safe-win32-x64-msvc`
 
-The `native/` npm workspace and Rust crate are private build inputs, not additional published packages. The seven native packages are platform-filtered optional dependencies of the root package.
+The `native/` npm workspace and Rust crate are private build inputs, not additional published packages. The eight native packages are platform-filtered optional dependencies of the root package.
 
 Each published package must have this trusted publisher configured in npm:
 
@@ -31,7 +32,7 @@ Use the existing package and publisher configuration; do not bootstrap or reconf
 
 ## Prepare the release candidate
 
-Update the root package version, all seven native package versions, all seven exact root optional-dependency pins, the private native npm workspace version, and the crate version in `native/Cargo.toml`. The root `Cargo.toml` is an unversioned workspace.
+Update the root package version, all eight native package versions, all eight exact root optional-dependency pins, the private native npm workspace version, and the crate version in `native/Cargo.toml`. The root `Cargo.toml` is an unversioned workspace.
 
 Regenerate the lockfiles rather than editing them by hand:
 
@@ -77,7 +78,7 @@ pnpm docs:site
 git diff --check
 ```
 
-Host-native package proof additionally uses `pnpm native:build` followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires all seven real bindings assembled by the release workflow and must run through pnpm.
+Host-native package proof additionally uses `pnpm native:build` followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires all eight real bindings assembled by the release workflow and must run through pnpm.
 
 Do not commit generated `dist/` files, native binaries, or release artifacts.
 
@@ -87,15 +88,15 @@ Merge the reviewed release preparation into `main` after its exact-head CI is gr
 
 The workflow checks tag format, annotation, protection, main ancestry, matching package/crate versions and pins, and dated changelog content. Main ancestry alone does not guarantee the tag points to latest main, and the workflow does not wait for a separate CI run; maintainers must enforce both conditions before tagging.
 
-The automated order is source validation, seven-target native build, assembly and eight-package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
+The automated order is source validation, eight-target native build, assembly and nine-package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
 
-Package publication and release-proof generation each verify all eight packages sequentially under a 90-minute job ceiling. The configured retry sleeps total 530 seconds per package, or 4,240 seconds (70 minutes 40 seconds) across eight packages, leaving 19 minutes 20 seconds of nominal headroom. This is an overall fail-closed cap, not a guarantee that every package can exhaust its retry schedule: each attempt can also make separately bounded registry requests, while npm publication and Sigstore verification have no separate total deadline. Pathologically slow or unbounded external work can still reach the outer ceiling. Raising it only increases possible runner occupancy; it does not add normal-path work or relax byte-identity, registry-signature, or provenance checks.
+Package publication and release-proof generation each verify all nine packages sequentially under a 90-minute job ceiling. The configured retry sleeps total 530 seconds per package, or 4,770 seconds (79 minutes 30 seconds) across nine packages, leaving 10 minutes 30 seconds of nominal headroom. This is an overall fail-closed cap, not a guarantee that every package can exhaust its retry schedule: each attempt can also make separately bounded registry requests, while npm publication and Sigstore verification have no separate total deadline. Pathologically slow or unbounded external work can still reach the outer ceiling. Raising it only increases possible runner occupancy; it does not add normal-path work or relax byte-identity, registry-signature, or provenance checks.
 
 If a version already exists, the publishing helper verifies it instead of republishing it. A retry after timeout reuses the collected manifest and tarballs from successful jobs in the same workflow run. Preserve those artifacts when investigating a failure; never rebuild or replace published artifacts to work around a byte, signature, or provenance mismatch.
 
 ## Verify the completed release
 
-For the root and all seven native packages, verify the exact version, expected `latest` dist-tag, canonical registry tarball URL, integrity, publication time, registry signatures, and workflow-bound provenance. Confirm the public GitHub Release and protected annotated tag exist and point to the intended commit.
+For the root and all eight native packages, verify the exact version, expected `latest` dist-tag, canonical registry tarball URL, integrity, publication time, registry signatures, and workflow-bound provenance. Confirm the public GitHub Release and protected annotated tag exist and point to the intended commit.
 
 The Release body must match the finalized changelog and include npm version links, registry tarball links, integrity, attestation proof, and the successful Actions run. Download the workflow's collected package artifacts promptly; their retention is bounded.
 

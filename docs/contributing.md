@@ -100,6 +100,24 @@ On Linux x64 or arm64 with Docker, run `pnpm build`, copy the matching GNU artif
 artifact and run native security and no-replace move tests in Rocky Linux 8
 (glibc 2.28). Both GNU architectures execute this load test on matching runners.
 
+### Windows ARM64 builds
+
+`windows-11-arm` builds and runs the ARM64 MSVC addon using native ARM64 Node
+and Rust, and separately tests x64 Node and Rust under Windows emulation. Both
+lanes run the native suite, main-thread and Worker private-creation/descriptor
+proof, and root-only npm/pnpm install smoke. PE inspection matches the loaded
+consumer binary's hash, architecture and required NT imports. Release builds
+also run the ARM64 native security and Worker tests before uploading the binding.
+
+The only linked C codec is `zstd-sys`; `cargo test --workspace --locked` and the
+release addon build compile it for `aarch64-pc-windows-msvc`. Bzip2 uses
+`libbz2-rs-sys`, and deflate uses `miniz_oxide`, both Rust implementations.
+The portable WASM build uses the checksum-pinned x64 WASI SDK under Windows
+emulation because that SDK has no Windows ARM64 host archive. Its compiler and
+archiver produce wasm32 only; the addon still uses MSVC for the selected target.
+Bun 1.4.2 has no Windows ARM64 artifact; the existing Windows x64 Bun lanes remain
+the Bun runtime proof. Native Windows ARM64 support is qualified with Node.
+
 ## Test
 
 ```bash
@@ -262,14 +280,14 @@ OS/CPU/libc selection, a native-required SHA-256 operation, and fresh-process
 optionals. Omitted-optionals installs also verify that all public subpaths can
 be imported, without implying every operation remains available.
 
-Host-only smoke supplies the six foreign packages using their unchanged real
+Host-only smoke supplies the seven foreign packages using their unchanged real
 manifests and clearly marked synthetic, non-executable payloads. Every foreign
 metadata/tarball endpoint is checked before installation, so a missing fixture
 cannot masquerade as successful platform filtering. These temporary fixtures
 never enter `packages/`, release artifacts, or the publish manifest. They prove
 installer filtering, not foreign native compilation or execution. Full release
-collection uses the actual seven collected native tarballs instead. Run it with
-`pnpm package:collect` after assembling all seven real bindings; missing targets
+collection uses the actual eight collected native tarballs instead. Run it with
+`pnpm package:collect` after assembling all eight real bindings; missing targets
 fail collection. `pnpm package:collect --allow-host-only` exercises the same
 lifecycle boundary locally but proves only the host. Both collection commands
 require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standalone
@@ -277,7 +295,7 @@ require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standa
 direct `node` invocation without lifecycle metadata is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
-PR CI builds and executes all seven shipped bindings. The existing check names
+PR CI builds and executes all eight shipped bindings. The existing check names
 stay stable; extra runner/runtime combinations add checks without changing the
 repository ruleset. Native lanes run Node 24; the GNU host lanes also exercise
 Bun 1.4.2 (as do macOS and Windows).
@@ -294,6 +312,7 @@ Bun 1.4.2 (as do macOS and Windows).
 | Native check | `macos-15-intel` | x64 | Node 24, Bun 1.4.2 |
 | Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.2 |
 | Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.2 |
+| Windows ARM64 host | `windows-11-arm` | arm64 native and x64 emulated | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-latest` | x64 / musl | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-24.04-arm` | arm64 / musl | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-latest` | x64 / glibc | Node 24 |
@@ -302,7 +321,7 @@ Bun 1.4.2 (as do macOS and Windows).
 | Coverage | `ubuntu-latest`, `macos-15`, `fs-safe-windows-16core` | host | Node 22 |
 
 Both musl lanes also run root-only package smoke with the real host binding.
-The seven-target source build matrix still runs on release tags. The smoke writes manager versions,
+The eight-target source build matrix still runs on release tags. The smoke writes manager versions,
 cases, and synthetic-fixture scope to `release-artifacts/consumer-proof.json`.
 
 ## Docs

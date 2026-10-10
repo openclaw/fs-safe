@@ -224,6 +224,9 @@ importers:
       '@openclaw/fs-safe-linux-x64-musl':
         specifier: 0.25.0
         version: link:packages/linux-x64-musl
+      '@openclaw/fs-safe-win32-arm64-msvc':
+        specifier: 0.25.0
+        version: link:packages/win32-arm64-msvc
       '@openclaw/fs-safe-win32-x64-msvc':
         specifier: 0.25.0
         version: link:packages/win32-x64-msvc
@@ -244,6 +247,8 @@ importers:
   packages/linux-x64-gnu: {}
 
   packages/linux-x64-musl: {}
+
+  packages/win32-arm64-msvc: {}
 
   packages/win32-x64-msvc: {}
 

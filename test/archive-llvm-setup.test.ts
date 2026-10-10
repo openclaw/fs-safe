@@ -129,7 +129,7 @@ it("does not retry a checksum mismatch", async () => {
   expect(delay).not.toHaveBeenCalled();
 });
 
-it.skipIf(!["linux-x64", "darwin-arm64", "darwin-x64", "win32-x64"].includes(`${process.platform}-${process.arch}`))(
+it.skipIf(!["linux-x64", "darwin-arm64", "darwin-x64", "win32-x64", "win32-arm64"].includes(`${process.platform}-${process.arch}`))(
   "keeps the actual installer from extracting or publishing a bad checksum after retry",
   async () => {
     const runner = join(directory, "runner");

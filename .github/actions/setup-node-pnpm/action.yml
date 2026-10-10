@@ -4,6 +4,9 @@ inputs:
   node-version:
     description: Node.js version to install
     required: true
+  architecture:
+    description: Node.js architecture (defaults to the runner architecture)
+    default: ""
   pnpm-version:
     description: pnpm version to install
     default: "12.10.1"
@@ -19,5 +22,6 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
+        architecture: ${{ inputs.architecture }}
         cache: pnpm
         cache-dependency-path: pnpm-lock.yaml

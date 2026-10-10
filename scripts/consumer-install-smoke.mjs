@@ -374,7 +374,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
       }
       proof.managers.push(managerProof);
     }
-    console.log(`foreign filter fixtures: ${synthetic.length ? synthetic.join(", ") : "all seven collected native artifacts"}`);
+    console.log(`foreign filter fixtures: ${synthetic.length ? synthetic.join(", ") : "all collected native artifacts"}`);
     writeFileSync(join(outputDir, "consumer-proof.json"), `${JSON.stringify(proof, null, 2)}\n`);
   } catch (error) {
     if (server) console.error(`consumer fixture requests: ${JSON.stringify(server.requests)}`);

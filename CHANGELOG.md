@@ -31,6 +31,8 @@
 
 ### Compatibility
 
+- **Windows ARM64:** add a native ARM64 package with real Windows 11 ARM64 and x64-emulation validation, including private ACL creation and Worker descriptor ownership.
+
 - **Native ZIP metadata:** invalid UTF-8-flagged names now reject instead of decoding lossily or falling back to CP437. Public ZIP extraction, preflight, and reads already reject these names during physical admission. ([#885](https://github.com/openclaw/fs-safe/pull/885))
 
 ## 0.25.0 - 2026-10-08
