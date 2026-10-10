@@ -6,6 +6,7 @@ import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { FsSafeError } from "../src/errors.js";
 import { publishCopyStage } from "../src/publish-copy-stage.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { fileSymlinkOrSkip } from "./helpers/file-symlink.js";
 
 const { tempRoot } = useRealTempDirs();
 beforeEach(() => configureFsSafeNative({ mode: "off" }));
@@ -135,6 +136,33 @@ it("fails closed when exclusive creation itself is denied", async () => {
   expect(() => f.run()).toThrow(expect.objectContaining({ code: "EACCES" }));
   expect(rename).not.toHaveBeenCalled();
   expect(fs.existsSync(f.targetPath)).toBe(false);
+});
+
+it.each(["EACCES", "EPERM"])("preserves a dangling Windows leaf introduced by link %s refusal", async (code, context) => {
+  const f = await fixture();
+  const referent = path.join(f.directory, "missing");
+  const competitor = path.join(f.directory, "competitor");
+  const link = await fileSymlinkOrSkip(referent, competitor, context).catch(error => {
+    fs.closeSync(f.fd);
+    throw error;
+  });
+  vi.spyOn(fs, "linkSync").mockImplementation(() => {
+    fs.renameSync(competitor, f.targetPath);
+    throw errno(code);
+  });
+  const open = vi.spyOn(fs, "openSync");
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  // Exercise the preflight on every host; Windows CI also proves real O_EXCL behavior.
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    expect(() => f.run()).toThrow(expect.objectContaining({ code: "already-exists" }));
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+  }
+  expect(open).not.toHaveBeenCalled();
+  expect(fs.readlinkSync(f.targetPath)).toBe(link);
+  expect(fs.existsSync(referent)).toBe(false);
+  expect(fs.readFileSync(f.temporaryPath, "utf8")).toBe("complete bytes");
 });
 
 it.each(["EIO", "EEXIST"])("does not fall back after link %s", async code => {
