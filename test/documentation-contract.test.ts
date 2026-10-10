@@ -60,6 +60,15 @@ describe("documentation contract", () => {
     expect(documentedImportFailures()).toEqual([]);
   });
 
+  it("does not advertise the removed Python configuration bridge", () => {
+    const nativeHelperDoc = readRepoFile("docs/native-helper.md");
+    const migration = nativeHelperDoc.split("## Migration from the Python helper")[1]
+      ?.split("## Related pages")[0];
+    expect(migration).toContain("removed");
+    expect(migration).toContain("ignored");
+    expect(migration).not.toContain("warns once");
+  });
+
   it("documents every public FsSafeError code in the reference union", () => {
     expect(documentedFsSafeErrorCodes()).toEqual(publicFsSafeErrorCodes().toSorted());
   });

@@ -16,11 +16,11 @@ Current releases install the matching exact-version optional platform package.
 - Run on Node.js 22 or newer.
 - Update `@openclaw/fs-safe` and regenerate every lock or shrinkwrap file your
   deployment consumes.
-- Keep optional dependencies enabled if you want JavaScript ZIP/TAR support.
-  Native loading no longer depends on Python. Keep optional dependencies enabled
-  for the matching native package and JavaScript ZIP/TAR decoders. An install
-  that omits them can still import fs-safe, but native-only features and missing
-  JS archive decoders fail with actionable errors.
+- Keep optional dependencies enabled for the matching native package and the
+  JSZip fallback. Current TAR/gzip/zstd/bzip2 fallbacks are bundled and work
+  with optional dependencies omitted. Native loading no longer depends on
+  Python. See [runtime dependencies](install.md#runtime-dependencies) for the
+  current installation contract.
 
 If you call `resolveRootPath()` or `resolveRootPathSync()` directly, upgrade to
 0.5: versions through 0.4.7 could approve an in-root symlink traversal that
