@@ -171,4 +171,25 @@ describe.skipIf(process.platform === "win32")("guest no-replace fallback", () =>
     expect(await fs.readFile(path.join(root, "source"), "utf8")).toBe(fault === "source" ? "replacement" : "original");
     expect(await fs.readFile(path.join(root, "target"), "utf8")).toBe(fault === "target" ? "replacement" : "original");
   });
+
+  it.each(["file", "symlink"])("does not report a destination collision for a source swapped to %s", async kind => {
+    const root = await tempRoot("fs-safe-guest-source-type-error-");
+    await fs.mkdir(path.join(root, "source"));
+    await fs.writeFile(path.join(root, "referent"), "unrelated");
+    const result = publish(root, [
+      "os.chdir(sys.argv[1])",
+      "original_rename = os.rename",
+      "def race(src, dst, **kwargs):",
+      "    original_rename('source', 'saved')",
+      kind === "file" ? "    open('source', 'w').write('replacement')" : "    os.symlink('referent', 'source')",
+      "    return original_rename(src, dst, **kwargs)",
+      "os.rename = race",
+    ].join("\n"));
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stderr).message).toContain("identity changed");
+    expect(await fs.readdir(root)).toEqual(["referent", "saved", "source"]);
+    expect(await fs.readFile(path.join(root, "referent"), "utf8")).toBe("unrelated");
+    if (kind === "file") expect(await fs.readFile(path.join(root, "source"), "utf8")).toBe("replacement");
+    else expect(await fs.readlink(path.join(root, "source"))).toBe("referent");
+  });
 });
