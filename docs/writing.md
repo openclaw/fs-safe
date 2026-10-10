@@ -223,12 +223,12 @@ await fs.createJson("config/settings.json", { enabled: true }, { atomic: true })
 await fs.create("config/flushed.json", initial, { atomic: true, durable: "file" });
 ```
 
-`atomic: true` keeps the destination absent until all bytes have been written.
+`atomic: true` finishes all bytes in a sibling stage before publication.
 The native backend uses its no-replace rename; the JavaScript fallback hardlinks
 the completed stage and unlinks its temporary name in the same JavaScript turn.
-The fallback requires hardlink support and fails without publishing partial bytes
-when that mechanism is unavailable. Other processes can briefly observe both
-names. Existing and raced entries are preserved, including dangling symlinks;
+When the OS refuses hardlinks, it uses the [placeholder-rename fallback](#publication-without-hardlinks).
+Other processes can briefly observe both linked names, or an empty placeholder
+before the atomic replacement. Entries present at the exclusive claim are preserved, including dangling symlinks;
 ordinary confinement, type, hardlink, and symlink-policy rejections still apply.
 `assertBeforeMutation` retains its live checks through content writes and publication.
 
@@ -293,9 +293,10 @@ unlimited. Zero permits an empty input only. Invalid limits reject before I/O.
 Unlike buffered creation's JavaScript fallback, streamed creation stages all
 chunks before publishing the final name. Native mode uses no-replace rename;
 the JavaScript fallback hardlinks the completed stage and removes its temporary
-name in the same JavaScript turn. That fallback requires a filesystem supporting
-hardlinks; other processes may briefly observe both names. An existing or
-concurrently created destination is preserved. Existing-target preflight does
+name in the same JavaScript turn. If hardlinks are refused, it uses the
+[placeholder-rename fallback](#publication-without-hardlinks); other processes may
+briefly observe an empty placeholder. A destination present at the exclusive
+claim is preserved. Existing-target preflight does
 not consume the input. The final mode and durability policy use the same guarded
 writer as other Root operations.
 
@@ -408,8 +409,35 @@ With `overwrite: false`, an existing destination produces `already-exists` and
 is never altered. Copying prepares a private sibling file before publishing its
 completed contents. Native mode uses no-replace rename. The guarded JavaScript
 fallback links the completed stage and removes its temporary name in the same
-JavaScript turn; the filesystem must support hardlinks. Other processes can
-briefly observe both names. The source is never hardlinked to the destination.
+JavaScript turn. If the OS refuses hardlinks, it uses the placeholder-rename
+fallback below. Other processes can briefly observe both linked names or an
+empty placeholder. The source is never hardlinked to the destination.
+
+### Publication without hardlinks
+
+For staged JavaScript no-replace copies and writes, `EACCES`, `EPERM`, `EXDEV`,
+`ENOTSUP`, `EOPNOTSUPP`, and `ENOSYS` from the link operation permit a
+**placeholder-rename** fallback, including Android/Termux hardlink restrictions.
+It exclusively creates a mode-`0600`, no-follow destination, closes it after
+capturing its exact identity, rechecks the parent and stage, and requires the
+same empty, singly linked regular placeholder before renaming the completed
+stage over it. A real creation-permission failure still rejects. `EEXIST` from
+the link operation does not permit fallback or establish non-publication.
+
+An empty placeholder is observable before the atomic replacement, and a crash
+can leave that placeholder and the completed stage. Detected placeholder swaps
+reject without removing foreign entries; failed pre-rename operations remove
+only a verified owned empty placeholder. Failed cleanup reports `helper-failed`
+with `details.publication: "not-published"` and `details.cleanup: "failed"`.
+After rename, verification requires the stage name to be absent and the target
+to retain the staged identity; the complete published file is preserved on failure.
+
+These pathname checks are best-effort, not compare-and-swap: a same-directory
+writer can replace the placeholder after the final check, and rename can replace
+that intervening file or symlink (without following it). Protect the parent from
+untrusted mutation when strict concurrent no-clobber is required. This fallback
+preserves existing receipt shapes; `RootCopyPublicationReceipt` reports identity
+and path, with no method or fallback field.
 
 `clone` chooses the file-data transfer strategy through `CopyCloneMode`, shared
 with [`copyTree`](copy.md#api). File copies default to `"never"`; tree copies
