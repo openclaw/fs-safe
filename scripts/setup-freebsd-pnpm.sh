@@ -18,8 +18,10 @@ if [ "$FS_SAFE_FREEBSD_TARGET" = "freebsd-arm64" ]; then
   test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
   # Bootstrap from the locked registry sources, before pnpm can materialize its
   # own .pnpm/crates directory. Cargo discovers config from the working directory.
-  cargo build --manifest-path "$source_dir/Cargo.toml" --locked --release -p pnpm-cli --bin pnpm
-  install -m 755 "$source_dir/target/release/pnpm" "$(npm root --global)/pnpm/pnpm"
+  # This is only the build tool. Avoid release optimization and debug-info cost
+  # inside the emulated guest; fs-safe itself is still built with --release.
+  CARGO_PROFILE_DEV_DEBUG=0 cargo build --manifest-path "$source_dir/Cargo.toml" --locked -p pnpm-cli --bin pnpm
+  install -m 755 "$source_dir/target/debug/pnpm" "$(npm root --global)/pnpm/pnpm"
 fi
 
 test "$(pnpm --version)" = "12.10.1"
