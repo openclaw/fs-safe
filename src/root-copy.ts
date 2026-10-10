@@ -73,7 +73,12 @@ export async function copyFileInRoot(root: RootContext, params: RootCopyParams,
     if (params.maxBytes !== undefined && source.stat.size > params.maxBytes) {
       throw new FsSafeError("too-large", `file exceeds limit of ${params.maxBytes} bytes (got ${source.stat.size})`);
     }
-    const metadata = params.preserveMetadata ? captureCopyMetadata(source.handle.fd, sourceIdentity) : undefined;
+    let metadata;
+    try {
+      metadata = params.preserveMetadata ? captureCopyMetadata(source.handle.fd, sourceIdentity) : undefined;
+    } catch (error) {
+      throw normalizePinnedWriteError(error);
+    }
     const sourceAdmission = params.admitSource?.(sourceIdentity, source.realPath);
     const verifySource = async () => {
       params.signal?.throwIfAborted();
