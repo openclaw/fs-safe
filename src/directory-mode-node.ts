@@ -4,6 +4,8 @@ import { FsSafeError } from "./errors.js";
 import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
+import { getNativeBinding } from "./native.js";
+import { nativePolicyDirectoryObserver } from "./native-policy-directory-observation.js";
 
 export type DirectoryModeChecks = {
   check?: () => void;
@@ -11,6 +13,7 @@ export type DirectoryModeChecks = {
 };
 export type DirectoryModeOwner = {
   verify(check?: () => void): Promise<void>;
+  verifyCanonical?(): Promise<boolean>;
   apply(mode: number, checks?: DirectoryModeChecks): Promise<void>;
   close(): Promise<void>;
 };
@@ -27,6 +30,7 @@ export function assertOwnedDirectory(expected: Stats | BigIntStats, actual: Stat
 /** Serializes use and close: even a queued path-based fd operation retains its descriptor. */
 export function ownDirectoryMode(params: {
   inspect: () => Promise<number>;
+  inspectCanonical?: () => number | undefined;
   chmod: (mode: number) => Promise<void>;
   prepareChmod?: () => Promise<void>;
   verifyChmod?: () => Promise<void>;
@@ -41,7 +45,7 @@ export function ownDirectoryMode(params: {
     pending = operation.catch(() => undefined);
     return operation;
   };
-  return {
+  const owner: DirectoryModeOwner = {
     verify: (check) => enqueue(async () => {
       check?.();
       await params.inspect();
@@ -88,6 +92,14 @@ export function ownDirectoryMode(params: {
       return closing;
     },
   };
+  if (params.inspectCanonical) {
+    owner.verifyCanonical = async () => {
+      let verified = false;
+      await enqueue(async () => { verified = params.inspectCanonical!() !== undefined; });
+      return verified;
+    };
+  }
+  return owner;
 }
 
 /** Darwin descriptor inspection avoids requesting directory-content reads. */
@@ -111,7 +123,7 @@ export function nodeDirectorySearchOnlyFlags(): { flags: number; proc: boolean }
 /** Real Node only: injected filesystem adapters must retain descriptor-chmod semantics. */
 export async function pinNodeDirectoryForMode(
   dirPath: string,
-  options: { expectedIdentity?: BigIntStats; ownerUid?: number } = {},
+  options: { expectedIdentity?: BigIntStats; ownerUid?: number; canonicalPath?: string } = {},
 ): Promise<DirectoryModeOwner> {
   const { ownerUid } = options;
   const assertOwner = (stat: BigIntStats) => {
@@ -141,7 +153,11 @@ export async function pinNodeDirectoryForMode(
     proc = route.proc;
     return await fs.open(dirPath, route.flags | flags);
   });
+  let observer: ReturnType<typeof nativePolicyDirectoryObserver>;
   try {
+    observer = options.canonicalPath === dirPath && ownerUid === undefined
+      ? nativePolicyDirectoryObserver(getNativeBinding(), handle.fd, dirPath)
+      : undefined;
     const inspect = async () => {
       const opened = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), expected);
       assertOwnedDirectory(expected, opened);
@@ -163,8 +179,17 @@ export async function pinNodeDirectoryForMode(
       assertOwner(opened);
       assertOwner(followed);
     };
+    const observeCanonical = observer;
     const owner = ownDirectoryMode({
       inspect,
+      inspectCanonical: observeCanonical ? () => {
+        const observed = observeCanonical();
+        if (!observed) return undefined;
+        if (observed.identity.dev !== expected.dev || observed.identity.ino !== expected.ino) {
+          throw new FsSafeError("path-mismatch", "directory changed before its mode could be applied");
+        }
+        return Number(observed.identity.mode & 0o7777n);
+      } : undefined,
       prepareChmod: proc ? assertProcAuthority : undefined,
       verifyChmod: proc ? assertProcAuthority : undefined,
       async chmod(mode) {
@@ -174,11 +199,12 @@ export async function pinNodeDirectoryForMode(
           await handle.chmod(mode);
         }
       },
-      close: () => handle.close(),
+      close: () => { observer?.dispose(); return handle.close(); },
     });
     await owner.verify();
     return owner;
   } catch (error) {
+    observer?.dispose();
     try {
       await handle.close();
     } catch {
