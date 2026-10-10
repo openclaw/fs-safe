@@ -83,10 +83,19 @@ export function isolatedConsumerEnv(directory) {
   return env;
 }
 
-async function run(command, args, cwd, env) {
+// Windows 11 ARM x64-emulated creation p50: 183.18s (3 samples); 3x rounded up to a minute is 600s.
+export function creationProbeTimeoutMs(omitted, mode, runtime = {
+  platform: process.platform, arch: process.arch,
+  emulated: process.env.FS_SAFE_TEST_WINDOWS_X64_EMULATION === "1",
+}) {
+  return runtime.platform === "win32" && runtime.arch === "x64" && runtime.emulated &&
+    omitted && (mode === "off" || mode === "auto") ? 600_000 : 120_000;
+}
+
+async function run(command, args, cwd, env, timeoutMs = 120_000) {
   // Async children leave the test-owned registry's event loop available.
   const { stdout } = await exec(command[0], [...command.slice(1), ...args], {
-    cwd, env, encoding: "utf8", timeout: 120_000, killSignal: "SIGKILL", maxBuffer: 8 * 1024 * 1024,
+    cwd, env, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 8 * 1024 * 1024,
   });
   return stdout.trim();
 }
@@ -262,7 +271,8 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         }
         cases.creation = [];
         for (const mode of omitted ? ["off", "auto", "require"] : ["require"]) {
-          const receipt = JSON.parse(await run([process.execPath, join(directory, "consumer-creation-probe.mjs")], [mode], directory, env));
+          const receipt = JSON.parse(await run([process.execPath, join(directory, "consumer-creation-probe.mjs")],
+            [mode], directory, env, creationProbeTimeoutMs(omitted, mode)));
           assert.equal(receipt.protocol, 1);
           assert.equal(receipt.mode, mode);
           assert.equal(receipt.omitted, omitted);

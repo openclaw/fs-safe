@@ -1636,6 +1636,7 @@ jobs:
       - name: Verify root-only npm and pnpm consumer installs
         env:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          FS_SAFE_TEST_WINDOWS_X64_EMULATION: ${{ matrix.arch == 'x64' && '1' || '0' }}
         run: pnpm package:smoke
 
       - name: Verify loaded PE architecture and imports
