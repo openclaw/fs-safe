@@ -15,7 +15,7 @@ export function portableScript(seed) {
     op('move', 'sync-copy', { to: 'moved', options: { overwrite: true } }),
     op('stat', 'moved'), op('copyIn', 'nested/second', { source: name }),
     op('list', 'nested'), op('walk', 'nested', { options: { order: 'sorted', symlinkPolicy: 'skip' } }),
-    op('writeJson', 'data.json', { data: { seed, name, isFile: true, mode: 123, path: 'literal\\payload' } }), op('readJson', 'data.json'),
+    op('writeJson', 'data.json', { data: { seed, name, isFile: true, mode: 123, path: 'literal\\payload', scannedEntryCount: 0 } }), op('readJson', 'data.json'),
     op('lock', 'lock-target'), op('temp', '.', { data }),
     op('remove', 'moved'), op('remove', 'nested/copied'), op('remove', 'nested/second'), op('remove', 'nested'),
   ] };

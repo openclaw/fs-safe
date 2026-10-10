@@ -109,7 +109,7 @@ function comparable(result) {
   }
   // Full standalone scans promise filesystem ordering, not lexical ordering.
   // Bounded subsets and followed-directory aliases remain visible divergences.
-  if (result?.value?.scannedEntryCount !== undefined) {
+  if (result?.operation === "walkDirectory" && result.value?.scannedEntryCount !== undefined) {
     const byPath = (a, b) => a.relativePath < b.relativePath ? -1 : a.relativePath > b.relativePath ? 1 : 0;
     return { ...result, value: { ...result.value,
       entries: [...result.value.entries].sort(byPath),

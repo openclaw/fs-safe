@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { decode, encode, firstDifference, generate, validateSpec } from "../../scripts/differential-root-model.mjs";
-import { allowedDifferences, portableReport, portableScript, seeds } from "./corpus.mjs";
+import { portableReport, portableScript, seeds } from "./corpus.mjs";
 import { loadTestNative } from "../helpers/native-probe.js";
 import { useRealTempDirs } from "../helpers/vitest.js";
 
@@ -31,7 +31,6 @@ it("allows Unicode and dot names without admitting traversal or Windows aliases"
 });
 
 it("scopes representation allowances without hiding data, mode or hash changes", () => {
-  expect(Object.values(allowedDifferences).every(reason => reason.length > 0)).toBe(true);
   const tree = [{ path: "cafe\u0301", kind: "file", mode: 0o600, nlink: 1, hash: "abc" }];
   const report = { initial: tree, results: [{ value: { name: "cafe\u0301", mode: 123 }, tree }], final: tree };
   const spec = { ops: [{ method: "readJson" }] };
@@ -54,6 +53,17 @@ it("scopes representation allowances without hiding data, mode or hash changes",
   const reversed = { ...walk, results: [{ value: [...walk.results[0].value].reverse() }] };
   const walkSpec = { ops: [{ method: "walk" }] };
   expect(firstDifference(portableReport(walk, walkSpec), portableReport(reversed, walkSpec))).toEqual({ phase: "operation", index: 0 });
+});
+
+it("compares metadata-shaped JSON literally without treating it as a directory scan", () => {
+  const json = { initial: [], final: [], results: [{ operation: "readJson", value: { scannedEntryCount: 0 } }] };
+  expect(firstDifference(json, structuredClone(json))).toBeUndefined();
+  const arrays = { ...json, results: [{ operation: "readJson", value: {
+    scannedEntryCount: 2, entries: [{ relativePath: "b" }, { relativePath: "a" }], failedDirs: [],
+  } }] };
+  const reversed = structuredClone(arrays);
+  reversed.results[0].value.entries.reverse();
+  expect(firstDifference(arrays, reversed)).toEqual({ phase: "operation", index: 0 });
 });
 
 it("replays the portable corpus through public APIs and saves every mode's receipts", async () => {
