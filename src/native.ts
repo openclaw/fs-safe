@@ -154,7 +154,7 @@ function targetFor(
   arch: string,
   musl: boolean,
 ): string | undefined {
-  if (platform === "win32" && arch === "x64") return "win32-x64-msvc";
+  if (platform === "win32" && (arch === "x64" || arch === "arm64")) return `win32-${arch}-msvc`;
   if (platform === "darwin" && arch === "x64") return "darwin-x64";
   if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
   if (platform === "linux" && (arch === "x64" || arch === "arm64")) {

@@ -151,6 +151,8 @@ describe("platform native loader", () => {
     expect(__nativeTargetForTest("darwin", "x64")).toBe("darwin-x64");
     expect(__nativeTargetForTest("darwin", "arm64")).toBe("darwin-arm64");
     expect(__nativeTargetForTest("win32", "x64")).toBe("win32-x64-msvc");
+    expect(__nativeTargetForTest("win32", "arm64")).toBe("win32-arm64-msvc");
+    expect(__nativeTargetForTest("win32", "ia32")).toBeUndefined();
     expect(__nativeTargetForTest("freebsd", "x64")).toBeUndefined();
     expect(__nativeTargetForTest("linux", "ppc64")).toBeUndefined();
   });

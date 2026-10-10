@@ -12,7 +12,12 @@ const assets = {
   "darwin-x64": ["x86_64-macos", "87d27fa8adc68dee59bfbf2e22a6d34ef717c34d6bf1d8af2a56fc929d9ce0eb"],
   "win32-x64": ["x86_64-windows", "cccb5c323a9b34f0349a9b09e8804a0a7632c68c3310f4b5f437ed57d7e71d8f"],
 };
-const asset = assets[`${process.platform}-${process.arch}`];
+// WASI SDK has no Windows ARM64 host archive. Windows 11 runs the same pinned
+// x64 LLVM tools under emulation; their output is still freestanding wasm32.
+// This compiler selection never controls the native addon or consumer runtime.
+const compilerHost = process.platform === "win32" && process.arch === "arm64"
+  ? "win32-x64" : `${process.platform}-${process.arch}`;
+const asset = assets[compilerHost];
 if (!asset) throw new Error(`Unsupported archive compiler host: ${process.platform}-${process.arch}`);
 if (!process.env.RUNNER_TEMP || !process.env.GITHUB_ENV) {
   throw new Error("Archive compiler setup requires RUNNER_TEMP and GITHUB_ENV.");

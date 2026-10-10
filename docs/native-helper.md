@@ -5,8 +5,8 @@ description: "How fs-safe loads its platform-specific native filesystem primitiv
 
 # Native helper policy
 
-`@openclaw/fs-safe` declares seven exact-version optional packages for Linux
-x64/arm64 (glibc or musl), macOS x64/arm64, and Windows x64. Package-manager
+`@openclaw/fs-safe` declares eight exact-version optional packages for Linux
+x64/arm64 (glibc or musl), macOS x64/arm64, and Windows x64/arm64. Package-manager
 OS, CPU, and libc filters install only the matching package. The loader requires
 that package lazily, without runtime downloads, postinstall scripts, or a
 consumer Rust build.

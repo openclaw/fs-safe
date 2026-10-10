@@ -8,7 +8,7 @@ import { publishOrVerify } from "../scripts/publish-or-verify.mjs";
 import { publishReleasePackages } from "../scripts/publish-release-packages.mjs";
 
 const temporaryDirectories: string[] = [];
-const NOMINAL_NON_SLEEP_HEADROOM_MS = 19 * 60_000 + 20_000;
+const NOMINAL_NON_SLEEP_HEADROOM_MS = 10 * 60_000 + 30_000;
 
 async function releaseArtifacts(packageNames: readonly string[]) {
   const directory = await mkdtemp(join(tmpdir(), "fs-safe-publish-release-test-"));
@@ -120,9 +120,9 @@ describe("publish-release-packages", () => {
     const perPackageRetrySleepMs = REGISTRY_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
     const sequentialRetrySleepMs = releasePackageCount * perPackageRetrySleepMs;
 
-    expect(releasePackageCount).toBe(8);
+    expect(releasePackageCount).toBe(9);
     expect(perPackageRetrySleepMs).toBe(530_000);
-    expect(sequentialRetrySleepMs).toBe(4_240_000);
+    expect(sequentialRetrySleepMs).toBe(4_770_000);
     for (const [jobName, command] of [
       ["publish", "node scripts/publish-release-packages.mjs release-artifacts"],
       ["release", "node scripts/append-release-proof.mjs"],

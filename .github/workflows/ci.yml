@@ -1583,6 +1583,75 @@ jobs:
       - name: Audit
         run: cargo audit --deny warnings
 
+  windows-arm64:
+    name: Windows ARM64 host (Node ${{ matrix.arch }})
+    runs-on: windows-11-arm
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 24
+          architecture: ${{ matrix.arch }}
+
+      - name: Verify native or emulated Node architecture
+        run: node -e "if (process.platform !== 'win32' || process.arch !== '${{ matrix.arch }}') throw Error('Unexpected Node architecture'); console.log(process.version, process.platform, process.arch)"
+
+      - name: Select matching Rust host and portable target
+        run: |
+          rustup toolchain install stable-${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}-pc-windows-msvc --force-non-host --profile minimal --target wasm32-unknown-unknown
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup override set stable-${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}-pc-windows-msvc
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test native crate and linked C codecs
+        run: cargo test --workspace --locked
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Build and stage host binding
+        run: pnpm native:build
+
+      - name: Run native suite including real Node Workers
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test native
+
+      - name: Verify root-only npm and pnpm consumer installs
+        env:
+          FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          FS_SAFE_TEST_WINDOWS_X64_EMULATION: ${{ matrix.arch == 'x64' && '1' || '0' }}
+        run: pnpm package:smoke
+
+      - name: Verify loaded PE architecture and imports
+        run: ./scripts/check-windows-native-imports.ps1 -Binary packages/win32-${{ matrix.arch }}-msvc/fs-safe-native.node -ConsumerProof release-artifacts/consumer-proof.json -Output release-artifacts/windows-native-pe.json -Architecture ${{ matrix.arch }}
+
+      - name: Upload consumer and PE proof
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-arm64-host-node-${{ matrix.arch }}
+          path: |
+            release-artifacts/manifest.json
+            release-artifacts/consumer-proof.json
+            release-artifacts/windows-native-pe.json
+          if-no-files-found: error
+
   package-smoke:
     name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}

@@ -17,9 +17,11 @@ platform syscall sequence that can preserve the boundary.
 
 Every operation that has an equivalent safe Node implementation keeps that
 guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
-run postinstall code, or fetch binaries at runtime. Seven exact-version optional
+run postinstall code, or fetch binaries at runtime. Eight exact-version optional
 packages are filtered by OS, CPU, and Linux libc, so an installation receives
-only its matching prebuilt binding.
+only its matching prebuilt binding. Windows ships both x64 and ARM64 MSVC
+bindings; selection follows the Node process architecture. An x64 Node process
+on Windows ARM64 uses the x64 binding under emulation.
 Native-only operations fail explicitly
 instead of substituting a weaker implementation.
 

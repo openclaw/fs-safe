@@ -85,8 +85,8 @@ const metadataHelperSha256 = hash(new URL("./consumer-proof-metadata.mjs", impor
 assert.equal(probeSha256, expected.windowsSecurity.probeSha256);
 assert.equal(metadataHelperSha256, expected.metadataHelperSha256);
 
-assert.equal(expected.platforms.length, 7);
-assert.equal(new Set(expected.platforms).size, 7);
+assert.equal(expected.platforms.length, 8);
+assert.equal(new Set(expected.platforms).size, 8);
 const physical = new Set();
 function inspectPackages(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

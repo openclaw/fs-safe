@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory)][string]$Binary,
     [Parameter(Mandatory)][string]$ConsumerProof,
-    [Parameter(Mandatory)][string]$Output
+    [Parameter(Mandatory)][string]$Output,
+    [ValidateSet('x64', 'arm64')][string]$Architecture = 'x64'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -22,7 +23,7 @@ foreach ($managerName in @('npm', 'pnpm')) {
     $native = @($normal[0].windowsSecurity | Where-Object { $_.mode -eq 'require' })
     if ($native.Count -ne 1) { throw "Missing unique $managerName required-native receipt." }
     $observed = $native[0]
-    if ($observed.protocol -ne 2 -or $observed.platform -ne 'win32' -or $observed.arch -ne 'x64' -or
+    if ($observed.protocol -ne 2 -or $observed.platform -ne 'win32' -or $observed.arch -ne $Architecture -or
         $observed.nativeLoaded -ne $true -or $observed.binarySha256 -cne $binaryHash -or
         $observed.source.dirty -ne $false -or $observed.source.commit -ne $proof.source.commit -or
         $observed.source.tree -ne $proof.source.tree) {
@@ -30,12 +31,14 @@ foreach ($managerName in @('npm', 'pnpm')) {
     }
 }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$tools = @(& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe')
+$hostTools = if ($Architecture -eq 'arm64') { 'Hostarm64\arm64' } else { 'Hostx64\x64' }
+$tools = @(& $vswhere -latest -products '*' -find "VC\Tools\MSVC\**\bin\$hostTools\dumpbin.exe")
 if ($LASTEXITCODE -ne 0 -or $tools.Count -eq 0) { throw 'MSVC dumpbin is unavailable.' }
 $dumpbin = $tools[0]
+$machine = if ($Architecture -eq 'arm64') { 'AA64' } else { '8664' }
 $headers = (& $dumpbin /nologo /headers $Binary) -join "`n"
-if ($LASTEXITCODE -ne 0 -or $headers -notmatch '(?im)^\s*8664\s+machine\b' -or
-    $headers -notmatch '(?im)^\s*20B\s+magic # \(PE32\+\)') { throw 'Expected an AMD64 PE32+ addon.' }
+if ($LASTEXITCODE -ne 0 -or $headers -notmatch "(?im)^\s*$machine\s+machine\b" -or
+    $headers -notmatch '(?im)^\s*20B\s+magic # \(PE32\+\)') { throw "Expected a $Architecture PE32+ addon." }
 # The standard tool filters import descriptors to this DLL before symbol matching.
 $imports = (& $dumpbin /nologo /imports:ntdll.dll $Binary) -join "`n"
 if ($LASTEXITCODE -ne 0 -or $imports -notmatch '(?im)^\s*ntdll\.dll\s*$') {
@@ -50,7 +53,7 @@ foreach ($symbol in $symbols) {
 if ((Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $binaryHash) {
     throw 'The inspected addon changed during verification.'
 }
-$receipt = @{ machine = 'AMD64 (0x8664)'; format = 'PE32+'; binarySha256 = $binaryHash; imports = @{ 'ntdll.dll' = $symbols } }
+$receipt = @{ architecture = $Architecture; machine = "0x$machine"; format = 'PE32+'; binarySha256 = $binaryHash; imports = @{ 'ntdll.dll' = $symbols } }
 $Output = [IO.Path]::GetFullPath($Output)
 [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Output))
 [IO.File]::WriteAllText($Output, ($receipt | ConvertTo-Json -Depth 5) + "`n", [Text.UTF8Encoding]::new($false))

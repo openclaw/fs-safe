@@ -1,5 +1,13 @@
 export const nativeTargets = [
   {
+    label: "win32-arm64-msvc",
+    package: "@openclaw/fs-safe-win32-arm64-msvc",
+    os: "win32",
+    cpu: "arm64",
+    rust: "aarch64-pc-windows-msvc",
+    artifact: "fs-safe-native.win32-arm64-msvc.node",
+  },
+  {
     label: "linux-x64-gnu",
     package: "@openclaw/fs-safe-linux-x64-gnu",
     os: "linux",
@@ -70,8 +78,8 @@ export function hostNativeTarget() {
   if (platformArch === "darwin-x64" || platformArch === "darwin-arm64") {
     return nativeTargets.find((target) => target.label === platformArch);
   }
-  if (platformArch === "win32-x64") {
-    return nativeTargets.find((target) => target.label === "win32-x64-msvc");
+  if (platformArch === "win32-x64" || platformArch === "win32-arm64") {
+    return nativeTargets.find((target) => target.label === `${platformArch}-msvc`);
   }
   if (platformArch === "linux-x64" || platformArch === "linux-arm64") {
     const libc = process.report?.getReport().header?.glibcVersionRuntime ? "gnu" : "musl";

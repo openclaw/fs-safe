@@ -183,6 +183,7 @@
     "@openclaw/fs-safe-linux-arm64-musl": "0.25.0",
     "@openclaw/fs-safe-linux-x64-gnu": "0.25.0",
     "@openclaw/fs-safe-linux-x64-musl": "0.25.0",
+    "@openclaw/fs-safe-win32-arm64-msvc": "0.25.0",
     "@openclaw/fs-safe-win32-x64-msvc": "0.25.0",
     "jszip": "^3.10.2"
   },
