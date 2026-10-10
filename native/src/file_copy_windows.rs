@@ -8,10 +8,11 @@ use napi::bindgen_prelude::{AbortSignal, AsyncTask, Task};
 use napi::{Env, Error, JsError, Result, Status};
 use napi_derive::napi;
 use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_NON_DIRECTORY_FILE};
-use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
+use windows_sys::Win32::Foundation::{GetLastError, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_END_OF_FILE_INFO, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_TYPE_DISK,
-    FileEndOfFileInfo, GetFileType, WriteFile,
+    DELETE, FILE_END_OF_FILE_INFO, FILE_FLAG_NO_BUFFERING, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_TYPE_DISK, FileEndOfFileInfo, GetFileType, ReOpenFile,
+    WriteFile,
 };
 
 use crate::clone_windows::{clone_file_data, is_refs, reject_named_streams};
@@ -55,7 +56,7 @@ pub struct FileCopyTask {
     source: RetainedHandle,
     parent: RetainedHandle,
     name: String,
-    always: bool,
+    clone_mode: String,
     max_bytes: u64,
     cancelled: Arc<AtomicBool>,
 }
@@ -117,26 +118,46 @@ impl FileCopyTask {
     fn copy(&self) -> NativeResult<CreatedCopy> {
         self.check_cancelled()?;
         let size = self.check_source()?;
-        if !is_refs(self.parent.0.0)? {
-            return Err(native_error("ENOTSUP", "file cloning requires ReFS"));
-        }
-        // A content rejection must never become an automatic byte-copy retry.
-        reject_named_streams(self.source.0.0).map_err(|error| {
-            if error.status == "ENOTSUP" {
-                native_error("EIO", error.reason)
-            } else {
-                error
+        if self.clone_mode != "never" {
+            if !is_refs(self.parent.0.0)? {
+                return Err(native_error("ENOTSUP", "file cloning requires ReFS"));
             }
-        })?;
-        if !is_refs(self.source.0.0)?
-            || handle_identity_and_size(self.source.0.0)?.0.0
-                != handle_identity_and_size(self.parent.0.0)?.0.0
-        {
-            return Err(native_error(
-                "ENOTSUP",
-                "file cloning requires the same ReFS volume",
-            ));
+            // A content rejection must never become an automatic byte-copy retry.
+            reject_named_streams(self.source.0.0).map_err(|error| {
+                if error.status == "ENOTSUP" {
+                    native_error("EIO", error.reason)
+                } else {
+                    error
+                }
+            })?;
+            if !is_refs(self.source.0.0)?
+                || handle_identity_and_size(self.source.0.0)?.0.0
+                    != handle_identity_and_size(self.parent.0.0)?.0.0
+            {
+                return Err(native_error(
+                    "ENOTSUP",
+                    "file cloning requires the same ReFS volume",
+                ));
+            }
         }
+        let clone_source = if self.clone_mode == "never" {
+            None
+        } else {
+            // Match the tree cloner: pin this object without buffering, and exclude
+            // writers until cloning settles. ReOpenFile never resolves a pathname.
+            let handle = unsafe {
+                ReOpenFile(
+                    self.source.0.0,
+                    FILE_GENERIC_READ,
+                    FILE_SHARE_READ | FILE_SHARE_DELETE,
+                    FILE_FLAG_NO_BUFFERING,
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(win_error(unsafe { GetLastError() }, "reopen clone source"));
+            }
+            Some(OwnedHandle(handle))
+        };
         let target = nt_open_relative_with_policy(
             self.parent.0.0,
             &self.name,
@@ -153,10 +174,16 @@ impl FileCopyTask {
         };
         created.error = (|| {
             self.check_cancelled()?;
-            if let Err(error) =
-                clone_file_data(self.source.0.0, created.target.0.0, size, &self.cancelled)
-            {
-                if self.always
+            if self.clone_mode == "never" {
+                self.copy_bytes(created.target.0.0)?;
+                created.method = "copy";
+            } else if let Err(error) = clone_file_data(
+                clone_source.as_ref().unwrap().0,
+                created.target.0.0,
+                size,
+                &self.cancelled,
+            ) {
+                if self.clone_mode == "always"
                     || !matches!(
                         error.status.as_str(),
                         "ENOTSUP" | "EXDEV" | "EINVAL" | "ENOSYS"
@@ -243,12 +270,6 @@ pub fn copy_file_exclusive(
     }
     let task = (|| {
         validate_child_basename(&basename)?;
-        if clone_mode == "never" {
-            return Err(native_error(
-                "ENOTSUP",
-                "ordinary copy uses the guarded byte path",
-            ));
-        }
         Ok(FileCopyTask {
             source: RetainedHandle(duplicate_handle(
                 root_handle(source_fd)?,
@@ -259,7 +280,7 @@ pub fn copy_file_exclusive(
                 "retain copy parent",
             )?),
             name: basename,
-            always: clone_mode == "always",
+            clone_mode,
             max_bytes,
             cancelled: cancellation(signal.as_ref()),
         })
