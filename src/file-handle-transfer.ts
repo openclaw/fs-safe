@@ -140,7 +140,8 @@ export async function copyFileHandle(
   );
   const sourceStat = await inspectFileIdentity(() => {
     signal?.throwIfAborted();
-    return source.stat({ bigint: true });
+    const fd = source.fd;
+    return fd < 0 ? source.stat({ bigint: true }) : fs.fstatSync(fd, { bigint: true });
   });
   signal?.throwIfAborted();
   if (!sourceStat.isFile()) throw new FsSafeError("not-file", "copy source handle must be a regular file");
@@ -149,7 +150,8 @@ export async function copyFileHandle(
   }
   const targetStat = await inspectFileIdentity(() => {
     signal?.throwIfAborted();
-    return target.stat({ bigint: true });
+    const fd = target.fd;
+    return fd < 0 ? target.stat({ bigint: true }) : fs.fstatSync(fd, { bigint: true });
   });
   signal?.throwIfAborted();
   if (!targetStat.isFile()) throw new FsSafeError("not-file", "copy target handle must be a regular file");
