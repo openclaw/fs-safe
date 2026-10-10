@@ -45,15 +45,13 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
     configureFsSafeNative({ mode: "require" });
   }
 
-  it("normalizes a root-descriptor admission failure before supported removal", async () => {
+  it("normalizes a root-descriptor admission failure before recursive removal", async () => {
     requireNative();
     const directory = await tempRoot("fs-safe-native-remove-root-error-");
     await fs.mkdir(path.join(directory, "tree"));
     const scoped = await root(directory);
     vi.spyOn(fs, "open").mockRejectedValueOnce(Object.assign(new Error("denied"), { code: "EACCES" }));
-    // Windows has no recursive enumeration capability; its absence rejects
-    // before descriptor admission. Exercise its supported removal path here.
-    await expect(scoped.remove("tree", { recursive: process.platform !== "win32" })).rejects.toMatchObject({ code: "path-alias" });
+    await expect(scoped.remove("tree", { recursive: true })).rejects.toMatchObject({ code: "path-alias" });
     expect(await fs.readdir(directory)).toEqual(["tree"]);
   });
 
