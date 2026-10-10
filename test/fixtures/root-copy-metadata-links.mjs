@@ -51,11 +51,11 @@ async function prove(base, filesystem) {
     const atime = new Date("2001-02-03T04:05:06.000Z");
     const mtime = new Date("2002-03-04T05:06:07.000Z");
     if (process.platform === "win32") {
-      attributes(source, 0x3127);
       execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
         '[IO.File]::SetCreationTimeUtc($env:FS_SAFE_ATTRIBUTE_FILE, [DateTime]::new(2000,1,2,3,4,5,[DateTimeKind]::Utc))'], {
         env: { ...process.env, FS_SAFE_ATTRIBUTE_FILE: source },
       });
+      attributes(source, 0x3127);
     }
     else fs.chmodSync(source, 0o451);
     const before = fs.statSync(source);
