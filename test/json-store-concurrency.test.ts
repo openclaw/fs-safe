@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
-import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   createJsonStore,
   type JsonStore,
@@ -13,6 +13,8 @@ import { deferred } from "./helpers/deferred.js";
 
 type State = { count: number };
 type Mutation = "update" | "updateOr" | "write";
+
+allowWindowsFilesystemStalls();
 
 const { tempRoot } = useTempDirs();
 
