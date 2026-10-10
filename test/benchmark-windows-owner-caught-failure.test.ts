@@ -22,7 +22,7 @@ import {
   configureFsSafeNative,
   getFsSafeNativeConfig,
 } from "../src/native-config.js";
-import { __loadBundledNativeForTest } from "../src/native.js";
+import { __loadBundledNativeForTest, __setNativeLoaderForTest, __resetNativeLoaderForTest } from "../src/native.js";
 import { PermissionCommandError } from "../src/permission-exec.js";
 import { inspectPathPermissions } from "../src/permissions.js";
 import {
@@ -124,6 +124,23 @@ function measuredRows(iterations = 40) {
 }
 
 describe("Windows owner caught-failure benchmark contract", () => {
+  it.runIf(process.platform !== "win32")("keeps the required-native host control on POSIX", async () => {
+    configureFsSafeNative({ mode: "require" });
+    __setNativeLoaderForTest(() => ({ closeOwnedFd() {}, readOwnerAndDacl() {
+      throw new Error("the POSIX control must not invoke Windows native code");
+    } }));
+    try {
+      await withMockedRegistration({ inspectWindowsAcl, inspectPathPermissions }, true, process.platform, async rows => {
+        const control = rows[0]!;
+        control.options.before();
+        const result = await control.run();
+        expect(() => control.options.after(result)).not.toThrow();
+      });
+    } finally {
+      __resetNativeLoaderForTest();
+      __resetFsSafeNativeConfigForTest();
+    }
+  });
   it("executes every prebuilt cohort and verifies it outside timing", async () => {
     await withMockedRegistration({
       inspectWindowsAcl, inspectPathPermissions: inspectPermissionFixture,
