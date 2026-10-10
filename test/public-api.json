@@ -803,7 +803,10 @@
     "./test-hooks": {
       "runtime": [
         "__setFsSafeTestHooksForTest",
-        "getFsSafeTestHooks"
+        "getFsSafeTestHooks",
+        "holdWindowsSharingLock",
+        "readWindowsFileExtents",
+        "setWindowsFileAttributes"
       ],
       "types": [
         "FsSafeTestHooks"
