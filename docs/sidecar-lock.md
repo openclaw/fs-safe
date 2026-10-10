@@ -141,7 +141,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
   shouldReclaim?: (params: {
     lockPath: string;
     normalizedTargetPath: string;
-    payload: Record<string, unknown> | null;
+    payload: unknown;
     staleMs: number;
     nowMs: number;
     heldByThisProcess: boolean;
@@ -150,7 +150,7 @@ type FileLockAcquireOptions<TPayload extends Record<string, unknown>> = {
     lockPath: string;
     normalizedTargetPath: string;
     raw: string;
-    payload: Record<string, unknown> | null;
+    payload: unknown;
   }) => boolean | Promise<boolean>;
   metadata?: Record<string, unknown>;    // attached to heldEntries() output for diagnostics
   parsePayload?: (raw: string) => unknown;
