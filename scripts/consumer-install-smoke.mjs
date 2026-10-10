@@ -126,6 +126,15 @@ export function resolvePnpmCommand(cli = process.env.npm_execpath) {
   throw new Error("package collection requires a pnpm lifecycle CLI; run pnpm package:collect or pnpm package:smoke");
 }
 
+export function resolveConsumerCommands(npmCli, runtime = { platform: process.platform, arch: process.arch }) {
+  const commands = [["npm", [process.execPath, npmCli]]];
+  // pnpm publishes no freebsd-arm64 executable, so that target proves npm installations only.
+  if (runtime.platform !== "freebsd" || runtime.arch !== "arm64") {
+    commands.push(["pnpm", resolvePnpmCommand()]);
+  }
+  return commands;
+}
+
 const hashScript = `
   import assert from 'node:assert/strict';
   import { configureFsSafeNative } from '@openclaw/fs-safe';
@@ -145,7 +154,7 @@ const hashScript = `
   }
 `;
 
-export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCommand, allowHostOnly, source }) {
+export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, consumerCommands, allowHostOnly, source }) {
   const temporary = mkdtempSync(join(tmpdir(), "fs-safe-consumer-proof-"));
   let server;
   try {
@@ -211,7 +220,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
       root: manifest.find((artifact) => artifact.name === rootPkg.name),
       syntheticForeignPackages: synthetic, managers: [],
     };
-    for (const [manager, command] of [["npm", [process.execPath, npmCli]], ["pnpm", pnpmCommand]]) {
+    for (const [manager, command] of consumerCommands) {
       const managerProof = { manager, cases: [] };
       for (const omitted of [false, true]) {
         const directory = join(temporary, `${manager}-${omitted ? "omitted" : "normal"}`);
@@ -263,6 +272,14 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
           return run([process.execPath], ["--input-type=module", "--eval", hashScript, mode, missing ? "missing" : "present"], directory, env);
         }
         const cases = { omitted, nativePackages: installed.nativePackages, cloneMetadata: installed.cloneMetadata };
+        if (process.platform === "freebsd") {
+          const probe = join(directory, "freebsd-probe.mjs");
+          writeFileSync(probe, readFileSync(new URL("./consumer-freebsd-probe.mjs", import.meta.url)));
+          cases.freebsd = JSON.parse(await run([process.execPath, probe], [], directory, env));
+          managerProof.cases.push(cases);
+          console.log(`${manager}@${version} FreeBSD ${omitted ? "omitted optionals" : host.label}: ${JSON.stringify(cases)}`);
+          continue;
+        }
         cases.require = await hash("require", omitted);
         cases.auto = await hash("auto");
         cases.off = await hash("off");

@@ -5,8 +5,10 @@ description: "How fs-safe loads its platform-specific native filesystem primitiv
 
 # Native helper policy
 
-`@openclaw/fs-safe` declares eight exact-version optional packages for Linux
-x64/arm64 (glibc or musl), macOS x64/arm64, and Windows x64/arm64. Package-manager
+`@openclaw/fs-safe` declares exact-version optional packages for Linux
+x64/arm64 (glibc or musl), macOS x64/arm64, Windows x64/arm64, and FreeBSD x64/arm64.
+The FreeBSD 14.4+ bindings expose the [qualified subset](native.md#freebsd-14-4-and-newer).
+Package-manager
 OS, CPU, and libc filters install only the matching package. The loader requires
 that package lazily, without runtime downloads, postinstall scripts, or a
 consumer Rust build.
@@ -32,6 +34,12 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 See [Archive extraction](archive.md) for native, bundled WASM, and ZIP backends.
 Native archive-operation failures are terminal; `auto` does not retry them through a
 fallback. `require` rejects missing bindings or required capabilities.
+
+A loaded binding may provide only a subset of native operations. Each operation
+checks its required capabilities before native dispatch: missing capabilities
+select the existing guarded fallback in `auto`, or report `helper-unavailable`
+in `require`. A failure from an available native method is still an operation
+failure; it is not treated as a missing capability.
 
 Windows owner/DACL inspection, private-directory creation, and secure reads can
 use [PowerShell fallbacks](install.md#windows-security-fallback) in `auto` and

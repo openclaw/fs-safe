@@ -21,6 +21,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  freebsd-native:
+    name: FreeBSD targets
+    uses: ./.github/workflows/freebsd.yml
+
   lint-workflows:
     name: Lint workflows
     runs-on: ubuntu-latest

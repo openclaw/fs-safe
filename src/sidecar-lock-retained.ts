@@ -96,7 +96,7 @@ export function retainCreatedSidecar(
       }
     } };
   }
-  if (!binding.stagedFileMatches || !binding.removeStagedFile) return undefined;
+  if (!binding.openBeneath || !binding.stagedFileMatches || !binding.removeStagedFile) return undefined;
   const closeFile = captureNativeFdClose(binding);
   const parentFd = binding.openBeneath(nativeParent!.fd, "",
     nativeOpenFlags(fs.constants.O_RDONLY | fs.constants.O_DIRECTORY)).fd;

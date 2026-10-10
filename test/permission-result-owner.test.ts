@@ -99,12 +99,13 @@ describe("public permission result ownership", () => {
     expect(successful).not.toHaveProperty("error");
   });
 
-  it("discards native fields when late summary access throws before a failed fallback", async () => {
+  it("preserves a late native summary failure without selecting a fallback", async () => {
     const nativeFacts = facts();
+    const failure = new Error("late native summary failure");
     let ownerReads = 0;
     Object.defineProperty(nativeFacts, "ownerClass", {
       get() {
-        if (++ownerReads === 2) throw new Error("late native summary failure");
+        if (++ownerReads === 2) throw failure;
         return "current-user";
       },
     });
@@ -112,23 +113,12 @@ describe("public permission result ownership", () => {
     read.mockReturnValueOnce(nativeFacts).mockReturnValue(facts());
     const cause = new Error("fallback owner query failed");
     const exec = vi.fn(async () => { throw cause; });
-    const result = await inspectPathPermissions(target, { platform: "win32", exec });
+    await expect(inspectPathPermissions(target, { platform: "win32", exec })).rejects.toBe(failure);
     expect(ownerReads).toBe(2);
-    expectShape(result, ["ownerError", ...errorKeys]);
-    expect(result).toMatchObject({
-      source: "unknown", worldWritable: false, groupWritable: false,
-      worldReadable: false, groupReadable: false,
-      ownerError: "Error: fallback owner query failed",
-      error: "Windows owner inspection failed: Error: fallback owner query failed",
-      errorDetail: undefined,
-    });
-    expect(result.errorCause).toBe(cause);
-    const snapshot = Object.getOwnPropertyDescriptors(result);
     const next = await inspectPathPermissions(target, { platform: "win32", exec });
     expectShape(next, [...ownerKeys, "aclSummary"]);
     expect(next).toMatchObject({ source: "windows-acl", worldWritable: true });
-    expect(Object.getOwnPropertyDescriptors(result)).toEqual(snapshot);
-    expect(exec).toHaveBeenCalledOnce();
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it("keeps POSIX and failed-stat results free of Windows-only fields", async () => {

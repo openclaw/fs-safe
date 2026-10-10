@@ -76,8 +76,8 @@ jobs:
             throw new Error(`native/Cargo.toml does not declare ${version}`);
           }
           const nativePackages = require("node:fs").readdirSync("packages");
-          if (nativePackages.length !== 8) {
-            throw new Error(`expected eight native packages, found ${nativePackages.length}`);
+          if (nativePackages.length !== nativePkg.napi.targets.length) {
+            throw new Error(`native package count does not match the target manifest: ${nativePackages.length}`);
           }
           for (const directory of nativePackages) {
             const platformPkg = JSON.parse(readFileSync(`packages/${directory}/package.json`, "utf8"));
@@ -217,10 +217,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  prebuild-freebsd:
+    name: Build and prove FreeBSD packages
+    if: github.ref_protected
+    needs: validate
+    uses: ./.github/workflows/freebsd.yml
+
   collect:
     name: Assemble and validate release packages
     if: github.ref_protected
-    needs: prebuild
+    needs: [prebuild, prebuild-freebsd]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -245,7 +251,7 @@ jobs:
       - name: Build package
         run: pnpm build
 
-      - name: Download all eight bindings
+      - name: Download all bindings
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: binding-*

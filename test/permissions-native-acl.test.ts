@@ -131,17 +131,31 @@ describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspe
     expect(result.untrustedWorld).toMatchObject([{ sid: "s-1-1-0", canRead: true }]);
   });
 
-  it.each(["off", "auto", "require"] as const)("retains fallback with an unavailable helper in %s mode", async mode => {
+  it.each(["off", "auto", "require"] as const)("honors %s mode with an unavailable helper", async mode => {
     configureFsSafeNative({ mode });
     __setNativeLoaderForTest(() => { throw new Error("optional helper unavailable"); });
     exec.mockResolvedValue(queryOutput(facts()));
-    await expect(inspectWindowsAcl(target)).resolves.toMatchObject({ ok: true, entries: [] });
-    expect(exec).toHaveBeenCalledOnce();
+    if (mode === "require") {
+      await expect(inspectWindowsAcl(target)).rejects.toMatchObject({ code: "helper-unavailable" });
+      expect(exec).not.toHaveBeenCalled();
+    } else {
+      await expect(inspectWindowsAcl(target)).resolves.toMatchObject({ ok: true, entries: [] });
+      expect(exec).toHaveBeenCalledOnce();
+    }
   });
 
-  it("preserves the fallback error and original diagnostic cause after native failure", async () => {
+  it("preserves a native failure without invoking fallback", async () => {
     const read = install(facts());
-    read.mockImplementation(() => { throw new Error("native query unavailable"); });
+    const failure = new Error("native query unavailable");
+    read.mockImplementation(() => { throw failure; });
+    await expect(inspectWindowsAcl(target)).rejects.toBe(failure);
+    expect(read).toHaveBeenCalledOnce();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("preserves fallback diagnostics when the automatic helper is unavailable", async () => {
+    configureFsSafeNative({ mode: "auto" });
+    __setNativeLoaderForTest(() => { throw new Error("optional helper unavailable"); });
     const original = Object.assign(new Error("descriptor query denied"), { code: 5, stderr: "denied\n" });
     exec.mockRejectedValue(original);
     const result = await inspectWindowsAcl(target);
@@ -149,6 +163,7 @@ describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspe
       ok: false, entries: [], errorDetail: { exitCode: 5, stderr: "denied\\u000a" },
     });
     expect(result.errorCause).toBe(original);
+    expect(exec).toHaveBeenCalledOnce();
   });
 
   it.each(["env", "exec"] as const)("honors an explicit %s injection without reading native facts", async option => {

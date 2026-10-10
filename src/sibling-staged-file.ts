@@ -106,7 +106,7 @@ async function writeIsolatedProducer<T>(params: {
   const targetRoot = rootFromDirectoryGuard(parentGuard);
   // Select the handoff before invoking the producer. Missing required native
   // support must not leave producer output behind as a discovery side effect.
-  const native = getNativeBinding();
+  const native = getNativeBinding("openBeneath", "renameNoReplace");
   const cleanupErrors: unknown[] = [];
   const { target, identity } = await createOwnedTempFile({
     rootDir: targetRoot.rootReal,

@@ -6,7 +6,7 @@ import {
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import type { NativeBinding } from "./native.js";
+import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import type { NativeRootAdmission } from "./native-parent-admission.js";
 import { NativePolicyDirectoryMismatch } from "./native-policy-directory-observation.js";
@@ -65,6 +65,7 @@ function mkdirPosixPolicyChild(
     const created = mkdirChild.call(binding, parentFd, basename, 0o777);
     if (typeof created === "boolean") return created;
   }
+  assertNativeCapabilities(binding, "mkdirBeneath");
   binding.mkdirBeneath(parentFd, basename, 0o777);
   return false;
 }
@@ -121,6 +122,7 @@ export async function capturePolicyAwareNativeParent(
   directoryFlags: number,
   fuseChildCreation = false,
 ): Promise<NativePolicyParent> {
+  assertNativeCapabilities(binding, "openBeneath");
   const rootFd = rootAdmission.root.fd;
   const closeFd = captureNativeFdClose(binding);
   const observationDisposers = windows ? undefined : new Map<number, () => void>();

@@ -203,7 +203,7 @@ describe.each([0, 1, 101, 1000])("native list with %i metadata entries", (width)
 });
 
 it.each(["auto", "require"] as const)(
-  "uses the full JavaScript path when the %s binding lacks the optional method",
+  "honors %s mode when the binding lacks native directory observation",
   async (mode) => {
     const rootDir = await tempRoot(`fs-safe-native-observation-absent-${mode}-`);
     await fs.mkdir(path.join(rootDir, "selected"));
@@ -212,6 +212,10 @@ it.each(["auto", "require"] as const)(
     const capability = await root(rootDir);
     const lstat = vi.spyOn(fsSync, "lstatSync");
     const canonical = vi.spyOn(realpathSync, "native");
+    if (mode === "require") {
+      await expect(capability.list("selected")).rejects.toMatchObject({ code: "helper-unavailable" });
+      return;
+    }
     await expect(capability.list("selected")).resolves.toEqual([]);
     expect(lstat).toHaveBeenCalledTimes(4);
     expect(canonical).toHaveBeenCalledTimes(2);

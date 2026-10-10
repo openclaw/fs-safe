@@ -1,6 +1,7 @@
 import type { BigIntStats } from "node:fs";
 import { FsSafeError } from "./errors.js";
 import type { NativeBinding } from "./native-binding.js";
+import { assertNativeCapabilities } from "./native.js";
 import {
   cachedNoReplaceUnavailable, noReplaceUnavailable, rememberNoReplaceUnavailable,
 } from "./native-noreplace.js";
@@ -31,9 +32,10 @@ function fallbackError(error: unknown, operation: string): unknown {
 }
 
 export function nativeMoveNoReplace(
-  binding: NativeBinding, paths: Parameters<NativeBinding["renameNoReplace"]>, expected: BigIntStats | undefined, allowFallback: boolean,
+  binding: NativeBinding, paths: Parameters<NonNullable<NativeBinding["renameNoReplace"]>>, expected: BigIntStats | undefined, allowFallback: boolean,
   operation = "move",
 ): "link-unlink" | undefined {
+  assertNativeCapabilities(binding, "renameNoReplace");
   const [sourceFd, source, targetFd, target] = paths;
   let unavailable = cachedNoReplaceUnavailable(binding, sourceFd, operation);
   if (!unavailable) {

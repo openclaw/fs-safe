@@ -2,7 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { FsSafeError } from "./errors.js";
-import { getNativeBinding, type NativeBinding } from "./native.js";
+import { getNativeBinding, selectNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { transferFileHandle } from "./file-handle-transfer.js";
@@ -57,7 +57,8 @@ export async function createNativeCopyFile(
   maxBytes: number | undefined,
 ): Promise<NativeFileCopyResult | undefined> {
   input.signal?.throwIfAborted();
-  if (!native.copyFileExclusive) {
+  const copier = selectNativeBinding(native, "copyFileExclusive");
+  if (!copier) {
     if (input.clone === "always") {
       throw new FsSafeError("helper-unavailable", "native file cloning is unavailable");
     }
@@ -67,7 +68,7 @@ export async function createNativeCopyFile(
   const nativeSignal = input.signal ? AbortSignal.any([input.signal]) : undefined;
   try {
     // The caller adopts this descriptor before observing a later cancellation.
-    return await native.copyFileExclusive(
+    return await copier.copyFileExclusive(
       input.handle.fd, parentFd, basename, input.clone,
       maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined,
       nativeSignal,

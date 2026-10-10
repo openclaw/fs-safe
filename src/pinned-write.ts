@@ -13,8 +13,7 @@ import type { FileIdentityStat } from "./file-identity.js";
 import { sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
-import { runPinnedWriteNative } from "./native-pinned-write.js";
-import { getNativeBinding } from "./native.js";
+import { getPinnedWriteNativeBinding, runPinnedWriteNative } from "./native-pinned-write.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { withSidecarLock } from "./sidecar-lock.js";
@@ -122,7 +121,7 @@ export async function runPinnedWriteHelper(params: PinnedWriteParams): Promise<F
   if (normalizedParams.onRenameIdentityMismatch === "verify-content") {
     return await runPinnedWriteFallback(normalizedParams);
   }
-  const native = getNativeBinding();
+  const native = getPinnedWriteNativeBinding(normalizedParams);
   if (native) {
     return await runPinnedWriteNative(native, normalizedParams,
       input => runPinnedWriteFallback({ ...normalizedParams, input }));

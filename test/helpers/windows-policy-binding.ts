@@ -41,6 +41,39 @@ export function windowsPolicyBinding(rootPath: string) {
       expect(this).toBe(binding);
       fsSync.mkdirSync(path.join(directory(parentFd), ...relative.split("/")), { recursive: true, mode });
     }),
+    copyFileExclusive: vi.fn(async function (
+      this: NativeBinding, sourceFd: number, parentFd: number, basename: string,
+      clone: "never" | "auto" | "always", maxBytes?: number, signal?: AbortSignal,
+    ) {
+      expect(this).toBe(binding);
+      signal?.throwIfAborted();
+      if (clone === "always") throw Object.assign(new Error("fixture cannot clone"), { code: "ENOTSUP" });
+      const size = fsSync.fstatSync(sourceFd).size;
+      if (maxBytes !== undefined && size > maxBytes) throw Object.assign(new Error("too large"), { code: "too-large" });
+      const { fd } = binding.openBeneath(parentFd, basename, fsSync.constants.O_RDWR | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL);
+      try {
+        const buffer = Buffer.alloc(64 * 1024);
+        let offset = 0;
+        for (;;) {
+          signal?.throwIfAborted();
+          const read = fsSync.readSync(sourceFd, buffer, 0, buffer.length, offset);
+          if (!read) break;
+          if (maxBytes !== undefined && offset + read > maxBytes) throw Object.assign(new Error("too large"), { code: "too-large" });
+          let written = 0;
+          while (written < read) {
+            const count = fsSync.writeSync(fd, buffer, written, read - written, offset + written);
+            if (count === 0) throw new Error("fixture copy made no progress");
+            written += count;
+          }
+          offset += read;
+        }
+        return { fd, method: "copy" as const };
+      } catch (error) {
+        binding.closeOwnedFd(fd);
+        fsSync.unlinkSync(path.join(directory(parentFd), basename));
+        throw error;
+      }
+    }),
     renameReplace(fromFd: number, from: string, toFd: number, to: string) {
       fsSync.renameSync(path.join(directory(fromFd), from), path.join(directory(toFd), to));
     },

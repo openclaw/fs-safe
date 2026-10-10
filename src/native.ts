@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { FsSafeError } from "./errors.js";
-import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
+import { captureNativeFdClose, type NativeBinding, type CapableNativeBinding } from "./native-binding.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 
 export type { NativeBinding } from "./native-binding.js";
@@ -157,6 +157,7 @@ function targetFor(
   if (platform === "win32" && (arch === "x64" || arch === "arm64")) return `win32-${arch}-msvc`;
   if (platform === "darwin" && arch === "x64") return "darwin-x64";
   if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (platform === "freebsd" && (arch === "x64" || arch === "arm64")) return `freebsd-${arch}`;
   if (platform === "linux" && (arch === "x64" || arch === "arm64")) {
     return `linux-${arch}-${musl ? "musl" : "gnu"}`;
   }
@@ -205,7 +206,28 @@ export function __nativeTargetForTest(
   return targetFor(platform, arch, musl);
 }
 
-export function getNativeBinding(): NativeBinding | undefined {
+export function selectNativeBinding<K extends keyof NativeBinding>(
+  native: NativeBinding | undefined, ...capabilities: K[]
+): CapableNativeBinding<K> | undefined {
+  if (!native) return undefined;
+  const missing = capabilities.filter((name) => typeof native[name] !== "function");
+  if (missing.length === 0) return native as CapableNativeBinding<K>;
+  if (getFsSafeNativeConfig().mode === "require") {
+    throw new FsSafeError("helper-unavailable", `native fs-safe capabilities unavailable: ${missing.join(", ")}`);
+  }
+  return undefined;
+}
+
+export function assertNativeCapabilities<K extends keyof NativeBinding>(
+  native: NativeBinding, ...capabilities: K[]
+): asserts native is CapableNativeBinding<K> {
+  const missing = capabilities.filter((name) => typeof native[name] !== "function");
+  if (missing.length) {
+    throw new FsSafeError("helper-unavailable", `native fs-safe capabilities unavailable: ${missing.join(", ")}`);
+  }
+}
+
+export function getNativeBinding<K extends keyof NativeBinding = never>(...capabilities: K[]): CapableNativeBinding<K> | undefined {
   const { mode } = getFsSafeNativeConfig();
   if (mode === "off") return undefined;
   if (!attempted) {
@@ -218,7 +240,7 @@ export function getNativeBinding(): NativeBinding | undefined {
       loadError = error;
     }
   }
-  if (binding) return binding;
+  if (binding) return selectNativeBinding(binding, ...capabilities);
   if (mode === "require") {
     throw new FsSafeError("helper-unavailable", "native fs-safe helper is unavailable", {
       cause: loadError,
@@ -227,8 +249,8 @@ export function getNativeBinding(): NativeBinding | undefined {
   return undefined;
 }
 
-export function requireNativeBinding(): NativeBinding {
-  const native = getNativeBinding();
+export function requireNativeBinding<K extends keyof NativeBinding = never>(...capabilities: K[]): CapableNativeBinding<K> {
+  const native = getNativeBinding(...capabilities);
   if (!native) {
     throw new FsSafeError("helper-unavailable", "native fs-safe helper is unavailable", {
       cause: loadError,

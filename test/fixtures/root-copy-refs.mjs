@@ -5,6 +5,7 @@ import path from "node:path";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { root } from "../../dist/root.js";
 import { configureFsSafeNative } from "../../dist/config.js";
+import { __loadBundledNativeForTest } from "../../dist/native.js";
 import { copyTree, probeTreeClone } from "../../dist/copy.js";
 import { readWindowsFileExtents } from "../../dist/test-hooks.js";
 
@@ -29,6 +30,7 @@ function assertClonedData(source, destination, clusterSize) {
 async function prove() {
   assert.equal(process.platform, "win32");
   configureFsSafeNative({ mode: "require" });
+  assert.equal(typeof __loadBundledNativeForTest().copyFileExclusive, "function");
   const parent = process.env.FS_SAFE_CLONE_TEST_ROOT;
   assert.ok(parent, "explicit real ReFS volume required");
   assert.equal(probeTreeClone(parent), "refs");

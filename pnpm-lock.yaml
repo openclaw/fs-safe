@@ -212,6 +212,12 @@ importers:
       '@openclaw/fs-safe-darwin-x64':
         specifier: 0.25.0
         version: link:packages/darwin-x64
+      '@openclaw/fs-safe-freebsd-arm64':
+        specifier: 0.25.0
+        version: link:packages/freebsd-arm64
+      '@openclaw/fs-safe-freebsd-x64':
+        specifier: 0.25.0
+        version: link:packages/freebsd-x64
       '@openclaw/fs-safe-linux-arm64-gnu':
         specifier: 0.25.0
         version: link:packages/linux-arm64-gnu
@@ -239,6 +245,10 @@ importers:
   packages/darwin-arm64: {}
 
   packages/darwin-x64: {}
+
+  packages/freebsd-arm64: {}
+
+  packages/freebsd-x64: {}
 
   packages/linux-arm64-gnu: {}
 

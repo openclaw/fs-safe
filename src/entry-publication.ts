@@ -236,7 +236,7 @@ export function retainEntryForPublication(options: RetainEntryForPublicationOpti
     inspectEntry(sourcePath, source.expected);
     const sourceFd = kind === "symlink"
       ? binding.openStagedSymlink!(sourceParent.fd, source.basename)
-      : binding.openBeneath(sourceParent.fd, source.basename,
+      : native.openBeneath(sourceParent.fd, source.basename,
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK |
       (kind === "directory" ? fs.constants.O_DIRECTORY : 0))?.fd;
     if (!Number.isInteger(sourceFd) || sourceFd < 0) {

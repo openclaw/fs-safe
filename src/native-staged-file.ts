@@ -30,7 +30,7 @@ import { isFsSafeNativeRequired } from "./native-config.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
-  "createStagedFile" | "stagedFileMatches" | "removeStagedFile"
+  "createStagedFile" | "stagedFileMatches" | "removeStagedFile" | "renameReplace" | "renameNoReplace"
 >>;
 
 export function assertNativeStaging(binding: NativeBinding): asserts binding is NativeStagingBinding {

@@ -7,7 +7,7 @@ import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
-import type { NativeBinding } from "./native.js";
+import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { realpathSync } from "./realpath.js";
 import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
@@ -44,11 +44,12 @@ function unavailable(message: string): FsSafeError {
   return new FsSafeError("helper-unavailable", message);
 }
 
-function assertParentAdmissionAvailable(binding: NativeBinding): void {
+function assertParentAdmissionAvailable(binding: NativeBinding): asserts binding is NativeBinding & Required<Pick<NativeBinding, "openBeneath">> {
   if (typeof binding.openBeneath !== "function") {
     throw unavailable("native parent directory admission is unavailable");
   }
   captureNativeFdClose(binding);
+  assertNativeCapabilities(binding, "openBeneath");
 }
 
 export async function openNativeRootAdmission(

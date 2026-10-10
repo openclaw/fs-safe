@@ -153,7 +153,9 @@ describe("platform native loader", () => {
     expect(__nativeTargetForTest("win32", "x64")).toBe("win32-x64-msvc");
     expect(__nativeTargetForTest("win32", "arm64")).toBe("win32-arm64-msvc");
     expect(__nativeTargetForTest("win32", "ia32")).toBeUndefined();
-    expect(__nativeTargetForTest("freebsd", "x64")).toBeUndefined();
+    expect(__nativeTargetForTest("freebsd", "x64")).toBe("freebsd-x64");
+    expect(__nativeTargetForTest("freebsd", "arm64")).toBe("freebsd-arm64");
+    expect(__nativeTargetForTest("freebsd", "ia32")).toBeUndefined();
     expect(__nativeTargetForTest("linux", "ppc64")).toBeUndefined();
   });
 

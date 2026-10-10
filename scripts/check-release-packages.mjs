@@ -15,15 +15,15 @@ import { fileURLToPath } from "node:url";
 import { hostNativeTarget, nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
 import { resolveNpmCli } from "./npm-cli.mjs";
-import { consumerInstallSmoke, isolatedConsumerEnv, resolvePnpmCommand } from "./consumer-install-smoke.mjs";
+import { consumerInstallSmoke, isolatedConsumerEnv, resolveConsumerCommands } from "./consumer-install-smoke.mjs";
 import { packageProofSource } from "./consumer-proof-metadata.mjs";
 
-const pnpmCommand = resolvePnpmCommand();
+const npmCli = resolveNpmCli();
+const consumerCommands = resolveConsumerCommands(npmCli);
 const outputIndex = process.argv.lastIndexOf("--output");
 const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "release-artifacts");
 const allowHostOnly = process.argv.includes("--allow-host-only");
 mkdirSync(outputDir, { recursive: true });
-const npmCli = resolveNpmCli();
 const packingConfig = mkdtempSync(join(tmpdir(), "fs-safe-pack-config-"));
 const npmEnv = isolatedConsumerEnv(packingConfig);
 
@@ -124,7 +124,7 @@ async function main() {
   if (!host || !targets.some((target) => target.label === host.label)) {
     throw new Error(`release smoke requires the host target ${host?.label ?? "unknown"}`);
   }
-  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, pnpmCommand, allowHostOnly, source });
+  await consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, consumerCommands, allowHostOnly, source });
   assert.deepEqual(packageProofSource(), source, "source changed while collecting package proof");
 
   for (const artifact of manifest) {

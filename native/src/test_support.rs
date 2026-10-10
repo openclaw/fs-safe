@@ -29,7 +29,7 @@ pub(crate) fn directory(path: &Path) -> std::fs::File {
         .unwrap()
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn isolated_admission_test(name: &str, check: impl FnOnce()) {
     const CHILD_TEST: &str = "FS_SAFE_COPY_ADMISSION_TEST";
     if std::env::var(CHILD_TEST).as_deref() == Ok(name) {

@@ -68,7 +68,7 @@ export const WINDOWS_OWNER_CAUGHT_FAILURE_RECEIPT = Object.freeze({
     "wrapped-timeout",
     "malformed-json",
   ]),
-  controls: Object.freeze(["windows-native-or-prebuilt-fallback", "forced-posix-policy"]),
+  controls: Object.freeze(["host-platform-policy", "forced-posix-policy"]),
   timedBoundary: "one-public-call-with-injected-executor-for-source-cohorts",
   hostileCases: "correctness-only-because-the-fix-changes-rejection-into-an-unverified-result",
   verification: "exact-route-result-cause-command-details-and-source-executor-count-outside-timing",
@@ -227,7 +227,7 @@ export function registerWindowsOwnerCaughtFailure({
     return { stdout: EMPTY_FACTS, stderr: "" };
   };
   register(PLATFORM_CONTROL, () => api.inspectPathPermissions(target, {
-    platform: "win32",
+    platform,
     env: { SystemRoot: "C:\\Windows" },
     exec: controlExec,
   }), {
@@ -237,8 +237,13 @@ export function registerWindowsOwnerCaughtFailure({
       assert.equal(fs.readFileSync(target, "utf8"), "{}");
     },
     after: (result) => {
-      assert.equal(controlCalls, platform === "win32" && native ? 0 : 1);
-      verifyWindowsControl(result);
+      assert.equal(controlCalls, platform === "win32" && !native ? 1 : 0);
+      if (platform === "win32") verifyWindowsControl(result);
+      else {
+        assert.equal(result.ok, true);
+        assert.equal(result.source, "posix");
+        assertNoFailure(result);
+      }
       assert.equal(fs.readFileSync(target, "utf8"), "{}");
     },
     workloadSemantics: "equivalent-output",

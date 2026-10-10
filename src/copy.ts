@@ -33,7 +33,7 @@ function closeDescriptor(fd: number, failure: Failure | undefined): Failure | un
 
 /** Inspect an existing real directory without creating probe files. */
 export function probeTreeClone(parentPath: string): TreeCloneBackend | undefined {
-  const native = getNativeBinding();
+  const native = getNativeBinding("probeTreeClone");
   if (!native) return undefined;
   const parent = openStagedDirectory(assertAbsolutePathInput(parentPath));
   let backend: TreeCloneBackend | undefined;
@@ -88,9 +88,9 @@ async function materializeTree(
   }
   const native =
     policy === "always"
-      ? requireNativeBinding()
+      ? requireNativeBinding("probeTreeClone", "cloneTree")
       : policy === "auto"
-        ? getNativeBinding()
+        ? getNativeBinding("probeTreeClone", "cloneTree")
         : undefined;
   const target = assertAbsolutePathInput(destination);
   const name = path.basename(target);

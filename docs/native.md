@@ -17,13 +17,45 @@ platform syscall sequence that can preserve the boundary.
 
 Every operation that has an equivalent safe Node implementation keeps that
 guarded JavaScript path. Native loading is lazy; installs do not compile Rust,
-run postinstall code, or fetch binaries at runtime. Eight exact-version optional
+run postinstall code, or fetch binaries at runtime. Exact-version optional
 packages are filtered by OS, CPU, and Linux libc, so an installation receives
 only its matching prebuilt binding. Windows ships both x64 and ARM64 MSVC
 bindings; selection follows the Node process architecture. An x64 Node process
 on Windows ARM64 uses the x64 binding under emulation.
 Native-only operations fail explicitly
 instead of substituting a weaker implementation.
+
+## FreeBSD 14.4 and newer
+
+The FreeBSD x64 and arm64 packages provide native anonymous pipes, descriptor
+close and POSIX canonicalization. The larger Linux/macOS/Windows filesystem backend is excluded
+from these binaries: its Unix gates contain platform-specific resolver, clone,
+copy, observation and cleanup implementations. FreeBSD does not export stubs for
+those operations. In `auto`, each operation selects its existing guarded JavaScript
+or WASM backend; in `require`, a missing required capability fails with
+`helper-unavailable`. Pure JavaScript APIs retain their ordinary behavior.
+
+| Native capability | FreeBSD binding |
+|---|---|
+| `createPipe`, `closeOwnedFd`, `canonicalizePath` | Implemented; real pipe, descriptor and pathname syscalls |
+| Beneath open/create/mkdir/link, replace/no-replace rename and identity-fenced rename | Absent; guarded fallback where supported |
+| Directory observations, retained files/symlinks, entry publication, owned-tree and root removal | Absent; guarded fallback or explicit native-only rejection |
+| File/tree clone, native copy/hash, archive inspection/extraction and buffer readers | Absent; JavaScript/WASM fallback where supported |
+| Native watch | Absent; polling fallback in `auto` |
+| Darwin ACL and Windows security/identity methods | Not applicable |
+
+The release workflow builds inside FreeBSD 14.4 VMs and checks installed-package
+behavior on the main thread and a real Worker. ARM64 uses QEMU CPU emulation
+with a real FreeBSD kernel. This is not a Linux cross-build runtime test. Build
+locally on FreeBSD with `pnpm native:build:freebsd`; the JavaScript/WASM distribution
+can be prepared separately with `pnpm build`. There is no qualified FreeBSD Bun
+artifact in the runtime matrix. FreeBSD x64 installed-package proof covers npm
+and pnpm. FreeBSD arm64 covers npm only because pnpm does not publish a native
+binary for that target. CI prepares the ARM64 proof harness dependencies on Linux
+and syncs them into the VM; consumer installations and runtime proof run inside
+FreeBSD, without running pnpm there.
+Reopening pipe descriptors through `/dev/fd` requires the standard `fdescfs`
+mount there; the VM proof mounts it before testing reopen, inheritance and EOF.
 
 ## The beneath model
 

@@ -306,7 +306,7 @@ export class TempWorkspaceCleanupOwner {
         try {
           const cached = cachedNoReplaceUnavailable(binding, parent.fd, "workspace quarantine");
           if (cached) throw cached;
-          binding.renameNoReplace(parent.fd, path.basename(this.#dir), parent.fd, name);
+          binding.renameNoReplace!(parent.fd, path.basename(this.#dir), parent.fd, name);
         } catch (error) {
           const unavailable = error instanceof FsSafeError && error.code === "helper-unavailable"
             ? error : noReplaceUnavailable(error, "workspace quarantine", true);

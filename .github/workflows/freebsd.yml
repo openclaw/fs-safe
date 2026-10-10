@@ -1,0 +1,138 @@
+name: FreeBSD
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freebsd-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  javascript:
+    name: Prepare FreeBSD JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 24
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: ./.github/actions/setup-archive-llvm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: freebsd-javascript
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  native:
+    name: FreeBSD 14.4 ${{ matrix.label }}
+    needs: javascript
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: freebsd-x64
+            arch: x86_64
+          - label: freebsd-arm64
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: freebsd-javascript
+          path: dist/
+      - uses: ./.github/actions/setup-node-pnpm
+        if: matrix.label == 'freebsd-arm64'
+        with:
+          node-version: 24
+      - name: Prepare ARM64 proof harness dependencies on Linux for VM sync
+        if: matrix.label == 'freebsd-arm64'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build and prove inside FreeBSD (ARM64 uses QEMU CPU emulation)
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        env:
+          FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          FS_SAFE_FREEBSD_TARGET: ${{ matrix.label }}
+        with:
+          release: "14.4"
+          arch: ${{ matrix.arch }}
+          envs: FS_SAFE_EXPECTED_SOURCE_COMMIT FS_SAFE_FREEBSD_TARGET
+          prepare: |
+            set -eu
+            pkg install -y git node24 npm-node24 rust
+          run: |
+            set -eu
+            freebsd-version
+            case "$(freebsd-version -u)" in 14.4-RELEASE*) ;; *) exit 1 ;; esac
+            uname -m
+            node --version
+            node -e 'if (`freebsd-${process.arch}` !== process.env.FS_SAFE_FREEBSD_TARGET) process.exit(1)'
+            rustc --version
+            cargo --version
+            git --version
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            test "$(git rev-parse HEAD)" = "$FS_SAFE_EXPECTED_SOURCE_COMMIT"
+            if ! mount -p | awk '$2 == "/dev/fd" && $3 == "fdescfs" { found=1 } END { exit !found }'; then
+              mount -t fdescfs fdesc /dev/fd
+            fi
+            cargo test --locked -p fs-safe-native
+            node scripts/build-freebsd.mjs --link-workspace
+            FS_SAFE_NATIVE_MODE=require node scripts/freebsd-pipe-proof.mjs
+            if [ "$FS_SAFE_FREEBSD_TARGET" = "freebsd-x64" ]; then
+              rm "node_modules/@openclaw/fs-safe-$FS_SAFE_FREEBSD_TARGET"
+              rmdir node_modules/@openclaw node_modules
+            fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: binding-${{ matrix.label }}
+          path: native/fs-safe-native.${{ matrix.label }}.node
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-proof-${{ matrix.label }}
+          path: artifacts/freebsd-native-proof.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify npm and pnpm installed packages inside FreeBSD x64
+        if: matrix.label == 'freebsd-x64'
+        shell: freebsd {0}
+        run: |
+          set -eu
+          export FS_SAFE_EXPECTED_SOURCE_COMMIT='${{ github.event.pull_request.head.sha || github.sha }}'
+          export FS_SAFE_FREEBSD_TARGET='${{ matrix.label }}'
+          npm install --global pnpm@12.10.1 --ignore-scripts
+          pnpm --version
+          pnpm install --frozen-lockfile
+          pnpm package:smoke
+      - name: Verify npm installed packages inside FreeBSD ARM64
+        if: matrix.label == 'freebsd-arm64'
+        shell: freebsd {0}
+        run: |
+          set -eu
+          export FS_SAFE_EXPECTED_SOURCE_COMMIT='${{ github.event.pull_request.head.sha || github.sha }}'
+          npm run package:smoke
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: platform-package-proof-${{ matrix.label }}
+          path: |
+            release-artifacts/manifest.json
+            release-artifacts/consumer-proof.json
+          if-no-files-found: error

@@ -12,9 +12,10 @@ export type NativeWatchWireBatch = { hints: { directory: string; name: string; s
 export type NativeWatchEntry = { scope: string; directory: { root: string; relative: string; rootDev: bigint; rootIno: bigint; dev: bigint; ino: bigint }; name: string; target?: DirectoryIdentity & { kind: string } };
 export function watchBinding(mode: "auto" | "events" | "poll"): NativeBinding | undefined {
   if (mode === "poll") return;
-  const binding = getNativeBinding(); // Preserves require + missing-addon failure.
+  const binding = getNativeBinding("watchRegister", "watchAdd", "watchUnregister",
+    ...(process.platform === "darwin" ? ["watchConfigure", "watchEntries"] as const : []));
   // Bun TSFN teardown remains unqualified; guarded native scans remain usable.
-  if (binding?.watchRegister && (process.platform !== "darwin" || (binding.watchConfigure && binding.watchEntries)) && !process.versions.bun && !process.versions.deno && ["linux", "darwin", "win32"].includes(process.platform)) return binding;
+  if (binding && !process.versions.bun && !process.versions.deno && ["linux", "darwin", "win32"].includes(process.platform)) return binding;
   if (mode === "events" || getFsSafeNativeConfig().mode === "require") {
     throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { details: { operation: "watch" } });
   }
