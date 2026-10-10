@@ -1,6 +1,8 @@
 # Quickstart
 
-Five minutes. By the end you will have a working `root()` and know how to read, write, atomically replace, and unpack an archive — without your code being able to escape the workspace.
+Build a `root()` and use it to read, write, atomically replace, and unpack an
+archive under a trusted workspace. Confinement strength and concurrent-mutation
+limits depend on the operation and platform; see the [security model](security-model.md).
 
 If you have used Go's `os.Root` / `OpenInRoot` or Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std), this is the same shape: a capability-style handle that carries the boundary across every operation. The first thing to internalize is that you stop reasoning about *paths* and start reasoning about *the handle*.
 
@@ -31,13 +33,19 @@ await fs.write("notes/today.txt", "hello\n");
 const text = await fs.readText("notes/today.txt");
 ```
 
-Writes use a sibling temp file plus `rename`, so a partial write never appears at the destination. Reads open with `O_NOFOLLOW` where available and verify the opened fd matches the path identity before returning the buffer.
+Replacement writes use a sibling temp file plus `rename`, so a partial write
+never appears at the destination. Reads open with `O_NOFOLLOW` where available
+and verify the opened fd matches the path identity before returning the buffer.
 
 `create()` is the don't-clobber variant of `write()` and throws `already-exists` when the target is already there:
 
 ```ts
 await fs.create("notes/README.md", "seed\n"); // throws if it already exists
 ```
+
+Default create-only writes can expose incomplete content on the JavaScript
+fallback. Pass `{ atomic: true }` when publication must wait for complete
+content; see [atomic creation](writing.md#atomic-buffered-creation).
 
 ## 3. JSON, with parsing
 
@@ -60,7 +68,16 @@ await fs.move("notes/today.txt", "notes/archive/today.txt", { overwrite: true })
 await fs.remove("notes/archive/today.txt");
 ```
 
-`move()` defaults to no clobber. That mode requires the native helper so a concurrent target cannot be replaced between an absence check and the rename; without it, the call fails with `helper-unavailable`. Pass `{ overwrite: true }` when replacing the target is intentional. `remove()` removes files and empty directories by default. To remove a non-empty directory, pass `{ recursive: true }`; use `maxEntries`, `maxDepth`, and `signal` to bound the work. See [`root()`](root.md) for removal ordering, limits, and partial-removal semantics.
+`move()` defaults to no clobber and requires native support. Linux `auto` can
+fall back when no-replace rename is unsupported; its directory fallback can
+replace a concurrently created empty directory. Use native `require` when
+that must fail closed. See the [move contract](writing.md#fs-move-from-to-options).
+Pass `{ overwrite: true }` when replacement is intended.
+
+`remove()` removes files and empty directories by default. For a non-empty
+directory, pass `{ recursive: true }`; use `maxEntries`, `maxDepth`, and `signal`
+to bound the work. See [`root()`](root.md) for removal ordering, limits, and
+partial-removal semantics.
 
 ## 5. Inspect
 

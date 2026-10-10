@@ -79,103 +79,68 @@ Used by helpers that accept either an encoding (returning a string) or `null` (r
 
 ## `OpenResult` / `ReadResult`
 
-Returned by `Root.open()` and `Root.read()`:
+Import the result types rather than copying their shapes:
 
 ```ts
-type OpenResult = {
-  handle: import("node:fs/promises").FileHandle;
-  containment: "kernel-atomic" | "best-effort";
-  realPath: string;
-  stat: import("node:fs").Stats;
-};
-
-type ReadResult = {
-  buffer: Buffer;
-  containment: "kernel-atomic" | "best-effort";
-  realPath: string;
-  stat: import("node:fs").Stats;
-};
+import type { OpenResult, ReadResult, WritableOpenResult } from "@openclaw/fs-safe/root";
 ```
 
 `realPath` is the canonical real path the read or open landed on, after symlink resolution; `stat` is the verified `fstat` result. Public root results currently report `containment: "best-effort"`; the union also describes direct native `openBeneath()` results, which report `"kernel-atomic"` on Linux. See the [security model](security-model.md#containment-guarantees-by-platform).
 
+`ReadResult` carries the read `buffer`. `OpenResult` and `WritableOpenResult`
+carry an owned Node `FileHandle` as `handle` and implement
+`[Symbol.asyncDispose]()`; use `await using` or explicitly close the handle.
+See [reading](reading.md#fs-open-rel-options) and
+[writable handles](writing.md#openwritable-for-streaming) for ownership and streaming.
+
 ## `RootDefaults` / `RootOptions`
 
 ```ts
-type RenameIdentityPolicy = "strict" | "verify-content-with-lock";
-
-type RootDefaults = {
-  assertBeforeMutation?: () => void;
-  denyMutations?: DenyMutationPolicy;
-  durable?: boolean; // default true for write/create/writeJson/createJson/append
-  hardlinks?: "reject" | "allow";
-  maxBytes?: number;
-  mkdir?: boolean; // default true for mutation methods
-  mode?: number;
-  renameIdentity?: RenameIdentityPolicy;
-  symlinks?: "reject" | "follow-within-root" | "follow-parents-within-root";
-  mutationSymlinks?: MutationSymlinkPolicy;
-};
-
-type DenyMutationPolicy = {
-  paths?: readonly string[];
-  prefixes?: readonly string[];
-};
-
-type RootOptions = {
-  rootDir: string;
-  defaults?: RootDefaults;
-};
+import type {
+  DenyMutationPolicy,
+  RenameIdentityPolicy,
+  RootDefaults,
+  RootOptions,
+} from "@openclaw/fs-safe/root";
 ```
 
-`RootDefaults` is what `root(rootDir, defaults)` accepts. See [`root()`](root.md) for the per-method options that override these. `denyMutations` and `assertBeforeMutation` are exceptions: deny entries are merged, and the root authority assertion runs before the per-call assertion.
+`RootDefaults` is what `root(rootDir, defaults)` accepts. `RootOptions` is the
+`{ rootDir, defaults? }` record. See the [Root signature and defaults](root.md#signature)
+for fields and behavior. `denyMutations` and `assertBeforeMutation` compose with
+per-call restrictions: deny entries are merged, and the root authority assertion
+runs before the per-call assertion.
 
 ## `RootReadOptions` / `RootWriteOptions` / `RootCopyOptions`
 
 ```ts
-import type { CopyCloneMode, RootCopyPublicationReceipt } from "@openclaw/fs-safe";
-
-type RootReadOptions = Pick<RootDefaults, "hardlinks" | "maxBytes" | "symlinks">;
-type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "mkdir" | "mode" | "renameIdentity" | "mutationSymlinks"> & {
-  encoding?: BufferEncoding;
-  overwrite?: boolean;
-};
-type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "durable" | "maxBytes" | "mkdir" | "mode" | "mutationSymlinks"> & {
-  sourceHardlinks?: "reject" | "allow";
-  overwrite?: boolean;
-  clone?: CopyCloneMode;
-  signal?: AbortSignal;
-  preserveSourceMode?: boolean;
-  onDestinationPublished?: (receipt: RootCopyPublicationReceipt) => void;
-};
-type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mkdir" | "mode" | "mutationSymlinks"> & {
-  writeMode?: "replace" | "append" | "update";
-};
-type RootWriteJsonOptions = RootWriteOptions & {
-  replacer?: Parameters<typeof JSON.stringify>[1];
-  space?: Parameters<typeof JSON.stringify>[2];
-  trailingNewline?: boolean;
-};
-type RootAppendOptions = RootWriteOptions & {
-  prependNewlineIfNeeded?: boolean;
-};
-type RootMoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
-  overwrite?: boolean;
-};
-type RootRemoveOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
-  recursive?: boolean;
-  force?: boolean;
-  order?: "filesystem" | "sorted";
-  maxEntries?: number;
-  maxDepth?: number;
-  signal?: AbortSignal;
-};
-type RootMkdirOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks"> & {
-  private?: boolean;
-};
+import type {
+  RootAppendOptions,
+  RootCopyOptions,
+  RootCreateJsonOptions,
+  RootCreateOptions,
+  RootCreateStreamOptions,
+  RootMkdirOptions,
+  RootMoveOptions,
+  RootOpenOptions,
+  RootOpenWritableOptions,
+  RootReadOptions,
+  RootRemoveOptions,
+  RootWriteJsonOptions,
+  RootWriteOptions,
+} from "@openclaw/fs-safe/root";
 ```
 
-Per-method option shapes. Each picks the `RootDefaults` keys that apply, plus method-specific extras.
+Each method accepts only its applicable defaults and method-specific options:
+
+| Types | Contract |
+|---|---|
+| `RootReadOptions` | Read symlink/hardlink policy and `maxBytes`; see [read options](reading.md#read-options). |
+| `RootOpenOptions` | Read link policies, without `maxBytes`. The returned handle's I/O belongs to the caller. |
+| `RootWriteOptions`, `RootWriteJsonOptions`, `RootAppendOptions` | [Write options](writing.md#write-options), JSON formatting, and append newline handling. |
+| `RootCreateOptions`, `RootCreateJsonOptions`, `RootCreateStreamOptions` | [Exclusive creation](writing.md#atomic-buffered-creation), private permissions, and `durable: "file"`; streamed creation also accepts byte limits and cancellation. |
+| `RootCopyOptions` | [Guarded copying](writing.md#write-verbs), source policy, `CopyCloneMode`, and `RootCopyPublicationReceipt`. |
+| `RootOpenWritableOptions` | [Writable handles](writing.md#openwritable-for-streaming) with `writeMode`, without buffered-write durability or byte limits. |
+| `RootMoveOptions`, `RootRemoveOptions`, `RootMkdirOptions` | [Mutation methods](root.md#writes) with their collision, removal-budget, and directory-privacy options. |
 
 ## `SymlinkPolicy` / `MutationSymlinkPolicy` / `HardlinkPolicy`
 

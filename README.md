@@ -113,9 +113,10 @@ operation; per-call options handle exceptions. See the [Root reference](docs/roo
 
 `write()` replaces contents by default. Use `create()` or `overwrite: false`
 when an existing destination should be an error. `move()` defaults to no clobber
-and requires native support for the atomic collision decision; it fails with
-`helper-unavailable` when unavailable. Pass `overwrite: true` when replacement
-is intended.
+and requires native support. On Linux, `auto` can replace a concurrently created
+empty directory if no-replace rename is unsupported; use native `require` for
+strict refusal. See the [move fallback contract](docs/writing.md#fs-move-from-to-options).
+Pass `overwrite: true` when replacement is intended.
 
 Staged JavaScript copies and creates also work when hardlinks are refused
 (including Android/Termux), using a verified empty placeholder before atomic
