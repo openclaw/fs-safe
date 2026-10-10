@@ -15,6 +15,10 @@ export function generate(seed, length, ci = false) {
   const pick = rng(seed);
   const paths = ['file', 'empty', 'dir/child', 'new', 'missing/new', 'dir', 'missing', 'file/child', 'link', 'alias/new', 'dangling', 'hard', 'hard-peer', 'deny/new'];
   const methods = ['write', 'create', 'append', 'copyIn', 'read', 'readText', 'open', 'openWritable', 'stat', 'exists', 'list', 'entries', 'walk', 'remove', 'mkdir', 'resolve', 'writeJson', 'createJson', 'move', 'atomic', 'walkDirectory', 'hash'];
+  if (!ci) {
+    paths.push('.dot', 'café', 'cafe\u0301', '日本語', 'x'.repeat(180), 'readonly');
+    methods.push('copySync', 'copyBatch', 'lock', 'temp');
+  }
   const ops = [];
   const mode = () => pick([undefined, 0o600, 0o640, 0o644, 0o700, 0o777]);
   const cap = () => pick([undefined, 0, 1, 4, 32, Number.MAX_SAFE_INTEGER, Infinity]);
@@ -29,7 +33,7 @@ export function generate(seed, length, ci = false) {
       if (['create', 'createJson'].includes(method)) o.atomic = pick([undefined, false, true]);
       if (method === 'append') o.prependNewlineIfNeeded = pick([undefined, false, true]);
       if (method.endsWith('Json')) { op.data = pick([null, false, 0, '', {a: 1}, [1, 'x']]); o.space = pick([undefined, 0, 2, 10]); o.trailingNewline = pick([undefined, true, false]); }
-    } else if (method === 'copyIn') {
+    } else if (['copyIn', 'copySync', 'copyBatch'].includes(method)) {
       op.source = pick(['file', 'empty', 'dir/child', 'hard', 'link', 'dir', 'missing']);
       Object.assign(o, mutation(), { mode: mode(), mkdir: pick([undefined, false, true]), durable: false, overwrite: pick([undefined, false, true]), clone: pick(['never', 'auto']), maxBytes: cap(), preserveSourceMode: pick([undefined, true, false]), sourceHardlinks: pick([undefined, 'reject', 'allow']) });
     } else if (['read', 'readText', 'open'].includes(method)) {
@@ -67,7 +71,7 @@ export function generate(seed, length, ci = false) {
 
 const methods = new Set(["write", "create", "append", "copyIn", "read", "readText",
   "open", "openWritable", "stat", "exists", "list", "entries", "walk", "remove",
-  "mkdir", "resolve", "writeJson", "createJson", "move", "atomic", "walkDirectory", "hash"]);
+  "mkdir", "resolve", "writeJson", "createJson", "readJson", "move", "atomic", "walkDirectory", "hash", "copySync", "copyBatch", "lock", "temp"]);
 
 export function validateSpec(spec) {
   if (!spec || !Array.isArray(spec.ops) || spec.ops.length < 1 || spec.ops.length > 1000) {
@@ -78,15 +82,15 @@ export function validateSpec(spec) {
   const fixturePath = value => {
     if (value === ".") return;
     if (typeof value !== "string" || path.isAbsolute(value) || value.split("/").some(
-      part => !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(part) || part.endsWith(".") ||
-        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part),
+      part => !/^[\p{L}\p{N}_.-][\p{L}\p{N}\p{M}_.-]*$/u.test(part) || part === "." || part === ".." || part.endsWith(".") ||
+        /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part),
     )) throw new TypeError("replay paths must be portable fixture-relative names");
   };
   for (const op of spec.ops) {
     if (!op || !methods.has(op.method) || !object(op.options)) throw new TypeError("invalid replay operation");
     fixturePath(op.path);
     if (op.method === "atomic" && op.path === ".") throw new TypeError("atomic writes require a fixture leaf");
-    if (op.method === "copyIn") fixturePath(op.source);
+    if (["copyIn", "copySync", "copyBatch"].includes(op.method)) fixturePath(op.source);
     if (op.method === "move") fixturePath(op.to);
     // JSON cannot supply filesystem adapters, executable callbacks, or streams.
     for (const key of ["filePath", "content", "fileSystem"]) {
@@ -99,9 +103,13 @@ export function validateSpec(spec) {
 }
 
 function comparable(result) {
+  if (["copySync", "copyBatch"].includes(result?.operation) && result.value) {
+    const { method: _mechanism, ...value } = result.value;
+    return { ...result, value };
+  }
   // Full standalone scans promise filesystem ordering, not lexical ordering.
   // Bounded subsets and followed-directory aliases remain visible divergences.
-  if (result?.value?.scannedEntryCount !== undefined) {
+  if (result?.operation === "walkDirectory" && result.value?.scannedEntryCount !== undefined) {
     const byPath = (a, b) => a.relativePath < b.relativePath ? -1 : a.relativePath > b.relativePath ? 1 : 0;
     return { ...result, value: { ...result.value,
       entries: [...result.value.entries].sort(byPath),
