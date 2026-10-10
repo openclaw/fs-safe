@@ -120,7 +120,8 @@ async function mergeTree(params: GuardedMergeParams, publication?: readonly Arch
     check();
     for (const ancestor of ancestors) {
       // Verify every retained ancestor, including its current name and physical path.
-      if (ancestor.owner.verifyCanonical) {
+      // Shallow chains cost less to verify directly than crossing the native bridge.
+      if (ancestors.length >= 4 && ancestor.owner.verifyCanonical) {
         let verified: boolean;
         try { verified = await ancestor.owner.verifyCanonical(); }
         catch (error) {

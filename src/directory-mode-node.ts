@@ -45,12 +45,7 @@ export function ownDirectoryMode(params: {
     pending = operation.catch(() => undefined);
     return operation;
   };
-  return {
-    ...(params.inspectCanonical ? { async verifyCanonical() {
-      let verified = false;
-      await enqueue(async () => { verified = params.inspectCanonical!() !== undefined; });
-      return verified;
-    } } : {}),
+  const owner: DirectoryModeOwner = {
     verify: (check) => enqueue(async () => {
       check?.();
       await params.inspect();
@@ -97,6 +92,14 @@ export function ownDirectoryMode(params: {
       return closing;
     },
   };
+  if (params.inspectCanonical) {
+    owner.verifyCanonical = async () => {
+      let verified = false;
+      await enqueue(async () => { verified = params.inspectCanonical!() !== undefined; });
+      return verified;
+    };
+  }
+  return owner;
 }
 
 /** Darwin descriptor inspection avoids requesting directory-content reads. */

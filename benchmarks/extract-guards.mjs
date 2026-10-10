@@ -13,6 +13,7 @@ async function load(directory) {
 }
 const baseline = await load(process.env.ARCHIVE_BASE_DIST ?? 'dist');
 const candidate = await load(process.env.ARCHIVE_HEAD_DIST ?? 'dist');
+const control = await load(process.env.ARCHIVE_CONTROL_DIST ?? process.env.ARCHIVE_BASE_DIST ?? 'dist');
 const pairs = Number(process.env.ARCHIVE_PAIRS ?? 9);
 const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'archive-guard-pairs-')));
@@ -46,14 +47,14 @@ try {
         return elapsed;
       };
       for (const mode of (process.env.ARCHIVE_MODES ?? 'off,require').split(',')) {
-        baseline.configureFsSafeNative({ mode }); candidate.configureFsSafeNative({ mode });
-        for (let i = 0; i < 3; i++) { await measure(baseline); await measure(candidate); }
+        for (const implementation of [baseline, candidate, control]) implementation.configureFsSafeNative({ mode });
+        for (let i = 0; i < 3; i++) { await measure(baseline); await measure(candidate); await measure(control); }
         const observations = [];
         for (let i = 0; i < pairs; i++) {
           let a, b;
           if (i % 2) { b = await measure(candidate); a = await measure(baseline); }
           else { a = await measure(baseline); b = await measure(candidate); }
-          const a1 = await measure(baseline), a2 = await measure(baseline);
+          const a1 = await measure(baseline), a2 = await measure(control);
           observations.push({ a, b, a1, a2 });
         }
         console.log(JSON.stringify({ kind, depth, mode, pairs, files: 500, bytesPerFile: 1024,
