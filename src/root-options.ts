@@ -51,6 +51,8 @@ export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyM
   clone?: CopyCloneMode;
   signal?: AbortSignal;
   preserveSourceMode?: boolean;
+  preserveMetadata?: boolean;
+  sourceSymlinks?: "follow" | "copy-link";
   onDestinationPublished?: (receipt: RootCopyPublicationReceipt) => void;
 };
 

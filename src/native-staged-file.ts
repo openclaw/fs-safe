@@ -27,6 +27,7 @@ import { classifyNativeRenameFailure } from "./native-rename-outcome.js";
 import { createStagedFileReceipt, stagedFailure } from "./staged-file-settlement.js";
 import { noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-noreplace.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
+import { restoreCopyMetadata } from "./copy-metadata.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
@@ -281,6 +282,7 @@ class NativeStagedFile implements StagedFile {
         this.#assertStagePermissions(fd);
       } : this.#assertBeforeMutation;
       if (!copied) await writePinnedInput(fd, input, maxBytes, assertBeforeMutation);
+      if (input.kind === "file") restoreCopyMetadata(fd, input.metadata);
       if (this.#verifyMode) this.#assertStagePermissions(fd);
       if (this.#owner.sync !== false) {
         if (this.#owner.strictFileSync) fs.fsyncSync(fd);

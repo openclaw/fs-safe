@@ -68,6 +68,8 @@ On Linux, automatic byte copying also uses the native binding when available. It
 
 Tree-copy cleanup attempts every acquired close once, even when another close fails. Portable file handles close output before input; completed directories close their pinned source before target; the public wrapper then closes its source before the destination parent. A copy, identity, metadata, native-clone, or cancellation failure already observed at one of those scopes remains the reported value instead of being replaced by cleanup. If that scope otherwise succeeded, its first close failure is reported unchanged. Concurrent siblings have no global structural close order: the first observed sibling failure stops new work while admitted work settles. Portable copying records caller cancellation when it occurs, so a later abort during cleanup cannot replace an earlier copy failure.
 
+For guarded per-file copying, [`Root.copyIn`](writing.md#copy-metadata-and-source-links) can preserve timestamps and Windows non-permission attributes with `preserveMetadata`, and copy literal links with `sourceSymlinks: "copy-link"`. Permission selection remains separate. Windows reparse payload handling is shared with this tree copier.
+
 Clones preserve file contents, empty directories, timestamps, executable modes where supported, and literal symbolic links. Editing a clone does not modify its source. Unsupported filesystem operations fail; callers may choose their own copy or checkout fallback after the failed operation has settled.
 
 Native Windows byte copies can store large zero-filled chunks as sparse ranges when the destination is initially empty and its filesystem supports sparse files. This still reads every source byte and creates an independent copy.

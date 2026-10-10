@@ -6,6 +6,8 @@
 
 ### Features
 
+- **Guarded file copying:** add `Root.copyIn` metadata preservation and exclusive literal-link copying, including dangling Windows file and directory links; keep permission selection separate from timestamps and attributes.
+
 - **Native filesystem capabilities:** add Linux write leases on caller-owned descriptors, no-follow Darwin ACL inspection with separate file and directory inheritance facts, and Windows sharing-lock, attribute, and physical-extent test fixtures.
 - **Anonymous pipes:** add `@openclaw/fs-safe/pipe` with native-owned, reopenable close-on-exec pipe ends for one-shot child input on POSIX, including safe stream closure in Workers.
 

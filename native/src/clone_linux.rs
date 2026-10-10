@@ -128,8 +128,7 @@ fn copy_metadata(source_fd: i32, target_fd: i32, metadata: &Stat) -> NativeResul
     rustix::fs::fchmod(borrowed(target_fd), Mode::from_raw_mode(metadata.st_mode))
         .map_err(|error| os_error(error, "preserve Linux reflink clone mode"))?;
     copy_attributes(true)?;
-    rustix::fs::futimens(borrowed(target_fd), &timestamps(metadata))
-        .map_err(|error| os_error(error, "preserve Linux reflink clone timestamps"))?;
+    crate::copy_timestamps_unix::file(target_fd, &timestamps(metadata))?;
     unchanged(metadata, &stat(source_fd)?)
 }
 
@@ -252,8 +251,7 @@ fn clone_symlink(
     let current = rustix::fs::statat(borrowed(source_parent), name, AtFlags::SYMLINK_NOFOLLOW)
         .map_err(|error| os_error(error, "reinspect Linux reflink clone symbolic link"))?;
     unchanged(metadata, &current)?;
-    rustix::fs::symlinkat(target.as_c_str(), borrowed(target_parent), name)
-        .map_err(|error| os_error(error, "create Linux reflink clone symbolic link"))?;
+    crate::copy_link_unix::create(target_parent, name, target.as_c_str())?;
     rustix::fs::utimensat(
         borrowed(target_parent),
         name,

@@ -48,6 +48,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm native:build
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
       - name: Create disposable ReFS VHD (Dev Drive on ARM64)
         shell: pwsh
         run: ./scripts/setup-refs-test-volume.ps1 -DevDrive:(${{ matrix.arch == 'arm64' && '$true' || '$false' }})
@@ -62,6 +65,10 @@ jobs:
           node -e "if (process.arch !== process.env.EXPECTED_ARCH) throw Error('wrong runtime architecture')"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm test test/root-copy-refs.test.ts test/clone.test.ts test/copy-tree.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/fixtures/root-copy-metadata-links.mjs require
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun test/fixtures/root-copy-metadata-links.mjs require
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Detach and remove disposable VHD
         if: always()

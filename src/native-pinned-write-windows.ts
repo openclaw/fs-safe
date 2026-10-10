@@ -24,6 +24,7 @@ import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { createStagedFileReceipt, settleStagedFile } from "./staged-file-settlement.js";
 import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt } from "./staged-file-types.js";
 import { exactIdentityMatches } from "./staged-directory.js";
+import { restoreCopyMetadata } from "./copy-metadata.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 
 interface WriteFdCloseFailure {
@@ -139,6 +140,7 @@ export async function runPinnedWriteWindows(
     // reopenable until the published name has been identity-fenced.
     fsSync.fchmodSync(tempFd, 0o600);
     if (!copied) await writePinnedInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
+    if (params.input.kind === "file") restoreCopyMetadata(tempFd, params.input.metadata);
     if (params.sync !== false) {
       if (params.strictFileSync) fsSync.fsyncSync(tempFd);
       else syncFileBestEffortSync(tempFd);

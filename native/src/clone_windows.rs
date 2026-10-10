@@ -130,7 +130,7 @@ fn create_source_handle(parent: HANDLE, basename: &str) -> NativeResult<()> {
     Ok(())
 }
 
-fn metadata(handle: HANDLE) -> NativeResult<FILE_BASIC_INFO> {
+pub(crate) fn metadata(handle: HANDLE) -> NativeResult<FILE_BASIC_INFO> {
     let mut info = FILE_BASIC_INFO::default();
     if unsafe {
         GetFileInformationByHandleEx(
@@ -206,7 +206,7 @@ pub(crate) fn reject_named_streams(handle: HANDLE) -> NativeResult<()> {
     Ok(())
 }
 
-fn set_metadata(handle: HANDLE, mut info: FILE_BASIC_INFO) -> NativeResult<()> {
+pub(crate) fn set_metadata(handle: HANDLE, mut info: FILE_BASIC_INFO) -> NativeResult<()> {
     // Sparse, integrity and reparse attributes belong to their respective FSCTLs.
     info.FileAttributes &= 0x3127;
     if info.FileAttributes == 0 {
@@ -303,7 +303,7 @@ fn open_source(job: &FileJob) -> NativeResult<(OwnedHandle, BY_HANDLE_FILE_INFOR
     Ok((source, information))
 }
 
-fn clone_reparse(source: HANDLE, target: HANDLE) -> NativeResult<()> {
+pub(crate) fn clone_reparse(source: HANDLE, target: HANDLE) -> NativeResult<()> {
     let mut data = [0_u8; 16 * 1024];
     let count = control(
         source,

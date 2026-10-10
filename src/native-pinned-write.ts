@@ -11,6 +11,7 @@ import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { cachedNoReplaceUnavailable } from "./native-noreplace.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import type { describeStagedDirectory } from "./staged-directory.js";
+import { copyLinkAtParent } from "./copy-link.js";
 
 const writeCapabilities = ["openBeneath", "mkdirBeneath", "renameNoReplace", "renameReplace"] as const;
 const posixWriteCapabilities = [...writeCapabilities, "createStagedFile", "stagedFileMatches", "removeStagedFile"] as const;
@@ -85,6 +86,9 @@ export async function runPinnedWriteNative(
       parentPathStat = admitted.guard.stat;
     }
     const verificationGuard = { dir: parentPath, realPath: parentPath, stat: parentPathStat };
+    if (params.input.kind === "link") {
+      return await copyLinkAtParent(params, params.input, verificationGuard, { binding, fd: parentFd });
+    }
     if (params.overwrite === false) {
       try {
         fsSync.lstatSync(path.join(parentPath, params.basename));

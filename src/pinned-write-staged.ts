@@ -21,6 +21,7 @@ import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { createStagedFileReceipt, settleStagedFile } from "./staged-file-settlement.js";
 import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt } from "./staged-file-types.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { restoreCopyMetadata } from "./copy-metadata.js";
 
 export async function runPinnedStagedWrite(
   params: PinnedWriteParams,
@@ -73,6 +74,7 @@ export async function runPinnedStagedWrite(
     }
     const expectedTempStat = tempStat;
     await handle.chmod(params.mode);
+    if (params.input.kind === "file") restoreCopyMetadata(handle.fd, params.input.metadata);
     if (verifyPosixMode) {
       assertPinnedWriteMode(handle.fd, params.mode, params.private);
       assertBeforeMutation = pinnedWriteModeAssertion(handle.fd, params.mode, params.assertBeforeMutation, params.private);

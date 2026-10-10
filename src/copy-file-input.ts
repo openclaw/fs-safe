@@ -6,6 +6,7 @@ import { getNativeBinding, selectNativeBinding, type NativeBinding } from "./nat
 import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import { transferFileHandle } from "./file-handle-transfer.js";
+import type { CopyMetadata } from "./copy-metadata.js";
 
 export type CopyFileInput = {
   kind: "file";
@@ -13,6 +14,7 @@ export type CopyFileInput = {
   size: number;
   clone: CopyCloneMode;
   signal?: AbortSignal;
+  metadata?: CopyMetadata;
   verifySource(): Promise<void>;
 };
 

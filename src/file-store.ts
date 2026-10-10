@@ -1,4 +1,5 @@
 import syncFs from "node:fs";
+import path from "node:path";
 import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
@@ -168,7 +169,12 @@ async function copyIntoRoot(params: {
     maxBytes: params.maxBytes,
   });
   await ensureParentInRoot(scopedRoot, relativePath, params.dirMode);
-  await scopedRoot.copyIn(literalStoreRootPath(relativePath), params.sourcePath, {
+  // FileStore's source contract rejects final links, including swaps after lstat.
+  // Retain that read policy when Root's absolute-path copying follows links.
+  const sourceRoot = await root(path.dirname(params.sourcePath), { symlinks: "reject" });
+  await scopedRoot.copyIn(literalStoreRootPath(relativePath), {
+    root: sourceRoot, relativePath: `./${path.basename(params.sourcePath)}`,
+  }, {
     durable: params.durable,
     maxBytes: params.maxBytes,
     mkdir: false,
