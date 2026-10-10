@@ -145,8 +145,11 @@ before deploying with native mode `require` or native-only features.
 The native addon supports kernels without `openat2` (before Linux 5.6) and
 containers returning `ENOSYS` or probe-time `EPERM` for that syscall. Beneath
 opens use a guarded no-follow component walk and report `best-effort`.
-Nested no-clobber moves retain atomic `renameat2(RENAME_NOREPLACE)` and exact
-identity checks; keep native mode enabled. Strict bounded cleanup still
+Nested no-clobber moves retain native parent admission and exact identity checks;
+keep native mode enabled. If `renameat2(RENAME_NOREPLACE)` is also unsupported,
+Linux `auto` uses [move fallbacks](writing.md#fs-move-from-to-options), including
+a directory rename that can replace a concurrently created empty directory.
+Native `require` refuses these fallbacks. Strict bounded cleanup still
 requires `openat2` with `RESOLVE_NO_XDEV` and reports `helper-unavailable`
 without it. See [Linux capability behavior and limits](native.md#linux-without-openat2).
 
