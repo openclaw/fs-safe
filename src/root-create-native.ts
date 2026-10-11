@@ -248,6 +248,7 @@ function verifyMkdirDirectory(binding: NativeBinding, fd: number, pathname: stri
 }
 
 export function ensureNativeRootCurrent(root: RootContext): void {
+  assertRootIdentityCurrentSync(root);
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath) return unavailable();
   using rootOwner = openExactNativeRootSync(binding, {
