@@ -225,7 +225,7 @@ function privateDirectoryBackend() {
   if (getFsSafeNativeConfig().mode === "require") {
     throw new FsSafeError("helper-unavailable", "private directory creation requires an up-to-date native parent identity capability");
   }
-  warnNativeFallback("windows-private-directory", "Private Windows directory creation uses a slower built-in system command.");
+  warnNativeFallback("windows-private-directory", "Private Windows directory creation launches the packaged .NET helper for each check or creation.", "createPrivateDirectoryWithParentIdentity");
   return undefined;
 }
 

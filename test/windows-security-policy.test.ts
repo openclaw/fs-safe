@@ -179,11 +179,16 @@ describe("Windows security native policy", () => {
     expect(command.inspectWindowsDescriptorCommand).toHaveBeenCalledTimes(2);
     const warnings = vi.mocked(process.emitWarning).mock.calls;
     expect(warnings).toHaveLength(3);
+    const capabilities = ["readOwnerAndDacl", "createPrivateDirectory", "inspectWindowsSecureFileHandle"];
     for (const [index, feature] of ["windows-owner-dacl", "windows-private-directory", "windows-secure-file"].entries()) {
       expect(warnings[index]).toEqual([
         expect.stringContaining(feature), { code: "FS_SAFE_NATIVE_FALLBACK", type: "FsSafeWarning" },
       ]);
       expect(String(warnings[index]?.[0])).not.toContain("confidential");
+      expect(String(warnings[index]?.[0])).toContain("packaged .NET helper");
+      expect(String(warnings[index]?.[0])).toContain(mode === "off"
+        ? "disabled by programmatic configuration"
+        : `capability-missing: ${capabilities[index]}`);
     }
   });
 });
