@@ -1,4 +1,4 @@
-// Process-per-check transport. All filesystem policy remains in the bridge.
+// Process-per-check transport for bridge operations and compatibility owner queries.
 using System;
 using System.Collections;
 using System.Collections.Generic;

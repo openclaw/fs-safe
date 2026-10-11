@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net40</TargetFramework>
+    <TargetFramework>net462</TargetFramework>
     <OutputType>Exe</OutputType>
     <AssemblyName>windows-security-helper</AssemblyName>
     <PlatformTarget>AnyCPU</PlatformTarget>

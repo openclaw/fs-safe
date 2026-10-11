@@ -76,44 +76,49 @@ describe.runIf(process.platform === "win32")("prebuilt owner query compatibility
     await Promise.all([file, zero, explicit, empty, nullDacl].map(target => fs.writeFile(target, "fixture")));
     await fs.symlink(file, symlink, "file");
     await fs.symlink(directory, junction, "junction");
-    const setup = JSON.parse(runWindowsSecurityScript(FIXTURE, [
-      "$root=[Environment]::GetEnvironmentVariable('FS_SAFE_OWNER_FIXTURE')",
-      "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-      "$prefix='O:'+$sid+'D:P(A;;FA;;;'+$sid+')'",
-      "$zero=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'zero-mask'),$prefix+'(A;;0x0;;;WD)')",
-      "$explicit=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'explicit'),$prefix+'(A;;0x1;;;WD)(A;;0x2;;;WD)')",
-      "$null=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'empty'),'O:'+$sid+'D:P')",
-      "$null=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'null'),'O:'+$sid+'D:NO_ACCESS_CONTROL')",
-      "@{zero=@($zero);explicit=@($explicit)}|ConvertTo-Json -Compress",
-    ], { FS_SAFE_OWNER_FIXTURE: root }));
-    expect(setup.zero).toContain(0);
-    expect(setup.explicit.slice(-2)).toEqual([1, 2]);
-    // A volume-GUID namespace exercises the old namespace => remote rule
-    // without depending on an SMB server or administrative network share.
-    const volume = execFileSync(resolveWindowsSystemCommand("mountvol.exe"), [path.parse(root).root, "/L"], commandOptions).trim();
-    expect(volume).toMatch(/^\\\\\?\\Volume\{[0-9a-f-]+\}\\$/i);
-    const namespace = volume + file.slice(path.parse(file).root.length);
-    const targets = [file, directory, symlink, junction, zero, explicit, empty, nullDacl, `\\\\?\\${file}`, namespace];
-    for (const target of targets) {
-      const expected = oracle(target);
-      const actual = JSON.parse(execFileSync(helper, ["owner", target], commandOptions));
-      expect(actual, target).toEqual(expected);
-      expect(Object.keys(actual).sort()).toEqual(["aces", "complete", "currentUserSid", "daclPresent", "ownerSid", "remote"]);
-      expect(actual.remote).toBe(target === namespace);
-      if (target === zero) expect(actual.aces.every((ace: { mask: number }) => ace.mask !== 0)).toBe(true);
-      if (target === explicit) expect(actual.aces.filter((ace: { sid: string }) => ace.sid === "S-1-1-0").map((ace: { mask: number }) => ace.mask)).toEqual([3]);
-      if (target === empty) expect(actual).toMatchObject({ daclPresent: true, aces: [] });
-      if (target === nullDacl) expect(actual).toMatchObject({ daclPresent: false, aces: [] });
+    try {
+      const setup = JSON.parse(runWindowsSecurityScript(FIXTURE, [
+        "$root=[Environment]::GetEnvironmentVariable('FS_SAFE_OWNER_FIXTURE')",
+        "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+        "$prefix='O:'+$sid+'D:P(A;;FA;;;'+$sid+')'",
+        "$zero=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'zero-mask'),$prefix+'(A;;0x0;;;WD)')",
+        "$explicit=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'explicit'),$prefix+'(A;;0x1;;;WD)(A;;0x2;;;WD)')",
+        "$null=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'empty'),'O:'+$sid+'D:P')",
+        "$null=[OwnerAclFixture]::Set([IO.Path]::Combine($root,'null'),'O:'+$sid+'D:NO_ACCESS_CONTROL')",
+        "@{zero=@($zero);explicit=@($explicit)}|ConvertTo-Json -Compress",
+      ], { FS_SAFE_OWNER_FIXTURE: root }));
+      expect(setup.zero).toContain(0);
+      expect(setup.explicit.slice(-2)).toEqual([1, 2]);
+      // A volume-GUID namespace exercises the old namespace => remote rule
+      // without depending on an SMB server or administrative network share.
+      const volume = execFileSync(resolveWindowsSystemCommand("mountvol.exe"), [path.parse(root).root, "/L"], commandOptions).trim();
+      expect(volume).toMatch(/^\\\\\?\\Volume\{[0-9a-f-]+\}\\$/i);
+      const namespace = volume + file.slice(path.parse(file).root.length);
+      const targets = [file, directory, symlink, junction, zero, explicit, empty, nullDacl, `\\\\?\\${file}`, namespace];
+      for (const target of targets) {
+        const expected = oracle(target);
+        const actual = JSON.parse(execFileSync(helper, ["owner", target], commandOptions));
+        expect(actual, target).toEqual(expected);
+        expect(Object.keys(actual).sort()).toEqual(["aces", "complete", "currentUserSid", "daclPresent", "ownerSid", "remote"]);
+        expect(actual.remote).toBe(target === namespace);
+        if (target === zero) expect(actual.aces.every((ace: { mask: number }) => ace.mask !== 0)).toBe(true);
+        if (target === explicit) expect(actual.aces.filter((ace: { sid: string }) => ace.sid === "S-1-1-0").map((ace: { mask: number }) => ace.mask)).toEqual([3]);
+        if (target === empty) expect(actual).toMatchObject({ daclPresent: true, aces: [] });
+        if (target === nullDacl) expect(actual).toMatchObject({ daclPresent: false, aces: [] });
+      }
+      const passThrough = vi.fn(executePermissionCommand);
+      const injected = await inspectWindowsAcl(file, { exec: passThrough });
+      expect(injected.ok).toBe(true);
+      expect(passThrough).toHaveBeenCalledExactlyOnceWith(helper, ["owner", file]);
+      const canned = await inspectWindowsAcl(file, { exec: async () => ({ stdout: JSON.stringify(oracle(file)), stderr: "" }) });
+      expect(injected).toEqual(canned);
+    } finally {
+      // The owner can restore WRITE_DAC even when the empty DACL denies deletion.
+      execFileSync(resolveWindowsSystemCommand("icacls.exe"), [empty, "/reset"], commandOptions);
     }
-    const passThrough = vi.fn(executePermissionCommand);
-    const injected = await inspectWindowsAcl(file, { exec: passThrough });
-    expect(injected.ok).toBe(true);
-    expect(passThrough).toHaveBeenCalledExactlyOnceWith(helper, ["owner", file]);
-    const canned = await inspectWindowsAcl(file, { exec: async () => ({ stdout: JSON.stringify(oracle(file)), stderr: "" }) });
-    expect(injected).toEqual(canned);
   }, 45_000);
 
-  it.each([[], ["owner"], ["owner", "x", "extra"], ["path", "extra"], ["unknown"]])("rejects invalid operation arguments %j", args => {
+  it.each([[], ["owner"], ["owner", "x", "extra"], ["path", "extra"], ["unknown"]].map(args => ({ args })))("rejects invalid operation arguments $args", ({ args }) => {
     const result = spawnSync(helper, args, commandOptions);
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
