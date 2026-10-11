@@ -195,10 +195,7 @@ describe.skipIf(process.platform !== "win32")("Windows Root rename identity poli
         if (args[0] === target && typeof args[1] === "number" &&
           (args[1] & fsSync.constants.O_RDWR) !== 0) {
           accepted = handle;
-          const chmod = handle.chmod.bind(handle), sync = handle.sync.bind(handle), close = handle.close.bind(handle);
-          vi.spyOn(handle, "chmod").mockImplementation(async mode => {
-            assertPinned(); events.push("chmod"); await chmod(mode);
-          });
+          const sync = handle.sync.bind(handle), close = handle.close.bind(handle);
           vi.spyOn(handle, "sync").mockImplementation(async () => {
             assertPinned(); events.push("sync"); await sync();
           });
@@ -207,6 +204,13 @@ describe.skipIf(process.platform !== "win32")("Windows Root rename identity poli
           });
         }
         return handle;
+      });
+      const chmod = fsSync.fchmodSync.bind(fsSync);
+      vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+        if (fd === accepted?.fd) {
+          assertPinned(); events.push("chmod");
+        }
+        chmod(fd, mode);
       });
       const verify = verification.verifyAtomicWriteResult;
       vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async params => {
