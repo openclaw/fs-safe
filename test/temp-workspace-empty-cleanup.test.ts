@@ -124,9 +124,16 @@ describe.each(["async", "sync"] as const)("%s empty workspace cleanup", (variant
     });
     const rmdir = vi.spyOn(fs, "rmdir");
     const rmdirSync = vi.spyOn(fsSync, "rmdirSync");
+    const recursive = vi.spyOn(fsSync, "rmSync");
     expect(await workspace.cleanup()).toBe("removed");
     expect(rmdir).toHaveBeenCalledTimes(variant === "async" ? 1 : 0);
-    expect(rmdirSync).toHaveBeenCalledTimes(variant === "sync" ? 1 : 0);
+    if (variant === "sync") {
+      // Node 22 also calls the exported rmdirSync during recursive removal.
+      expect(rmdirSync.mock.calls[0]?.[0]).toMatch(/\.fs-safe-workspace-cleanup-/);
+      expect(recursive).toHaveBeenCalledTimes(1);
+    } else {
+      expect(rmdirSync).not.toHaveBeenCalled();
+    }
     expect(fsSync.existsSync(workspace.dir)).toBe(false);
   });
 });
