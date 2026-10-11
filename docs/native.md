@@ -483,11 +483,23 @@ infer native loading from timing.
 `pnpm build:windows-helper` builds the portable security executable with the
 .NET SDK pinned by `global.json`, Roslyn deterministic compilation, a fixed
 source path map, no debug symbols, AnyCPU and `Prefer32Bit=false`. The project
-under `native/windows-security-helper/` targets .NET Framework 4.0 using
+under `native/windows-security-helper/` targets .NET Framework 4.6.2 using
 Microsoft's `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3 and its committed
 NuGet lock file; builds restore in locked mode. CI compares Ubuntu and Windows
 SHA-256 hashes to enforce byte-identical output. The main package includes only
-the exe; the two C# source files remain available in the repository.
+the exe; the C# source files remain available in the repository. The separate
+`windows-owner-query.cs` compatibility query preserves the former PowerShell
+query's .NET API sequence, normalization, link behavior, and locality rules;
+the raw security bridge remains independent.
+
+The 4.6.2 target selects modern `System.IO` path handling on 4.6.2+ runtimes,
+matching Windows PowerShell 5.1. An executable targeting an earlier framework
+gets legacy handling that rejects extended-length `\\?\` paths with
+"Illegal characters in path." The helper still uses only APIs available in
+.NET Framework 4.0 and the same CLR v4.0.30319; it needs no `.exe.config` sidecar.
+Locked restore pins the `Microsoft.NETFramework.ReferenceAssemblies.net462`
+package to 1.0.3 with its content hash. The raw bridge keeps extended paths out
+of .NET normalization and uses `CreateFileW`; its security checks are unchanged.
 
 Build output is copied beside the source modules for Vitest and beside the
 compiled modules in `dist/`; both use the same module-relative filename.

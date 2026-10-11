@@ -347,23 +347,17 @@ describe("secure file reads", () => {
   });
 
   it.each([
-    [{ SystemRoot: "D:\\Windows" }, "D:\\Windows"],
-    [{ SystemRoot: ".\\fake-root", WINDIR: "E:\\Windows" }, "E:\\Windows"],
-    [{ systemroot: "D:\\Windows" }, "D:\\Windows"],
-    [{ SystemRoot: "D:\\Windows" + "/".repeat(10_000) }, "D:\\Windows"],
-  ])("resolves the structured Windows query and scopes command discovery to system modules", async (env, expectedRoot) => {
+    { SystemRoot: "D:\\Windows" },
+    { SystemRoot: ".\\fake-root", WINDIR: "E:\\Windows" },
+    { systemroot: "D:\\Windows" },
+    { SystemRoot: "D:\\Windows" + "/".repeat(10_000) },
+  ])("uses the packaged owner helper independently of environment command discovery", async env => {
+    const target = "C:\\fixture\\é-';$value.txt";
     const exec = vi.fn(async (_command: string, _args: string[]) => windowsAclOutput());
-    await expect(inspectWindowsAcl("C:\\fixture", { env, exec })).resolves.toMatchObject({ ok: true });
-    expect(exec).toHaveBeenCalledWith(expectedRoot + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", expect.arrayContaining(["-EncodedCommand"]));
-    expect(exec).toHaveBeenCalledTimes(1);
-    const args = exec.mock.calls[0]![1];
-    expect(args.slice(0, -1)).toEqual(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
-    const query = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
-    expect(query.split(";").slice(0, 2)).toEqual([
-      "$ErrorActionPreference='Stop'",
-      "$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')",
-    ]);
-    expect(query).toContain("|Microsoft.PowerShell.Utility\\ConvertTo-Json -Depth 4 -Compress");
+    await expect(inspectWindowsAcl(target, { env, exec })).resolves.toMatchObject({ ok: true });
+    expect(exec).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/windows-security-helper\.exe$/), ["owner", target],
+    );
   });
 
   it("covers permission formatting and ACL classification helpers", async () => {

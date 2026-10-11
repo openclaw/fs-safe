@@ -219,7 +219,7 @@ describe("permission inspection failure modes", () => {
   it("preserves a structured query failure as the original diagnostic cause", async () => {
     const original = Object.assign(new Error("descriptor query denied"), { code: 9, signal: null, stderr: "query failed\n" });
     const result = await inspectWindowsAcl("C:\\fixture", { exec: async () => { throw original; } });
-    expect(result).toMatchObject({ ok: false, errorDetail: { command: expect.stringContaining("powershell.exe"), exitCode: 9, stderr: "query failed\\u000a" } });
+    expect(result).toMatchObject({ ok: false, errorDetail: { command: expect.stringContaining("windows-security-helper.exe"), exitCode: 9, stderr: "query failed\\u000a" } });
     expect(result.errorCause).toBe(original);
   });
 });

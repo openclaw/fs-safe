@@ -238,7 +238,7 @@ describe("Windows owner caught-failure diagnostics", () => {
       ok: false,
       error: "Error: command failed",
       errorDetail: {
-        command: expect.stringContaining("powershell.exe"),
+        command: expect.stringContaining("windows-security-helper.exe"),
         durationMs: expect.any(Number),
         timedOut: false,
         exitCode: 5,
@@ -270,7 +270,7 @@ describe("Windows owner caught-failure diagnostics", () => {
     expect(result).toMatchObject({
       error: "PermissionCommandError: Windows permission inspection timed out after 30000ms",
       errorDetail: {
-        command: expect.stringContaining("powershell.exe"),
+        command: expect.stringContaining("windows-security-helper.exe"),
         durationMs: 30_125,
         timedOut: true,
         exitCode: null,
@@ -319,7 +319,7 @@ describe("Windows owner caught-failure diagnostics", () => {
       });
       expect(result.errorCause).toBe(error);
       expect(result.errorDetail).toMatchObject({
-        command: expect.stringContaining("powershell.exe"),
+        command: expect.stringContaining("windows-security-helper.exe"),
         timedOut: false, exitCode: null, signal: null, stderr: "",
       });
     }

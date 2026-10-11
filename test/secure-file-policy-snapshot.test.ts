@@ -289,7 +289,7 @@ describe("secure-read policy snapshots", () => {
       message: expect.stringContaining("call-time inspector denied"),
     });
     expect(exec).toHaveBeenCalledExactlyOnceWith(
-      "C:\\CallTimeWindows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", expect.any(Array),
+      expect.stringContaining("windows-security-helper.exe"), ["owner", filePath],
     );
     expect(replacement).not.toHaveBeenCalled();
   });
@@ -319,7 +319,7 @@ describe("secure-read policy snapshots", () => {
     await expect(readSecureFile({ filePath, inject: { platform: "win32", env, exec } }))
       .rejects.toMatchObject({ code: "permission-unverified", message: expect.stringContaining("captured inspector denied") });
     expect(exec).toHaveBeenCalledExactlyOnceWith(
-      "C:\\CapturedWindows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", expect.any(Array),
+      expect.stringContaining("windows-security-helper.exe"), ["owner", filePath],
     );
     expect(get).toHaveBeenCalledTimes(1);
   });
@@ -340,7 +340,7 @@ describe("secure-read policy snapshots", () => {
     await expect(readSecureFile({ filePath, inject: { platform: "win32", env, exec } }))
       .rejects.toMatchObject({ code: "permission-unverified", message: expect.stringContaining("default inspector denied") });
     expect(exec).toHaveBeenCalledExactlyOnceWith(
-      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", expect.any(Array),
+      expect.stringContaining("windows-security-helper.exe"), ["owner", filePath],
     );
     expect(get).not.toHaveBeenCalled();
   });
@@ -357,7 +357,7 @@ describe("secure-read policy snapshots", () => {
     await expect(readSecureFile({ filePath, inject: { platform: "win32", env, exec } }))
       .rejects.toMatchObject({ code: "permission-unverified", message: expect.stringContaining("case-variant inspector denied") });
     expect(exec).toHaveBeenCalledExactlyOnceWith(
-      "C:\\CaseVariantWindows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", expect.any(Array),
+      expect.stringContaining("windows-security-helper.exe"), ["owner", filePath],
     );
     expect(get).toHaveBeenCalledTimes(1);
   });
