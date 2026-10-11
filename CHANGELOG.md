@@ -6,7 +6,7 @@
 
 ### Fixes
 
-- Windows: fs-safe receipts now carry exact identities; pass them back for identity checks.
+- Windows: fs-safe receipts now carry exact identities; pass them back for identity checks. ([#962](https://github.com/openclaw/fs-safe/pull/962))
 
 ## 0.26.1 - 2026-10-11
 
