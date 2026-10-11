@@ -81,7 +81,7 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
-      const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [90, 81], append: [66, 62], openWritable: [36, 32] }[operation];
+      const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [82, 73], append: [66, 62], openWritable: [36, 32] }[operation];
       const expectedResources = (operation === "mkdir" || operation === "ensureRoot") ? { PROMISE: promises[row.mode === "require" ? 1 : 0] }
         : row.mode === "require" ? { PROMISE: promises[1] }
         : { PROMISE: promises[0], FSREQPROMISE: 1 };
