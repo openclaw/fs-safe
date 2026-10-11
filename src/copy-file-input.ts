@@ -4,7 +4,7 @@ import { resolveCopyCloneMode, type CopyCloneMode } from "./copy-policy.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, selectNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { transferFileHandle } from "./file-handle-transfer.js";
 import type { CopyMetadata } from "./copy-metadata.js";
 
@@ -26,12 +26,12 @@ export function resolveFileCopyCloneMode(mode?: CopyCloneMode): CopyCloneMode {
   return clone;
 }
 
-export async function assertCopySourceCurrent(
+export function assertCopySourceCurrent(
   source: { handle: FileHandle; realPath: string },
   identity: BigIntStats,
-): Promise<void> {
-  await inspectFileIdentity(() => fs.fstatSync(source.handle.fd, { bigint: true }), identity);
-  await inspectFileIdentity(() => {
+): void {
+  inspectFileIdentitySync(() => fs.fstatSync(source.handle.fd, { bigint: true }), identity);
+  inspectFileIdentitySync(() => {
     const current = fs.lstatSync(source.realPath, { bigint: true });
     if (current.isSymbolicLink() || !current.isFile()) {
       throw new FsSafeError("path-mismatch", "copy source path changed");

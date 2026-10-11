@@ -68,6 +68,18 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   add("copyIn", () => root.copyIn("copy", p("input"), { durable: false }), () => fsp.copyFile(p("input"), p("copy")),
     "Existing destination; Node copyFile versus guarded staged copy with identity checks. Durability disabled.",
     { before: () => fs.writeFileSync(p("copy"), data), verify: content("copy") });
+  for (const [name, source, options] of [
+    ["root-source", { root, relativePath: "input" }, { durable: false }],
+    ["preserve-metadata", p("input"), { durable: false, preserveMetadata: true, preserveSourceMode: true }],
+    ["clone-auto", p("input"), { durable: false, clone: "auto" }],
+    ["default", p("input"), {}],
+    ["no-overwrite", p("input"), { durable: false, overwrite: false }],
+  ]) {
+    add(`copyIn-${name}`, () => root.copyIn("copy", source, options), () => fsp.copyFile(p("input"), p("copy")),
+      `Root.copyIn ${name}; Node copies a trusted path without source admission, publication or metadata/durability guarantees.`,
+      { before: () => options.overwrite === false ? fs.rmSync(p("copy"), { force: true }) : fs.writeFileSync(p("copy"), data),
+        verify: content("copy") });
+  }
   add("copyRootFileSync", () => api.copyRootFileSync({ source: { rootPath: workspace, absolutePath: p("input") },
     destination: { rootPath: workspace, absolutePath: p("copy") } }),
   () => fs.copyFileSync(p("input"), p("copy"), fs.constants.COPYFILE_EXCL),

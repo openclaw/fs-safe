@@ -9,7 +9,7 @@ import { admitCopyLink, assertCopyLinkAvailable } from "./copy-link.js";
 import { assertAbsolutePathInput } from "./absolute-path.js";
 import { assertNoNulPathInput } from "./path.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
 import { serializePathWrite } from "./write-queue.js";
 import { rootWriteQueueKey } from "./root-create-native.js";
@@ -61,7 +61,7 @@ export async function copyFileInRoot(root: RootContext, params: RootCopyParams,
   } else {
     source = await params.source.root.open(params.source.relativePath, params.sourceHardlinks === undefined ? undefined : { hardlinks: params.sourceHardlinks });
     try {
-      sourceIdentity = await inspectFileIdentity(() => fsSync.fstatSync(source.handle.fd, { bigint: true }));
+      sourceIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(source.handle.fd, { bigint: true }));
     } catch (error) {
       await source.handle.close().catch(() => undefined);
       throw error;
@@ -83,7 +83,7 @@ export async function copyFileInRoot(root: RootContext, params: RootCopyParams,
       try { sourceAdmission?.verify(); }
       catch (error) { throw new MutationAuthorityError(error); }
       if (typeof params.source !== "string") await params.source.root.stat(".");
-      await assertCopySourceCurrent(source, sourceIdentity);
+      assertCopySourceCurrent(source, sourceIdentity);
     };
     const mode = sourceAdmission?.mode ?? params.mode ?? (params.preserveSourceMode ? Number(sourceIdentity.mode & 0o7777n) : undefined);
     await copyInputInRoot(root, params, {
@@ -98,7 +98,7 @@ export async function copyFileInRoot(root: RootContext, params: RootCopyParams,
 async function copyInputInRoot(
   root: RootContext, params: RootCopyParams,
   input: Extract<PinnedWriteInput, { kind: "file" | "link" }>, mode: number | undefined,
-  verifyAdmission: () => Promise<void> = input.verifySource,
+  verifyAdmission: () => void | Promise<void> = input.verifySource,
 ): Promise<void> {
   if (mode !== undefined && (!Number.isInteger(mode) || mode < 0 || mode > 0o7777)) {
     throw new FsSafeError("invalid-path", "invalid copy mode");

@@ -73,7 +73,7 @@ export async function runPinnedStagedWrite(
       throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
     const expectedTempStat = tempStat;
-    await handle.chmod(params.mode);
+    fsSync.fchmodSync(handle.fd, params.mode);
     if (params.input.kind === "file") restoreCopyMetadata(handle.fd, params.input.metadata);
     if (verifyPosixMode) {
       assertPinnedWriteMode(handle.fd, params.mode, params.private);
