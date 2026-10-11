@@ -118,7 +118,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
 });
 
 describe("empty temp workspace cleanup call budgets", () => {
-  it.each(["async", "sync"] as const)("keeps %s removal to one nonrecursive call", async (variant) => {
+  it.each(["async", "sync"] as const)("holds %s cleanup to its platform call budget", async (variant) => {
     configureFsSafeNative({ mode: "off" });
     const rootDir = await tempRoot("fs-safe-temp-cleanup-budget-");
     const options = { rootDir, prefix: "workspace-" };
@@ -141,11 +141,13 @@ describe("empty temp workspace cleanup call budgets", () => {
       expect(named).toHaveBeenCalledTimes(10);
       expect(descriptor).toHaveBeenCalledTimes(7);
       expect(canonical).toHaveBeenCalledTimes(7);
-      expect(rmdir).toHaveBeenCalledTimes(variant === "async" ? 1 : 0);
-      expect(rmdirSync).toHaveBeenCalledTimes(variant === "sync" ? 1 : 0);
-      expect(rm).not.toHaveBeenCalled();
-      expect(rmSync).not.toHaveBeenCalled();
-      expect(requests).toEqual(variant === "async" ? ["FSREQPROMISE"] : []);
+      const windows = process.platform === "win32";
+      expect(rmdir).toHaveBeenCalledTimes(!windows && variant === "async" ? 1 : 0);
+      expect(rmdirSync).toHaveBeenCalledTimes(!windows && variant === "sync" ? 1 : 0);
+      expect(rm).toHaveBeenCalledTimes(windows && variant === "async" ? 1 : 0);
+      expect(rmSync).toHaveBeenCalledTimes(windows && variant === "sync" ? 1 : 0);
+      expect(requests).toEqual(variant === "sync" ? []
+        : windows ? ["FSREQCALLBACK", "FSREQCALLBACK", "FSREQCALLBACK"] : ["FSREQPROMISE"]);
     } finally {
       hook.disable();
       vi.restoreAllMocks();

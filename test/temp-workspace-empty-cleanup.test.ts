@@ -60,7 +60,7 @@ describe.each(["async", "sync"] as const)("%s empty workspace cleanup", (variant
     return variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
   }
 
-  it("removes an empty quarantine without recursive rm", async () => {
+  it.skipIf(process.platform === "win32")("removes an empty quarantine without recursive rm", async () => {
     const workspace = await create();
     const rm = vi.spyOn(fs, "rm");
     const rmSync = vi.spyOn(fsSync, "rmSync");
@@ -87,7 +87,7 @@ describe.each(["async", "sync"] as const)("%s empty workspace cleanup", (variant
     expect(fsSync.existsSync(workspace.dir)).toBe(false);
   });
 
-  it("preserves a quarantine replaced during the failed empty removal", async () => {
+  it.skipIf(process.platform === "win32")("preserves a quarantine replaced during the failed empty removal", async () => {
     const workspace = await create();
     let quarantine = "";
     const swap = (target: fsSync.PathLike) => {
@@ -110,7 +110,7 @@ describe.each(["async", "sync"] as const)("%s empty workspace cleanup", (variant
     expect(fsSync.readFileSync(path.join(`${quarantine}.original`, "owned"), "utf8")).toBe("owned");
   });
 
-  it("does not treat unchanged timestamps as proof that a workspace is empty", async () => {
+  it.skipIf(process.platform === "win32")("does not treat unchanged timestamps as proof that a workspace is empty", async () => {
     const workspace = await create();
     const initial = fsSync.lstatSync(workspace.dir, { bigint: true });
     fsSync.writeFileSync(path.join(workspace.dir, "owned"), "owned");

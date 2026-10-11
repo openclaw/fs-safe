@@ -211,12 +211,14 @@ leaves and never traversed. Windows marks the exact opened objects for deletion 
 
 Empty quarantines can be removed without directory enumeration: the native
 helper can attempt a descriptor-relative empty-directory removal, and the
-compatible JavaScript path can attempt `rmdir`. Unchanged creation timestamps
+compatible POSIX JavaScript path can attempt `rmdir`. Unchanged creation timestamps
 select this attempt as a performance hint, never as emptiness or ownership proof;
 all fresh identity checks still run. Changed timestamps and nonempty directories
 continue through the same guarded recursive removal. The native empty attempt is bounded
 and synchronous, including for async workspaces; recursive native cleanup stays
-asynchronous. Older bindings retain their existing recursive route.
+asynchronous. Older bindings and Windows compatible cleanup retain their
+existing recursive route; Windows can defer directory timestamp changes, so
+the empty-attempt hint does not select a faster compatible path there.
 
 POSIX has no unlink-by-fd or expected-inode unlink for directory entries. After
 the final identity check, each `unlinkat` can still be raced; the possible side

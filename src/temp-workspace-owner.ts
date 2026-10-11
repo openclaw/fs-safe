@@ -392,11 +392,12 @@ export class TempWorkspaceCleanupOwner {
       return "indeterminate";
     }
     // Removal failures propagate unchanged; only authority uncertainty becomes a receipt.
+    const tryEmpty = quarantine.tryEmpty && process.platform !== "win32";
     try {
-      if (quarantine.tryEmpty) await fs.rmdir(quarantine.path);
+      if (tryEmpty) await fs.rmdir(quarantine.path);
       else await fs.rm(quarantine.path, { recursive: true, force: true });
     } catch (error) {
-      if (!quarantine.tryEmpty) throw error;
+      if (!tryEmpty) throw error;
       const code = (error as NodeJS.ErrnoException | null)?.code;
       if (code !== "ENOENT") {
         if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "EPERM") throw error;
@@ -430,11 +431,12 @@ export class TempWorkspaceCleanupOwner {
     } catch {
       return "indeterminate";
     }
+    const tryEmpty = quarantine.tryEmpty && process.platform !== "win32";
     try {
-      if (quarantine.tryEmpty) fsSync.rmdirSync(quarantine.path);
+      if (tryEmpty) fsSync.rmdirSync(quarantine.path);
       else fsSync.rmSync(quarantine.path, { recursive: true, force: true });
     } catch (error) {
-      if (!quarantine.tryEmpty) throw error;
+      if (!tryEmpty) throw error;
       const code = (error as NodeJS.ErrnoException | null)?.code;
       if (code !== "ENOENT") {
         if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "EPERM") throw error;
