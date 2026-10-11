@@ -248,6 +248,10 @@ readable/writable `fd`, with idempotent `close()` and `Symbol.dispose`, and retu
 bigint destination `identity` and `sourceIdentity` (`dev`, `ino`). Both identities
 are readonly and frozen. Closing releases the descriptor, not the file.
 
+Use `fs.stat(path, { bigint: true })` for exact Windows file IDs.
+`expectedSourceIdentity` requires bigint components and rejects Number inputs
+with `FsSafeError("path-mismatch")`, including unsafe rounded Numbers.
+
 Callers that already pinned a source can pass `expectedSourceIdentity: { dev, ino }`
 from `fs.fstatSync(pinnedSourceFd, { bigint: true })`. fs-safe still admits and
 opens its own source descriptor, and compares its exact bigint identity before

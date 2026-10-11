@@ -334,7 +334,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
         if (params.strictFileSync) await handle.sync();
         else await syncFileBestEffort(handle);
       }
-      const stat = fsSync.fstatSync(handle.fd);
+      const stat = fsSync.fstatSync(handle.fd, { bigint: true });
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
       // Publication is complete. A failed outer check must not remove its target.
       created = false;

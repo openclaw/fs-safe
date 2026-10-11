@@ -36,7 +36,7 @@ describe("pinned write fsync compatibility", () => {
         overwrite: true,
         input: { kind: "buffer", data: "created", encoding: "utf8" },
       }),
-    ).resolves.toMatchObject({ dev: expect.any(Number), ino: expect.any(Number) });
+    ).resolves.toMatchObject({ dev: expect.any(BigInt), ino: expect.any(BigInt) });
     await expect(fs.readFile(path.join(root, "created.txt"), "utf8")).resolves.toBe("created");
   });
 });

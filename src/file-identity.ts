@@ -5,6 +5,14 @@ export type FileIdentityStat = {
   ino: number | bigint;
 };
 
+export function hasSafeFileIdentity(identity: FileIdentityStat): boolean {
+  return isExactStatValue(identity.dev) && isExactStatValue(identity.ino);
+}
+
+function isExactStatValue(value: number | bigint): boolean {
+  return typeof value === "bigint" || Number.isSafeInteger(value);
+}
+
 function isZero(value: number | bigint): boolean {
   return value === 0 || value === 0n;
 }
@@ -35,19 +43,24 @@ export function sameFileIdentity(
   right: FileIdentityStat,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
+  const leftDev = left.dev;
+  const leftIno = left.ino;
+  const rightDev = right.dev;
+  const rightIno = right.ino;
   // When Windows cannot open a path for stat, libuv's FindFirstFile fallback reports dev=0 and
   // ino=0. Treating either unknown value as a mismatch caused nondeterministic path-mismatch
   // failures on legitimate reads under antivirus or indexer contention.
   return (
-    !isStatValueProvablyDifferent(left.dev, right.dev, platform) &&
-    !isStatValueProvablyDifferent(left.ino, right.ino, platform)
+    isExactStatValue(leftDev) && isExactStatValue(leftIno) &&
+    isExactStatValue(rightDev) && isExactStatValue(rightIno) &&
+    !isStatValueProvablyDifferent(leftDev, rightDev, platform) &&
+    !isStatValueProvablyDifferent(leftIno, rightIno, platform)
   );
 }
 
 function sameCleanupStatValue(left: number | bigint, right: number | bigint): boolean {
   // Converting an unsafe number to bigint cannot recover an already rounded ID.
-  if (typeof left === "number" && !Number.isSafeInteger(left)) return false;
-  if (typeof right === "number" && !Number.isSafeInteger(right)) return false;
+  if (!isExactStatValue(left) || !isExactStatValue(right)) return false;
   return sameStatValue(left, right);
 }
 

@@ -112,7 +112,7 @@ describe("pinned write fallback coverage", () => {
         overwrite: true,
         input: { kind: "buffer", data: "created", encoding: "utf8" },
       }),
-    ).resolves.toMatchObject({ dev: expect.any(Number), ino: expect.any(Number) });
+    ).resolves.toMatchObject({ dev: expect.any(BigInt), ino: expect.any(BigInt) });
     await expect(fs.readFile(path.join(root, "created.txt"), "utf8")).resolves.toBe(
       "created",
     );
@@ -129,7 +129,7 @@ describe("pinned write fallback coverage", () => {
       mode: 0o600,
       overwrite: false,
       input: { kind: "buffer", data: "created", encoding: "utf8" },
-    })).resolves.toMatchObject({ dev: expect.any(Number), ino: expect.any(Number) });
+    })).resolves.toMatchObject({ dev: expect.any(BigInt), ino: expect.any(BigInt) });
     await expect(fs.readFile(path.join(root, "nested", "created.txt"), "utf8")).resolves.toBe(
       "created",
     );

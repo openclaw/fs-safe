@@ -149,6 +149,11 @@ target. It pins the source with nonblocking `O_NOFOLLOW`, optionally verifies
 `expectedSourceIdentity`, tries a hardlink first, then synchronizes the target
 parent directory.
 
+Pass `expectedSourceIdentity` from `fs.stat(path, { bigint: true })` (or
+`fs.lstat`) for exact Windows file IDs. Unsafe Number components cannot prove
+identity and reject with `FsSafeError("path-mismatch")` before publication;
+safe integer Numbers remain supported. Internal source fences use bigint stats.
+
 Trusted relative source and target paths are resolved to absolute paths before
 authority checks. On Windows, ordinary drive-relative operands are anchored at
 entry before namespace-alias admission. A caller-supplied `parentReceipt` must

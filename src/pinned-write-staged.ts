@@ -41,7 +41,6 @@ export async function runPinnedStagedWrite(
       ? fsSync.constants.O_NOFOLLOW
       : 0);
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
-  let tempStat: Awaited<ReturnType<NonNullable<typeof handle>["stat"]>> | undefined;
   let tempIdentity: BigIntStats | undefined;
   let readHandle: FileHandle | undefined;
   let renamed = false;
@@ -67,8 +66,8 @@ export async function runPinnedStagedWrite(
     if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600, params.private);
     await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeWrite);
     if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600, params.private);
-    tempStat = fsSync.fstatSync(handle.fd);
-    const tempPathStat = fsSync.lstatSync(tempPath);
+    const tempStat = fsSync.fstatSync(handle.fd, { bigint: true });
+    const tempPathStat = fsSync.lstatSync(tempPath, { bigint: true });
     if (tempPathStat.isSymbolicLink() || !sameFileIdentity(tempPathStat, tempStat)) {
       throw new FsSafeError("path-mismatch", "fallback temp path changed during write");
     }
@@ -117,7 +116,7 @@ export async function runPinnedStagedWrite(
       }
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
-      const targetStat = fsSync.lstatSync(targetPath);
+      const targetStat = fsSync.lstatSync(targetPath, { bigint: true });
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }
@@ -141,8 +140,7 @@ export async function runPinnedStagedWrite(
         }
         // The content-verified destination, not the old temp inode, is now pinned.
         verificationIdentity = readHandleStat;
-        // Preserve the helper's legacy numeric return facts, not the private proof.
-        verifiedIdentity = { dev: Number(readHandleStat.dev), ino: Number(readHandleStat.ino) };
+        verifiedIdentity = readHandleStat;
       }
     });
     await params.verifyPublished?.((readHandle ?? handle).fd, verificationIdentity, parentGuard);

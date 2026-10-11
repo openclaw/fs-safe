@@ -16,6 +16,7 @@ import { hashFileHandle } from "./file-hash.js";
 import {
   sameFileIdentity,
   sameFileIdentityForCleanup,
+  hasSafeFileIdentity,
   type FileIdentityStat,
 } from "./file-identity.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
@@ -272,6 +273,11 @@ export async function publishFileExclusive(params: {
   onSyncFailure?: PublishFileExclusiveSyncFailurePolicy;
   parentReceipt?: DirectoryReceipt<Stats | BigIntStats>;
 }): Promise<PublishFileExclusiveResult> {
+  const expectedInput = params.expectedSourceIdentity;
+  const expectedSourceIdentity = expectedInput && { dev: expectedInput.dev, ino: expectedInput.ino };
+  if (expectedSourceIdentity && !hasSafeFileIdentity(expectedSourceIdentity)) {
+    throw new FsSafeError("path-mismatch", "publication source identity is not exact; pass fs.stat(path, { bigint: true })");
+  }
   const sourcePathInput = admitStandalonePublicationPath(params.sourcePath, "publication source uses a Windows filesystem namespace alias");
   const targetPathInput = admitStandalonePublicationPath(params.targetPath, "publication target uses a Windows filesystem namespace alias");
   const parentReceiptInput = params.parentReceipt;
@@ -312,22 +318,14 @@ export async function publishFileExclusive(params: {
     parent = await pinDirectory(parentReceipt ?? parentPath, {
       label: "publication parent",
     });
-    const sourceIdentity = fsSync.fstatSync(source.fd);
     const sourceExactIdentity = fsSync.fstatSync(source.fd, { bigint: true });
     const sourcePathExactIdentity = fsSync.lstatSync(sourcePath, { bigint: true });
-    const expectedSourceIdentity = params.expectedSourceIdentity;
     if (
       sourcePathExactIdentity.isSymbolicLink() ||
       !sourcePathExactIdentity.isFile() ||
       !sameFileIdentity(sourcePathExactIdentity, sourceExactIdentity) ||
       (expectedSourceIdentity &&
-        !sameFileIdentity(
-          expectedSourceIdentity,
-          typeof expectedSourceIdentity.dev === "bigint" ||
-            typeof expectedSourceIdentity.ino === "bigint"
-            ? sourceExactIdentity
-            : sourceIdentity,
-        ))
+        !sameFileIdentity(expectedSourceIdentity, sourceExactIdentity))
     ) {
       throw new FsSafeError("path-mismatch", "publication source identity did not match");
     }

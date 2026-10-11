@@ -75,7 +75,7 @@ type TrashTargetGuard = {
   path: string;
   realPath: string;
   realPathResolved: boolean;
-  stat: fs.Stats;
+  stat: fs.BigIntStats;
 };
 
 function resolveTrashTargetPath(targetPath: string): { path: string; resolved: boolean } {
@@ -122,7 +122,7 @@ function assertAllowedTrashTarget(
   if (isForeignWindowsShareOrDevicePath(lexicalTarget, [...allowedRoots, ...resolvedRoots])) {
     throw new Error(`Refusing to trash path outside allowed roots: ${targetPath}`);
   }
-  const stat = fs.lstatSync(lexicalTarget);
+  const stat = fs.lstatSync(lexicalTarget, { bigint: true });
   const resolvedTarget = resolveTrashTargetPath(targetPath);
   const resolvedTargetPath = resolvedTarget.path;
   const parent = createSyncDirectoryGuard(path.dirname(lexicalTarget));
@@ -149,7 +149,7 @@ function assertAllowedTrashTarget(
 
 function assertTrashTargetGuard(guard: TrashTargetGuard): void {
   assertSyncDirectoryGuard(guard.parent);
-  const stat = fs.lstatSync(guard.path);
+  const stat = fs.lstatSync(guard.path, { bigint: true });
   if (!sameFileIdentity(stat, guard.stat)) {
     throw new Error(`Refusing to trash path after it changed: ${guard.path}`);
   }
