@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
+import { assertCopySourceCurrent } from "../src/copy-file-input.js";
 import { createFileSync } from "../src/create.js";
 import { sha256File, sha256FileSync } from "../src/file-hash.js";
 import { tryReadJson, writeJson } from "../src/json.js";
@@ -33,6 +34,7 @@ const budgets = {
   "root.exists": 7, // exact direct-child admission and final root path fence
   sha256File: 8, // two pathname checks, two descriptor checks, open/read/EOF/close
   sha256FileSync: 8,
+  "root.copyIn durable:false": 48,
 };
 const asyncBudgets = {
   "root.open": 2, // open and caller close
@@ -49,6 +51,7 @@ const asyncBudgets = {
   "root.exists": 1, // measured 0
   sha256File: 4, // open, payload read, EOF read, close
   sha256FileSync: 0,
+  "root.copyIn durable:false": 9,
 };
 // Includes the instrumentation wrapper around open; metadata checks add no promises.
 const promiseBudgets = { "root.readBytes": 51, readLocalFileSafely: 47, "root.open": 35, "readLocalFileSafely bounded": 46 };
@@ -161,6 +164,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         "root.exists": () => safe.exists("r.txt"),
         sha256File: () => sha256File(path.join(directory, "r.txt")),
         sha256FileSync: async () => sha256FileSync(path.join(directory, "r.txt")),
+        "root.copyIn durable:false": () => safe.copyIn("copy.txt", path.join(directory, "r.txt"), { durable: false }),
       };
       for (const name of Object.keys(budgets) as Array<keyof typeof budgets>) {
         await operations[name]();
@@ -603,5 +607,26 @@ describe("write metadata budgets", () => {
       await fs.chmod(path.join(directory, "value"), 0o600).catch(() => undefined);
     }
   });
+  }
+});
+
+it("checks copy source identity without allocating promises", async () => {
+  const directory = await tempRoot("fs-safe-copy-fence-budget-");
+  const realPath = path.join(directory, "source");
+  await fs.writeFile(realPath, "copy source");
+  const handle = await fs.open(realPath, "r");
+  try {
+    const identity = fsSync.fstatSync(handle.fd, { bigint: true });
+    let promises = 0;
+    const hook = createHook({ init(_id, type) { if (type === "PROMISE") promises++; } });
+    hook.enable();
+    try {
+      assertCopySourceCurrent({ handle, realPath }, identity);
+    } finally {
+      hook.disable();
+    }
+    expect(promises).toBe(0);
+  } finally {
+    await handle.close();
   }
 });

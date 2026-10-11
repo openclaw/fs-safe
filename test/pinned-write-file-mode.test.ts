@@ -22,15 +22,17 @@ describe.skipIf(process.platform === "win32")("fallback final file mode", () => 
       await fs.chown(rootPath, process.geteuid!(), process.getegid!());
       const target = path.join(rootPath, "target");
       const events: string[] = [];
+      const files = new Set<number>();
       const fchmod = fsSync.fchmodSync.bind(fsSync);
       vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-        events.push("chmod");
+        if (files.has(fd)) events.push("chmod");
         fchmod(fd, mode);
       });
       const open = fs.open.bind(fs);
       vi.spyOn(fs, "open").mockImplementation(async (...args) => {
         const handle = await open(...args);
         if (!(await handle.stat()).isFile()) return handle;
+        files.add(handle.fd);
         const chmod = handle.chmod.bind(handle);
         const write = handle.write.bind(handle);
         const sync = handle.sync.bind(handle);

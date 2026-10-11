@@ -23,25 +23,29 @@ describe("fallback mode-failure cleanup ownership", () => {
     const saved = path.join(rootDir, "original");
     const failure = Object.assign(new Error("synthetic mode failure"), { code: "EIO" });
     const open = fs.open.bind(fs);
+    const files = new Map<number, string>();
     let replacedPath: string | undefined;
+    const failFinalMode = (fd: number) => {
+      const openedPath = files.get(fd);
+      if (!openedPath || fsSync.fstatSync(fd).size === 0) return;
+      replacedPath = openedPath;
+      fsSync.renameSync(replacedPath, saved);
+      fsSync.writeFileSync(replacedPath, "replacement", { mode: 0o600 });
+      throw failure;
+    };
+    const fchmod = fsSync.fchmodSync.bind(fsSync);
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      failFinalMode(fd);
+      fchmod(fd, mode);
+    });
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (!(await handle.stat()).isFile()) return handle;
-      const fchmod = fsSync.fchmodSync.bind(fsSync);
-      vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
-        if (fd !== handle.fd || fsSync.fstatSync(fd).size === 0) return fchmod(fd, mode);
-        replacedPath = String(args[0]);
-        fsSync.renameSync(replacedPath, saved);
-        fsSync.writeFileSync(replacedPath, "replacement", { mode: 0o600 });
-        throw failure;
-      });
+      files.set(handle.fd, String(args[0]));
       const chmod = handle.chmod.bind(handle);
       vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
-        if ((await handle.stat()).size === 0) return await chmod(mode);
-        replacedPath = String(args[0]);
-        await fs.rename(replacedPath, saved);
-        await fs.writeFile(replacedPath, "replacement", { mode: 0o600 });
-        throw failure;
+        failFinalMode(handle.fd);
+        await chmod(mode);
       });
       return handle;
     });
