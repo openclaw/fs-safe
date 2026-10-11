@@ -66,7 +66,7 @@ if (args.mode === "both") {
 
 async function runMode() {
   const api = {};
-  for (const sub of ["index", "advanced", "atomic", "json", "store", "file-lock", "temp", "walk", "archive", "durability"]) {
+  for (const sub of ["index", "root", "advanced", "atomic", "json", "store", "file-lock", "temp", "walk", "archive", "durability"]) {
     Object.assign(api, await import(pathToFileURL(path.join(dist, `${sub}.js`))));
   }
   api.configureFsSafeNative({ mode: args.mode });
