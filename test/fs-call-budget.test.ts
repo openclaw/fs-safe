@@ -155,3 +155,62 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
     }
   });
 });
+
+// Copy admission has independent native/fallback paths and an operation-local
+// directory cache. Pin cold single-copy and warm batch costs separately.
+describe("synchronous copy admission budgets", () => {
+  it("keeps fresh directory checks within the fallback budget", async () => {
+    const { copyRootFileSync, createRootFileCopyBatchSync } = await import("../src/advanced.js");
+    const directory = fsSync.realpathSync(await tempRoot("fs-safe-copy-budget-"));
+    fsSync.mkdirSync(path.join(directory, "nested"));
+    for (const parent of [directory, path.join(directory, "nested")]) fsSync.writeFileSync(path.join(parent, "input"), "hi");
+    const restore: Array<() => void> = [];
+    const counts = new Map<string, number>();
+    let counting = false;
+    const wrap = (object: object, keys: string[], prefix: string) => {
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        if (!descriptor?.writable || typeof descriptor.value !== "function") continue;
+        const original = descriptor.value;
+        Object.defineProperty(object, key, { ...descriptor, value: Object.assign(function (this: unknown, ...args: unknown[]) {
+          if (counting) counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
+          return Reflect.apply(original, this, args);
+        }, original) });
+        restore.push(() => Object.defineProperty(object, key, descriptor));
+      }
+    };
+    configureFsSafeNative({ mode: "off" });
+    try {
+      wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
+      wrap(fsSync, Object.keys(fsSync).filter(key => key.endsWith("Sync")), "s.");
+      wrap(fs, Object.keys(fs), "p.");
+      for (const nested of [false, true]) for (const batched of [false, true]) {
+        using batch = createRootFileCopyBatchSync();
+        const parent = nested ? path.join(directory, "nested") : directory;
+        const options = (suffix: string) => ({
+          source: { rootPath: directory, absolutePath: path.join(parent, "input") },
+          destination: { rootPath: directory, absolutePath: path.join(parent, `${nested}-${batched}-${suffix}`) },
+        });
+        if (batched) batch.copyFile(options("warmup")).close();
+        counts.clear();
+        counting = true;
+        const copied = batched ? batch.copyFile(options("measured")) : copyRootFileSync(options("measured"));
+        counting = false;
+        copied.close();
+        const detail = `${nested ? "nested" : "direct"} ${batched ? "batch" : "single"}: ${JSON.stringify([...counts])}`;
+        const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
+        // Windows exclusive creation adds two leaf checks and one canonical check.
+        const windows = process.platform === "win32";
+        const totalBudget = nested ? (batched ? 123 : 150) : (batched ? 102 : 123);
+        const lstatBudget = nested ? (batched ? 61 : 75) : (batched ? 50 : 60);
+        expect.soft(total, detail).toBe(totalBudget + (windows ? 3 : 0));
+        expect.soft(counts.get("s.lstatSync"), detail).toBe(lstatBudget + (windows ? 2 : 0));
+        expect.soft([...counts].filter(([key]) => key.startsWith("p.")), detail).toEqual([]);
+      }
+    } finally {
+      counting = false;
+      for (const undo of restore.reverse()) undo();
+      configureFsSafeNative({ mode: "auto" });
+    }
+  });
+});

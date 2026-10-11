@@ -5,6 +5,7 @@ import { FsSafeError } from "./errors.js";
 import { sameFileIdentity } from "./file-identity.js";
 import { realpathSync } from "./realpath.js";
 import { resolveRootPathSync, ROOT_PATH_ALIAS_POLICIES } from "./root-path.js";
+import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export type CopyPath = { rootPath: string; absolutePath: string };
 
@@ -60,15 +61,23 @@ export function createCopyPathAdmissionCache() {
   const assertParent = ({ root, parent, chain }: ParentAdmission) => {
     assertSyncDirectoryGuard(root);
     for (const guard of chain) {
+      // The full parent guard immediately below includes this exact identity.
+      if (guard === parent) continue;
       inspectDirectoryIdentitySync(guard.dir, { dev: BigInt(guard.stat.dev), ino: BigInt(guard.stat.ino) });
     }
-    assertSyncDirectoryGuard(parent);
+    if (parent !== root) assertSyncDirectoryGuard(parent);
     assertSyncDirectoryGuard(root);
   };
   const admit = (input: CopyPath, create = false): ReturnType<typeof admitUncachedCopyPath> => {
     // Keep the public resolver for Windows aliases and noncanonical spellings,
     // including raw dot segments whose traversal must not be normalized away.
-    if (process.platform === "win32" || !path.isAbsolute(input.rootPath) ||
+    const ordinaryWindowsPath = process.platform !== "win32" || (
+      /^[a-z]:\\/iu.test(input.rootPath) &&
+      !hasWindowsPathAlias(input.rootPath, "filesystem") &&
+      !hasWindowsPathAlias(input.absolutePath, "filesystem") &&
+      !input.absolutePath.slice(3).split("\\").some(segment => /[. ]$/u.test(segment) || segment.includes("~"))
+    );
+    if (!ordinaryWindowsPath || !path.isAbsolute(input.rootPath) ||
       !path.isAbsolute(input.absolutePath) || input.rootPath.includes("\0") || input.absolutePath.includes("\0") ||
       path.resolve(input.rootPath) !== input.rootPath || path.resolve(input.absolutePath) !== input.absolutePath ||
       !input.absolutePath.startsWith(input.rootPath.endsWith(path.sep) ? input.rootPath : `${input.rootPath}${path.sep}`)) {
