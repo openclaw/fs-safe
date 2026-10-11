@@ -317,7 +317,8 @@ not bypass the byte limit.
 ## Mode semantics
 
 See [Native helper policy](native-helper.md#modes) for the `auto`, `require`, and
-`off` contracts and cached loader behavior.
+`off` contracts and cached loader behavior. See [What needs the native binding](#what-needs-the-native-binding)
+for the exceptions to fallback availability.
 
 `sha256FileSync()` is a synchronous Node implementation in all three modes and
 does not load the binding. Use asynchronous `sha256File()` for native hashing
@@ -359,6 +360,35 @@ against exact fd and pathname metadata; legacy helper return facts and public
 read metadata behavior are unchanged. Missing Windows pathname identity still
 requires a guarded path reopen and comparison with the original retained file;
 that fallback does not apply to POSIX no-read modes.
+
+## What needs the native binding
+
+In `off` and missing-binding `auto`, these capabilities are unavailable. Other
+APIs keep their guarded fallback; the [delta table](#javascript-fallback-guarantees-and-delta)
+describes its strength. Installing a binding does not add support on an excluded
+platform or filesystem.
+
+| API or option | Binding requirement without a fallback |
+|---|---|
+| `Root.move()` with `overwrite: false` (the default); `replaceDirectoryAtomic()` | `helper-unavailable`; atomic no-replace publication cannot use check-then-rename. |
+| `stageFileInDirectory()`, `retainSymlinkInDirectory()` | Linux/macOS: `helper-unavailable`; other platforms: `unsupported-platform`. |
+| `retainEntryForPublication()` | Linux/macOS/Windows: `helper-unavailable`; other platforms: `unsupported-platform`. |
+| `retainFileInDirectory()` | Windows retention only; returns an unsupported admission with `helper-unavailable` rather than throwing. |
+| `createPipe()` | Linux/macOS/FreeBSD: `helper-unavailable`; other platforms: `unsupported-platform`. |
+| `tryAcquireWriteLease()` | Linux: `helper-unavailable`; other platforms: `unsupported-platform`. |
+| `createCloneSource()`; `copyTree()` or `Root.copyIn()` with `clone: "always"` | `helper-unavailable`; synchronous `copyRootFileSync()` / batch copying with `clone: "always"` reports `unsupported-platform`. Ordinary automatic byte copying remains available. |
+| `readCloneFileMetadata()`; `inspectDarwinAcl()` | macOS: metadata reading throws `helper-unavailable`; ACL inspection returns `{ kind: "unknown", reason: "helper-unavailable" }`. Elsewhere, they return unsupported/unknown facts. |
+| `Root.copyIn()` with `sourceSymlinks: "copy-link"` | macOS/Windows: `helper-unavailable`; Linux/FreeBSD retain the guarded literal-link path. |
+| `watch()` with `mode: "events"` | `helper-unavailable`; `mode: "auto"` uses polling. |
+| Temp workspace/file helpers with `cleanupSafety: "require-bounded"` | `helper-unavailable`; the default `"compatible"` cleanup remains available. |
+| Private creation on macOS | `helper-unavailable` for descriptor ACL admission: `createDirectory[Sync]()` / `createFileSync()` and Root creation with `private: true`, `Root.createJson()` and `Root.ensureRoot()` with `private: true`. |
+| Windows test hooks `holdWindowsSharingLock()`, `setWindowsFileAttributes()`, `readWindowsFileExtents()` | Windows: `helper-unavailable`; other platforms: `unsupported-platform`. |
+
+`preserveMetadata: true` does **not** require native support in `auto` or `off`:
+see [copy metadata and source links](writing.md#copy-metadata-and-source-links)
+for timestamp precision and Windows attribute differences. Archive fallbacks
+include bundled WASM, and Windows security fallbacks use the packaged
+PowerShell/C# bridge; neither requires the optional native binding.
 
 ## JavaScript fallback guarantees and delta
 
