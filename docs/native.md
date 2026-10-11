@@ -343,7 +343,9 @@ including fresh policy, identity and post-removal checks; recursive traversal
 retains its directory, mount, budget and cancellation checks. Neither optimization
 changes the descriptor-relative mutation or atomic no-replace mechanism.
 
-Writable opens attempt the existing-file handle path before creating parents.
+Writable opens without an explicit mutation policy attempt the existing-file
+handle path before creating parents. Policy-bound opens first prepare the parent
+receipt needed to select the file.
 In `require`, missing files and parents still use native confined creation;
 existing files keep their guarded Node handle path, identity fences and hardlink
 checks. Required creation capabilities are checked even when the file exists.

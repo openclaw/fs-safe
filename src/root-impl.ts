@@ -708,6 +708,12 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
   if (nativeCreatesParents) {
     const binding = getNativeBinding("openBeneath", "mkdirChildBeneath", "closeOwnedFd");
     if (!binding) throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
+    // Policy selection retains a parent receipt before the existing-file open.
+    if (guardedTarget) await tryMkdirRootNative({
+      originalPath: params.relativePath,
+      root, directory: path.dirname(resolved), target: resolved, mkdir: true, policy,
+      resolveCurrent, assertBeforeMutation: params.assertBeforeMutation,
+    });
   }
   const prepared = !nativeCreatesParents && guardedTarget ? await prepareSharedRootWriteTarget(root, {
     relativePath: params.relativePath, guardedTarget, mkdir: params.mkdir,
@@ -768,6 +774,11 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
         throw err;
       }
       if (options?.createIfMissing === false) {
+        if (nativeCreatesParents && !guardedTarget) await tryMkdirRootNative({
+          originalPath: params.relativePath,
+          root, directory: path.dirname(ioPath), target: ioPath, mkdir: true, policy,
+          resolveCurrent, assertBeforeMutation: params.assertBeforeMutation,
+        });
         const parentGuard = writePathSelection?.parentGuard ??
           await createAsyncDirectoryGuard(path.dirname(ioPath), { bigint: true });
         assertRootIdentityCurrentSync(root);

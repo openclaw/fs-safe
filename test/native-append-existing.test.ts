@@ -41,4 +41,16 @@ describe.runIf(native?.openCreateBeneath)("native existing-file writable opens",
       .rejects.toMatchObject({ code: "helper-unavailable" });
     expect(await fs.readFile(path.join(directory, "value"), "utf8")).toBe("preserve");
   });
+
+  it("creates missing parents before selecting a policy-bound writable file", async () => {
+    const directory = await tempRoot("fs-safe-policy-writable-parent-");
+    configureFsSafeNative({ mode: "require" });
+    const scoped = await root(directory);
+    const opened = await scoped.openWritable("missing/value", { mutationSymlinks: "reject" });
+    try {
+      expect(opened.createdForWrite).toBe(true);
+      await opened.handle.writeFile("content");
+    } finally { await opened.handle.close(); }
+    expect(await fs.readFile(path.join(directory, "missing/value"), "utf8")).toBe("content");
+  });
 });
