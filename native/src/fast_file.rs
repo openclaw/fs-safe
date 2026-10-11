@@ -72,6 +72,7 @@ fn hash_file(
     fd: i32,
     max_bytes: u64,
     cancelled: &AtomicBool,
+    owns_position: bool,
 ) -> crate::NativeResult<(u64, String)> {
     let check_cancelled = || {
         if cancelled.load(Ordering::Relaxed) {
@@ -83,7 +84,7 @@ fn hash_file(
         Ok(())
     };
     check_cancelled()?;
-    let reader = platform::open_independent_reader(fd)?;
+    let reader = crate::hash_reader::HashReader::open(fd, owns_position)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     let mut bytes = 0_u64;
@@ -92,7 +93,7 @@ fn hash_file(
         let length = (max_bytes - bytes)
             .saturating_add(1)
             .min(buffer.len() as u64) as usize;
-        let read = platform::read_at(&reader, &mut buffer[..length], bytes)?;
+        let read = reader.read_at(&mut buffer[..length], bytes)?;
         check_cancelled()?;
         if read as u64 > max_bytes - bytes {
             return Err(crate::native_error(
@@ -118,12 +119,13 @@ pub fn sha256_file(
     fd: i32,
     max_bytes: Option<f64>,
     signal: Option<AbortSignal>,
+    owns_position: Option<bool>,
 ) -> Result<AsyncTask<NativeTask<FileHash>>> {
     let max_bytes = checked_max_bytes(max_bytes)?;
     let cancelled = cancellation(signal.as_ref());
     Ok(AsyncTask::with_optional_signal(
         NativeTask::new(move || {
-            let (bytes, digest) = hash_file(fd, max_bytes, &cancelled)?;
+            let (bytes, digest) = hash_file(fd, max_bytes, &cancelled, owns_position.unwrap_or(false))?;
             Ok(FileHash {
                 bytes: bytes as f64,
                 digest,
@@ -139,7 +141,7 @@ mod tests {
 
     #[test]
     fn hash_cancellation_precedes_reader_admission() {
-        let error = hash_file(-1, u64::MAX, &AtomicBool::new(true)).unwrap_err();
+        let error = hash_file(-1, u64::MAX, &AtomicBool::new(true), false).unwrap_err();
         assert_eq!(error.status, "Cancelled");
         assert_eq!(error.reason, "SHA-256 operation aborted");
     }
@@ -177,13 +179,13 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         for maximum in [payload.len() as u64, u64::MAX] {
             assert_eq!(
-                hash_file(fixture.file.as_raw_fd(), maximum, &cancelled).unwrap(),
+                hash_file(fixture.file.as_raw_fd(), maximum, &cancelled, false).unwrap(),
                 (payload.len() as u64, expected.to_owned())
             );
             assert_eq!(fixture.file.stream_position().unwrap(), 2);
         }
         for maximum in [0, 65_536] {
-            let error = hash_file(fixture.file.as_raw_fd(), maximum, &cancelled).unwrap_err();
+            let error = hash_file(fixture.file.as_raw_fd(), maximum, &cancelled, false).unwrap_err();
             assert_eq!(error.status, "too-large");
             assert_eq!(error.reason, "SHA-256 input exceeds maxBytes");
             assert_eq!(fixture.file.stream_position().unwrap(), 2);
@@ -193,7 +195,7 @@ mod tests {
         assert_eq!(next[0], payload[2]);
         fixture.file.set_len(0).unwrap();
         assert_eq!(
-            hash_file(fixture.file.as_raw_fd(), 0, &cancelled).unwrap(),
+            hash_file(fixture.file.as_raw_fd(), 0, &cancelled, false).unwrap(),
             (
                 0,
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned()

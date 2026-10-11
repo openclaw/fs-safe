@@ -10,6 +10,7 @@ mod test_support;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod watch;
 mod fast_file;
+mod hash_reader;
 mod clone_tree;
 mod clone_metadata;
 mod directory_observation;

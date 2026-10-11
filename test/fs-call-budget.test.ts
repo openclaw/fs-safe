@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { AsyncLocalStorage, AsyncResource, createHook } from "node:async_hooks";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { createFileSync } from "../src/create.js";
+import { sha256File, sha256FileSync } from "../src/file-hash.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
 import { __loadBundledNativeForTest } from "../src/native.js";
@@ -28,6 +30,8 @@ const budgets = {
   "root.create": 34,
   createFileSync: 10,
   "root.exists": 7, // exact direct-child admission and final root path fence
+  sha256File: 8, // two pathname checks, two descriptor checks, open/read/EOF/close
+  sha256FileSync: 8,
 };
 const asyncBudgets = {
   "root.open": 2, // open and caller close
@@ -42,6 +46,8 @@ const asyncBudgets = {
   "root.create": 3,
   createFileSync: 0,
   "root.exists": 1, // measured 0
+  sha256File: 4, // open, payload read, EOF read, close
+  sha256FileSync: 0,
 };
 // Includes the instrumentation wrapper around open; metadata checks add no promises.
 const promiseBudgets = { "root.readBytes": 51, readLocalFileSafely: 47, "root.open": 35, "readLocalFileSafely bounded": 46 };
@@ -152,6 +158,8 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         "root.create": () => safe.create(`created-${createSequence++}`, "x", { durable: false }),
         createFileSync: async () => createFileSync(path.join(directory, `exclusive-${createSequence++}`)).close(),
         "root.exists": () => safe.exists("r.txt"),
+        sha256File: () => sha256File(path.join(directory, "r.txt")),
+        sha256FileSync: async () => sha256FileSync(path.join(directory, "r.txt")),
       };
       for (const name of Object.keys(budgets) as Array<keyof typeof budgets>) {
         await operations[name]();
@@ -185,6 +193,13 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           expect.soft(counts.get("s.statSync"), breakdown).toBe(1);
           expect.soft(counts.get(process.platform === "linux" ? "s.readlinkSync" : "s.realpathSync.native"), breakdown).toBe(1);
           if (process.platform === "linux") expect.soft(counts.get("s.realpathSync.native"), breakdown).toBeUndefined();
+        }
+        if (name === "sha256File" || name === "sha256FileSync") {
+          expect.soft(total, breakdown).toBe(8);
+          expect.soft(asyncTotal, breakdown).toBe(name === "sha256File" ? 4 : 0);
+          expect.soft(counts.get("s.lstatSync"), breakdown).toBe(2);
+          expect.soft(counts.get("s.fstatSync"), breakdown).toBe(2);
+          expect.soft(counts.get(name === "sha256File" ? "h.read" : "s.readSync"), breakdown).toBe(2);
         }
       }
     } finally {
@@ -478,4 +493,30 @@ it("bounds flat-walk promises without adding filesystem observations", async () 
     expect(counts.map(count => count.readdir)).toEqual([1, 1]);
     expect(counts[1]!.asyncFs).toBe(counts[0]!.asyncFs);
   } finally { configureFsSafeNative({ mode: "auto" }); }
+});
+
+it.skipIf(Boolean(process.versions.bun))("keeps async hash admission free of metadata promise adapters", async () => {
+  const directory = await tempRoot("fs-safe-hash-promises-");
+  const file = path.join(directory, "input");
+  await fs.writeFile(file, "hash budget");
+  // Coverage and test-runner activity create unrelated promises in this process.
+  const resources = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+    import { createHook } from "node:async_hooks";
+    import { sha256File } from "./dist/file-hash.js";
+    import { configureFsSafeNative } from "./dist/config.js";
+    configureFsSafeNative({ mode: "off" });
+    await sha256File(process.argv[1]);
+    const resources = {};
+    const hook = createHook({
+      init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; },
+    });
+    hook.enable();
+    await sha256File(process.argv[1]);
+    hook.disable();
+    console.log(JSON.stringify(resources));
+  `, file], { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" })) as Record<string, number>;
+  // Previously 47: all three exact metadata observations now stay synchronous.
+  expect(resources.PROMISE).toBeLessThanOrEqual(35);
+  expect(resources.FSREQPROMISE).toBe(3);
+  expect(resources.FILEHANDLECLOSEREQ).toBe(1);
 });
