@@ -343,6 +343,11 @@ including fresh policy, identity and post-removal checks; recursive traversal
 retains its directory, mount, budget and cancellation checks. Neither optimization
 changes the descriptor-relative mutation or atomic no-replace mechanism.
 
+Writable opens attempt the existing-file handle path before creating parents.
+In `require`, missing files and parents still use native confined creation;
+existing files keep their guarded Node handle path, identity fences and hardlink
+checks. Required creation capabilities are checked even when the file exists.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [PowerShell fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation
