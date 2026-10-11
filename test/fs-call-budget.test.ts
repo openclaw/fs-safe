@@ -117,7 +117,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
 
 // Copy admission has independent native/fallback paths and an operation-local
 // directory cache. Pin cold single-copy and warm batch costs separately.
-describe.skipIf(process.platform === "win32")("synchronous copy admission budgets", () => {
+describe("synchronous copy admission budgets", () => {
   it("keeps fresh directory checks within the fallback budget", async () => {
     const { copyRootFileSync, createRootFileCopyBatchSync } = await import("../src/advanced.js");
     const directory = fsSync.realpathSync(await tempRoot("fs-safe-copy-budget-"));
@@ -158,8 +158,12 @@ describe.skipIf(process.platform === "win32")("synchronous copy admission budget
         copied.close();
         const detail = `${nested ? "nested" : "direct"} ${batched ? "batch" : "single"}: ${JSON.stringify([...counts])}`;
         const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
-        expect.soft(total, detail).toBe(nested ? (batched ? 123 : 150) : (batched ? 102 : 123));
-        expect.soft(counts.get("s.lstatSync"), detail).toBe(nested ? (batched ? 61 : 75) : (batched ? 50 : 60));
+        // Windows exclusive creation adds two leaf checks and one canonical check.
+        const windows = process.platform === "win32";
+        const totalBudget = nested ? (batched ? 123 : 150) : (batched ? 102 : 123);
+        const lstatBudget = nested ? (batched ? 61 : 75) : (batched ? 50 : 60);
+        expect.soft(total, detail).toBe(totalBudget + (windows ? 3 : 0));
+        expect.soft(counts.get("s.lstatSync"), detail).toBe(lstatBudget + (windows ? 2 : 0));
         expect.soft([...counts].filter(([key]) => key.startsWith("p.")), detail).toEqual([]);
       }
     } finally {
