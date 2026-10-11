@@ -171,7 +171,10 @@ Without `maxEntries`, sorted walks reuse a full directory metadata snapshot
 from the `Root.list()` owner. This preserves the existing fast complete-scan
 behavior and its snapshot semantics: changes made after a directory is listed
 do not alter its already-captured entries. Supply an entry budget or use
-filesystem order when metadata work must remain incremental. Sorted entries
+filesystem order when metadata work must remain incremental. Complete snapshots
+are consumed directly between public iterator yields, without per-entry listing
+promises. Directory admission, cancellation, and awaited-filter identity fences
+remain in place. Sorted entries
 describe the observations captured in their directory snapshot or batch.
 
 Use `order: "filesystem"` when a wide directory must not be fully enumerated:
