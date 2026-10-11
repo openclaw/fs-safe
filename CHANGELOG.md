@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks.
+- Windows portable permission and ACL inspection avoids PowerShell startup (about 8× faster in a Windows x64 probe), preserving injected executors and .NET ACL semantics; requires .NET Framework 4.6.2+.
 
 ## 0.26.1 - 2026-10-11
 

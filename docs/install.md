@@ -158,15 +158,17 @@ without it. See [Linux capability behavior and limits](native.md#linux-without-o
 
 ### Windows security fallback
 
-Windows raw owner/DACL inspection, private-directory creation, and secure-file
+Windows pathname permission inspection, raw owner/DACL inspection, private-directory creation, and secure-file
 reads work without the addon in `auto` or `off` mode using the packaged
 `windows-security-helper.exe`. This prebuilt AnyCPU console application targets
-.NET Framework 4.0 (CLR v4.0.30319), the runtime already required by Windows
-PowerShell 5.1. It runs as native x64 on x64 Windows and native ARM64 on Windows
+.NET Framework 4.6.2 or newer (CLR v4.0.30319), with the modern path handling
+used by Windows PowerShell 5.1. It runs as native x64 on x64 Windows and native ARM64 on Windows
 11 ARM with .NET Framework 4.8.1, including when the calling Node is x64.
 No compiler, .NET SDK, or PowerShell is needed by this fallback at runtime.
 
-Each check starts a separate helper process. Paths and expected identities stay
+Each check starts a separate helper process. The compatibility owner/ACL query
+passes `["owner", targetPath]` as arguments and preserves .NET's named security
+lookup and ACL normalization. Other paths and expected identities stay
 in environment variables, and descriptor checks inherit the actual borrowed
 handle through stdin. No security facts are cached or checks combined. The
 fallback preserves private DACLs at creation and inspects the same open handle

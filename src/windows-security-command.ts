@@ -5,6 +5,7 @@ import type { NativeWindowsDescriptorSecurityFacts, NativeWindowsSecurityFacts }
 import type { FsSafeNativeMode } from "./native-config.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, PermissionCommandError } from "./permission-exec.js";
 import { parseWindowsOwnerAndDaclFacts, parseWindowsSecurityCommandFacts, unverified, type DescriptorFacts } from "./windows-security-facts.js";
+import { windowsSecurityHelperPath, explainWindowsSecurityHelperFailure } from "./windows-security-helper.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const TERMINATION_GRACE_MS = 1_000;
@@ -48,7 +49,7 @@ function command(operation: CommandOperation, params: CommandParams) {
     (!Number.isInteger(params.expectedLinks) || params.expectedLinks < 1 || params.expectedLinks > 0xffff_ffff)) {
     throw new TypeError("Windows security operation requires a positive uint32 link count");
   }
-  const helper = fileURLToPath(new URL("./windows-security-helper.exe", import.meta.url));
+  const helper = windowsSecurityHelperPath();
   return {
     file: helper,
     args: [operation],
@@ -115,7 +116,7 @@ function parseReplyValue(stdout: string, operation: CommandOperation): unknown {
 
 function explainHelperFailure(error: Error, file: string): void {
   if (file.endsWith("windows-security-helper.exe")) {
-    error.message += "; Windows security helper could not complete; rebuild with pnpm build:windows-helper or reinstall @openclaw/fs-safe";
+    explainWindowsSecurityHelperFailure(error);
   }
 }
 

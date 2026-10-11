@@ -166,15 +166,19 @@ describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspe
     expect(exec).toHaveBeenCalledOnce();
   });
 
-  it.each(["env", "exec"] as const)("honors an explicit %s injection without reading native facts", async option => {
+  it("honors an explicit executor without reading native facts", async () => {
     const read = install(facts());
-    const options = option === "env" ? { env: { SystemRoot: "D:\\Windows" } } : { exec };
-    await expect(inspectWindowsAcl(target, options)).resolves.toMatchObject({ ok: true });
+    await expect(inspectWindowsAcl(target, { exec })).resolves.toMatchObject({ ok: true });
     expect(read).not.toHaveBeenCalled();
     expect(exec).toHaveBeenCalledOnce();
-    if (option === "env") {
-      expect(exec.mock.calls[0]?.[0]).toBe("D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    }
+    expect(exec).toHaveBeenCalledWith(expect.stringMatching(/windows-security-helper\.exe$/), ["owner", target]);
+  });
+
+  it("does not let an explicit environment disable native facts", async () => {
+    const read = install(facts());
+    await expect(inspectWindowsAcl(target, { env: { SystemRoot: "D:\\Windows" } })).resolves.toMatchObject({ ok: true });
+    expect(read).toHaveBeenCalledOnce();
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it("reports explicit principal translation failure before either reader runs", async () => {
