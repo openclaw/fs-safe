@@ -31,10 +31,13 @@ describe.skipIf(process.platform !== "linux")("Root directory filename decoding"
 
 it.each(["filesystem", "sorted"] as const)("preserves valid Unicode names and metadata (%s)", async order => {
   const directory = await tempRoot("fs-safe-directory-unicode-");
-  const names = ["\ufffd", "caf\u00e9", "日本語", "~", "internal space"];
+  const names = ["\ufffd", "caf\u00e9", "日本語", "~", "internal space", "\ufeffBOM", "😀", "\ue000"];
   for (const [index, name] of names.entries()) await fs.writeFile(path.join(directory, name), "x".repeat(index + 1));
   const scoped = await root(directory);
   expect(await scoped.list("")).toEqual([...names].sort());
+  const listed = await scoped.list("", { withFileTypes: true });
+  expect(listed.map(entry => entry.name)).toEqual([...names].sort());
+  for (const entry of listed) expect(entry.size).toBe(names.indexOf(entry.name) + 1);
   const entries = await Array.fromAsync(scoped.entries("", { order, maxEntries: 10 }));
   expect(entries.map(entry => entry.name).sort()).toEqual([...names].sort());
   for (const entry of entries) expect(entry.size).toBe(names.indexOf(entry.name) + 1);
