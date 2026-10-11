@@ -6,6 +6,7 @@ export {
   syncDirectoryBestEffortSync,
   syncDirectorySync,
   type DirectoryReceipt,
+  type ExactDirectoryReceipt,
   type DirectorySyncOutcome,
   type DurableDirectoryReceipt,
   type EnsureDurableDirectoryOptions,
@@ -32,3 +33,4 @@ export {
   type Sha256FileOptions,
   type Sha256FileResult,
 } from "./file-hash.js";
+export type { ExactFileIdentity, ExactIdentityReceipt } from "./exact-identity.js";

@@ -49,7 +49,7 @@ export async function worker(spec, dir, sync) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === 'object') {
       if ('isFile' in v && 'mode' in v) return { ...(v.name ? {name: v.name} : {}), ...metadata(v) };
-      return Object.fromEntries(Object.entries(v).filter(([key]) => !['dirent', 'handle'].includes(key)).map(([k,x]) => [
+      return Object.fromEntries(Object.entries(v).filter(([key]) => !['dirent', 'handle', 'exactIdentity'].includes(key)).map(([k,x]) => [
         k, typeof x === "string" && ["path", "realPath", "relativePath"].includes(k) ? normalizePath(x)
           : k === 'size' && v.kind && v.kind !== 'file' ? 0 : normalize(x),
       ]));

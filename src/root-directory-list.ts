@@ -1,3 +1,4 @@
+import { exactFileIdentity, numberStatScalar } from "./exact-identity.js";
 import { isUtf8 } from "node:buffer";
 import type { BigIntStats, Dir, Stats } from "node:fs";
 import fsSync from "node:fs";
@@ -73,13 +74,16 @@ export function pathStatFromStats(stat: Stats | BigIntStats, name?: string): Pat
       ? Number(stat.mtimeNs) / 1_000_000
       : stat.mtime.getTime()
     : stat.mtimeMs;
-  const dev = Number(stat.dev), gid = Number(stat.gid), ino = Number(stat.ino);
+  const exactIdentity = exactFileIdentity(stat);
+  const dev = numberStatScalar(stat.dev), gid = numberStatScalar(stat.gid), ino = numberStatScalar(stat.ino);
   const isDirectory = stat.isDirectory(), isFile = stat.isFile(), isSymbolicLink = stat.isSymbolicLink();
-  const mode = Number(stat.mode), nlink = Number(stat.nlink), size = Number(stat.size), uid = Number(stat.uid);
+  const mode = numberStatScalar(stat.mode), nlink = numberStatScalar(stat.nlink), size = numberStatScalar(stat.size), uid = numberStatScalar(stat.uid);
   // Construct named metadata directly, preserving property order without a spread copy.
-  return name === undefined
+  const result = name === undefined
     ? { dev, gid, ino, isDirectory, isFile, isSymbolicLink, mode, mtimeMs, nlink, size, uid }
     : { name, dev, gid, ino, isDirectory, isFile, isSymbolicLink, mode, mtimeMs, nlink, size, uid };
+  // PathStat's established JSON shape stays numeric. Retain this object or copy the companion explicitly.
+  return Object.defineProperty(result, "exactIdentity", { value: exactIdentity });
 }
 
 export type RootDirectoryObservationGuard = AsyncDirectoryGuard<BigIntStats>;
@@ -281,7 +285,7 @@ async function listGuardedDirectoryPath(
     if (withFileTypes) {
       // readdir supplies literal child names beneath the already-canonical directory.
       const prefix = guard.realPath.endsWith(path.sep) ? guard.realPath : `${guard.realPath}${path.sep}`;
-      entries = names.map(name => pathStatFromStats(fsSync.lstatSync(`${prefix}${name}`), name));
+      entries = names.map(name => pathStatFromStats(fsSync.lstatSync(`${prefix}${name}`, { bigint: true }), name));
     } else {
       entries = names;
     }
@@ -394,7 +398,7 @@ export async function openRootDirectoryListing(
     preparedIndex = 0;
     while (true) {
       try {
-        const entry = pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name)), name);
+        const entry = pathStatFromStats(fsSync.lstatSync(path.join(guard.realPath, name), { bigint: true }), name);
         prepared.push(entry);
         // No later sibling can be observed before a possible recursive descent.
         if (entry.isDirectory || entry.isSymbolicLink || prepared.length >= (options.metadataBatchSize ?? METADATA_BATCH_SIZE)) break;
@@ -458,7 +462,7 @@ export async function openRootDirectoryListing(
           let observed: { stat: Stats | BigIntStats; identity?: ExactStatIdentity };
           try {
             observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint
-              ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : { stat: fsSync.lstatSync(pathname) };
+              ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : { stat: fsSync.lstatSync(pathname, { bigint: true }) };
           } catch (error) {
             await assertCurrent();
             if (options.skipVanished && isNotFoundPathError(error)) continue;

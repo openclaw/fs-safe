@@ -331,3 +331,17 @@ retaining lexical traversal and the before/after root and parent identity checks
 Windows namespace spellings and root aliases retain the ordinary resolver, including its handling
 of dot segments in symlink targets. No caller changes are needed for the
 single-file improvement.
+
+## Exact identity receipts
+
+`copyRootFileSync()` returns exact bigint `identity` (destination) and
+`sourceIdentity` values. Pass `sourceIdentity` to `expectedSourceIdentity` to
+bind another copy to that source, or the destination `identity` when copying the
+new file. `Root.copyIn()` reports exact bigint `dev`/`ino` through
+`onDestinationPublished`; retain that callback receipt when reopening the output.
+`PublishedWriteIdentity` callbacks already use the same exact shape.
+
+`readCloneFileMetadata()` now also supplies `exactIdentity`, derived from the
+same native metadata record as its legacy `dev` and `ino` fields. These remain
+point-in-time observations. Exact identity does not grant ownership or protect
+against later replacement; use the operation's identity-checking API.

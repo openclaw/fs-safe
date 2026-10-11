@@ -79,7 +79,7 @@ itPosix.each(["reject", "follow-parents-within-root", "follow-within-root"] as c
     recording = false;
     try {
       expect(phases).toEqual([
-        "path:nofollow", "open", "descriptor:numeric", "descriptor:bigint", "final",
+        "path:nofollow", "open", "descriptor:bigint", "final",
         "root", symlinks === "follow-within-root" ? "path:follow" : "path:nofollow",
         "realpath", "path:nofollow", "canonical:admitted", "root",
       ]);

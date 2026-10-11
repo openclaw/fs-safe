@@ -1,9 +1,24 @@
+import type { ExactIdentityReceipt } from "./exact-identity.js";
+export type { ExactFileIdentity, ExactIdentityReceipt } from "./exact-identity.js";
 import { createHash } from "node:crypto";
 
 export type FileIdentityStat = {
   dev: number | bigint;
   ino: number | bigint;
 };
+
+export type FileIdentityInput = FileIdentityStat | ExactIdentityReceipt;
+
+/** Only the explicit companion is unambiguous; nested source/target receipts are not inferred. */
+export function identityFromReceipt(value: FileIdentityInput): FileIdentityStat {
+  if ("exactIdentity" in value) {
+    const exact = value.exactIdentity;
+    const dev = exact?.dev, ino = exact?.ino;
+    // A malformed explicit companion cannot fall back to a lossy legacy view.
+    return typeof dev === "bigint" && typeof ino === "bigint" ? { dev, ino } : { dev: NaN, ino: NaN };
+  }
+  return value;
+}
 
 export function hasSafeFileIdentity(identity: FileIdentityStat): boolean {
   return isExactStatValue(identity.dev) && isExactStatValue(identity.ino);
@@ -39,10 +54,12 @@ export function sha256Hex(data: string | Buffer, encoding?: BufferEncoding): str
 }
 
 export function sameFileIdentity(
-  left: FileIdentityStat,
-  right: FileIdentityStat,
+  left: FileIdentityInput,
+  right: FileIdentityInput,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
+  left = identityFromReceipt(left);
+  right = identityFromReceipt(right);
   const leftDev = left.dev;
   const leftIno = left.ino;
   const rightDev = right.dev;

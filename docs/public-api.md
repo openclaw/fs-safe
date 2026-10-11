@@ -187,3 +187,13 @@ budgets, `persistent`, and lifecycle.
 Every runtime and type name in `test/public-api.json` must appear somewhere in
 `README.md` or `docs/`. Documentation examples are also checked so a named
 import cannot silently move to another package subpath.
+
+## Exact receipt types
+
+`ExactFileIdentity` is the immutable bigint `dev`/`ino` pair returned alongside
+legacy numeric metadata. `ExactIdentityReceipt` describes an object with that
+`exactIdentity` companion. `FileIdentityInput` accepts either a traditional
+`FileIdentityStat` pair or an explicit exact-companion receipt.
+`ExactDirectoryReceipt` guarantees the exact companion on a returned directory
+receipt while the caller-constructible `DirectoryReceipt` remains compatible.
+See [the identity round-trip guidance](security-model.md#exact-receipts-and-legacy-numeric-metadata).

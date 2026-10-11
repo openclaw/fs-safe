@@ -203,3 +203,15 @@ they do not gain this cleanup authority.
 - [Advanced composition](advanced.md)
 - [Native architecture](native.md)
 - [Security model](security-model.md)
+
+## Round-tripping identities
+
+`StagedFileReceipt.identity` and `directory.identity` already contain exact
+bigint `dev`/`ino` values. Retain those values directly; do not convert them to
+Number. `PublishedFileReceipt.staged.identity` is the same staged file's identity,
+not a new pathname observation. File metadata such as size and timestamps is a
+preparation-time snapshot and can change during writing. Publication callbacks
+using `PublishedWriteIdentity` likewise already return exact bigint identities.
+
+For the standalone `publishFileExclusive()` API, retain its `exactIdentity`
+companion instead of its legacy `identity: Stats`; see [directory durability](durability.md#exclusive-file-publication).

@@ -1,3 +1,4 @@
+import type { ExactFileIdentity } from "./exact-identity.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { normalizeMaxBytes } from "./byte-budget.js";
@@ -10,6 +11,7 @@ export type ReadResult = {
   containment: ContainmentGuarantee;
   realPath: string;
   stat: Stats;
+  exactIdentity: ExactFileIdentity;
 };
 
 type OpenedFile = Omit<ReadResult & {
@@ -36,5 +38,6 @@ export async function readOpenedFileSafely(params: {
     containment: params.opened.containment,
     realPath: params.opened.realPath,
     stat: params.opened.stat,
+    exactIdentity: params.opened.exactIdentity,
   };
 }

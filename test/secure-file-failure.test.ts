@@ -172,7 +172,7 @@ describe("secure file inspection failures", () => {
     const root = await tempRoot("fs-safe-secure-descriptor-type-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    const directoryStat = await fs.stat(root);
+    const directoryStat = await fs.stat(root, { bigint: true });
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
@@ -203,10 +203,10 @@ describe("secure file inspection failures", () => {
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      const actual = await handle.stat();
+      const actual = await handle.stat({ bigint: true });
       vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce({
         ...actual,
-        uid: (process.geteuid?.() ?? actual.uid) + 1,
+        uid: BigInt(process.geteuid?.() ?? actual.uid) + 1n,
         isDirectory: () => false,
         isFile: () => true,
         isSymbolicLink: () => false,
@@ -225,7 +225,7 @@ describe("secure file inspection failures", () => {
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
       read = vi.spyOn(handle, "readFile");
-      const actual = await handle.stat();
+      const actual = await handle.stat({ bigint: true });
       vi.spyOn(fsSync, "fstatSync").mockReturnValueOnce({
         ...actual,
         uid: undefined,
