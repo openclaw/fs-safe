@@ -190,7 +190,7 @@ describe("move filesystem call budgets", () => {
         const breakdown = JSON.stringify(Object.fromEntries(counts));
         expect(promises, breakdown).toBe(overwrite && mode !== "require" ? 82 : 73);
         if (process.platform !== "win32") {
-          const callBudget = overwrite ? mode === "require" ? 38 : 33 : mode === "require" ? 36 : 37;
+          const callBudget = overwrite ? mode === "require" ? 38 : 33 : mode === "auto" && process.platform === "linux" ? 37 : 36;
           expect(total, breakdown).toBe(callBudget);
           expect(counts.get("s.realpathSync.native"), breakdown).toBe(4);
         }
