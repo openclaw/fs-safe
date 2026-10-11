@@ -73,7 +73,13 @@ if (process.argv.includes("--child")) {
           : process.env.FS_SAFE_TEST_NO_OPENAT2 === "1"
             ? { statx: 8, openat: 3, fstat: 11, readlink: 6, newfstatat: 6, mkdirat: 1, close: 3 }
             : { statx: 8, openat: 1, fstat: 6, readlink: 6, newfstatat: 3, mkdirat: 1, openat2: 1, close: 2 };
-        assert.deepEqual(row.syscalls, expected, `${row.mode} mkdir filesystem syscalls`);
+        // Linux arm64 exposes the *at variants for these libc pathname calls.
+        const architectureExpected = process.arch === "arm64"
+          ? Object.fromEntries(Object.entries(expected).map(([name, count]) => [
+            name === "mkdir" ? "mkdirat" : name === "readlink" ? "readlinkat" : name, count,
+          ]))
+          : expected;
+        assert.deepEqual(row.syscalls, architectureExpected, `${row.mode} mkdir filesystem syscalls`);
       }
       console.log(JSON.stringify(row));
     }
