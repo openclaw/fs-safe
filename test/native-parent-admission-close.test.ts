@@ -78,9 +78,11 @@ it.each(["win32", "linux"] as const)("preserves %s parent-admission disposal sem
 
 let native: NativeBinding | undefined;
 try { native = __loadBundledNativeForTest(); } catch { /* Optional outside native CI. */ }
-it.runIf(process.platform !== "win32" && native?.observeDirectoryFd)(
-  "ordinary native parent admission permits sibling churn without changing directory identity",
-  async () => {
+it.runIf(process.platform !== "win32" && native?.observeDirectoryFd).each([
+  "native-publication", "native-directory",
+] as const)(
+  "%s keeps its sibling-churn contract without changing directory identity",
+  async (observation) => {
     const directory = await tempRoot("fs-safe-parent-sibling-churn-");
     const root = await fs.open(directory, fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0));
     const rootStat = await root.stat({ bigint: true });
@@ -106,9 +108,15 @@ it.runIf(process.platform !== "win32" && native?.observeDirectoryFd)(
       return stat;
     }) as typeof fsSync.fstatSync);
     try {
-      const admitted = await openNativeParentAdmission(binding, {
+      const pending = openNativeParentAdmission(binding, {
         root, rootPath: directory, exactRoot: true, operation: "write",
-      }, "", "native-directory");
+      }, "", observation);
+      if (observation === "native-directory") {
+        await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
+        expect(changed).toBe(true);
+        return;
+      }
+      const admitted = await pending;
       try {
         expect(changed).toBe(true);
         expect(admitted.guard.stat.dev).toBe(rootStat.dev);

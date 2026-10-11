@@ -9,7 +9,7 @@ import { hasSafeFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { realpathSync } from "./realpath.js";
-import { describeNativeStagedDirectory, describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
+import { describeNativeStagedDirectory, describePolicyStagedDirectory, describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
@@ -172,7 +172,7 @@ export async function openNativeParentAdmission(
   binding: NativeBinding,
   rootAdmission: Omit<NativeRootAdmission, "root"> & { root: Pick<FileHandle, "fd"> },
   relativeParentPath: string,
-  observation?: "native-directory",
+  observation?: "native-directory" | "native-publication",
 ): Promise<NativeParentAdmission> {
   assertParentAdmissionAvailable(binding);
   const closeFd = captureNativeFdClose(binding);
@@ -191,7 +191,8 @@ export async function openNativeParentAdmission(
     const parentInput = relativeParentPath
       ? path.join(rootAdmission.rootPath, ...relativeParentPath.split("/"))
       : rootAdmission.rootPath;
-    if (observation === "native-directory" && process.platform === "win32" && rootAdmission.exactRoot &&
+    if ((observation === "native-directory" || observation === "native-publication") &&
+        process.platform === "win32" && rootAdmission.exactRoot &&
         typeof binding.observeDirectory === "function") {
       const stat = inspectFileIdentitySync(() => fsSync.fstatSync(parentFd, { bigint: true }));
       let observed;
@@ -218,8 +219,18 @@ export async function openNativeParentAdmission(
       "filesystem",
       "native parent uses a Windows filesystem namespace alias",
     );
-    if (observation === "native-directory" && process.platform !== "win32" && rootAdmission.exactRoot) {
+    if (observation === "native-publication" && process.platform !== "win32" && rootAdmission.exactRoot) {
       const captured = describeNativeStagedDirectory(binding, parentFd, parentPath);
+      return {
+        fd: parentFd,
+        close: () => closeFd(parentFd),
+        guard: { dir: parentPath, realPath: parentPath, stat: captured.stat },
+        stagedDirectory: captured.directory,
+      };
+    }
+    if (observation === "native-directory" && process.platform !== "win32" && rootAdmission.exactRoot) {
+      const captured = describePolicyStagedDirectory(parentFd, parentPath, binding);
+      captured.disposeObservation?.();
       return {
         fd: parentFd,
         close: () => closeFd(parentFd),
