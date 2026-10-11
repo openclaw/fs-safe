@@ -80,7 +80,7 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
-      const promises = { mkdir: [40, 19], remove: [32, 27], move: [90, 81], append: [68, 62], openWritable: [38, 32] }[operation];
+      const promises = { mkdir: [40, 19], remove: [32, 27], move: [82, 73], append: [68, 62], openWritable: [38, 32] }[operation];
       const expectedResources = row.mode === "require"
         ? { PROMISE: promises[1] }
         : { PROMISE: promises[0], FSREQPROMISE: 1 };
@@ -100,8 +100,8 @@ if (process.argv.includes("--child")) {
           ? { statx: 6, readlink: 6, openat: 1, newfstatat: 2, unlinkat: 1, close: 1 }
           : { statx: 6, readlink: 6, unlink: 1 };
         if (operation === "move") expected = row.mode === "require"
-          ? { statx: 33, readlink: 8, openat: 1, newfstatat: 1, renameat: 1, close: 1 }
-          : { statx: 31, readlink: 14, rename: 1 };
+          ? { statx: 31, readlink: 6, openat: 1, newfstatat: 1, renameat: 1, close: 1 }
+          : { statx: 28, readlink: 8, rename: 1 };
         if (operation === "append") expected = row.mode === "require"
           ? { statx: 13, readlink: 6, openat: 1, write: 1, close: 1 }
           : { statx: 14, readlink: 8, openat: 1, write: 1, close: 1 };
