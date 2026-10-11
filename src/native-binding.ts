@@ -326,7 +326,7 @@ export interface NativeBinding {
     ...args: [...paths: NativeTwoPathArgs, expectedSourceDev: bigint, expectedSourceIno: bigint]
   ): void;
   renameReplace?(...args: NativeTwoPathArgs): void;
-  sha256File?(fd: number, maxBytes?: number, signal?: AbortSignal): Promise<NativeFileHash>;
+  sha256File?(fd: number, maxBytes?: number, signal?: AbortSignal, ownsPosition?: boolean): Promise<NativeFileHash>;
 }
 
 export type CapableNativeBinding<K extends keyof NativeBinding> = NativeBinding & Required<Pick<NativeBinding, K>>;

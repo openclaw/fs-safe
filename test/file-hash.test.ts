@@ -173,6 +173,23 @@ describe("sha256File", () => {
     expect(nativeHash).toHaveBeenCalledOnce();
   });
 
+  it("permits native cursor changes only for a privately owned pathname handle", async () => {
+    const directory = await tempRoot("fs-safe-hash-owned-");
+    const file = path.join(directory, "input");
+    await fs.writeFile(file, "abc");
+    const nativeHash = vi.fn(async (..._args: unknown[]) => ({ bytes: 3, digest: "digest" }));
+    __setNativeLoaderForTest(() => ({ sha256File: nativeHash, closeOwnedFd: vi.fn() }) as unknown as NativeBinding);
+    const handle = await fs.open(file, "r");
+    try {
+      await sha256File(handle);
+      await sha256File(file);
+      expect(nativeHash.mock.calls.map((call) => call[3])).toEqual([false, true]);
+      expect(handle.fd).toBeGreaterThanOrEqual(0);
+    } finally {
+      await handle.close();
+    }
+  });
+
   itPosix("rejects symbolic-link path inputs", async () => {
     const root = await tempRoot("fs-safe-hash-");
     const filePath = path.join(root, "payload.bin");

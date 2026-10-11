@@ -6,7 +6,7 @@ import { normalizeMaxBytes } from "./byte-budget.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, selectNativeBinding, type NativeBinding } from "./native.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 export type Sha256FileInput = string | FileHandle;
@@ -61,6 +61,7 @@ export async function hashFileHandle(
   handle: FileHandle,
   native: NativeBinding | undefined = getNativeBinding(),
   { maxBytes = Infinity, signal }: Sha256FileOptions = {},
+  ownsPosition = false,
 ): Promise<Sha256FileResult> {
   signal?.throwIfAborted();
   const stat = fsSync.fstatSync(handle.fd);
@@ -79,6 +80,7 @@ export async function hashFileHandle(
         handle.fd,
         Number.isFinite(maxBytes) ? maxBytes : undefined,
         nativeSignal,
+        ownsPosition,
       );
       signal?.throwIfAborted();
       return result;
@@ -157,7 +159,7 @@ async function hashPath(
   options: Sha256FileOptions,
 ): Promise<Sha256FileResult> {
   assertNoWindowsPathAlias(filePath, "filesystem", "SHA-256 path uses a Windows filesystem namespace alias");
-  const before = await inspectFileIdentity(() => hashPathIdentity(filePath));
+  const before = inspectFileIdentitySync(() => hashPathIdentity(filePath));
 
   let handle: FileHandle;
   try {
@@ -170,9 +172,10 @@ async function hashPath(
   let completed = false;
   try {
     options.signal?.throwIfAborted();
-    const opened = await inspectFileIdentity(() => hashDescriptorIdentity(handle.fd), before);
-    await inspectFileIdentity(() => hashPathIdentity(filePath, true), opened);
-    const result = await hashFileHandle(handle, getNativeBinding(), options);
+    const opened = inspectFileIdentitySync(() => hashDescriptorIdentity(handle.fd), before);
+    inspectFileIdentitySync(() => hashPathIdentity(filePath, true), opened);
+    // Only this overload owns the handle and its otherwise unobservable cursor.
+    const result = await hashFileHandle(handle, getNativeBinding(), options, true);
     completed = true;
     return result;
   } finally {
