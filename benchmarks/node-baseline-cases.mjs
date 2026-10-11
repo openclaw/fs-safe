@@ -116,6 +116,25 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
     await fsp.writeFile(p("private/state"), JSON.stringify(value));
   }, "No-op value update; Node read/parse/stringify/truncate versus process-serialized atomic JSON update without sidecar locking. Durability disabled.",
   { verify: () => verifyJson(JSON.parse(fs.readFileSync(p("private/state"), "utf8"))) });
+  for (const lock of [false, true]) {
+    for (const durable of [false, true]) {
+      if (!lock && !durable) continue;
+      const configuredStore = api.jsonStore({ filePath: p("private/state"), lock, durable });
+      const suffix = `${lock ? "-locked" : ""}${durable ? "-durable" : ""}`;
+      if (lock && !durable) {
+        add("json-store-read-locked", () => configuredStore.read(),
+          async () => JSON.parse(await fsp.readFile(p("private/state"), "utf8")),
+          "Read from a lock-configured store; reads do not acquire the mutation lock.", { verify: verifyJson });
+      }
+      add(`json-store-update${suffix}`, () => configuredStore.update((value) => value), async () => {
+        const value = JSON.parse(await fsp.readFile(p("private/state"), "utf8"));
+        const handle = await fsp.open(p("private/state"), "w", 0o600);
+        try { await handle.writeFile(JSON.stringify(value)); if (durable) await handle.sync(); }
+        finally { await handle.close(); }
+      }, `No-op value update; fs-safe adds serialized atomic publication${lock ? " and a sidecar lock" : ""}. ${durable ? "Durability enabled; Node syncs the file, fs-safe also syncs publication where supported." : "Durability disabled."}`,
+      { verify: () => verifyJson(JSON.parse(fs.readFileSync(p("private/state"), "utf8"))) });
+    }
+  }
   const lockOptions = { payload: () => ({ pid: process.pid }), timeoutMs: 1000 };
   for (const sync of [false, true]) {
     const suffix = sync ? "-sync" : "";

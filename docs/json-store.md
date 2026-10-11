@@ -92,6 +92,12 @@ including when a mutation is waiting behind another operation.
 
 The store does **not** validate the parsed value against `T` at runtime — the cast is unchecked. Wrap with a schema (zod/valibot) if the file might be hand-edited or written by another process you don't control.
 
+Private writes validate each distinct directory guard once within a synchronous
+metadata phase. A direct child shares its root and parent guard; nested parents
+retain their own checks. Every phase after asynchronous work observes the
+directories again, without caching admission across calls. File I/O and optional
+durability synchronization remain asynchronous.
+
 ## `read()`
 
 Returns the parsed contents, or `undefined` if the file does not exist. Invalid JSON throws (via [`readJsonIfExists`](json.md)).

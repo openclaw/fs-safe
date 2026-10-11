@@ -1,12 +1,14 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHook } from "node:async_hooks";
 import { describe, expect, it } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
 import { readLocalFileSafely, root } from "../src/root.js";
+import { jsonStore } from "../src/json-store.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 // Measured fallback calls on macOS; allow two calls for platform variation,
@@ -109,6 +111,82 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
       }
     } finally {
       counting = false;
+      for (const undo of restore.reverse()) undo();
+      configureFsSafeNative({ mode: "auto" });
+    }
+  });
+});
+
+describe.skipIf(process.platform === "win32")("JSON store filesystem call budgets", () => {
+  it("bounds private read and update observations without caching them", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-json-budget-");
+    await fs.mkdir(path.join(directory, "private"), { mode: 0o700 });
+    const filePath = path.join(directory, "private/state.json");
+    await fs.writeFile(filePath, "{\"count\":0}", { mode: 0o600 });
+    const store = jsonStore<{ count: number }>({ filePath, durable: false });
+    const locked = jsonStore<{ count: number }>({ filePath, durable: false, lock: true });
+    const handle = await fs.open(filePath, "r");
+    const prototype = Object.getPrototypeOf(handle);
+    await handle.close();
+    const counts = new Map<string, number>();
+    const restore: Array<() => void> = [];
+    let counting = false;
+    let promises = 0;
+    const hook = createHook({ init(_id, type) { if (counting && type === "PROMISE") promises++; } });
+    const wrap = (object: object, keys: string[], prefix: string) => {
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        if (!descriptor?.writable || typeof descriptor.value !== "function") continue;
+        const original = descriptor.value;
+        Object.defineProperty(object, key, {
+          ...descriptor,
+          value: Object.assign(function (this: unknown, ...args: unknown[]) {
+            if (counting) counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
+            const result = Reflect.apply(original, this, args);
+            if (prefix === "p." && key === "open") {
+              return result.then((opened: object) => { wrap(opened, ["close"], "h."); return opened; });
+            }
+            return result;
+          }, original),
+        });
+        restore.push(() => Object.defineProperty(object, key, descriptor));
+      }
+    };
+    try {
+      wrap(fs, Object.keys(fs), "p.");
+      wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
+      wrap(fsSync, Object.keys(fsSync).filter((key) => key.endsWith("Sync") && key !== "writeSync"), "s.");
+      wrap(prototype, Object.getOwnPropertyNames(prototype).filter((key) => key !== "constructor" && key !== "fd"), "h.");
+      hook.enable();
+      const operations = {
+        read: () => store.read(),
+        update: () => store.update((value) => ({ count: value!.count + 1 })),
+        locked: () => locked.update((value) => ({ count: value!.count + 1 })),
+      };
+      const limits = {
+        read: { total: 18, async: 3, promises: 86 },
+        update: { total: 68, async: 8, promises: 216 },
+        locked: { total: 192, async: 23, promises: 670 },
+      };
+      for (const name of Object.keys(operations) as Array<keyof typeof operations>) {
+        const run = operations[name];
+        await run();
+        counts.clear();
+        promises = 0;
+        counting = true;
+        try { await run(); } finally { counting = false; }
+        const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+        const asyncTotal = [...counts].reduce((sum, [key, count]) => sum + (key.startsWith("s.") ? 0 : count), 0);
+        const detail = `${name}: ${JSON.stringify({ total, asyncTotal, promises, calls: Object.fromEntries(counts) })}`;
+        if (process.env.FS_SAFE_BUDGET_TRACE) fsSync.writeSync(1, `${detail}\n`);
+        expect.soft(total, detail).toBeLessThanOrEqual(limits[name].total);
+        expect.soft(asyncTotal, detail).toBe(limits[name].async);
+        expect.soft(promises, detail).toBeLessThanOrEqual(limits[name].promises);
+      }
+    } finally {
+      counting = false;
+      hook.disable();
       for (const undo of restore.reverse()) undo();
       configureFsSafeNative({ mode: "auto" });
     }
