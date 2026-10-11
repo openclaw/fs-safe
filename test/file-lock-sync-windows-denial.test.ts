@@ -185,7 +185,8 @@ describe("synchronous Windows lock-file open denials", () => {
       for (const code of ["EPERM", "ENOENT"]) {
         const { target, lockPath, options } = await fixture();
         if (["parser", "read", "fstat"].includes(stage)) fs.writeFileSync(lockPath, "{}");
-        const error = failure(lockPath, code);
+        const acquireTarget = stage === "parent" ? path.join(target, "missing", "state") : target;
+        const error = failure(`${acquireTarget}.lock`, code);
         const close = vi.spyOn(fs, "closeSync");
         const fail = vi.fn((): never => { throw error; });
         const payload = stage === "payload" ? fail : vi.fn(options.payload);
@@ -194,7 +195,7 @@ describe("synchronous Windows lock-file open denials", () => {
         if (stage === "parent") vi.spyOn(fs, "mkdirSync").mockImplementationOnce(fail);
         if (stage === "write") vi.spyOn(fs, "writeFileSync").mockImplementationOnce(fail);
         if (stage === "fsync") vi.spyOn(fs, "fsyncSync").mockImplementationOnce(fail);
-        expect(() => acquireFileLockSync(target, {
+        expect(() => acquireFileLockSync(acquireTarget, {
           ...options, payload, ...(stage === "parser" ? { parsePayload: fail } : {}),
         })).toThrow(error);
         expect(fail).toHaveBeenCalledTimes(1);
