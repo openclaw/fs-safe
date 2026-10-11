@@ -52,6 +52,45 @@ Bun macOS/Linux canonicalization uses the addon under its
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+## Runtime health checks
+
+`getFsSafeNativeStatus(options?: { probe?: boolean }): Promise<FsSafeNativeStatus>` is
+exported from `@openclaw/fs-safe/config` and the main entry point. It reports the
+loader state without parsing warnings, on every supported runtime. A doctor can
+explicitly probe without changing the configured mode or mutating the filesystem:
+
+```ts
+import { getFsSafeNativeStatus } from "@openclaw/fs-safe/config";
+
+const status = await getFsSafeNativeStatus({ probe: true });
+console.log(status.loaded ? "Native helper active" : `Native helper: ${status.reason}`);
+if (status.guidance) console.log(status.guidance);
+```
+
+| Fields | Meaning |
+|---|---|
+| `mode`, `modeSource` | Effective policy and its source; only environment variable names are exposed. |
+| `reason`, `loaded` | `not-probed`, `loaded`, `disabled`, `unsupported-target`, `package-missing`, `load-failed`, or `capability-missing`; `loaded` is true only for `loaded`. |
+| `target` | Runtime platform/architecture/libc, including unsupported targets. |
+| `packageName`, `packageVersion` | Expected platform package and exact pinned manifest version; absent for unsupported targets. |
+| `loadErrorCode` | Allowlisted code or `UNKNOWN`, only for `load-failed`. |
+| `guidance` | The same next-step text as fallback warnings; absent for `not-probed` and `loaded`. |
+
+Await the returned promise. With no options, this API only reads the cache and
+never loads the addon;
+`not-probed` means no load has been attempted. With `{ probe: true }`, it uses
+the existing lazy loader and cache. Mode `off` always reports `disabled` without
+attempting a load. Failures are reported without throwing, including in `require`
+mode. Core `capability-missing` does not expose internal function names, and a
+`loaded` result does not promise that every operation is available or kernel-atomic.
+Fields omit paths and raw loader errors.
+
+Each module instance has its own status, so probe real Workers separately when
+their health matters. After repairing an installation, start a fresh process or
+Worker: the cached failure is not retried by another probe or mode change.
+See the [full API reference](config.md#getfssafenativestatus-options) for exported
+types and field details.
+
 ## Troubleshooting fallback warnings
 
 Windows security and private-creation fallbacks emit `FS_SAFE_NATIVE_FALLBACK`

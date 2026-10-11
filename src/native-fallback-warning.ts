@@ -1,4 +1,6 @@
 import { getNativeFallbackDiagnostic, type NativeBinding } from "./native.js";
+import { getNativeModeSetting } from "./native-config.js";
+import { nativeGuidance } from "./native-guidance.js";
 
 const warnedFeatures = new Set<string>();
 
@@ -7,25 +9,18 @@ function fallbackReason(capabilities: (keyof NativeBinding)[]): string {
   const expected = diagnostic.packageName === undefined
     ? `No native package is published for ${diagnostic.target}.`
     : `Expected ${diagnostic.packageName}@${diagnostic.packageVersion}.`;
+  const guidance = nativeGuidance(diagnostic.reason, getNativeModeSetting().source);
   switch (diagnostic.reason) {
-    case "disabled": {
-      const enable = diagnostic.source === "programmatic configuration"
-        ? 'call configureFsSafeNative({ mode: "auto" }) or configureFsSafeNative({ mode: "require" })'
-        : `set ${diagnostic.source}=auto or ${diagnostic.source}=require`;
-      return `native support is disabled by ${diagnostic.source} (disabled). ${expected} ` +
-        `If native loading is intended, ${enable}; keep intentional off settings.`;
-    }
+    case "disabled":
+      return `native support is disabled by ${diagnostic.source} (disabled). ${expected} ${guidance}`;
     case "unsupported-target":
-      return `the target ${diagnostic.target} is unsupported (unsupported-target). ${expected} Portable mode is expected on this target.`;
+      return `the target ${diagnostic.target} is unsupported (unsupported-target). ${expected} ${guidance}`;
     case "package-missing":
-      return `the selected native package could not be resolved (package-missing). ${expected} ` +
-        `Reinstall with optional dependencies included: npm --include=optional, or pnpm without --no-optional / optional=false. Check the lockfile and registry mirror.`;
+      return `the selected native package could not be resolved (package-missing). ${expected} ${guidance}`;
     case "load-failed":
-      return `the native package could not be loaded (load-failed: ${diagnostic.code}). ${expected} ` +
-        `Check Node architecture, Linux libc compatibility, package dependencies, and OS code-integrity policy. Reinstalling identical bytes may not help.`;
+      return `the native package could not be loaded (load-failed: ${diagnostic.code}). ${expected} ${guidance}`;
     case "capability-missing":
-      return `the native package lacks requested functions (capability-missing: ${diagnostic.capabilities.join(", ")}). ${expected} ` +
-        `Use matching fs-safe and platform-package versions; some targets intentionally provide only a subset of capabilities.`;
+      return `the native package lacks requested functions (capability-missing: ${diagnostic.capabilities.join(", ")}). ${expected} ${guidance}`;
     default:
       return `the requested native operation is unavailable (${diagnostic.reason}). ${expected}`;
   }
