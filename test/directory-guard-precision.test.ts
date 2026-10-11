@@ -17,6 +17,8 @@ it("retains exact identity behind rounded numeric directory metadata", async () 
   const guard = createSyncDirectoryGuard(dir);
   expect(guard.stat.ino).toBe(Number(ino));
   expect(() => assertSyncDirectoryGuard(guard)).not.toThrow();
+  // Copying rounded metadata cannot carry the original guard's exact proof.
+  expect(() => assertSyncDirectoryGuard({ ...guard })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
   ino += 1n;
   expect(Number(ino)).toBe(guard.stat.ino);
   expect(() => assertSyncDirectoryGuard(guard)).toThrow(expect.objectContaining({ code: "path-mismatch" }));
