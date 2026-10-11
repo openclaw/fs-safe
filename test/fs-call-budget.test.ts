@@ -1,4 +1,4 @@
-import { createHook } from "node:async_hooks";
+import { AsyncResource, createHook } from "node:async_hooks";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -174,15 +174,25 @@ describe("move filesystem call budgets", () => {
           }
         };
         let promises = 0;
-        const hook = createHook({ init(_id, type) { if (type === "PROMISE") promises++; } });
+        // Exclude runner work that happens while the asynchronous rename is pending.
+        const operation = new AsyncResource("fs-safe-move-budget");
+        const descendants = new Set([operation.asyncId()]);
+        const hook = createHook({ init(id, type, trigger) {
+          if (!descendants.has(trigger)) return;
+          descendants.add(id);
+          if (type === "PROMISE") promises++;
+        } });
         try {
           wrap(fs, Object.keys(fs), "p.");
           wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
           wrap(fsSync, Object.keys(fsSync).filter(key => key.endsWith("Sync")), "s.");
           hook.enable();
-          await scoped.move("source", "target", { overwrite });
+          await Promise.resolve();
+          expect(promises).toBe(0);
+          await operation.runInAsyncScope(() => scoped.move("source", "target", { overwrite }));
         } finally {
           hook.disable();
+          operation.emitDestroy();
           for (const undo of restore.reverse()) undo();
         }
         const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
