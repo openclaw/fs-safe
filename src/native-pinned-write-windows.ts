@@ -198,7 +198,6 @@ export async function runPinnedWriteWindows(
     const targetStat = inspectFileIdentitySync(
       () => fsSync.fstatSync(targetFd!, { bigint: true }), verificationIdentity,
     );
-    const targetIdentity = binding.fstatIdentity(targetFd);
     if (!targetStat.isFile()) {
       throw new FsSafeError("path-mismatch", "native write target changed after rename");
     }
@@ -237,7 +236,7 @@ export async function runPinnedWriteWindows(
       await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard, { fd: parentFd, binding });
     } else await params.verifyPublished?.(targetFd, verificationIdentity, parentGuard);
     completed = true;
-    return { dev: targetIdentity.dev, ino: targetIdentity.ino };
+    return { dev: targetStat.dev, ino: targetStat.ino };
   } catch (error) {
     failure = { error };
     throw error;

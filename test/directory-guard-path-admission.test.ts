@@ -299,7 +299,11 @@ describe("directory guard Windows pathname admission", () => {
     for (const guard of guards) {
       for (const assert of assertions) {
         const wrapped = withSingleReadIdentity(guard);
-        await expect(assert(wrapped.guard)).resolves.toBeUndefined();
+        const copiedIdentityIsExact = [guard.stat.dev, guard.stat.ino].every(
+          value => typeof value === "bigint" || Number.isSafeInteger(value),
+        );
+        if (copiedIdentityIsExact) await expect(assert(wrapped.guard)).resolves.toBeUndefined();
+        else await expect(assert(wrapped.guard)).rejects.toMatchObject({ code: "path-mismatch" });
         expect(wrapped.reads()).toEqual([1, 1, 1, 1, 1]);
       }
     }

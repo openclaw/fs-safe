@@ -336,7 +336,7 @@ describe.skipIf(process.platform === "win32" || !nativeAvailable)("private nativ
           retainedFd = fd;
           expect(fsSync.fstatSync(fd, { bigint: true })).toMatchObject({ dev: identity.dev, ino: identity.ino });
           expect(fsSync.fstatSync(fd).mode & 0o777).toBe(0);
-          expect(parentGuard.stat).toMatchObject({ ino: (await fs.stat(directory)).ino });
+          expect(parentGuard.stat).toMatchObject({ ino: (await fs.stat(directory, { bigint: true })).ino });
           expect(parentGuard.realPath).toBe(directory);
           await new Promise<void>((resolve) => setImmediate(resolve));
           expect(fsSync.fstatSync(fd).isFile()).toBe(true);

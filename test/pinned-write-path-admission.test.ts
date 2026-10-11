@@ -176,14 +176,16 @@ describe.skipIf(process.platform !== "win32")("pinned write Windows pathname adm
       __setNativeLoaderForTest(() => ({
         ...binding,
         closeOwnedFd: close,
-        fstatIdentity(fd) {
-          rootFds.push(fd);
-          return binding.fstatIdentity(fd);
-        },
         openBeneath,
         renameNoReplace,
         renameReplace,
       }));
+      const fstat = fsSync.fstatSync.bind(fsSync);
+      vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
+        const stat = fstat(...args);
+        if (args[1]?.bigint && stat.isDirectory() && parentFds.length === 0) rootFds.push(args[0]);
+        return stat;
+      }) as typeof fsSync.fstatSync);
       configureFsSafeNative({ mode: "require" });
       const nativeRealpath = realpathSync.native.bind(realpathSync);
       vi.spyOn(realpathSync, "native").mockImplementation((candidate) =>

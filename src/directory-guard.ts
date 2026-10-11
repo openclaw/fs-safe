@@ -2,7 +2,7 @@ import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentity } from "./file-identity.js";
+import { hasSafeFileIdentity, sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
@@ -32,6 +32,10 @@ export type SyncDirectoryGuard = AsyncDirectoryGuard;
 
 type DirectoryGuardMode = "native" | "normalized";
 type DirectoryGuardOptions = { bigint?: boolean; initial?: BigIntStats };
+
+// Numeric metadata is retained for existing internal consumers; rounded IDs
+// must never become authority for a later comparison.
+const exactGuardIdentities = new WeakMap<AnyAsyncDirectoryGuard, FileIdentityStat>();
 
 export type DirectoryIdentity = Readonly<{
   dev: bigint;
@@ -83,9 +87,17 @@ export function captureDirectoryGuard(dir: string, mode: DirectoryGuardMode, opt
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw directoryComponentNotDirectoryError();
   }
+  let exactIdentity: FileIdentityStat | undefined;
+  if (!hasSafeFileIdentity(stat)) {
+    const exact = fsSync.lstatSync(operationPath, { bigint: true });
+    if (exact.isSymbolicLink() || !exact.isDirectory()) throw directoryComponentNotDirectoryError();
+    exactIdentity = { dev: exact.dev, ino: exact.ino };
+  }
   const realPath = mode === "native" ? realpathSync.native(operationPath) : realpathSync(operationPath);
   assertNoWindowsPathAlias(realPath, "filesystem");
-  return { dir, realPath, stat };
+  const guard = { dir, realPath, stat };
+  if (exactIdentity) exactGuardIdentities.set(guard, exactIdentity);
+  return guard;
 }
 
 export async function assertAsyncDirectoryGuard(guard: AnyAsyncDirectoryGuard): Promise<void> {
@@ -102,9 +114,11 @@ export function assertDirectoryGuard(guard: AnyAsyncDirectoryGuard, mode: Direct
   const expectedRealPath = guard.realPath;
   assertNoWindowsPathAlias(expectedRealPath, "filesystem");
   const expectedStat = guard.stat;
-  const expectedIdentity = { dev: expectedStat.dev, ino: expectedStat.ino };
+  const suppliedIdentity = { dev: expectedStat.dev, ino: expectedStat.ino };
+  const retainedIdentity = exactGuardIdentities.get(guard);
+  const expectedIdentity = retainedIdentity ?? suppliedIdentity;
   const stat = typeof expectedIdentity.dev === "bigint" && typeof expectedIdentity.ino === "bigint"
-    ? inspectDirectoryIdentityAtPathSync(operationPath, {
+    ? retainedIdentity ? fsSync.lstatSync(operationPath, { bigint: true }) : inspectDirectoryIdentityAtPathSync(operationPath, {
       dev: expectedIdentity.dev,
       ino: expectedIdentity.ino,
     })
@@ -117,7 +131,7 @@ export function assertDirectoryGuard(guard: AnyAsyncDirectoryGuard, mode: Direct
   if (mode === "native" && !sameFileIdentity(stat, expectedIdentity)) {
     throw new FsSafeError("path-mismatch", "directory changed during operation");
   }
-  const realPath = mode === "native" || typeof expectedIdentity.ino === "bigint"
+  const realPath = mode === "native" || typeof suppliedIdentity.ino === "bigint"
     ? realpathSync.native(operationPath) : realpathSync(operationPath);
   assertNoWindowsPathAlias(realPath, "filesystem");
   if ((mode === "normalized" && !sameFileIdentity(stat, expectedIdentity)) || realPath !== expectedRealPath) {

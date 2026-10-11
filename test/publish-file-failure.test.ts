@@ -78,6 +78,23 @@ describe("exclusive publication failure fencing", () => {
     await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects an unsafe Number source expectation even when numeric fstat rounds to it", async () => {
+    configureFsSafeNative({ mode: "off" });
+    const { source, target } = await fixture("fs-safe-publish-rounded-", "source");
+    const exact = await fs.stat(source, { bigint: true });
+    const rounded = Number(2n ** 54n);
+    const fstat = fsSync.fstatSync;
+    vi.spyOn(fsSync, "fstatSync").mockImplementation(((fd: number, options?: { bigint?: boolean }) => {
+      const stat = options?.bigint ? fstat(fd, { bigint: true }) : fstat(fd);
+      return !options?.bigint && stat.isFile() ? Object.assign(stat, { ino: rounded }) : stat;
+    }) as typeof fsSync.fstatSync);
+    await expect(publishFileExclusive({
+      sourcePath: source, targetPath: target, strategy: "link-required",
+      expectedSourceIdentity: { dev: Number(exact.dev), ino: rounded },
+    })).rejects.toMatchObject({ code: "path-mismatch" });
+    await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.each([
     { strategy: "link-required", method: "hardlink", phase: "hardlink-verify", bytes: "source", prefix: "fs-safe-publish-target-swap-" },
     { strategy: "link-or-copy", method: "exclusive-copy", phase: "copy-verify", bytes: "copy source", prefix: "fs-safe-publish-copy-swap-" },

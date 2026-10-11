@@ -43,7 +43,7 @@ describe("Linux opened-file procfs observation", () => {
     } finally { fs.closeSync(fd); }
   });
 
-  it.each([false, true])("uses the physical descriptor path with bigint=%s", async (bigint) => {
+  it.each([false, true])("uses only exact descriptor metadata with bigint=%s", async (bigint) => {
     const directory = await tempRoot("fs-safe-procfs-observation-");
     const target = path.join(directory, "file");
     fs.writeFileSync(target, "payload");
@@ -54,7 +54,12 @@ describe("Linux opened-file procfs observation", () => {
       const lookup = vi.spyOn(fs, "readlinkSync").mockReturnValue(target);
       const canonicalize = vi.spyOn(realpathSync, "native");
       const stat = vi.spyOn(fs, "statSync");
-      const result = await resolveOpenedFileRealPathForFd(fd, identity, target);
+      const pending = resolveOpenedFileRealPathForFd(fd, identity, target);
+      if (!bigint && (!Number.isSafeInteger(identity.dev) || !Number.isSafeInteger(identity.ino))) {
+        await expect(pending).rejects.toMatchObject({ code: "path-mismatch" });
+        return;
+      }
+      const result = await pending;
       expect(result).toMatchObject({ realPath: target, stat: { dev: identity.dev, ino: identity.ino } });
       expect(lookup).toHaveBeenCalledExactlyOnceWith(`/proc/self/fd/${fd}`);
       expect(canonicalize).not.toHaveBeenCalled();

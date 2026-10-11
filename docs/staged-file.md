@@ -87,6 +87,12 @@ be exactly representable. Ambiguous identity fails closed.
 Returned receipts are frozen descriptive snapshots, not mutable authority.
 Changing a supplied receipt after admission cannot retarget the lifecycle.
 
+Use `fs.lstat(path, { bigint: true })` for caller-created directory receipts:
+bigint stats retain exact Windows file IDs. Copied or reconstructed receipts
+with unsafe Number identities reject with `FsSafeError("path-mismatch")`.
+Original library receipts retain their private exact identity even when their
+public numeric metadata cannot represent every bit.
+
 `StagedFileReceipt` contains `directory` (`path`, `realPath`, and exact bigint
 `identity.dev`/`identity.ino`), `temporaryBasename`, and the prepared file's
 `identity` (`dev`, `ino`, `size`, `nlink`, `mtimeNs`, `ctimeNs` as bigint;
