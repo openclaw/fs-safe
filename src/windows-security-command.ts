@@ -4,7 +4,6 @@ import { FsSafeError } from "./errors.js";
 import type { NativeWindowsDescriptorSecurityFacts, NativeWindowsSecurityFacts } from "./native-binding.js";
 import type { FsSafeNativeMode } from "./native-config.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, PermissionCommandError } from "./permission-exec.js";
-import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { parseWindowsOwnerAndDaclFacts, parseWindowsSecurityCommandFacts, unverified, type DescriptorFacts } from "./windows-security-facts.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -49,10 +48,10 @@ function command(operation: CommandOperation, params: CommandParams) {
     (!Number.isInteger(params.expectedLinks) || params.expectedLinks < 1 || params.expectedLinks > 0xffff_ffff)) {
     throw new TypeError("Windows security operation requires a positive uint32 link count");
   }
-  const script = fileURLToPath(new URL("./windows-security-bridge.ps1", import.meta.url));
+  const helper = fileURLToPath(new URL("./windows-security-helper.exe", import.meta.url));
   return {
-    file: resolveWindowsSystemCommand(String.raw`WindowsPowerShell\v1.0\powershell.exe`),
-    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-Operation", operation],
+    file: helper,
+    args: [operation],
     // Preserve Windows UTF-16 spelling and leave long paths out of the bounded
     // command line. This overrides any inherited value only in this child.
     env: {

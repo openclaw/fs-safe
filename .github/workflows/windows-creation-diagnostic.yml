@@ -1,0 +1,29 @@
+name: Windows creation diagnostic
+on:
+  push:
+    branches: [perf/windows-security-helper-transport]
+    paths:
+      - .github/workflows/windows-creation-diagnostic.yml
+permissions:
+  contents: read
+jobs:
+  bootstrap:
+    name: Helper bootstrap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: global.json
+      - run: dotnet restore native/windows-security-helper/WindowsSecurityHelper.csproj
+      - run: dotnet build native/windows-security-helper/WindowsSecurityHelper.csproj --configuration Release --no-restore
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: helper-bootstrap-${{ matrix.os }}
+          path: |
+            native/windows-security-helper/packages.lock.json
+            native/windows-security-helper/bin/Release/net40/windows-security-helper.exe

@@ -25,8 +25,7 @@
   },
   "files": [
     "dist/archive-parser.wasm",
-    "dist/windows-security-bridge.cs",
-    "dist/windows-security-bridge.ps1",
+    "dist/windows-security-helper.exe",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "docs/**/*.md",
@@ -146,6 +145,7 @@
     "benchmark:methods": "node benchmarks/runner.mjs",
     "benchmark:node": "node benchmarks/node-baseline.mjs",
     "benchmark:publish": "pnpm build && node scripts/bench-publish.mjs",
+    "build:windows-helper": "node scripts/build-windows-helper.mjs",
     "build": "node scripts/prepack-build.mjs",
     "lint:file-size": "node scripts/check-file-size.mjs",
     "lint:fs-boundary": "node scripts/check-fs-boundary-primitives.mjs",

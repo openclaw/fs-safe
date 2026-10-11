@@ -3,7 +3,6 @@ import { existsSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
-import { copyWindowsCommandAssets } from "./windows-command-assets.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -31,5 +30,6 @@ const result = spawnSync(process.execPath, [tscBin, "-p", "tsconfig.json"], {
   env: process.env,
 });
 if (result.status !== 0) process.exit(result.status ?? 1);
-copyWindowsCommandAssets();
+const helper = spawnSync(process.execPath, ["scripts/build-windows-helper.mjs", "--if-available"], { stdio: "inherit" });
+if (helper.status !== 0) process.exit(helper.status ?? 1);
 await import("./build-archive-wasm.mjs");

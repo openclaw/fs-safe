@@ -1,4 +1,4 @@
-// Executed only by the built-in Windows PowerShell/.NET host. The raw security
+// Compiled into the packaged .NET Framework Windows security helper. The raw security
 // descriptor never passes through CommonSecurityDescriptor's ACE normalization.
 using System;
 using System.Collections.Generic;
