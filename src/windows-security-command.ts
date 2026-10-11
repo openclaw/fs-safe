@@ -4,7 +4,6 @@ import { FsSafeError } from "./errors.js";
 import type { NativeWindowsDescriptorSecurityFacts, NativeWindowsSecurityFacts } from "./native-binding.js";
 import type { FsSafeNativeMode } from "./native-config.js";
 import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, PermissionCommandError } from "./permission-exec.js";
-import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { parseWindowsOwnerAndDaclFacts, parseWindowsSecurityCommandFacts, unverified, type DescriptorFacts } from "./windows-security-facts.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -49,10 +48,10 @@ function command(operation: CommandOperation, params: CommandParams) {
     (!Number.isInteger(params.expectedLinks) || params.expectedLinks < 1 || params.expectedLinks > 0xffff_ffff)) {
     throw new TypeError("Windows security operation requires a positive uint32 link count");
   }
-  const script = fileURLToPath(new URL("./windows-security-bridge.ps1", import.meta.url));
+  const helper = fileURLToPath(new URL("./windows-security-helper.exe", import.meta.url));
   return {
-    file: resolveWindowsSystemCommand(String.raw`WindowsPowerShell\v1.0\powershell.exe`),
-    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-Operation", operation],
+    file: helper,
+    args: [operation],
     // Preserve Windows UTF-16 spelling and leave long paths out of the bounded
     // command line. This overrides any inherited value only in this child.
     env: {
@@ -114,6 +113,12 @@ function parseReplyValue(stdout: string, operation: CommandOperation): unknown {
   return response.result;
 }
 
+function explainHelperFailure(error: Error, file: string): void {
+  if (file.endsWith("windows-security-helper.exe")) {
+    error.message += "; Windows security helper could not complete; rebuild with pnpm build:windows-helper or reinstall @openclaw/fs-safe";
+  }
+}
+
 function executeSync(operation: CommandOperation, params: CommandParams): unknown {
   const { file, args, env } = command(operation, params);
   const startedAt = performance.now();
@@ -129,6 +134,7 @@ function executeSync(operation: CommandOperation, params: CommandParams): unknow
       killed: (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT",
       ...(operation === "create" ? { creationOutcome: "unconfirmed" } as const : {}),
     });
+    explainHelperFailure(error, file);
     if (operation === "create") Object.assign(error, { creationOutcome: "unconfirmed" });
     throw error;
   }
@@ -155,6 +161,7 @@ class WindowsSecurityCommandError extends PermissionCommandError {
 
   constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, override readonly timedOut: boolean, timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS) {
     super(file, durationMs, receipt, timeoutMs);
+    if (!timedOut) explainHelperFailure(this, file);
     this.creationOutcome = receipt.creationOutcome;
     this.processExitConfirmed = receipt.processExitConfirmed;
     if (timedOut) this.message = `Windows permission inspection timed out after ${timeoutMs}ms`;

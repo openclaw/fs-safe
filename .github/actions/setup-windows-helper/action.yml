@@ -1,0 +1,20 @@
+name: Set up Windows helper compiler
+description: Use the installed pinned SDK or install it for the portable helper build
+runs:
+  using: composite
+  steps:
+    - name: Check pinned SDK
+      id: sdk
+      if: hashFiles('global.json') != ''
+      shell: bash
+      run: |
+        expected=$(node -p 'require("./global.json").sdk.version')
+        actual=$(dotnet --version 2>/dev/null || true)
+        if [ "$actual" = "$expected" ]; then
+          echo 'installed=true' >> "$GITHUB_OUTPUT"
+        fi
+    - name: Install pinned SDK when absent
+      if: hashFiles('global.json') != '' && steps.sdk.outputs.installed != 'true'
+      uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+      with:
+        global-json-file: global.json

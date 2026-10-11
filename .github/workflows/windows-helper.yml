@@ -1,0 +1,41 @@
+name: Windows helper reproducibility
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Windows helper (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 24
+      - uses: ./.github/actions/setup-windows-helper
+      - run: pnpm build:windows-helper
+      - name: Hash helper
+        run: node --input-type=module -e "import fs from 'node:fs'; import crypto from 'node:crypto'; const hash = crypto.createHash('sha256').update(fs.readFileSync('dist/windows-security-helper.exe')).digest('hex'); fs.writeFileSync('helper.sha256', hash); console.log(hash);"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-helper-${{ matrix.os }}
+          path: |
+            helper.sha256
+            dist/windows-security-helper.exe
+          if-no-files-found: error
+  compare:
+    name: Windows helper byte identity
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: windows-helper-*
+          path: hashes
+      - run: cmp hashes/windows-helper-ubuntu-latest/helper.sha256 hashes/windows-helper-windows-latest/helper.sha256

@@ -9,17 +9,20 @@ export const WINDOWS_SECURITY_SOURCE = fs.readFileSync(
 );
 
 export function runWindowsSecurityScript(
-  source: string, body: readonly string[], env: NodeJS.ProcessEnv = {}, fd?: number,
+  source: string, body: readonly string[], env: NodeJS.ProcessEnv = {}, fd?: number, helperSource?: string,
 ): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-win-test-script-"));
   try {
     fs.writeFileSync(path.join(directory, "windows-security-bridge.cs"), source, "utf8");
+    if (helperSource) fs.writeFileSync(path.join(directory, "windows-security-helper.cs"), helperSource, "utf8");
     const script = path.join(directory, "windows-security-test.ps1");
     fs.writeFileSync(script, "\ufeff" + [
       "$ErrorActionPreference='Stop'",
       "$env:PSModulePath=[IO.Path]::Combine($PSHOME, 'Modules')",
       "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
-      "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))",
+      helperSource
+        ? "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath @(([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs')),([IO.Path]::Combine($PSScriptRoot, 'windows-security-helper.cs')))"
+        : "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))",
       ...body,
       "",
     ].join("\n"), "utf8");

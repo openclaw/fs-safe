@@ -31,7 +31,7 @@ Zstd/bzip2 TAR extraction and bounded reads required the binding in version 0.6;
 current versions also support bundled WASM codecs in `auto` and `off` through the
 same guarded TAR pipeline. ZIP fallback still requires optional JSZip.
 Windows private-directory creation required the binding in version 0.6; current
-releases also support [packaged Windows security scripts](install.md#windows-security-fallback)
+releases also support [packaged Windows security helper](install.md#windows-security-fallback)
 in `auto` and `off` mode while preserving the creation-time protected DACL.
 
 ## Deployment checklist

@@ -6,6 +6,7 @@
 
 ### Performance
 
+- Speed up portable Windows private file and directory creation about 5x on x64 (consumer probe median 65.1 s to 13.3 s) by running security checks in a prebuilt .NET Framework helper instead of compiling C# through PowerShell on every call; every check still runs on the inherited handle.
 - Speed up native `Root.mkdir()` for direct children while retaining descriptor-relative creation and exact root/child identity checks.
 - Speed up native removal and moves by retaining Root descriptors synchronously and reusing them for direct children, preserving policy, identity and no-replace checks.
 - Avoid redundant native parent creation for existing-file append and writable opens while retaining guarded handles and native missing-file creation.

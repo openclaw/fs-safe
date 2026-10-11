@@ -42,7 +42,7 @@ Set the process-global loading policy. Configure once at startup, before the fir
 | `require` | Operations that need the binding raise `FsSafeError("helper-unavailable")` when it cannot load. |
 
 Fallbacks include guarded JavaScript, the bundled TAR/gzip WASM parser, and the
-[packaged Windows security scripts](install.md#windows-security-fallback).
+[packaged Windows security helper](install.md#windows-security-fallback).
 Windows command fallbacks remain subject to normal system execution policy.
 
 ## `getFsSafeNativeConfig()`

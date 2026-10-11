@@ -8,7 +8,7 @@ import path from "node:path";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { createPrivateDirectory, readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";
-import { assertInstalledScriptPath, nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
+import { assertInstalledHelperPath, nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
 
 // This file is copied into disposable consumers and uses only public subpaths.
 assert.equal(process.platform, "win32");
@@ -73,13 +73,12 @@ const compiledModules = Object.fromEntries(Object.keys(expected.windowsSecurity.
   return [name, hash(inside(path.join(rootDirectory, "dist", name)))];
 }));
 assert.deepEqual(compiledModules, expected.windowsSecurity.compiledSha256);
-const scriptAssetNames = ["windows-security-bridge.cs", "windows-security-bridge.ps1"];
+const scriptAssetNames = ["windows-security-helper.exe"];
 assert.deepEqual(Object.keys(expected.windowsSecurity.assetsSha256).sort(), scriptAssetNames);
 const scriptAssets = Object.fromEntries(scriptAssetNames.map((name) =>
   [name, hash(inside(path.join(rootDirectory, "dist", name)))]));
 assert.deepEqual(scriptAssets, expected.windowsSecurity.assetsSha256);
-const bridgeScript = inside(path.join(rootDirectory, "dist", "windows-security-bridge.ps1"));
-const bridgeScriptRelative = path.relative(consumer, bridgeScript);
+const bridgeHelper = inside(path.join(rootDirectory, "dist", "windows-security-helper.exe"));
 const probeSha256 = hash(new URL(import.meta.url));
 const metadataHelperSha256 = hash(new URL("./consumer-proof-metadata.mjs", import.meta.url));
 assert.equal(probeSha256, expected.windowsSecurity.probeSha256);
@@ -135,15 +134,15 @@ const warningFeatures = ["windows-owner-dacl", "windows-private-directory", "win
 const onWarning = (warning) => warnings.push({ code: warning.code ?? null, name: warning.name,
   feature: warningFeatures.find((feature) => warning.message.includes(feature)) ?? null });
 process.on("warning", onWarning);
-function observedCommandArgs(args) {
-  assertInstalledScriptPath(args[4], bridgeScript);
-  return args.map((value, index) => index === 4 ? bridgeScriptRelative : value);
+function observedCommandArgs(file, args) {
+  assertInstalledHelperPath(file, bridgeHelper);
+  return args;
 }
 childProcess.spawn = (...args) => {
   const started = performance.now();
   const stdin = args[2]?.stdio?.[0];
   const stat = typeof stdin === "number" ? fs.fstatSync(stdin, { bigint: true }) : undefined;
-  const row = { command: path.basename(String(args[0])), args: observedCommandArgs(args[1]), kind: "async", durationMs: null,
+  const row = { command: path.basename(String(args[0])), args: observedCommandArgs(args[0], args[1]), kind: "async", durationMs: null,
     stdin: typeof stdin === "number" ? "inherited-file-descriptor" : stdin,
     inheritedFd: typeof stdin === "number" ? stdin : null,
     inheritedIdentity: stat ? { dev: String(stat.dev), ino: String(stat.ino) } : null };
@@ -156,7 +155,7 @@ childProcess.spawn = (...args) => {
 childProcess.spawnSync = (...args) => {
   const started = performance.now();
   const result = original.spawnSync(...args);
-  commands.push({ command: path.basename(String(args[0])), args: observedCommandArgs(args[1]), kind: "sync", durationMs: performance.now() - started,
+  commands.push({ command: path.basename(String(args[0])), args: observedCommandArgs(args[0], args[1]), kind: "sync", durationMs: performance.now() - started,
     stdin: args[2]?.stdio?.[0], pid: result.pid, code: result.status, signal: result.signal });
   return result;
 };
@@ -506,7 +505,7 @@ try {
         const command = row.commands[0];
         const descriptorScenario = ["descriptor-secure-read", "descriptor-secure-read-repeat", "broad-acl-rejected-before-read", "explicit-readable-policy", "broad-write-rejected-with-readable-opt-in"].includes(row.scenario);
         const operation = descriptorScenario ? "descriptor" : row.scenario.startsWith("raw-owner-and-dacl") ? "path" : "create";
-        assert.deepEqual(command.args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", bridgeScriptRelative, "-Operation", operation]);
+        assert.deepEqual(command.args, [operation]);
         if (descriptorScenario) {
           assert.equal(command.stdin, "inherited-file-descriptor");
           assert.deepEqual(command.inheritedIdentity, { dev: beforeFile.dev, ino: beforeFile.ino });
@@ -514,7 +513,7 @@ try {
         } else assert.equal(command.stdin, "ignore");
       }
       for (const command of commands) {
-        assert.equal(command.command.toLowerCase(), "powershell.exe");
+        assert.equal(command.command.toLowerCase(), "windows-security-helper.exe");
         assert.equal(command.code, 0);
       }
     } else assert.deepEqual(commands, []);
@@ -540,7 +539,7 @@ try {
     timing: {
       applicable: !missingRequired, unit: "milliseconds", kind: "first and repeated public calls in one consumer process", benchmarkGuarantee: false,
       firstCallMeaning: "first invocation of that public operation, not an isolated cold-machine benchmark",
-      repeatedCallMeaning: "same consumer process; each portable call still starts and compiles a fresh PowerShell child, with no persistent warm helper",
+      repeatedCallMeaning: "same consumer process; each portable call still starts a fresh .NET Framework helper process, with no persistent warm helper",
       publicCallDurationMs: "only the public API invocation, with transparent observers enabled; excludes fixture setup and result assertions",
       durationMs: "whole scenario elapsed, including result assertions; not used for API timing comparisons",
     },

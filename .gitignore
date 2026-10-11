@@ -17,3 +17,7 @@ release-artifacts*/
 .deepsec/
 .vscode
 .DS_Store
+
+src/windows-security-helper.exe
+native/windows-security-helper/bin/
+native/windows-security-helper/obj/

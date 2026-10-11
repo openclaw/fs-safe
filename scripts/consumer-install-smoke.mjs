@@ -44,7 +44,7 @@ const windowsSecurityModules = [
   "secure-file.js", "strict-file-identity.js", "string-coerce.js", "timing.js", "windows-command.js",
   "windows-owner.js", "windows-path-alias.js", "windows-security-command.js", "windows-security-facts.js",
 ];
-const windowsSecurityAssets = ["windows-security-bridge.cs", "windows-security-bridge.ps1"];
+const windowsSecurityAssets = ["windows-security-helper.exe"];
 const windowsSecurityScenarios = [
   "private-directory-created", "private-directory-created-repeat", "raw-owner-and-dacl", "raw-owner-and-dacl-repeat",
   "private-directory-collision", "populated-private-directory-collision", "descriptor-secure-read", "descriptor-secure-read-repeat",
@@ -390,7 +390,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         }));
         managerProof.windowsSecurityTiming = {
           unit: "milliseconds", samplesPerOperationAndMode: 2,
-          interpretation: "First versus repeated invocation of the same public operation in one consumer process. Each portable call still launches and compiles a fresh PowerShell child; there is no persistent warm helper. Informational measurements without timing thresholds or performance guarantees.",
+          interpretation: "First versus repeated invocation of the same public operation in one consumer process. Each portable call still launches a fresh .NET Framework helper process; there is no persistent warm helper. Informational measurements without timing thresholds or performance guarantees.",
           firstAndRepeated: windowsSecurityTimingPairs.map(([operation, first, repeated]) => ({
             operation,
             nativeRequire: measuredPair(native, first, repeated),

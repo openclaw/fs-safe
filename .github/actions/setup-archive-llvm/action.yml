@@ -1,8 +1,9 @@
 name: Set up archive LLVM
-description: Install checksum-pinned LLVM tools for the portable archive build only
+description: Prepare the pinned SDK for the Windows helper and LLVM tools for portable archives
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/setup-windows-helper
     - name: Install portable archive compiler and archiver
       shell: bash
       env:

@@ -98,12 +98,15 @@ describe("Windows security command facts", () => {
     else expect(cause).toBeUndefined();
   });
 
-  it("executes only the packaged script and keeps caller paths out of command arguments", async () => {
+  it("executes only the packaged helper and keeps caller paths out of command arguments", async () => {
     const targetPath = String.raw`C:\private\';Get-Process;#`;
-    const script = fileURLToPath(new URL("../src/windows-security-bridge.ps1", import.meta.url));
-    const prefix = ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-Operation"];
+    const helper = fileURLToPath(new URL("../src/windows-security-helper.exe", import.meta.url));
+    expect(helper).toContain("windows-security-helper.exe");
+    const prefix: string[] = [];
+    expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
     syncReply(security());
     readWindowsSecurityFactsCommand(targetPath);
+    expect(vi.mocked(spawnSync).mock.calls[0]?.[0]).toBe(helper);
     expect(vi.mocked(spawnSync).mock.calls[0]?.[1]).toEqual([...prefix, "path"]);
     expect(vi.mocked(spawnSync).mock.calls[0]?.[2]).toMatchObject({ env: { FS_SAFE_WINDOWS_SECURITY_PATH: targetPath } });
     childReply(creationReceipt);
@@ -135,7 +138,7 @@ describe("Windows security command facts", () => {
     syncReply(security({ aces, aceListComplete: false, unsupportedAceTypes: [5, 9] }));
     const facts = readWindowsSecurityFactsCommand(String.raw`C:\private\é-🦀`);
     expect(facts).toMatchObject({ aces, aceListComplete: false, unsupportedAceTypes: [5, 9], fallbackRequired: true });
-    expect(vi.mocked(spawnSync).mock.calls[0]?.[0]).toMatch(/System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+    expect(vi.mocked(spawnSync).mock.calls[0]?.[0]).toBe(fileURLToPath(new URL("../src/windows-security-helper.exe", import.meta.url)));
     expect(vi.mocked(spawnSync).mock.calls[0]?.[2]).toMatchObject({ env: { FS_SAFE_WINDOWS_SECURITY_PATH: String.raw`C:\private\é-🦀` } });
   });
 
@@ -373,5 +376,15 @@ describe("Windows fallback admission", () => {
     try {
       expect(readOwnerAndDacl("C:\\private")).toMatchObject({ status: "supported", complete: true, aces: [ace()] });
     } finally { Object.defineProperty(process, "platform", descriptor); }
+  });
+});
+
+describe("Windows helper synchronous launch failure", () => {
+  it.each(["ENOENT", "EACCES", "ENOEXEC"])("fails closed and explains recovery for %s", code => {
+    const error = Object.assign(new Error("fixture executable unavailable"), { code });
+    vi.mocked(spawnSync).mockReturnValue({ error, status: null, signal: null, stdout: "", stderr: "" } as ReturnType<typeof spawnSync>);
+    expect(() => readWindowsSecurityFactsCommand("C:\\private")).toThrow(
+      expect.objectContaining({ message: expect.stringContaining("rebuild with pnpm build:windows-helper or reinstall") }),
+    );
   });
 });

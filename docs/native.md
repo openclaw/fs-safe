@@ -351,7 +351,7 @@ existing files keep their guarded Node handle path, identity fences and hardlink
 checks. Required creation capabilities are checked even when the file exists.
 
 Windows owner/DACL inspection, private-directory creation, and secure-file
-inspection support [PowerShell fallbacks](install.md#windows-security-fallback)
+inspection support [Windows helper fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation
 failures are terminal.
 
@@ -408,7 +408,7 @@ platform or filesystem.
 see [copy metadata and source links](writing.md#copy-metadata-and-source-links)
 for timestamp precision and Windows attribute differences. Archive fallbacks
 include bundled WASM, and Windows security fallbacks use the packaged
-PowerShell/C# bridge; neither requires the optional native binding.
+prebuilt .NET Framework helper; neither requires the optional native binding.
 
 ## JavaScript fallback guarantees and delta
 
@@ -443,12 +443,37 @@ See [Root containment guarantees](security-model.md#containment-guarantees-by-pl
 | Zstd/bzip2 TAR | Rust streaming decode and fd-relative output creation. | Bundled WASM codecs feed the shared Rust TAR parser, then guarded private staging and the same merge policy; no optional codec dependency. |
 | Publication copy | Clone, Linux `copy_file_range`, async native SHA-256. | Exclusive `wx` byte loop and Node SHA-256 with the same content/identity fences. |
 | `rename-noreplace` | Atomic platform no-replace rename; Linux `auto` file publication can use identity-checked, non-crash-atomic link/unlink when unsupported. | Unsupported; no emulation by check-then-rename. |
-| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | The packaged PowerShell/C# bridge preserves raw facts and inspects the borrowed descriptor for secure reads, with the same Node identity comparison; its command failures reject. Structured .NET pathname reporting retains its separate compatibility query. |
-| Windows private directory | Creation-time protected DACL. | The packaged PowerShell/C# bridge applies the protected DACL at creation and retains exact handles through identity validation and failure cleanup. Command failures reject. |
+| Windows DACL read | Direct `GetSecurityInfo`; the public facts API exposes ordered basic allow/deny ACE SIDs, masks, and decoded flags without trust policy. Secure-file reads query the borrowed open descriptor and compare its 32-bit volume serial and 64-bit file-index projection with Node's bigint receipt. | The packaged prebuilt .NET Framework helper preserves raw facts and inspects the borrowed descriptor for secure reads, with the same Node identity comparison; its command failures reject. Structured .NET pathname reporting retains its separate compatibility query. |
+| Windows private directory | Creation-time protected DACL. | The packaged prebuilt .NET Framework helper applies the protected DACL at creation and retains exact handles through identity validation and failure cleanup. Command failures reject. |
 
 Use `off` in CI to keep the fallback contract exercised. Use `require` when a
 deployment depends on the stronger mechanism or a native-only feature; do not
 infer native loading from timing.
+
+## Windows helper build
+
+`pnpm build:windows-helper` builds the portable security executable with the
+.NET SDK pinned by `global.json`, Roslyn deterministic compilation, a fixed
+source path map, no debug symbols, AnyCPU and `Prefer32Bit=false`. The project
+under `native/windows-security-helper/` targets .NET Framework 4.0 using
+Microsoft's `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3 and its committed
+NuGet lock file; builds restore in locked mode. CI compares Ubuntu and Windows
+SHA-256 hashes to enforce byte-identical output. The main package includes only
+the exe; the two C# source files remain available in the repository.
+
+Build output is copied beside the source modules for Vitest and beside the
+compiled modules in `dist/`; both use the same module-relative filename.
+`pnpm build` can skip compilation on non-Windows developer machines without the
+SDK, retaining a previously built source-side copy when present. Packing still
+requires the executable. CI and release assembly install the pinned SDK and
+build it, including package smoke tests on other operating systems.
+
+Each invocation still inspects the inherited borrowed handle with
+`GetStdHandle(-10)` and exits. A persistent helper cannot receive replacement
+fds opened later: portable Node exposes neither the underlying OS HANDLE nor
+`DuplicateHandle`. Per-call processes preserve descriptor ownership and all
+existing checks across callbacks, publication, link-count changes, and chmod.
+There is no security-fact cache or pathname substitution for descriptor checks.
 
 ## Loader security
 
