@@ -413,3 +413,28 @@ describe("followed-link metadata", () => {
     expect(entries).toContainEqual({ relativePath: "alias", kind: "directory", size: expected.size });
   });
 });
+
+it("defers option validation until the first iterator step", async () => {
+  const directory = await tempRoot("fs-safe-walk-lazy-");
+  const capability = await root(directory);
+  let reads = 0;
+  const options = {
+    get symlinkPolicy() { reads++; return "invalid"; },
+  };
+  const iterator = capability.walk("", options as never);
+  expect(reads).toBe(0);
+  await expect(iterator.next()).rejects.toThrow(TypeError);
+  expect(reads).toBeGreaterThan(0);
+});
+
+it("preserves filesystem-shaped abort errors between snapshot entries", async () => {
+  const directory = await tempRoot("fs-safe-walk-abort-error-");
+  await fs.writeFile(path.join(directory, "a"), "");
+  await fs.writeFile(path.join(directory, "b"), "");
+  const capability = await root(directory);
+  const controller = new AbortController();
+  const iterator = capability.walk("", { symlinkPolicy: "skip", signal: controller.signal });
+  expect((await iterator.next()).value).toMatchObject({ relativePath: "a" });
+  controller.abort(Object.assign(new Error("aborted"), { code: "ENOENT" }));
+  await expect(iterator.next()).rejects.toMatchObject({ code: "not-found" });
+});
