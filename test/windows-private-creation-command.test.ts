@@ -25,8 +25,8 @@ vi.mock("node:child_process", async importOriginal => ({
 const parentIdentity = "0123456789abcdef:0123456789abcdeffedcba9876543210";
 const fileIdentity = "fedcba9876543210:fedcba98765432100123456789abcdef";
 const targetPath = String.raw`C:\private\é-🦀';Get-Process;#`;
-const script = fileURLToPath(new URL("../src/windows-security-bridge.ps1", import.meta.url));
-const commandPrefix = ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-Operation"];
+const helper = fileURLToPath(new URL("../src/windows-security-helper.exe", import.meta.url));
+const commandPrefix: string[] = [];
 
 function syncOutput(stdout: string) {
   vi.mocked(spawnSync).mockReturnValue({ status: 0, signal: null, stdout, stderr: "" } as ReturnType<typeof spawnSync>);
@@ -69,10 +69,11 @@ beforeEach(() => { vi.resetAllMocks(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe.each(variants)("Windows private-creation command protocol ($name)", variant => {
-  it("keeps creation paths and expected parent identities out of script arguments", async () => {
+  it("keeps creation paths and expected parent identities out of helper arguments", async () => {
     variant.reply({ created: true, identity: fileIdentity });
     expect(await variant.create(targetPath, parentIdentity)).toEqual({ identity: fileIdentity });
     expect(variant.spawned).toHaveBeenCalledOnce();
+    expect(vi.mocked(variant.spawned).mock.calls[0]?.[0]).toBe(helper);
     expect(vi.mocked(variant.spawned).mock.calls[0]?.[1]).toEqual([...commandPrefix, "create"]);
     expect(vi.mocked(variant.spawned).mock.calls[0]?.[2]).toMatchObject({
       env: { FS_SAFE_WINDOWS_SECURITY_PATH: targetPath, FS_SAFE_WINDOWS_SECURITY_PARENT_IDENTITY: parentIdentity },

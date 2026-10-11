@@ -191,3 +191,34 @@ describe("Windows security command bounded settlement", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("Windows helper launch and crash failures", () => {
+  it.each([1, -1073741819])("keeps a create exiting with %s unconfirmed", async code => {
+    const child = childProcess();
+    const result = createPrivateWindowsDirectoryCommand("C:\\private");
+    child.stdout.write('{"ok":true');
+    child.emit("exit", code, null);
+    child.emit("close", code, null);
+    await expect(result).rejects.toMatchObject({
+      creationOutcome: "unconfirmed", processExitConfirmed: true, exitCode: code,
+    });
+  });
+
+  it("fails closed with an actionable missing-executable error", async () => {
+    const child = childProcess();
+    const result = createPrivateWindowsDirectoryCommand("C:\\private");
+    child.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+    child.emit("close", -1, null);
+    await expect(result).rejects.toMatchObject({
+      creationOutcome: "unconfirmed", message: expect.stringContaining("rebuild with pnpm build:windows-helper or reinstall"),
+    });
+  });
+
+  it("keeps malformed create JSON unconfirmed after a successful process exit", async () => {
+    const child = childProcess();
+    const result = createPrivateWindowsDirectoryCommand("C:\\private");
+    child.stdout.write("{");
+    child.emit("close", 0, null);
+    await expect(result).rejects.toMatchObject({ code: "permission-unverified", creationOutcome: "unconfirmed" });
+  });
+});

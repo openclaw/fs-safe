@@ -73,7 +73,7 @@ afterEach(() => {
 });
 
 describe("readOwnerAndDaclBatch", () => {
-  it("returns ordered facts and duplicates through one PowerShell process", async () => {
+  it("returns ordered facts and duplicates through one helper process", async () => {
     const child = commandChild();
     const paths = [firstPath, secondPath, firstPath];
     const pending = readOwnerAndDaclBatch(paths);
@@ -87,7 +87,7 @@ describe("readOwnerAndDaclBatch", () => {
     })));
     expect(spawn).toHaveBeenCalledOnce();
     const [file, args] = vi.mocked(spawn).mock.calls[0]!;
-    expect(file).toMatch(/WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+    expect(file).toMatch(/windows-security-helper\.exe$/);
     expect(args).toContain("paths");
     expect(args).not.toContain(firstPath);
     expect(args).not.toContain(secondPath);

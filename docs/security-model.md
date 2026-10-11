@@ -91,6 +91,18 @@ publication, and cleanup. File writers preserve the raw suffix. Root-relative
 APIs and caller-constructed relative directory receipts continue to reject
 drive designators.
 
+### Portable Windows security transport
+
+The portable fallback runs a prebuilt .NET Framework helper for each security
+check. Node passes the borrowed fd as the child's stdin; C# inspects that exact
+handle using `GetStdHandle(-10)`. Replacement descriptors and every verification
+across callbacks, publication, link-count changes, and chmod retain the same
+ordering and ownership boundaries as the native fallback protocol. No facts are
+cached between calls. A persistent helper cannot inherit later-opened fds, and
+portable Node does not expose the OS HANDLE or `DuplicateHandle` needed to send
+them. See the [reproducible build](native.md#windows-helper-build) and
+[execution policy requirements](install.md#windows-security-fallback).
+
 ### Exclusive creation on Windows
 
 Windows Node exclusive creation can follow a dangling file symlink before an

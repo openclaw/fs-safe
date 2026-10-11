@@ -4,13 +4,12 @@ import { describe, expect, it } from "vitest";
 import { useTempDirs } from "./helpers/vitest.js";
 import { runWindowsSecurityScript } from "./helpers/windows-security-script.js";
 
-const SCRIPT = fs.readFileSync(new URL("../src/windows-security-bridge.ps1", import.meta.url), "utf8");
-const ADD_TYPE = "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))";
-const SERIALIZE_ROW = "      $rowJson = Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject ([ordered]@{ path = $pathname; security = $reply.result }) -Depth 8 -Compress";
-const WRITE_SUCCESS = "      [Console]::Write($encoded.ToString())";
+const SCRIPT = fs.readFileSync(new URL("../src/windows-security-helper.cs", import.meta.url), "utf8");
+const SERIALIZE_ROW = '      string rowJson=Json(new Dictionary<string,object>{{"path",path},{"security",reply["result"]}});';
+const WRITE_SUCCESS = "    Console.Write(json);";
 const { tempRoot } = useTempDirs();
 
-// The real production PowerShell loop and serializer run against observable facts.
+// The real production C# loop and serializer run against observable facts.
 // No Windows ACL or filesystem query is made by this test-only C# fixture.
 const FIXTURE = String.raw`
 using System;
@@ -55,10 +54,9 @@ function replaceOnce(source: string, needle: string, replacement: string): strin
 }
 
 function fixtureScript(source: string, fault?: "serializer" | "output"): string {
-  // The existing helper compiles our adjacent fixture before invoking this copy.
-  let script = replaceOnce(source.replaceAll("\r\n", "\n"), ADD_TYPE, "# Fixture already compiled by the test helper.");
-  if (fault === "serializer") script = replaceOnce(script, SERIALIZE_ROW, "      throw 'fixture serializer failure'");
-  if (fault === "output") script = replaceOnce(script, WRITE_SUCCESS, "      throw 'fixture output failure'");
+  let script = source.replaceAll("\r\n", "\n");
+  if (fault === "serializer") script = replaceOnce(script, SERIALIZE_ROW, '      throw new Exception("fixture serializer failure");');
+  if (fault === "output") script = replaceOnce(script, WRITE_SUCCESS, '    throw new Exception("fixture output failure");');
   return script;
 }
 
@@ -76,10 +74,9 @@ async function runBatch(input: string, options: {
   fault?: "serializer" | "output";
 } = {}): Promise<{ stdout: string; reply: Reply; trace: Trace }> {
   const directory = await tempRoot("fs-safe-win-batch-budget-");
-  const scriptFile = path.join(directory, "batch.ps1");
   const inputFile = path.join(directory, "input.json");
   const traceFile = path.join(directory, "trace.json");
-  fs.writeFileSync(scriptFile, fixtureScript(SCRIPT, options.fault));
+
   fs.writeFileSync(inputFile, input);
   const inputFd = fs.openSync(inputFile, "r");
   try {
@@ -87,23 +84,24 @@ async function runBatch(input: string, options: {
       "$oracle=Microsoft.PowerShell.Utility\\ConvertFrom-Json -InputObject ([Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_ORACLE'))",
       "$expected=Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject ([FsSafeWindowsBridge]::Expected([string[]]$oracle.paths)) -Depth 8 -Compress",
       "$expectedBytes=[Console]::OutputEncoding.GetByteCount($expected)",
-      "$cap=16*1024*1024",
-      "$source=[IO.File]::ReadAllText([Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_SCRIPT'))",
-      "if([Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_EXACT') -eq '1') {",
-      "  $cap=$expectedBytes+[int][Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_OFFSET')",
-      "  if(([regex]::Matches($source,[regex]::Escape('$limit = 16 * 1024 * 1024'))).Count -ne 1) { throw 'ambiguous fixture limit' }",
-      "  $source=$source.Replace('$limit = 16 * 1024 * 1024','$limit = '+$cap)",
-      "}",
-      "& ([ScriptBlock]::Create($source)) -Operation paths",
+      "$cap=$expectedBytes+[int][Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_OFFSET')",
+      '$null=[FsSafeWindowsHelper]::Main(@("paths"))',
       "$trace=[ordered]@{paths=@([FsSafeWindowsBridge]::Paths());expected=$expected;expectedBytes=$expectedBytes;limit=$cap}",
       "[IO.File]::WriteAllText([Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_TRACE'),(Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject $trace -Depth 4 -Compress),[Text.UTF8Encoding]::new($false))",
     ], {
-      FS_SAFE_BATCH_SCRIPT: scriptFile,
       FS_SAFE_BATCH_TRACE: traceFile,
       FS_SAFE_BATCH_ORACLE: JSON.stringify({ paths: options.expectedPaths ?? [] }),
-      FS_SAFE_BATCH_EXACT: options.budgetOffset === undefined ? "0" : "1",
       FS_SAFE_BATCH_OFFSET: String(options.budgetOffset ?? 0),
-    }, inputFd);
+    }, inputFd, fixtureScript(SCRIPT, options.fault).replace(
+      "const int Limit = 16 * 1024 * 1024;",
+      options.budgetOffset === undefined ? "const int Limit = 16 * 1024 * 1024;" :
+        `static readonly int Limit = ${Buffer.byteLength(JSON.stringify({ ok: true, result: (options.expectedPaths ?? []).map((path, index) => ({ path, security: {
+          ownerSid: "s-1-5-21-42", currentUserSid: "s-1-5-21-42", daclPresent: true, daclProtected: true, isLocal: true,
+          aceListComplete: true, unsupportedAceTypes: [], aces: [{ sid: "s-1-5-21-42", mask: index + 1, aceType: "allow",
+            flags: { raw: 0, objectInherit: false, containerInherit: false, noPropagateInherit: false, inheritOnly: false,
+              inherited: false, successfulAccess: false, failedAccess: false } }],
+        } })) }), "utf8") + options.budgetOffset};`,
+    ));
     return { stdout, reply: JSON.parse(stdout) as Reply, trace: JSON.parse(fs.readFileSync(traceFile, "utf8")) as Trace };
   } finally {
     fs.closeSync(inputFd);
@@ -113,13 +111,13 @@ async function runBatch(input: string, options: {
 it.each(["\n", "\r\n"])("prepares the real batch script fixture with %j line endings", newline => {
   const source = SCRIPT.replaceAll("\r\n", "\n").replaceAll("\n", newline);
   const prepared = fixtureScript(source);
-  expect(prepared).not.toContain(ADD_TYPE);
-  expect(prepared).toContain("$limit = 16 * 1024 * 1024");
-  expect(fixtureScript(source, "serializer")).toContain("throw 'fixture serializer failure'");
-  expect(fixtureScript(source, "output")).toContain("throw 'fixture output failure'");
+  expect(prepared).not.toContain("Add-Type");
+  expect(prepared).toContain("const int Limit = 16 * 1024 * 1024;");
+  expect(fixtureScript(source, "serializer")).toContain('throw new Exception("fixture serializer failure");');
+  expect(fixtureScript(source, "output")).toContain('throw new Exception("fixture output failure");');
 });
 
-describe.runIf(process.platform === "win32")("Windows PowerShell batch encoded-output budget", () => {
+describe.runIf(process.platform === "win32")("Windows helper batch encoded-output budget", () => {
   it.each([
     { label: "empty", paths: [] },
     { label: "singleton", paths: ["first"] },
@@ -179,5 +177,34 @@ describe.runIf(process.platform === "win32")("Windows PowerShell batch encoded-o
     const result = failure as { stdout?: string | Buffer; stderr?: string | Buffer };
     expect(result.stdout?.toString()).toBe("");
     expect(result.stderr?.toString()).toContain(`fixture ${fault} failure`);
+  }, 45_000);
+});
+
+describe.runIf(process.platform === "win32")("Windows helper JSON compatibility", () => {
+  it("matches PowerShell values for all bridge scalar and container types", () => {
+    const fixture = `using System; using System.Collections.Generic;
+public static class FsSafeWindowsBridge {
+  public static object Execute(string operation,string path) {
+    return new Dictionary<string,object>{{"ok",true},{"result",new object[]{
+      null,true,false,(byte)255,-1,int.MaxValue,uint.MaxValue,long.MinValue,ulong.MaxValue,
+      "quote\\\"-slash\\\\-é-雪-🦀-\\n\\t",new object[0],new Dictionary<string,object>{{"nested",null}}
+    }}};
+  }
+}`;
+    const stdout = runWindowsSecurityScript(fixture, [
+      '$null=[FsSafeWindowsHelper]::Main(@("path"))',
+      '[Console]::WriteLine()',
+      '[Console]::Write((Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject ([FsSafeWindowsBridge]::Execute("path", "")) -Depth 8 -Compress))',
+    ], {}, undefined, SCRIPT);
+    const [actual, expected] = stdout.split(/\r?\n/);
+    expect(JSON.parse(actual!)).toEqual(JSON.parse(expected!));
+    expect(actual).toContain("18446744073709551615");
+    expect(actual).not.toContain("\ufeff");
+  }, 45_000);
+
+  it("rejects a paths batch over the 16 MiB input budget before querying", async () => {
+    const result = await runBatch(JSON.stringify(["x".repeat(16 * 1024 * 1024)]));
+    expect(result.reply).toEqual({ ok: false, code: "EINVAL", message: "Invalid Windows security path batch" });
+    expect(result.trace.paths).toEqual([]);
   }, 45_000);
 });

@@ -73,13 +73,12 @@ const compiledModules = Object.fromEntries(Object.keys(expected.windowsSecurity.
   return [name, hash(inside(path.join(rootDirectory, "dist", name)))];
 }));
 assert.deepEqual(compiledModules, expected.windowsSecurity.compiledSha256);
-const scriptAssetNames = ["windows-security-bridge.cs", "windows-security-bridge.ps1"];
+const scriptAssetNames = ["windows-security-helper.exe"];
 assert.deepEqual(Object.keys(expected.windowsSecurity.assetsSha256).sort(), scriptAssetNames);
 const scriptAssets = Object.fromEntries(scriptAssetNames.map((name) =>
   [name, hash(inside(path.join(rootDirectory, "dist", name)))]));
 assert.deepEqual(scriptAssets, expected.windowsSecurity.assetsSha256);
-const bridgeScript = inside(path.join(rootDirectory, "dist", "windows-security-bridge.ps1"));
-const bridgeScriptRelative = path.relative(consumer, bridgeScript);
+const bridgeScript = inside(path.join(rootDirectory, "dist", "windows-security-helper.exe"));
 const probeSha256 = hash(new URL(import.meta.url));
 const metadataHelperSha256 = hash(new URL("./consumer-proof-metadata.mjs", import.meta.url));
 assert.equal(probeSha256, expected.windowsSecurity.probeSha256);
@@ -135,15 +134,15 @@ const warningFeatures = ["windows-owner-dacl", "windows-private-directory", "win
 const onWarning = (warning) => warnings.push({ code: warning.code ?? null, name: warning.name,
   feature: warningFeatures.find((feature) => warning.message.includes(feature)) ?? null });
 process.on("warning", onWarning);
-function observedCommandArgs(args) {
-  assertInstalledScriptPath(args[4], bridgeScript);
-  return args.map((value, index) => index === 4 ? bridgeScriptRelative : value);
+function observedCommandArgs(file, args) {
+  assertInstalledScriptPath(file, bridgeScript);
+  return args;
 }
 childProcess.spawn = (...args) => {
   const started = performance.now();
   const stdin = args[2]?.stdio?.[0];
   const stat = typeof stdin === "number" ? fs.fstatSync(stdin, { bigint: true }) : undefined;
-  const row = { command: path.basename(String(args[0])), args: observedCommandArgs(args[1]), kind: "async", durationMs: null,
+  const row = { command: path.basename(String(args[0])), args: observedCommandArgs(args[0], args[1]), kind: "async", durationMs: null,
     stdin: typeof stdin === "number" ? "inherited-file-descriptor" : stdin,
     inheritedFd: typeof stdin === "number" ? stdin : null,
     inheritedIdentity: stat ? { dev: String(stat.dev), ino: String(stat.ino) } : null };
@@ -156,7 +155,7 @@ childProcess.spawn = (...args) => {
 childProcess.spawnSync = (...args) => {
   const started = performance.now();
   const result = original.spawnSync(...args);
-  commands.push({ command: path.basename(String(args[0])), args: observedCommandArgs(args[1]), kind: "sync", durationMs: performance.now() - started,
+  commands.push({ command: path.basename(String(args[0])), args: observedCommandArgs(args[0], args[1]), kind: "sync", durationMs: performance.now() - started,
     stdin: args[2]?.stdio?.[0], pid: result.pid, code: result.status, signal: result.signal });
   return result;
 };
@@ -245,7 +244,7 @@ foreach($ace in $raw.DiscretionaryAcl) {
 Write-FixturePhase 'output:end'
 `;
 const powershell = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
-  "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  "System32", "WindowsPowerShell", "v1.0", "windows-security-helper.exe");
 let fixtureCount = 0;
 function independentAcl(target, action = "inspect") {
   const fixture = ++fixtureCount;
@@ -506,7 +505,7 @@ try {
         const command = row.commands[0];
         const descriptorScenario = ["descriptor-secure-read", "descriptor-secure-read-repeat", "broad-acl-rejected-before-read", "explicit-readable-policy", "broad-write-rejected-with-readable-opt-in"].includes(row.scenario);
         const operation = descriptorScenario ? "descriptor" : row.scenario.startsWith("raw-owner-and-dacl") ? "path" : "create";
-        assert.deepEqual(command.args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", bridgeScriptRelative, "-Operation", operation]);
+        assert.deepEqual(command.args, [operation]);
         if (descriptorScenario) {
           assert.equal(command.stdin, "inherited-file-descriptor");
           assert.deepEqual(command.inheritedIdentity, { dev: beforeFile.dev, ino: beforeFile.ino });
@@ -514,7 +513,7 @@ try {
         } else assert.equal(command.stdin, "ignore");
       }
       for (const command of commands) {
-        assert.equal(command.command.toLowerCase(), "powershell.exe");
+        assert.equal(command.command.toLowerCase(), "windows-security-helper.exe");
         assert.equal(command.code, 0);
       }
     } else assert.deepEqual(commands, []);

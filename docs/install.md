@@ -159,27 +159,32 @@ without it. See [Linux capability behavior and limits](native.md#linux-without-o
 ### Windows security fallback
 
 Windows raw owner/DACL inspection, private-directory creation, and secure-file
-reads work without the addon in `auto` or `off` mode when system Windows
-PowerShell and its .NET `Add-Type` compilation support are available. The package
-ships a readable, fixed `.ps1` driver and adjacent `.cs` source and invokes the
-driver with Windows PowerShell `-File`. Paths are passed as data. The fallback
-does not generate helper scripts at runtime or use an encoded launcher.
-The driver addresses built-in commands by module name and limits module
-discovery to PowerShell's bundled system modules, avoiding broad command
-discovery scans during each helper startup.
+reads work without the addon in `auto` or `off` mode using the packaged
+`windows-security-helper.exe`. This prebuilt AnyCPU console application targets
+.NET Framework 4.0 (CLR v4.0.30319), the runtime already required by Windows
+PowerShell 5.1. It runs as native x64 on x64 Windows and native ARM64 on Windows
+11 ARM with .NET Framework 4.8.1, including when the calling Node is x64.
+No compiler, .NET SDK, or PowerShell is needed by this fallback at runtime.
 
-Normal PowerShell execution policy and Microsoft Defender policy must permit
-the packaged scripts, including their use of `Add-Type`. The package does not
-bypass restrictions, change policies, or add exclusions. Unsupported or
-disallowed command execution fails closed.
+Each check starts a separate helper process. Paths and expected identities stay
+in environment variables, and descriptor checks inherit the actual borrowed
+handle through stdin. No security facts are cached or checks combined. The
+fallback preserves private DACLs at creation and inspects the same open handle
+that supplies secure-file bytes. Each capability emits a path-free
+`FS_SAFE_NATIVE_FALLBACK` warning once per process.
 
-The fallback preserves private DACLs at creation and inspects the same open
-handle that supplies secure-file bytes. Each capability emits a path-free
-`FS_SAFE_NATIVE_FALLBACK` warning once per process; each call adds PowerShell
-startup and compilation overhead. Execution or compilation failure also fails
-closed. Native `require` still rejects a missing binding or capability, and an
-available native operation's error never triggers a command retry. See
-[Permissions](permissions.md) and [Secure file reads](secure-file.md).
+The executable is included in the main npm package and covered by its npm
+provenance, just like its JavaScript. Source lives in the repository; consumers
+receive only the executable. Missing or disallowed execution fails closed with
+a rebuild/reinstall hint. AppLocker/WDAC policies may block this unsigned exe in
+user directories; there is no PowerShell retry. Such hosts can also restrict
+PowerShell to Constrained Language Mode, where the former Add-Type fallback
+was unavailable. The package does not bypass policies or add exclusions.
+
+Native `require` still rejects a missing binding or capability, and an available
+native operation's error never triggers a command retry. See
+[Permissions](permissions.md), [Secure file reads](secure-file.md), and
+[reproducible helper builds](native.md#windows-helper-build).
 
 ## Native helper policy
 

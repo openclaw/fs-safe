@@ -44,6 +44,9 @@ function packPackage(directory, expectedName) {
   );
   const parsed = JSON.parse(output);
   const normalized = normalizePackResult(parsed, expectedName);
+  if (expectedName === "@openclaw/fs-safe" && !normalized.files.some(file => file.path === "dist/windows-security-helper.exe")) {
+    throw new Error("packed package is missing dist/windows-security-helper.exe; run pnpm build:windows-helper before packing");
+  }
   const entry = Array.isArray(parsed) ? parsed[0] : parsed[expectedName];
   const artifact = { ...entry, ...normalized };
   if (!artifact.filename || !artifact.integrity) {

@@ -113,6 +113,13 @@ function parseReplyValue(stdout: string, operation: CommandOperation): unknown {
   return response.result;
 }
 
+function explainLaunchFailure(error: Error, cause: unknown): void {
+  if (cause && typeof cause === "object" && "code" in cause &&
+    ["ENOENT", "EACCES", "EPERM", "ENOEXEC", "UNKNOWN"].includes(String(cause.code))) {
+    error.message += "; Windows security helper could not launch; rebuild with pnpm build:windows-helper or reinstall @openclaw/fs-safe";
+  }
+}
+
 function executeSync(operation: CommandOperation, params: CommandParams): unknown {
   const { file, args, env } = command(operation, params);
   const startedAt = performance.now();
@@ -128,6 +135,7 @@ function executeSync(operation: CommandOperation, params: CommandParams): unknow
       killed: (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT",
       ...(operation === "create" ? { creationOutcome: "unconfirmed" } as const : {}),
     });
+    explainLaunchFailure(error, result.error);
     if (operation === "create") Object.assign(error, { creationOutcome: "unconfirmed" });
     throw error;
   }
@@ -154,6 +162,7 @@ class WindowsSecurityCommandError extends PermissionCommandError {
 
   constructor(file: string, durationMs: number, receipt: CommandFailureReceipt, override readonly timedOut: boolean, timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS) {
     super(file, durationMs, receipt, timeoutMs);
+    explainLaunchFailure(this, receipt.cause);
     this.creationOutcome = receipt.creationOutcome;
     this.processExitConfirmed = receipt.processExitConfirmed;
     if (timedOut) this.message = `Windows permission inspection timed out after ${timeoutMs}ms`;

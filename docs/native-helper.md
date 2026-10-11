@@ -45,7 +45,7 @@ in `require`. A failure from an available native method is still an operation
 failure; it is not treated as a missing capability.
 
 Windows owner/DACL inspection, private-directory creation, and secure reads can
-use [PowerShell fallbacks](install.md#windows-security-fallback) in `auto` and
+use [Windows helper fallbacks](install.md#windows-security-fallback) in `auto` and
 `off`; `require` stays strict, and native operation failures remain terminal.
 Bun macOS/Linux canonicalization uses the addon under its
 [runtime requirements](install.md#bun-runtime).

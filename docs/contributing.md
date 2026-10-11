@@ -108,7 +108,7 @@ lanes run the native suite, main-thread and Worker private-creation/descriptor
 proof, and root-only npm/pnpm install smoke. PE inspection matches the loaded
 consumer binary's hash, architecture and required NT imports. Omitted-optionals
 creation probes in the x64-emulated cell have a 600-second deadline: three
-complete measurements had a 183.18-second median, with 140 PowerShell launches
+pre-helper measurements had a 183.18-second median, with 140 PowerShell launches
 accounting for 98–99% of wall time. This is over three times that median, rounded
 up to a whole minute. Native ARM64 and x64 cells, and every other consumer probe,
 retain their 120-second deadlines. Release builds

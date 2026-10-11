@@ -1566,6 +1566,14 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Set up pinned Windows helper compiler
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Build Windows helper for the Alpine package
+        run: node scripts/build-windows-helper.mjs
+
       - name: Build and test in Alpine
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work node:24-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 sh -euxc '

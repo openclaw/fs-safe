@@ -170,7 +170,7 @@ See [File locks](sidecar-lock.md), [Secret files](secret-file.md), and
 ## 7. Gate native-only features
 
 Version 0.5 required native support for `createPrivateDirectory()`. Current
-releases also support a packaged PowerShell script in native `auto` and `off`
+releases also support a packaged .NET Framework helper in native `auto` and `off`
 modes, retaining its creation-time protected DACL. Check the
 [Windows security fallback prerequisites](install.md#windows-security-fallback)
 before relying on this route. The API remains Windows-only, explicit native

@@ -44,7 +44,7 @@ const windowsSecurityModules = [
   "secure-file.js", "strict-file-identity.js", "string-coerce.js", "timing.js", "windows-command.js",
   "windows-owner.js", "windows-path-alias.js", "windows-security-command.js", "windows-security-facts.js",
 ];
-const windowsSecurityAssets = ["windows-security-bridge.cs", "windows-security-bridge.ps1"];
+const windowsSecurityAssets = ["windows-security-helper.exe"];
 const windowsSecurityScenarios = [
   "private-directory-created", "private-directory-created-repeat", "raw-owner-and-dacl", "raw-owner-and-dacl-repeat",
   "private-directory-collision", "populated-private-directory-collision", "descriptor-secure-read", "descriptor-secure-read-repeat",

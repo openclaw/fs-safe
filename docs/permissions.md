@@ -42,7 +42,7 @@ POSIX remediation strings shell-quote paths with whitespace or metacharacters
 and protect option-like paths with `--`, so they can be presented as commands
 without letting the inspected pathname add shell syntax.
 
-`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` obtains descriptor-bound owner/DACL facts for the exact handle it reads, using native support or the packaged PowerShell/C# bridge in `auto` and `off` modes.
+`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` obtains descriptor-bound owner/DACL facts for the exact handle it reads, using native support or the packaged prebuilt .NET Framework helper in `auto` and `off` modes.
 
 ## Advanced Windows ACL helpers
 
@@ -178,7 +178,7 @@ Object-specific and other ACE layouts are not guessed: they are omitted,
 `unsupportedAceTypes`, allowing a security-sensitive caller to fail closed.
 Non-Windows systems return `{ status: "unsupported-platform", platform }`.
 Windows prefers the native binding. In native `auto` or `off` mode, a missing
-binding or capability uses the packaged PowerShell/C# bridge with
+binding or capability uses the packaged prebuilt .NET Framework helper with
 the same raw ACE projection. Native `require` rejects either absence with
 `FsSafeError("helper-unavailable")` and starts no command. An available native
 query's failure is terminal. The existing coarse `inspectPathPermissions()` API
@@ -220,13 +220,13 @@ An available native capability runs all queries in one isolated process using
 the current runtime executable. Its resolved native mode is forwarded explicitly;
 Node preload and module-search environment overrides are not inherited. An
 available native query's failure is terminal. In `auto` when the binding or
-capability is absent, or in `off`, one packaged PowerShell process reads the
-path array from stdin and compiles the existing C# bridge once. Native `require`
+capability is absent, or in `off`, one packaged .NET Framework helper process reads the
+path array from stdin. Native `require`
 rejects missing support before launching a process. No route launches one
 process per path or wraps synchronous parent-process queries in promises.
 
 `timeoutMs` defaults to 60,000 and applies to the whole process, including
-startup and fallback compilation. It must be an integer from 1 through
+helper startup. It must be an integer from 1 through
 2,147,483,647. Combined stdout and stderr are limited to 16 MiB. Success waits
 for process exit and both output pipes to close. Timeout and transport failure
 request termination, then retain the existing one-second settlement grace.
@@ -236,7 +236,7 @@ unconfirmed child can still be reading after rejection; the operation returns
 no facts and owns no output files or artifact cleanup. Neither timing out nor
 receiving a successful kill request is reported as confirmed exit.
 
-The PowerShell fallback encodes and budgets each result while collecting it,
+The helper fallback encodes and budgets each result while collecting it,
 instead of retaining every descriptor graph until the entire batch finishes.
 An encoded response that would exceed 16 MiB rejects with `too-large` before
 inspecting later paths. A query failure observed earlier retains its original
@@ -266,7 +266,7 @@ On Windows, this creates the directory and applies a
 protected owner + LocalSystem + Administrators full-control DACL directly with
 an atomic security descriptor. The native route launches no command. When its
 binding or capability is unavailable, native `auto` and `off` modes use the
-packaged PowerShell/C# bridge. Both routes retain the parent and exact created-directory handles
+packaged prebuilt .NET Framework helper. Both routes retain the parent and exact created-directory handles
 through ACL and final pathname validation. If validation fails, it attempts only
 nonrecursive deletion through the created handle, preserving any pathname
 replacement. If cleanup also fails, the error retains the original failure and
@@ -300,10 +300,9 @@ pathname-only compatibility shim. Existing Windows permission inspection still
 retains its structured .NET compatibility fallback.
 
 The raw owner/DACL and private-directory fallbacks each emit one path-free
-`FS_SAFE_NATIVE_FALLBACK` warning per process. PowerShell startup and C#
-compilation add overhead to each call; install the native package for frequent
-operations. These routes run the package's readable, fixed scripts under normal
-system PowerShell policy; see the [Windows security fallback prerequisites](install.md#windows-security-fallback).
+`FS_SAFE_NATIVE_FALLBACK` warning per process. A fresh prebuilt helper process
+adds startup overhead to each call; install the native package for frequent
+operations. These routes run the packaged executable under normal system policy; see the [Windows security fallback prerequisites](install.md#windows-security-fallback).
 If command support is unavailable, disallowed, or fails, the operation rejects.
 Private-directory creation never falls back to inherited permissions.
 The asynchronous creation command has a 30-second deadline. After a timeout or
