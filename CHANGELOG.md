@@ -3,11 +3,20 @@
 ## Unreleased
 
 - **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks.
-- Windows portable permission and ACL inspection avoids PowerShell startup (about 8× faster in a Windows x64 probe), preserving injected executors and .NET ACL semantics; requires .NET Framework 4.6.2+.
+
+## 0.26.2 - 2026-10-11
+
+### Highlights
+
+- **Windows receipt round trips:** use exact bigint identities from fs-safe receipts with the fail-closed identity checks introduced in 0.26.1. ([#962](https://github.com/openclaw/fs-safe/pull/962))
 
 ### Fixes
 
-- Windows: fs-safe receipts now carry exact identities; pass them back for identity checks. ([#962](https://github.com/openclaw/fs-safe/pull/962))
+- **Windows file identity:** publication, reads, opens, directory and temporary-workspace receipts, typed listings, and clone metadata now expose bigint `exactIdentity`; publication failures expose `exactTargetIdentity`. Pass the exact form back to identity-checking APIs, including publication and copy expectations, to avoid rejecting rounded legacy Number identities on volumes with large file IDs. Existing exact copy and staged-file receipts remain supported. ([#962](https://github.com/openclaw/fs-safe/pull/962))
+
+### Performance
+
+- **Windows permission inspection:** avoid PowerShell startup for portable owner and ACL queries, about 8× faster in a Windows x64 probe, while preserving injected executors and .NET ACL semantics; requires .NET Framework 4.6.2+. ([#958](https://github.com/openclaw/fs-safe/pull/958))
 
 ## 0.26.1 - 2026-10-11
 
