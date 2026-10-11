@@ -1237,6 +1237,35 @@ pub fn remove_owned_tree(
     remove_owned_tree_with_hook(parent_fd, name, directory_fd, || {})
 }
 
+pub fn try_remove_empty_owned_tree(
+    parent_fd: i32,
+    name: &str,
+    directory_fd: i32,
+) -> NativeResult<String> {
+    let owned = match nt_open_relative_with_policy(
+        root_handle(parent_fd)?,
+        name,
+        DELETE_ACCESS | FILE_WRITE_ATTRIBUTES,
+        FILE_OPEN,
+        0,
+        ReparsePolicy::AllowLeaf,
+    ) {
+        Ok(owned) => owned,
+        Err(error) if error.status == "ENOENT" => return Ok("preserved".to_owned()),
+        Err(error) => return Err(error),
+    };
+    if handle_is_reparse(owned.0)? || !same_handle_identity(root_handle(directory_fd)?, owned.0)? {
+        return Ok("preserved".to_owned());
+    }
+    // The disposition applies to this exact opened object and refuses a
+    // nonempty directory without enumerating or deleting any descendants.
+    match mark_handle_for_deletion(owned.0) {
+        Ok(()) => Ok("removed".to_owned()),
+        Err(error) if error.status == "ENOTEMPTY" => Ok("not-empty".to_owned()),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn fstat_identity(fd: i32) -> NativeResult<FileIdentity> {
     let handle = root_handle(fd)?;
     assert_not_reparse(handle)?;

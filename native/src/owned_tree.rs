@@ -32,6 +32,19 @@ fn removal_result(result: NativeResult<String>) -> NativeOwnedTreeRemovalResult 
     }
 }
 
+#[napi(js_name = "tryRemoveEmptyOwnedTree")]
+pub fn try_remove_empty_owned_tree(
+    parent_fd: i32,
+    basename: String,
+    directory_fd: i32,
+) -> NativeOwnedTreeRemovalResult {
+    removal_result(
+        validate_relative_path(&basename, false).and_then(|()| {
+            platform::try_remove_empty_owned_tree(parent_fd, &basename, directory_fd)
+        }),
+    )
+}
+
 #[napi(js_name = "removeOwnedTree")]
 pub fn remove_owned_tree(
     parent_fd: i32,

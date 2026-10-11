@@ -821,6 +821,33 @@ pub fn remove_owned_tree(
     remove_owned_tree_with_hook(parent_fd, name, directory_fd, || {})
 }
 
+pub fn try_remove_empty_owned_tree(
+    parent_fd: i32,
+    name: &str,
+    directory_fd: i32,
+) -> NativeResult<String> {
+    validate_child_basename(name)?;
+    if !directory_name_matches_fd(parent_fd, name, directory_fd)? {
+        return Ok("preserved".to_owned());
+    }
+    // REMOVEDIR cannot traverse a replacement. Nonempty directories retain
+    // their contents and return to the existing descriptor-bounded traversal.
+    match rustix::fs::unlinkat(borrowed(parent_fd), name, AtFlags::REMOVEDIR) {
+        Ok(()) => Ok("removed".to_owned()),
+        Err(rustix::io::Errno::NOTEMPTY | rustix::io::Errno::EXIST) => {
+            Ok("not-empty".to_owned())
+        }
+        Err(rustix::io::Errno::NOENT) => Ok("preserved".to_owned()),
+        Err(error @ (rustix::io::Errno::NOTDIR | rustix::io::Errno::PERM)) => {
+            if !directory_name_matches_fd(parent_fd, name, directory_fd)? {
+                return Ok("preserved".to_owned());
+            }
+            Err(os_error(error, "remove empty owned tree root"))
+        }
+        Err(error) => Err(os_error(error, "remove empty owned tree root")),
+    }
+}
+
 fn remove_created_target_checked(
     root_fd: i32,
     rel_path: &str,

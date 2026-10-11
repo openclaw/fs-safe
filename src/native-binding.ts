@@ -80,6 +80,10 @@ export interface NativeOwnedTreeRemovalResult {
   errorMessage?: string;
 }
 
+export interface NativeEmptyTreeRemovalResult extends Omit<NativeOwnedTreeRemovalResult, "outcome"> {
+  outcome?: "removed" | "preserved" | "not-empty";
+}
+
 export interface NativeRootRemovalEntry {
   dev: bigint;
   ino: bigint;
@@ -286,6 +290,11 @@ export interface NativeBinding {
   /** Internal Windows-only inspection of the exact borrowed Node descriptor. */
   inspectWindowsSecureFileHandle?(fd: number): NativeWindowsDescriptorSecurityFacts;
   ownedTreeRemovalAvailable?(parentFd: number): boolean;
+  tryRemoveEmptyOwnedTree?(
+    parentFd: number,
+    basename: string,
+    directoryFd: number,
+  ): NativeEmptyTreeRemovalResult;
   removeOwnedTree?(
     parentFd: number,
     basename: string,

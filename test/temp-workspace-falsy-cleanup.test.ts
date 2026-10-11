@@ -34,6 +34,7 @@ describe.each(["async", "sync"] as const)("%s falsy cleanup failures", (mode) =>
     const rootDir = await tempRoot(`fs-safe-falsy-rm-${mode}-`);
     const options = { rootDir, prefix: "workspace-" };
     const workspace = mode === "sync" ? tempWorkspaceSync(options) : await tempWorkspace(options);
+    fsSync.writeFileSync(`${workspace.dir}/owned`, "owned");
     const remove = mode === "sync"
       ? vi.spyOn(fsSync, "rmSync").mockImplementationOnce(() => { throw value; })
       : vi.spyOn(fs, "rm").mockRejectedValueOnce(value);

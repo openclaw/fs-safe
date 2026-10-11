@@ -209,6 +209,15 @@ identity before opening it, rejects mount crossings, and traverses descendants
 only through opened directory handles; symlinks/reparse entries are removed as
 leaves and never traversed. Windows marks the exact opened objects for deletion by handle.
 
+Empty quarantines can be removed without directory enumeration: the native
+helper can attempt a descriptor-relative empty-directory removal, and the
+compatible JavaScript path can attempt `rmdir`. Unchanged creation timestamps
+select this attempt as a performance hint, never as emptiness or ownership proof;
+all fresh identity checks still run. Changed timestamps and nonempty directories
+continue through the same guarded recursive removal. The native empty attempt is bounded
+and synchronous, including for async workspaces; recursive native cleanup stays
+asynchronous. Older bindings retain their existing recursive route.
+
 POSIX has no unlink-by-fd or expected-inode unlink for directory entries. After
 the final identity check, each `unlinkat` can still be raced; the possible side
 effect is bounded to one substituted non-directory leaf or one empty directory
