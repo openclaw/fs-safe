@@ -1,3 +1,4 @@
+import { exactFileIdentity, type ExactIdentityReceipt } from "./exact-identity.js";
 import { randomInt, randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import fs from "node:fs/promises";
@@ -213,13 +214,13 @@ function registerTempWorkspace(
   } catch (error) {
     throwTempWorkspaceCreationFailure(error, retainedChild, capability, owner);
   }
-  return { owner: owner!, unregisterTempDir, identity: { dev: Number(stat.dev), ino: Number(stat.ino) } };
+  return { owner: owner!, unregisterTempDir, exactIdentity: exactFileIdentity(stat), identity: { dev: Number(stat.dev), ino: Number(stat.ino) } };
 }
 
 async function createTempWorkspace(
   options: TempWorkspaceOptions,
   scopedPrefix = false,
-): Promise<TempWorkspace> {
+): Promise<TempWorkspace & ExactIdentityReceipt> {
   const { rootDir, dirMode, mode, cleanupSafety } = tempWorkspaceSettings(options);
   const admission = await admitTempWorkspaceRoot(rootDir);
   const root = admission.dir;
@@ -257,7 +258,7 @@ async function createTempWorkspace(
   } catch (error) {
     throwTempWorkspaceCreationFailure(error, retainedChild, capability);
   }
-  const { owner, identity, unregisterTempDir } = registerTempWorkspace(
+  const { owner, identity, exactIdentity, unregisterTempDir } = registerTempWorkspace(
     dir, retainedChild, capability, admission, dirMode,
   );
   // Once registered, even a store-construction failure remains exit-cleanable.
@@ -266,6 +267,7 @@ async function createTempWorkspace(
   return {
     dir,
     identity,
+    exactIdentity,
     store,
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     write: async (fileName, data) =>
@@ -305,7 +307,7 @@ async function createTempWorkspace(
 
 export async function tempWorkspace(
   options: TempWorkspaceOptions,
-): Promise<TempWorkspace> {
+): Promise<TempWorkspace & ExactIdentityReceipt> {
   return await createTempWorkspace(options);
 }
 
@@ -324,7 +326,7 @@ export async function withTempWorkspace<T>(
 function createTempWorkspaceSync(
   options: TempWorkspaceOptions,
   scopedPrefix = false,
-): TempWorkspaceSync {
+): TempWorkspaceSync & ExactIdentityReceipt {
   const { rootDir, dirMode, mode, cleanupSafety } = tempWorkspaceSettings(options);
   const admission = admitTempWorkspaceRootSync(rootDir);
   const root = admission.dir;
@@ -365,7 +367,7 @@ function createTempWorkspaceSync(
   } catch (error) {
     throwTempWorkspaceCreationFailure(error, retainedChild, capability);
   }
-  const { owner, identity, unregisterTempDir } = registerTempWorkspace(
+  const { owner, identity, exactIdentity, unregisterTempDir } = registerTempWorkspace(
     dir, retainedChild, capability, admission, dirMode,
   );
   // Once registered, even a store-construction failure remains exit-cleanable.
@@ -374,6 +376,7 @@ function createTempWorkspaceSync(
   return {
     dir,
     identity,
+    exactIdentity,
     store,
     path: (fileName) => resolveWorkspaceLeaf(dir, fileName),
     write: (fileName, data) =>
@@ -424,7 +427,7 @@ function createTempWorkspaceSync(
 
 export function tempWorkspaceSync(
   options: TempWorkspaceOptions,
-): TempWorkspaceSync {
+): TempWorkspaceSync & ExactIdentityReceipt {
   return createTempWorkspaceSync(options);
 }
 

@@ -114,18 +114,19 @@ describe("secure file exact identity", () => {
     const root = await tempRoot("fs-safe-secure-receipt-");
     const filePath = path.join(root, "secret");
     await fs.writeFile(filePath, "secret", { mode: 0o600 });
-    let numeric: Stats;
+    let exact: fsSync.BigIntStats;
     onNextOpen((handle) => {
       const stat = fsSync.fstatSync.bind(fsSync);
       vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
         const result = stat(fd, options);
         if (fd !== handle.fd) return result;
-        if (!options?.bigint) numeric = result as Stats;
+        if (options?.bigint) exact = result as fsSync.BigIntStats;
         return result;
       });
     });
     const result = await readSecureFile({ filePath, permissions: { allowInsecure: true } });
-    expect(result.stat).toBe(numeric!);
+    expect(result.exactIdentity).toEqual({ dev: exact!.dev, ino: exact!.ino });
+    expect(result.stat.ino).toBe(Number(exact!.ino));
     expect(result.stat).toBeInstanceOf(Stats);
     expect(result.stat.isFile()).toBe(true);
     for (const field of ["dev", "ino", "size", "mode", "uid"] as const) {

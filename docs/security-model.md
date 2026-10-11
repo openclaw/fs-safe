@@ -394,3 +394,26 @@ public result types and containment labels are unchanged.
 ## Reporting issues
 
 Suspected security issues belong in private disclosure first. See [`SECURITY.md`](https://github.com/openclaw/fs-safe/blob/main/SECURITY.md) in the repo for the current contact path.
+
+## Exact receipts and legacy numeric metadata
+
+Identity comparisons require bigint or safe-integer components. Unsafe Number
+IDs remain rejected: converting a rounded Number to bigint cannot recover the
+lost bits. This matters on NTFS, whose file IDs can exceed Number precision.
+
+Public open/read results, standalone publication results, directory durability
+receipts, and temp-workspace receipts carry `exactIdentity`. Publication failures
+carry `exactTargetIdentity` when the created target is known. Retain and pass
+those exact companions back to identity-checking APIs. Existing numeric fields
+keep their types and serve as legacy metadata views. Both views come from the
+same admitted observation, never an extra pathname stat to recover identity.
+`sameFileIdentity()` and standalone publication prefer an explicit
+`exactIdentity` on a whole receipt. They do not guess between nested source,
+target, directory, or staged identities.
+
+`Root.stat()`, typed `list()`, and `entries()` expose a non-enumerable
+`exactIdentity`, preserving their established numeric JSON representation.
+Object spread and JSON serialization omit that field: retain the returned object
+or copy its exact companion explicitly. Other bigint receipt fields also require
+an application-defined encoding for JSON. Exact receipts record identity at an
+observation; they add no atomic rename, deletion, ownership, or durability guarantee.

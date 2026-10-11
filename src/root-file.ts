@@ -1,3 +1,4 @@
+import { exactFileIdentity, type ExactFileIdentity } from "./exact-identity.js";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -35,7 +36,7 @@ type BoundaryReadFs = Pick<
 export type RootFileOpenFailureReason = PinnedOpenSyncFailureReason | "validation";
 
 export type RootFileOpenResult =
-  | { ok: true; path: string; fd: number; stat: fs.Stats; rootRealPath: string }
+  | { ok: true; path: string; fd: number; stat: fs.Stats; exactIdentity: ExactFileIdentity; rootRealPath: string }
   | { ok: false; reason: RootFileOpenFailureReason; error?: unknown };
 
 export type RootFileOpenFailure = Extract<RootFileOpenResult, { ok: false }>;
@@ -187,6 +188,7 @@ function finalizeRootFileOpen(params: RootFileOpenSettings & {
     path: opened.path,
     fd: opened.fd,
     stat: opened.stat,
+    exactIdentity: exactFileIdentity(opened.identity),
     rootRealPath: resolved.rootRealPath,
   };
 }

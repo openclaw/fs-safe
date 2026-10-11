@@ -4,6 +4,10 @@
 
 - Windows portable permission and ACL inspection avoids PowerShell startup (about 8× faster in a Windows x64 probe), preserving injected executors and .NET ACL semantics; requires .NET Framework 4.6.2+.
 
+### Fixes
+
+- Windows: fs-safe receipts now carry exact identities; pass them back for identity checks.
+
 ## 0.26.1 - 2026-10-11
 
 ### Highlights

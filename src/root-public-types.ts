@@ -45,3 +45,4 @@ export type {
   RootWalkOptions,
   RootWalkSymlinkPolicy,
 } from "./root-walk.js";
+export type { ExactFileIdentity } from "./exact-identity.js";

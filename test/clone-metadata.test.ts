@@ -133,12 +133,18 @@ describe.each(["darwin", "linux", "win32", "freebsd"] as const)("clone metadata 
     await expect(readCloneFileMetadata([input, unnormalized])).resolves.toEqual([
       undefined,
       {
+        exactIdentity: { dev: 12n, ino: 9007199254740993n },
         dev: 12, type: 1, mtimeSec: 10, mtimeNs: 11, ctimeSec: 12, ctimeNs: 13,
         uid: 501, gid: 20, mode: 0o100600, ino: 9007199254740993n, size: 31n,
         cloneId: 9007199254740995n,
       },
     ]);
     expect(read).toHaveBeenCalledExactlyOnceWith([input, input]);
+    const highInode = 2n ** 63n + 1n;
+    result.writeBigUInt64LE(highInode, 76);
+    const high = await readCloneFileMetadata([input, input]);
+    expect(high[1]?.ino).toBe(highInode);
+    expect(high[1]?.exactIdentity).toEqual({ dev: 12n, ino: BigInt.asIntN(64, highInode) });
   });
 
   it("keeps empty native batches on the existing native route", async () => {

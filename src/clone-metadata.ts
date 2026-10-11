@@ -1,7 +1,9 @@
+import type { ExactFileIdentity } from "./exact-identity.js";
 import { assertAbsolutePathInput } from "./absolute-path.js";
 import { getNativeBinding, requireNativeBinding } from "./native.js";
 
 export type CloneFileMetadata = {
+  exactIdentity?: ExactFileIdentity;
   dev: number;
   type: number;
   mtimeSec: number;
@@ -38,6 +40,7 @@ export async function readCloneFileMetadata(
     )
       return undefined;
     return {
+      exactIdentity: Object.freeze({ dev: BigInt(result.readUInt32LE(24)), ino: result.readBigInt64LE(76) }),
       dev: result.readUInt32LE(24),
       type: result.readUInt32LE(28),
       mtimeSec: Number(result.readBigInt64LE(32)),

@@ -185,7 +185,6 @@ it.each(["async", "sync"] as const)(
         "lstat",
         "lstat",
         "open",
-        "fstat:numeric",
         "fstat:bigint",
         "lstat",
         "lstat",
