@@ -4,6 +4,10 @@
 
 - Fix Windows private directory and file creation beyond MAX_PATH, including internal staging and pathname verification, while preserving ACL, alias, identity and cleanup checks.
 
+### Performance
+
+- Speed up native `Root.mkdir()` for direct children while retaining descriptor-relative creation and exact root/child identity checks.
+
 ## 0.26.0 - 2026-10-10
 
 ### Highlights

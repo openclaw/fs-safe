@@ -52,6 +52,34 @@ function assertParentAdmissionAvailable(binding: NativeBinding): asserts binding
   assertNativeCapabilities(binding, "openBeneath");
 }
 
+/** Short native mutations need a retained descriptor, not a Node FileHandle. */
+export function openExactNativeRootSync(
+  binding: NativeBinding,
+  params: { rootPath: string; rootIdentity: { dev: bigint; ino: bigint } },
+): { fd: number; [Symbol.dispose](): void } {
+  assertParentAdmissionAvailable(binding);
+  assertNoWindowsPathAlias(params.rootPath, "filesystem", "native root uses a Windows filesystem namespace alias");
+  const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fsSync.constants.O_RDONLY) |
+    (fsSync.constants.O_DIRECTORY ?? 0);
+  const fd = fsSync.openSync(pathForWindowsFilesystem(params.rootPath), flags);
+  let held = true;
+  const close = () => {
+    if (!held) return;
+    held = false;
+    fsSync.closeSync(fd);
+  };
+  try {
+    const stat = inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), params.rootIdentity);
+    if (!stat.isDirectory()) throw new FsSafeError("path-mismatch", "native root is not a directory");
+    return { fd, [Symbol.dispose]: close };
+  } catch (error) {
+    try { close(); } catch (closeError) {
+      throw createSuppressedError(closeError, error, "native root admission and close failed");
+    }
+    throw error;
+  }
+}
+
 export async function openNativeRootAdmission(
   binding: NativeBinding,
   params: { rootPath: string; rootIdentity?: RootIdentity; operation?: string; reportCloseErrors?: boolean; searchOnly?: boolean },
