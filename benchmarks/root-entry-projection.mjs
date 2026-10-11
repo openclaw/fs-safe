@@ -4,16 +4,26 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 const [baseDist, headDist, output, action = 'compare', selected = 'all'] = process.argv.slice(2);
+const counts = [1, 100, 1000, 50000];
+const mode = process.env.FS_SAFE_NATIVE_MODE ?? 'auto';
+const compareMode = process.env.FS_SAFE_COMPARE_MODE ?? mode;
 const modules = await Promise.all([baseDist, headDist].map(d => import(pathToFileURL(path.resolve(d, 'root.js')))));
+for (const [index, directory] of [baseDist, headDist].entries()) {
+  const { configureFsSafeNative } = await import(pathToFileURL(path.resolve(directory, 'config.js')));
+  const { getNativeBinding } = await import(pathToFileURL(path.resolve(directory, 'native.js')));
+  const selectedMode = index === 0 ? mode : compareMode;
+  configureFsSafeNative({ mode: selectedMode });
+  assert(selectedMode !== 'require' || getNativeBinding(), 'require must load a native binding');
+}
 const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'fs-safe-entry-bench-'));
 try {
-  for (const count of [1, 100, 1000]) {
+  for (const count of counts) {
     await fs.mkdir(path.join(workspace, `n${count}`));
     for (let i = 0; i < count; i++) await fs.writeFile(path.join(workspace, `n${count}`, `${i}.json`), '{"synthetic":true}\n');
   }
   const roots = await Promise.all(modules.map(m => m.root(workspace)));
   const cases = [
-    ...[1, 100, 1000].flatMap(count => [false, true].map(metadata => ({ name: `list-${count}-${metadata ? 'metadata' : 'names'}`, iterations: count === 1000 ? 30 : 100, run: r => r.list(`n${count}`, {withFileTypes: metadata}), verify: result => assert.equal(result.length, count) }))),
+    ...counts.flatMap(count => [false, true].map(metadata => ({ name: `list-${count}-${metadata ? 'metadata' : 'names'}`, iterations: count === 50000 ? 3 : count === 1000 ? 30 : 100, run: r => r.list(`n${count}`, {withFileTypes: metadata}), verify: result => assert.equal(result.length, count) }))),
     {name:'stat', iterations: 100, run: r => r.stat('n100/0.json'), verify: result => assert.equal(result.size, 19)},
     {name:'walk-sorted-1000', iterations: 10, run: async r => { const results=[]; for await (const entry of r.walk('n1000', {order:'sorted', symlinkPolicy:'skip'})) results.push(entry); return results; }, verify: result => assert.equal(result.length, 1000)},
     {name:'entries-sorted-1000', iterations: 5, run: async r => { const results=[]; for await (const entry of r.entries('n1000', {order:'sorted'})) results.push(entry); return results; }, verify: result => assert.equal(result.length, 1000)},
@@ -32,7 +42,7 @@ try {
   }
   const results = [];
   for (const c of cases) {
-    const measure = async index => { const start = performance.now(); let result; for(let j=0;j<c.iterations;j++) result = await c.run(roots[index]); const us=(performance.now()-start)*1000/c.iterations; c.verify(result); return us; };
+    const measure = async index => { global.gc?.(); const start = performance.now(); let result; for(let j=0;j<c.iterations;j++) result = await c.run(roots[index]); const us=(performance.now()-start)*1000/c.iterations; c.verify(result); return us; };
     if(action === 'trace') { for(let i=0;i<10;i++) await measure(0); continue; }
     for(let i=0;i<3;i++) { await measure(0); await measure(1); }
     const samples=[];
@@ -45,5 +55,5 @@ try {
     results.push({name:c.name, iterations:c.iterations, samples});
     console.error(c.name, 'complete');
   }
-  await fs.writeFile(output, JSON.stringify({mode:process.env.FS_SAFE_NATIVE_MODE,node:process.version,platform:process.platform,arch:process.arch,results},null,2));
+  await fs.writeFile(output, JSON.stringify({mode,compareMode,gcBeforeBlock:typeof global.gc === 'function',node:process.version,platform:process.platform,arch:process.arch,results},null,2));
 } finally { await fs.rm(workspace,{recursive:true,force:true}); }
