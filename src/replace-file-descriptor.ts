@@ -146,10 +146,11 @@ export function* writeTempFile(io: AtomicIo, params: {
     params.mutation?.assert();
     const writing = file.writeFile(params.content, true);
     if (io.asynchronous) yield writing;
-    if (io.asyncFs === fs && process.platform !== "win32" && !params.sync) {
+    if ((io.asyncFs === fs || (process.platform === "win32" && io.syncFs === syncFs)) && !params.sync) {
       // Matching non-durable writes have no I/O left after this identity fence.
       const current = inspectAtomicIdentity(io, () => file.statExact(), identity, true) as BigIntStats;
-      if (Number(current.mode & 0o7777n) === (params.mode & 0o7777)) return { file, identity };
+      const modeMask = process.platform === "win32" ? 0o200 : 0o7777;
+      if (Number(current.mode & BigInt(modeMask)) === (params.mode & modeMask)) return { file, identity };
     }
     const chmod = file.chmod(params.mode);
     if (io.asynchronous) yield chmod;

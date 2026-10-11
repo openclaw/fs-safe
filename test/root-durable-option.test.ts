@@ -171,6 +171,7 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
     const open = fs.open.bind(fs);
     const creationModes: (number | string | undefined)[] = [];
     const events: string[] = [];
+    let staged: { fd: number; path: string } | undefined;
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       const filePath = String(args[0]);
@@ -179,17 +180,20 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
       if (filePath.startsWith(directory + path.sep) && creates) {
         creationModes.push(args[2]);
         if (filePath !== target) {
-          const chmod = handle.chmod.bind(handle);
-          vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
-            expect((await fs.stat(target, { bigint: true })).ino).toBe((await handle.stat({ bigint: true })).ino);
-            expect((await fs.stat(target)).mode & 0o777).toBe(0o600);
-            await expect(fs.lstat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
-            events.push("chmod");
-            await chmod(mode);
-          });
+          staged = { fd: handle.fd, path: filePath };
         }
       }
       return handle;
+    });
+    const chmod = fsSync.fchmodSync.bind(fsSync);
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      if (fd === staged?.fd) {
+        expect(fsSync.statSync(target, { bigint: true }).ino).toBe(fsSync.fstatSync(fd, { bigint: true }).ino);
+        expect(fsSync.statSync(target).mode & 0o777).toBe(0o600);
+        expect(fsSync.existsSync(staged.path)).toBe(false);
+        events.push("chmod");
+      }
+      chmod(fd, mode);
     });
     vi.spyOn(verification, "verifyAtomicWriteResult").mockImplementation(async (params) => {
       if (params.targetPath !== target) return await verifyPublished(params);
@@ -215,17 +219,23 @@ describe.skipIf(process.platform === "win32")("Windows writer branch simulation"
     const safe = await root(directory);
     const failure = Object.assign(new Error("synthetic mode failure"), { code: "EIO" });
     const open = fs.open.bind(fs);
+    let stagedFd: number | undefined;
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       const filePath = String(args[0]);
       if (path.dirname(filePath) === directory && path.basename(filePath).startsWith(".fs-safe-")) {
-        vi.spyOn(handle, "chmod").mockImplementationOnce(async () => {
-          expect((await fs.stat(target, { bigint: true })).ino).toBe((await handle.stat({ bigint: true })).ino);
-          expect(await fs.readFile(target, "utf8")).toBe("payload");
-          throw failure;
-        });
+        stagedFd = handle.fd;
       }
       return handle;
+    });
+    const chmod = fsSync.fchmodSync.bind(fsSync);
+    vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+      if (fd === stagedFd) {
+        expect(fsSync.statSync(target, { bigint: true }).ino).toBe(fsSync.fstatSync(fd, { bigint: true }).ino);
+        expect(fsSync.readFileSync(target, "utf8")).toBe("payload");
+        throw failure;
+      }
+      chmod(fd, mode);
     });
 
     await expect(safe.write("target", "payload", { mode: 0o400 })).rejects.toBe(failure);
