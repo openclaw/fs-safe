@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify, types as utilTypes } from "node:util";
 import { formatErrorDetail } from "./error-detail.js";
+import { windowsSecurityHelperPath, explainWindowsSecurityHelperFailure } from "./windows-security-helper.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -239,6 +240,11 @@ export async function executePermissionCommand(
       killSignal: "SIGKILL",
     })) as { stdout: string; stderr: string };
   } catch (err) {
-    throw new PermissionCommandError(command, performance.now() - startedAt, err, timeoutMs);
+    const error = new PermissionCommandError(command, performance.now() - startedAt, err, timeoutMs);
+    if (command === windowsSecurityHelperPath() &&
+        ["ENOENT", "EACCES", "ENOEXEC"].includes(dataProperty(err, "code")?.value as string)) {
+      explainWindowsSecurityHelperFailure(error);
+    }
+    throw error;
   }
 }

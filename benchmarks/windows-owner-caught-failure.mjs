@@ -129,7 +129,7 @@ function createSourceCases(PermissionCommandError) {
     stderr: "deadline\n",
   });
   const wrappedTimeout = new PermissionCommandError(
-    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "windows-security-helper.exe",
     30_125,
     timeoutCause,
   );
@@ -168,7 +168,7 @@ function createSourceCases(PermissionCommandError) {
         assert.equal(result.ok, false);
         assert.equal(result.error, "Error: raw command failure");
         assert.equal(result.errorCause, rawCommand);
-        assert.match(result.errorDetail?.command, /powershell\.exe$/iu);
+        assert.match(result.errorDetail?.command, /windows-security-helper\.exe$/iu);
         assert(Number.isInteger(result.errorDetail?.durationMs));
         assert.equal(result.errorDetail?.exitCode, 5);
         assert.equal(result.errorDetail?.timedOut, false);
@@ -185,7 +185,7 @@ function createSourceCases(PermissionCommandError) {
           result.error,
           "PermissionCommandError: Windows permission inspection timed out after 30000ms",
         );
-        assert.match(result.errorDetail?.command, /powershell\.exe$/iu);
+        assert.match(result.errorDetail?.command, /windows-security-helper\.exe$/iu);
         assert.equal(result.errorDetail?.durationMs, 30_125);
         assert.equal(result.errorDetail?.timedOut, true);
         assert.equal(result.errorDetail?.signal, "SIGKILL");

@@ -14,6 +14,7 @@ export function runWindowsSecurityScript(
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-win-test-script-"));
   try {
     fs.writeFileSync(path.join(directory, "windows-security-bridge.cs"), source, "utf8");
+    if (helperSource) fs.copyFileSync(new URL("../../src/windows-owner-query.cs", import.meta.url), path.join(directory, "windows-owner-query.cs"));
     if (helperSource) fs.writeFileSync(path.join(directory, "windows-security-helper.cs"), helperSource, "utf8");
     const script = path.join(directory, "windows-security-test.ps1");
     fs.writeFileSync(script, "\ufeff" + [
@@ -21,7 +22,7 @@ export function runWindowsSecurityScript(
       "$env:PSModulePath=[IO.Path]::Combine($PSHOME, 'Modules')",
       "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
       helperSource
-        ? "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath @(([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs')),([IO.Path]::Combine($PSScriptRoot, 'windows-security-helper.cs')))"
+        ? "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath @(([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs')),([IO.Path]::Combine($PSScriptRoot, 'windows-security-helper.cs')),([IO.Path]::Combine($PSScriptRoot, 'windows-owner-query.cs')))"
         : "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))",
       ...body,
       "",
