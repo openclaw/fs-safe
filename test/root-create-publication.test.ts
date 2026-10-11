@@ -129,6 +129,13 @@ describe("create-only publication visibility", () => {
       const content = operation.endsWith("Json") ? '{"value":"complete"}' : "complete";
       let visibleBeforeWrite: boolean | undefined;
       const write = fsSync.write.bind(fsSync);
+      const writeSync = fsSync.writeSync.bind(fsSync);
+      vi.spyOn(fsSync, "writeSync").mockImplementation((fd, ...writeArgs) => {
+        if (visibleBeforeWrite === undefined && fsSync.fstatSync(fd).isFile()) {
+          visibleBeforeWrite = fsSync.existsSync(target);
+        }
+        return writeSync(fd, ...writeArgs);
+      });
       vi.spyOn(fsSync, "write").mockImplementation((fd, buffer, ...writeArgs) => {
         if (visibleBeforeWrite === undefined && fsSync.fstatSync(fd).isFile()) {
           visibleBeforeWrite = fsSync.existsSync(target);

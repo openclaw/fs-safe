@@ -50,6 +50,17 @@ for (const unavailable of ["off", "absent", "missing-capability", "windows"] as 
 }
 
 describe.runIf(nativeAvailable)("retained-directory staging", () => {
+  it("preserves a canonical parent reached through an ancestor alias", async () => {
+    const directory = await tempRoot("fs-safe-stage-ancestor-alias-");
+    const real = path.join(directory, "real");
+    await fs.mkdir(path.join(real, "nested"), { recursive: true });
+    await fs.symlink(real, path.join(directory, "alias"), "dir");
+    await using staged = await stageFileInDirectory({ directory: path.join(directory, "alias/nested"), content: "content" });
+    await staged.assertCurrent();
+    await staged.publish("published", { overwrite: false });
+    expect(await fs.readFile(path.join(real, "nested/published"), "utf8")).toBe("content");
+  });
+
   it.each(["", "snowman ☃", new Uint8Array([0, 255, 13, 10])])("prepares exact bytes %j without changing the parent", async (content) => {
     const directory = await tempRoot("fs-safe-stage-bytes-");
     await fs.chmod(directory, 0o750);

@@ -146,13 +146,20 @@ it.each(["admission", "child-open"])("closes parents and root after %s failure e
   const f = await fixture("one/two");
   await fs.mkdir(path.join(f.rootPath, "one"));
   const failure = new FsSafeError("denied-path", "primary admission failure");
-  const actualOpen = fs.open.bind(fs);
+  const actualOpen = fsSync.openSync.bind(fsSync);
+  const actualCloseRoot = f.close.getMockImplementation()!;
+  const rootIdentity = fsSync.statSync(f.rootPath, { bigint: true });
+  let rootFd = -1;
   let rootClosed = false;
-  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-    const handle = await actualOpen(...args);
-    const close = handle.close.bind(handle);
-    vi.spyOn(handle, "close").mockImplementation(async () => { await close(); rootClosed = true; });
-    return handle;
+  vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+    const fd = actualOpen(...args);
+    const stat = fsSync.fstatSync(fd, { bigint: true });
+    if (stat.dev === rootIdentity.dev && stat.ino === rootIdentity.ino) rootFd = fd;
+    return fd;
+  });
+  f.close.mockImplementation(fd => {
+    actualCloseRoot(fd);
+    if (fd === rootFd) rootClosed = true;
   });
   if (failureAt === "admission") {
     f.authorize.mockImplementation(async request => {

@@ -79,7 +79,7 @@ export async function runPinnedWriteNative(
         params.assertBeforeMutation?.();
         binding.mkdirBeneath(root.fd, params.relativeParentPath, 0o777);
       }
-      const admitted = await openNativeParentAdmission(binding, rootAdmission, params.relativeParentPath);
+      const admitted = await openNativeParentAdmission(binding, rootAdmission, params.relativeParentPath, "native-publication");
       parentFd = admitted.fd;
       parentPath = admitted.guard.realPath;
       directory = admitted.stagedDirectory;

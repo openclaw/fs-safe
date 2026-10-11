@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
+import type { NativeRootAdmission } from "./native-parent-admission.js";
 import { createFileHandle } from "./create.js";
 import { hasPreservedCreationArtifacts } from "./creation-boundary.js";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
@@ -75,7 +76,7 @@ function assertNamedParentCurrent(
 export async function runPinnedWriteWindows(
   binding: NativeBinding,
   params: PinnedWriteParams,
-  root: FileHandle,
+  root: NativeRootAdmission["root"],
   parentFd: number,
   parentGuard: AnyAsyncDirectoryGuard,
 ): Promise<FileIdentityStat> {
@@ -190,11 +191,12 @@ export async function runPinnedWriteWindows(
     renamed = true;
     if (receipt) publication = Object.freeze({ status: "published", staged: receipt, basename: params.basename, overwrite: false });
     params.onPublished?.(verificationIdentity);
-    targetFd = binding.openBeneath(
-      parentFd,
-      params.basename,
-      nativeOpenFlags(fsSync.constants.O_RDONLY),
-    ).fd;
+    const metadataOnly = params.overwrite === false && params.input.kind === "buffer" &&
+      params.input.stageBeforePublish !== false && !params.private &&
+      !params.assertBeforeMutation && binding.openPublicationMetadata;
+    targetFd = metadataOnly
+      ? metadataOnly(parentFd, params.basename)
+      : binding.openBeneath(parentFd, params.basename, nativeOpenFlags(fsSync.constants.O_RDONLY)).fd;
     const targetStat = inspectFileIdentitySync(
       () => fsSync.fstatSync(targetFd!, { bigint: true }), verificationIdentity,
     );

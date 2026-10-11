@@ -6,13 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAsyncDirectoryGuard } from "../src/directory-guard.js";
 import { openPrivateStoreLockRoot } from "../src/file-store-boundary.js";
 import { configureFsSafeNative } from "../src/index.js";
-import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { runPinnedWriteHelper } from "../src/pinned-write.js";
 import { createSecretFileAtomic, prepareSecretFileWrite, writeSecretFileAtomic } from "../src/secret-file.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+let projectNative = (binding: NativeBinding): NativeBinding => binding;
 let nativeAvailable = false;
 try {
   __loadBundledNativeForTest();
@@ -25,6 +26,7 @@ afterEach(() => {
   Object.defineProperty(process, "platform", platform);
   configureFsSafeNative({ mode: "auto" });
   __resetNativeLoaderForTest();
+  projectNative = binding => binding;
 });
 
 async function fixture() {
@@ -59,6 +61,22 @@ async function fixture() {
     const exact = fstat(args[0], { bigint: true });
     return project(fstat(...args), directories.get(`${exact.dev}:${exact.ino}`) ?? "");
   }) as typeof fsSync.fstatSync);
+  projectNative = binding => ({
+    ...binding,
+    ...(binding.observeDirectory ? { observeDirectory(pathname: string) {
+      const observed = binding.observeDirectory!(pathname);
+      return { ...observed, ino: identities.get(pathname) ?? identities.get(observed.realPath) ?? observed.ino };
+    } } : {}),
+    ...(binding.observeDirectoryFd ? { observeDirectoryFd(fd: number, pathname: string) {
+      const observed = binding.observeDirectoryFd!(fd, pathname);
+      return { ...observed, ino: identities.get(pathname) ?? identities.get(observed.realPath) ?? observed.ino };
+    } } : {}),
+    ...(binding.stagedDirectoryMatches ? { stagedDirectoryMatches(fd: number, pathname: string, dev: bigint, ino: bigint) {
+      const actual = fstat(fd, { bigint: true });
+      const expected = identities.get(directories.get(`${actual.dev}:${actual.ino}`) ?? "") ?? actual.ino;
+      return ino === expected && binding.stagedDirectoryMatches!(fd, pathname, dev, actual.ino);
+    } } : {}),
+  });
   return { rootDir, parent, identities, filePath: path.join(parent, "state.json") };
 }
 
@@ -97,7 +115,7 @@ for (const route of ["fallback", "Windows fallback", "native", "Windows native"]
     () => {
       function configureRoute() {
         if (route.includes("native")) {
-          const binding = loadWindowsSimulationNative();
+          const binding = projectNative(loadWindowsSimulationNative());
           __setNativeLoaderForTest(() => binding);
         }
         if (route.startsWith("Windows")) Object.defineProperty(process, "platform", { value: "win32" });

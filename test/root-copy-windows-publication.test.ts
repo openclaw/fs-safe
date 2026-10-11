@@ -312,6 +312,13 @@ describe.skipIf(!native)("atomic Root.create Windows native publication", () => 
       const directory = await tempRoot("fs-safe-create-windows-publication-");
       const scoped = await root(directory);
       const handles: FileHandle[] = [];
+      const rootDescriptors: number[] = [];
+      const openSync = fsSync.openSync.bind(fsSync);
+      vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+        const fd = openSync(...args);
+        rootDescriptors.push(fd);
+        return fd;
+      });
       const open = fs.open.bind(fs);
       vi.spyOn(fs, "open").mockImplementation(async (...args) => {
         const handle = await open(...args);
@@ -351,7 +358,10 @@ describe.skipIf(!native)("atomic Root.create Windows native publication", () => 
       for (const fd of opened) {
         expect(() => fsSync.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
       }
-      expect(handles.length).toBeGreaterThan(0);
+      expect(rootDescriptors.length + handles.length).toBeGreaterThan(0);
+      for (const fd of rootDescriptors) {
+        expect(() => fsSync.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      }
       for (const handle of handles) expect(handle.fd).toBe(-1);
       const target = path.join(directory, "target");
       expect(await fs.readFile(target, "utf8")).toBe("complete content");

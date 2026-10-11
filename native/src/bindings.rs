@@ -256,6 +256,12 @@ pub fn close_owned_fd(env: Env, fd: i32) -> Result<()> {
     into_napi(env, platform::close_owned_fd(fd))
 }
 
+#[cfg(windows)]
+#[napi(js_name = "openPublicationMetadata")]
+pub fn open_publication_metadata(env: Env, parent_fd: i32, name: String) -> Result<i32> {
+    into_napi(env, platform::open_publication_metadata(parent_fd, &name))
+}
+
 #[napi(js_name = "openBeneath")]
 pub fn open_beneath(
     env: Env,
@@ -419,6 +425,14 @@ pub fn observe_directory(env: Env, path: String) -> Result<DirectoryObservation>
             real_path: observed.real_path,
         }),
     )
+}
+
+#[cfg(unix)]
+#[napi(js_name = "stagedDirectoryMatches")]
+pub fn staged_directory_matches(env: Env, fd: i32, path: String, dev: BigInt, ino: BigInt) -> Result<bool> {
+    into_napi(env, crate::exact_file_identity(&dev, &ino).and_then(|expected| {
+        directory_observation::staged_directory_matches(fd, &path, expected.dev, expected.ino)
+    }))
 }
 
 #[cfg(unix)]

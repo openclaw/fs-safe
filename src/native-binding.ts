@@ -218,7 +218,9 @@ export interface NativeBinding {
   publishStagedSymlink?(parentFd: number, basename: string, linkFd: number, destination: string): void;
   removeStagedSymlink?(parentFd: number, basename: string, linkFd: number): "removed" | "name-absent" | "preserved";
   createStagedFile?(parentFd: number, basename: string): number;
+  stagedFileMetadata?(parentFd: number, basename: string, fd: number): { mode: bigint; nlink: bigint } | null;
   stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;
+  stagedDirectoryMatches?(fd: number, path: string, dev: bigint, ino: bigint): boolean;
   removeStagedFile?(
     parentFd: number,
     basename: string,
@@ -286,6 +288,7 @@ export interface NativeBinding {
   mkdirOpenChildBeneath?(parentFd: number, basename: string, mode: number, flags: number): { fd: number; created: boolean };
   mkdirBeneath?(rootFd: number, relPath: string, mode: number): void;
   openBeneath?(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
+  openPublicationMetadata?(parentFd: number, basename: string): number;
   readOwnerAndDacl?(path: string): NativeWindowsSecurityFacts;
   /** Internal Windows-only inspection of the exact borrowed Node descriptor. */
   inspectWindowsSecureFileHandle?(fd: number): NativeWindowsDescriptorSecurityFacts;

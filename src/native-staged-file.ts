@@ -11,9 +11,10 @@ import { assertSynchronousCallbackResult, isMutationAuthorityError } from "./mut
 import type { FileIdentityStat } from "./file-identity.js";
 import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { replayPinnedInput, writePinnedInput } from "./pinned-write-input.js";
+import { nativeStagedFileMode } from "./native-staged-file-metadata.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write-types.js";
-import { assertStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
+import { assertNativeStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import type {
   PublishedFileReceipt,
@@ -207,6 +208,9 @@ class NativeStagedFile implements StagedFile {
 
   #assertNamed(name: string, expectedMode: number): number {
     const fd = this.#file();
+    const mode = !this.#private ? nativeStagedFileMode(this.#owner.binding, this.#owner.parentFd,
+      name, fd, this.#verifyMode ? expectedMode : undefined) : undefined;
+    if (mode !== undefined) return mode;
     const stat = this.#owner.binding.stagedFileMatches(this.#owner.parentFd, name, fd)
       ? fs.fstatSync(fd, { bigint: true }) : undefined;
     if (!stat || stat.nlink !== 1n) {
@@ -220,8 +224,12 @@ class NativeStagedFile implements StagedFile {
     if (this.#open().publication.status !== "not-published") {
       throw new FsSafeError("helper-failed", "staged file publication has already been attempted");
     }
-    assertStagedDirectoryCurrent(this.#owner.directory);
+    this.#assertDirectory();
     this.#assertNamed(this.#owner.name, 0o600);
+  }
+
+  #assertDirectory(): void {
+    assertNativeStagedDirectoryCurrent(this.#owner.binding, this.#owner.parentFd, this.#owner.directory);
   }
 
   #assertPermissions(fd: number, stat: fs.BigIntStats, expectedMode: number): void {
@@ -248,7 +256,7 @@ class NativeStagedFile implements StagedFile {
           throw new FsSafeError("helper-unavailable", "required cloning cannot verify staged permissions before copying");
         }
       }
-      assertStagedDirectoryCurrent(this.#owner.directory);
+      this.#assertDirectory();
       // The exclusive open performs no fallible post-open checks. Store its fd
       // before every subsequent operation, including the first metadata read.
       const state = this.#open();
@@ -373,7 +381,7 @@ class NativeStagedFile implements StagedFile {
     this.#open().publication = receipt;
     onPublished?.(receipt.staged.identity);
     const stagedMode = this.#assertNamed(basename, 0o600);
-    assertStagedDirectoryCurrent(this.#owner.directory);
+    this.#assertDirectory();
     // Keep contents private until the name passes its identity fence. Mode
     // changes use the owned fd, including for final mode 000.
     const fd = this.#file();
@@ -386,7 +394,7 @@ class NativeStagedFile implements StagedFile {
     }
     if (this.#owner.sync !== false) syncFileBestEffortSync(this.#owner.parentFd);
     this.#assertNamed(basename, this.#owner.mode);
-    assertStagedDirectoryCurrent(this.#owner.directory);
+    this.#assertDirectory();
     return receipt;
   }
 
