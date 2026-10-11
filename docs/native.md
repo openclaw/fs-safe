@@ -343,6 +343,12 @@ including fresh policy, identity and post-removal checks; recursive traversal
 retains its directory, mount, budget and cancellation checks. Neither optimization
 changes the descriptor-relative mutation or atomic no-replace mechanism.
 
+Recursive removal in both implementations retains exact directory identities
+at admission. Repeated fences use ordinary numeric stats only when both captured
+identity components are safely representable; larger identities keep bigint
+observations, and unknown Windows components receive the existing bounded exact
+retry. Every directory identity and canonical-path observation remains in place.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [PowerShell fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation
