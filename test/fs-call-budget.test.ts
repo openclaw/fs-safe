@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { createFileSync } from "../src/create.js";
@@ -37,6 +37,44 @@ const asyncBudgets = {
   "root.exists": 1, // measured 0
 };
 const { tempRoot } = useRealTempDirs();
+
+describe("Root.list filename allocation budget", () => {
+  it.each([1000, 50000])("does not materialize filename buffers for %i ordinary names", async count => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-list-name-budget-");
+    const safe = await root(directory);
+    const names = Array.from({ length: count }, (_, index) => String(index));
+    let materializedBuffers = 0;
+    const readdir = vi.spyOn(fs, "readdir").mockImplementation((async (_path, options) => {
+      if (typeof options === "object" && options?.encoding === "buffer") {
+        materializedBuffers += names.length;
+        return names.map(name => Buffer.from(name));
+      }
+      return [...names];
+    }) as typeof fs.readdir);
+    try {
+      expect(await safe.list("")).toEqual([...names].sort());
+      expect(readdir).toHaveBeenCalledTimes(1);
+      expect(materializedBuffers).toBe(0);
+    } finally {
+      readdir.mockRestore();
+      configureFsSafeNative({ mode: "auto" });
+    }
+  });
+
+  it("re-reads a suspect batch as raw bytes while preserving literal replacement characters", async () => {
+    const directory = await tempRoot("fs-safe-list-replacement-budget-");
+    await fs.writeFile(path.join(directory, "\ufffd"), "valid UTF-8");
+    const safe = await root(directory);
+    const readdir = vi.spyOn(fs, "readdir");
+    try {
+      expect(await safe.list("")).toEqual(["\ufffd"]);
+      expect(readdir.mock.calls.map(([, options]) => options)).toEqual([undefined, { encoding: "buffer" }]);
+    } finally {
+      readdir.mockRestore();
+    }
+  });
+});
 
 describe.skipIf(process.platform === "win32")("fallback filesystem call budgets", () => {
   it("keeps each operation within its syscall budget", async () => {
