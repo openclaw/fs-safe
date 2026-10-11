@@ -66,8 +66,7 @@ export function defaultSyncShouldReclaim(
 
 export function syncReclaimGuardExists(reclaimGuardPath: string): boolean {
   try {
-    fs.lstatSync(reclaimGuardPath);
-    return true;
+    return fs.lstatSync(reclaimGuardPath, { throwIfNoEntry: false }) !== undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;

@@ -139,7 +139,10 @@ function canonicalLockParentSync(parent: string): string {
 function normalizeTargetPath(targetPath: string): string {
   const resolved = path.resolve(targetPath);
   assertNoWindowsPathAlias(resolved);
-  fs.mkdirSync(recursiveMkdirPath(path.dirname(resolved)), { recursive: true });
+  const directory = path.dirname(resolved);
+  let parentExists = false;
+  try { parentExists = fs.statSync(directory).isDirectory(); } catch { /* Preserve mkdir errors below. */ }
+  if (!parentExists) fs.mkdirSync(recursiveMkdirPath(directory), { recursive: true });
   let parent: string;
   try {
     parent = canonicalLockParentSync(path.dirname(resolved));
