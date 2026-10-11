@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
@@ -60,6 +61,7 @@ if (process.argv.includes("--child")) {
 } else {
   const trace = process.platform === "linux" && !process.argv.includes("--resources-only");
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-native-counts-"));
+  let succeeded = false;
   try {
     const tracePath = path.join(temporary, "trace");
     const child = spawnSync(trace ? "strace" : process.execPath, trace ? [
@@ -79,7 +81,7 @@ if (process.argv.includes("--child")) {
           if (current) counts[current] = {};
           continue;
         }
-        if (!current || /anon_inode:\[(?:eventfd|eventpoll)\]|pipe:\[/.test(line)) continue;
+        if (!current || /anon_inode:\[(?:eventfd|eventpoll)\]|pipe:\[/.test(line) || isRuntimeClockProbe(line)) continue;
         const syscall = /^\d+\s+(\w+)\(/.exec(line)?.[1];
         if ((syscall === "read" || syscall === "write") && !/\(\d+<\//.test(line)) continue;
         if (syscall) counts[current][syscall] = (counts[current][syscall] ?? 0) + 1;
@@ -182,7 +184,9 @@ if (process.argv.includes("--child")) {
       }
       console.log(JSON.stringify(row));
     }
+    succeeded = true;
   } finally {
-    fs.rmSync(temporary, { recursive: true, force: true });
+    if (succeeded || !trace) fs.rmSync(temporary, { recursive: true, force: true });
+    else console.error(`Failed syscall trace retained at ${path.join(temporary, "trace")}`);
   }
 }
