@@ -327,6 +327,18 @@ pub fn mkdir_open_child_beneath(env: Env, parent_fd: i32, basename: String, mode
         .map(|(fd, created)| CreatedDirectory { fd, created }))
 }
 
+#[napi(js_name = "createTempDirectoryBeneath")]
+pub fn create_temp_directory_beneath(env: Env, parent_fd: i32, basename: String) -> Result<NativeTempDirectory> {
+    into_napi(env, platform::create_temp_directory_beneath(parent_fd, &basename)
+        .map(|(fd, search_only)| NativeTempDirectory { fd, search_only }))
+}
+
+#[napi(object)]
+pub struct NativeTempDirectory {
+    pub fd: i32,
+    pub search_only: bool,
+}
+
 macro_rules! native_path_pair_operation {
     ($name:ident, $js_name:literal) => {
         #[napi(js_name = $js_name)]
