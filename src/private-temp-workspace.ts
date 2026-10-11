@@ -100,6 +100,27 @@ function createTempWorkspaceWithRequestedModeSync(
   throw collision;
 }
 
+function createNativeTempWorkspace(
+  childPrefix: string,
+  capability: TempWorkspaceCleanupCapability,
+): ReturnType<typeof TempWorkspaceRetainedChild.adoptCreated> & { dir: string } | undefined {
+  const create = capability.binding?.createTempDirectoryBeneath;
+  if (!create || capability.parent?.access !== "read") return undefined;
+  for (let attempt = 0; attempt < TEMP_WORKSPACE_DIRECT_CREATE_ATTEMPTS; attempt += 1) {
+    const dir = randomTempWorkspaceChildPath(childPrefix);
+    capability.prepareChildCreation();
+    let created: { fd: number; searchOnly: boolean };
+    try {
+      created = create.call(capability.binding, capability.parent.fd, path.basename(dir));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw error;
+    }
+    return { dir, ...TempWorkspaceRetainedChild.adoptCreated(dir, created.fd, created.searchOnly) };
+  }
+  throw Object.assign(new Error("temp workspace name collisions exhausted"), { code: "EEXIST" });
+}
+
 function resolveWorkspaceLeaf(dir: string, fileName: string): string {
   const resolved = path.join(dir, assertWorkspaceFileName(fileName));
   assertNoWindowsPathAlias(resolved, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
@@ -207,12 +228,16 @@ async function createTempWorkspace(
   let dir: string;
   let retainedChild: TempWorkspaceRetainedChild | undefined;
   try {
-    // Native capability discovery is complete before this synchronous
-    // boundary. The existing canonical-root route now captures the complete
-    // ancestry and associates its provisional parent descriptor here, then
-    // dispatches mkdtemp without yielding or invoking another probe.
-    capability.prepareChildCreation();
-    dir = await fs.mkdtemp(childPrefix);
+    // Both creation routes first capture the complete ancestry and associate
+    // the provisional parent descriptor without another capability probe.
+    const created = createNativeTempWorkspace(childPrefix, capability);
+    if (created) {
+      dir = created.dir;
+      retainedChild = created.retained;
+    } else {
+      capability.prepareChildCreation();
+      dir = await fs.mkdtemp(childPrefix);
+    }
     assertNoWindowsPathAlias(dir, "filesystem", "temp workspace path uses a Windows filesystem namespace alias");
     if (capability.parent) capability.assertCurrent();
     else admission.assertCurrent();
@@ -225,7 +250,7 @@ async function createTempWorkspace(
     );
     // Retain while the child still has its private creation mode so an
     // explicit dirMode such as 0 cannot make identity descriptor acquisition fail.
-    retainedChild = TempWorkspaceRetainedChild.retain(dir, stat);
+    retainedChild ??= TempWorkspaceRetainedChild.retain(dir, stat);
     if (needsModeInitialization) {
       await retainedChild.initializeMode(dirMode, admission.ownerUid, admission.assertCurrent);
     }

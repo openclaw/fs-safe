@@ -180,6 +180,22 @@ export class TempWorkspaceRetainedChild {
     stat: fsSync.BigIntStats;
   } {
     const descriptor = openRetainedDirectory(dir);
+    return TempWorkspaceRetainedChild.#adoptCreated(dir, descriptor);
+  }
+
+  static adoptCreated(dir: string, fd: number, searchOnly: boolean): {
+    retained: TempWorkspaceRetainedChild;
+    stat: fsSync.BigIntStats;
+  } {
+    return TempWorkspaceRetainedChild.#adoptCreated(dir, {
+      fd, access: searchOnly ? "search" : "read", proc: searchOnly && process.platform === "linux",
+    });
+  }
+
+  static #adoptCreated(dir: string, descriptor: OpenedDirectory): {
+    retained: TempWorkspaceRetainedChild;
+    stat: fsSync.BigIntStats;
+  } {
     try {
       // Only this immediate post-create route installs a receipt. Freezing the
       // exact fd result keeps its identity and complete mode immutable while

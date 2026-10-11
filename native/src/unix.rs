@@ -197,6 +197,26 @@ pub fn mkdir_open_child_beneath(parent_fd: i32, basename: &str, mode: u32, flags
     Ok((child.into_raw_fd(), created))
 }
 
+pub fn create_temp_directory_beneath(parent_fd: i32, basename: &str) -> NativeResult<(i32, bool)> {
+    if !mkdir_child_beneath(parent_fd, basename, 0o700)? {
+        return Err(native_error("EEXIST", "temp directory already exists"));
+    }
+    let flags = libc::O_DIRECTORY | libc::O_NOFOLLOW;
+    match open_owned_beneath(parent_fd, basename, libc::O_RDONLY | flags) {
+        Ok(child) => Ok((child.into_raw_fd(), false)),
+        Err(error) if error.status == "EACCES" => {
+            #[cfg(target_os = "linux")]
+            let search = libc::O_PATH;
+            // Darwin SDK O_SEARCH; same permission-independent route as Node admission.
+            #[cfg(target_os = "macos")]
+            let search = 0x40000000;
+            let child = open_owned_beneath(parent_fd, basename, search | flags)?;
+            Ok((child.into_raw_fd(), true))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, mode: u32) -> NativeResult<()> {
     if rel_path.is_empty() || rel_path == "." {
         return Ok(());

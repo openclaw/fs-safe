@@ -286,6 +286,7 @@ export interface NativeBinding {
   /** Direct-child mkdir; true is receipt provenance only, never cleanup ownership. */
   mkdirChildBeneath?(parentFd: number, basename: string, mode: number): boolean;
   mkdirOpenChildBeneath?(parentFd: number, basename: string, mode: number, flags: number): { fd: number; created: boolean };
+  createTempDirectoryBeneath?(parentFd: number, basename: string): { fd: number; searchOnly: boolean };
   mkdirBeneath?(rootFd: number, relPath: string, mode: number): void;
   openBeneath?(rootFd: number, relPath: string, flags: number): NativeOpenBeneathResult;
   openPublicationMetadata?(parentFd: number, basename: string): number;
