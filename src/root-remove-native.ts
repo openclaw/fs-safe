@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { scheduler } from "node:timers/promises";
-import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError, type FsSafeErrorDetails } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
@@ -13,6 +12,7 @@ import { assertRootIdentityCurrentSync, type RootContext } from "./root-context.
 import { normalizeRemoveGuardError, normalizeRemovePathError } from "./root-errors.js";
 import { captureNonrecursiveRemovalAdmission, nonrecursiveRemovalKind, type InternalRemoveOptions } from "./root-remove.js";
 import type { RemovalPathReceipts } from "./root-remove-receipt.js";
+import { assertRemovalDirectoryCurrent, createRemovalDirectoryAssertion, type RemovalDirectoryAssertion } from "./root-remove-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
@@ -177,7 +177,7 @@ export async function removePathInRootNative(
   async function removeEntries(admitted: NativeParentAdmission): Promise<void> {
     // The admission already checks Root through the retained parent. This list
     // adds only traversal descendants, avoiding duplicate ancestry fences.
-    const guards: AnyAsyncDirectoryGuard[] = [];
+    const guards: RemovalDirectoryAssertion[] = [];
     const maxEntries = options.maxEntries ?? 100_000;
     const maxDepth = options.maxDepth ?? 64;
     let examined = 0;
@@ -193,7 +193,7 @@ export async function removePathInRootNative(
     }
     function assertTraversalCurrent(): void {
       for (const guard of guards) {
-        try { assertSyncDirectoryGuard(guard); } catch (cause) {
+        try { assertRemovalDirectoryCurrent(guard); } catch (cause) {
           throw new FsSafeError("path-mismatch", "removal ancestor changed", { cause });
         }
       }
@@ -250,7 +250,7 @@ export async function removePathInRootNative(
           const read = () => {
             try { return directory.read(); } catch (error) { throw normalize(error, details(entryPath, "enumerate")); }
           };
-          guards.push({ dir: entryPath, realPath: entryPath, stat });
+          guards.push(createRemovalDirectoryAssertion(entryPath, stat, entryPath));
           try {
             assertCurrent();
             if (options.order === "sorted") {

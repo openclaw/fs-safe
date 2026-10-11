@@ -350,6 +350,12 @@ In `require`, missing files and parents still use native confined creation;
 existing files keep their guarded Node handle path, identity fences and hardlink
 checks. Required creation capabilities are checked even when the file exists.
 
+Recursive removal in both implementations retains exact directory identities
+at admission. Repeated fences use ordinary numeric stats only when both captured
+identity components are safely representable; larger identities keep bigint
+observations, and unknown Windows components receive the existing bounded exact
+retry. Every directory identity and canonical-path observation remains in place.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [Windows helper fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation

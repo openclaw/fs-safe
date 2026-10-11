@@ -290,6 +290,26 @@ it.each(["replaced", "symlink", "missing"] as const)("refuses a %s ancestor afte
   if (replacement === "replaced") expect(await fs.readFile(path.join(tree, "first"), "utf8")).toBe("replacement");
 });
 
+it.each([22n, 2n ** 54n])("rechecks an exact directory identity of %s before removing a child", async initialInode => {
+  const { tree, scoped } = await fixture();
+  let changed = false;
+  const lstat = fsSync.lstatSync.bind(fsSync);
+  vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+    const stat = lstat(...args);
+    if (String(args[0]) !== tree) return stat;
+    const ino = initialInode + (changed ? 1n : 0n);
+    return Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
+  });
+  __setFsSafeTestHooksForTest({
+    beforeRootFallbackMutation(operation, target) {
+      if (operation === "remove" && path.dirname(target) === tree) changed = true;
+    },
+  });
+  await expect(scoped.remove("tree", { recursive: true, force: true })).rejects.toMatchObject({ code: "path-mismatch" });
+  expect(changed).toBe(true);
+  expect(await fs.readdir(tree)).toHaveLength(2);
+});
+
 it("does not round the identity of a leaf before removal", async () => {
   const { tree, scoped } = await fixture();
   let changed: string | undefined;
