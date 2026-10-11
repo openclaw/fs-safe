@@ -153,8 +153,8 @@ for (const route of routes) {
         if (route.startsWith("windows")) Object.defineProperty(process, "platform", { value: "win32" });
         let published = false;
         let callbackStarted = false;
-        // Windows now fences exact fd identity before chmod; keep this fault at the callback boundary.
-        const currentInode = () => changed && published && (route !== "windows native" || callbackStarted) ? inode - 1n : inode;
+        // Publication fences are exact too; keep this fault at the callback boundary.
+        const currentInode = () => changed && published && callbackStarted ? inode - 1n : inode;
         const fstat = fsSync.fstatSync.bind(fsSync);
         vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) =>
           project(fstat(...args), currentInode())) as typeof fsSync.fstatSync);
@@ -219,8 +219,7 @@ for (const route of routes) {
         else {
           const result = await pending;
           if (route === "windows fallback") expect(result).toBeUndefined();
-          else expect(result).toMatchObject(route === "native POSIX"
-            ? { dev: device, ino: inode } : { dev: Number(device), ino: Number(inode) });
+          else expect(result).toMatchObject({ dev: device, ino: inode });
         }
         expect(callbacks).toBe(1);
         expect(() => fstat(fd!)).toThrowError(expect.objectContaining({ code: "EBADF" }));

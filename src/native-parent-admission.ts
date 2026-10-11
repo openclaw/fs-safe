@@ -6,7 +6,7 @@ import { assertSyncDirectoryGuard, inspectDirectoryIdentity, inspectDirectoryIde
 import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { FsSafeError } from "./errors.js";
-import type { FileIdentityStat } from "./file-identity.js";
+import { hasSafeFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { realpathSync } from "./realpath.js";
@@ -37,7 +37,8 @@ export function sameNativeIdentity(
   left: RootIdentity,
   right: RootIdentity,
 ): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+  return hasSafeFileIdentity(left) && hasSafeFileIdentity(right) &&
+    BigInt(left.dev) === BigInt(right.dev) && BigInt(left.ino) === BigInt(right.ino);
 }
 
 function unavailable(message: string): FsSafeError {
@@ -122,10 +123,7 @@ export async function openNativeRootAdmission(
       );
       rootMatches = true;
     } else if (process.platform === "win32") {
-      if (typeof binding.fstatIdentity !== "function") {
-        throw unavailable("native root directory identity checks are unavailable");
-      }
-      const identity = binding.fstatIdentity(root.fd);
+      const identity = fsSync.fstatSync(root.fd, { bigint: true });
       rootMatches = !params.rootIdentity || sameNativeIdentity(params.rootIdentity, identity);
     } else {
       const identity = fsSync.fstatSync(root.fd, { bigint: true });
@@ -226,12 +224,9 @@ export async function openNativeParentAdmission(
         parentPath,
         inspectFileIdentitySync(() => fsSync.fstatSync(parentFd, { bigint: true })),
       )
-      : fsSync.lstatSync(pathForWindowsFilesystem(parentPath));
+      : fsSync.lstatSync(pathForWindowsFilesystem(parentPath), { bigint: true });
     if (process.platform === "win32" && !rootAdmission.exactRoot) {
-      if (typeof binding.fstatIdentity !== "function") {
-        throw unavailable("native parent directory identity checks are unavailable");
-      }
-      const parentIdentity = binding.fstatIdentity(parentFd);
+      const parentIdentity = fsSync.fstatSync(parentFd, { bigint: true });
       if (parentPathStat.isSymbolicLink() || !sameNativeIdentity(parentPathStat, parentIdentity)) {
         throw new FsSafeError("path-mismatch", `${rootAdmission.operation} parent changed during resolution`);
       }
