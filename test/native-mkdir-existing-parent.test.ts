@@ -1,0 +1,100 @@
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
+import { root } from "../src/root.js";
+import { useRealTempDirs } from "./helpers/vitest.js";
+
+let native: NativeBinding | undefined;
+try { native = __loadBundledNativeForTest(); } catch { /* Native CI supplies the binding. */ }
+const { tempRoot } = useRealTempDirs();
+afterEach(() => { __resetNativeLoaderForTest(); __resetFsSafeNativeConfigForTest(); });
+
+describe.runIf(native?.mkdirChildBeneath)("native mkdir with an existing parent", () => {
+  it("rejects a parent replaced between its snapshot and beneath open", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("mkdir-parent-open-");
+    const parent = path.join(directory, "parent");
+    fs.mkdirSync(parent);
+    const safe = await root(directory);
+    let swapped = false;
+    __setNativeLoaderForTest(() => ({ ...native!, openBeneath(...args) {
+      if (!swapped && args[1] === "parent") {
+        swapped = true;
+        fs.renameSync(parent, path.join(directory, "held"));
+        fs.mkdirSync(parent);
+      }
+      return native!.openBeneath!(...args);
+    } }));
+    await expect(safe.mkdir("parent/child")).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(swapped).toBe(true);
+    expect(fs.readdirSync(parent)).toEqual([]);
+    expect(fs.readdirSync(path.join(directory, "held"))).toEqual([]);
+  });
+
+  it("keeps mutation inside the retained parent when its name is replaced", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("mkdir-parent-dispatch-");
+    const outside = await tempRoot("mkdir-parent-outside-");
+    const parent = path.join(directory, "parent");
+    const held = path.join(directory, "held");
+    fs.mkdirSync(parent);
+    const safe = await root(directory);
+    const beforeCreate = () => {
+      fs.renameSync(parent, held);
+      fs.symlinkSync(outside, parent, process.platform === "win32" ? "junction" : "dir");
+    };
+    __setNativeLoaderForTest(() => ({ ...native!,
+      ...(native!.mkdirOpenChildBeneath ? { mkdirOpenChildBeneath(...args: Parameters<NonNullable<NativeBinding["mkdirOpenChildBeneath"]>>) {
+        beforeCreate();
+        return native!.mkdirOpenChildBeneath!(...args);
+      } } : { mkdirChildBeneath(...args: Parameters<NonNullable<NativeBinding["mkdirChildBeneath"]>>) {
+        beforeCreate();
+        return native!.mkdirChildBeneath!(...args);
+      } }),
+    }));
+    await expect(safe.mkdir("parent/child")).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(fs.readdirSync(outside)).toEqual([]);
+    expect(fs.statSync(path.join(held, "child")).isDirectory()).toBe(true);
+    fs.unlinkSync(parent);
+  });
+
+  it.runIf(native?.mkdirOpenChildBeneath)("rejects a replaced child after native creation", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("mkdir-nested-child-");
+    const parent = path.join(directory, "parent");
+    fs.mkdirSync(parent);
+    const safe = await root(directory);
+    __setNativeLoaderForTest(() => ({ ...native!, mkdirOpenChildBeneath(...args) {
+      const child = native!.mkdirOpenChildBeneath!(...args);
+      fs.renameSync(path.join(parent, "child"), path.join(parent, "held"));
+      fs.mkdirSync(path.join(parent, "child"));
+      return child;
+    } }));
+    await expect(safe.mkdir("parent/child")).rejects.toMatchObject({ code: "path-mismatch" });
+  });
+
+  it("accepts repeated calls for an existing ordinary directory", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("mkdir-nested-existing-");
+    fs.mkdirSync(path.join(directory, "parent"));
+    const safe = await root(directory);
+    await safe.mkdir("parent/child");
+    await safe.mkdir("parent/child");
+    expect(fs.readdirSync(path.join(directory, "parent"))).toEqual(["child"]);
+  });
+
+  it("retains in-root alias resolution and missing-parent creation", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("mkdir-nested-alias-");
+    fs.mkdirSync(path.join(directory, "actual"));
+    fs.symlinkSync(path.join(directory, "actual"), path.join(directory, "alias"), process.platform === "win32" ? "junction" : "dir");
+    const safe = await root(directory);
+    await safe.mkdir("alias/child");
+    await safe.mkdir("new/parent/child");
+    expect(fs.statSync(path.join(directory, "actual/child")).isDirectory()).toBe(true);
+    expect(fs.lstatSync(path.join(directory, "alias")).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(path.join(directory, "new/parent/child")).isDirectory()).toBe(true);
+  });
+});
