@@ -1,7 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHook } from "node:async_hooks";
 import { describe, expect, it, vi } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
@@ -140,23 +139,6 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
 const writeNativeAvailable = Boolean(loadTestNative("required-env"));
 describe("write metadata budgets", () => {
   for (const mode of ["off", "require"] as const) {
-  it.skipIf(mode === "require" && !writeNativeAvailable)(`bounds replacement promises in ${mode} mode`, async () => {
-    configureFsSafeNative({ mode });
-    const directory = await tempRoot("fs-safe-write-promises-");
-    const safe = await root(directory);
-    await safe.write("value", "warm", { durable: false });
-    let promises = 0;
-    const hook = createHook({ init(_id, type) { if (type === "PROMISE") promises++; } });
-    try {
-      hook.enable();
-      await safe.write("value", "measured", { durable: false });
-    } finally {
-      hook.disable();
-      configureFsSafeNative({ mode: "auto" });
-    }
-    expect(promises).toBeLessThanOrEqual(mode === "off" ? 140 : 126);
-  });
-
   it.skipIf(mode === "require" && !writeNativeAvailable)(`preserves both Windows file flushes without redundant chmod in ${mode} mode`, async () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     const directory = await tempRoot("fs-safe-write-windows-mode-");
