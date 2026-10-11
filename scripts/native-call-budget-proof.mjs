@@ -161,12 +161,13 @@ if (process.argv.includes("--child")) {
         if (operation === "move") expected = row.mode === "require"
           ? { statx: 31, readlink: 6, openat: 1, newfstatat: 1, renameat: 1, close: 1 }
           : { statx: 28, readlink: 8, rename: 1 };
+        // Public writable receipts derive numeric metadata from the exact fstat.
         if (operation === "append") expected = row.mode === "require"
-          ? { statx: 13, readlink: 6, openat: 1, write: 1, close: 1 }
-          : { statx: 14, readlink: 8, openat: 1, write: 1, close: 1 };
+          ? { statx: 12, readlink: 6, openat: 1, write: 1, close: 1 }
+          : { statx: 13, readlink: 8, openat: 1, write: 1, close: 1 };
         if (operation === "openWritable") expected = row.mode === "require"
-          ? { statx: 13, readlink: 6, openat: 1 }
-          : { statx: 14, readlink: 8, openat: 1 };
+          ? { statx: 12, readlink: 6, openat: 1 }
+          : { statx: 13, readlink: 8, openat: 1 };
         if (operation === "create") expected = row.mode === "off"
           ? { statx: 23, readlink: 13, openat: 1, write: 1, fchmod: 1, close: 1 }
           : {statx: 20, readlink: 13, openat: 2, fcntl: 1, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat2: 1, close: 3};
