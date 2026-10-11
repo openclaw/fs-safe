@@ -337,6 +337,12 @@ remains asynchronous. Root and child pathname/canonical identities are checked
 before success. Private creation, mutation policies, callbacks, and longer paths
 retain their existing admission paths.
 
+Native removal and moves also retain Root synchronously and reuse that descriptor
+when Root is an immediate parent. Nonrecursive removal keeps its own leaf path,
+including fresh policy, identity and post-removal checks; recursive traversal
+retains its directory, mount, budget and cancellation checks. Neither optimization
+changes the descriptor-relative mutation or atomic no-replace mechanism.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [PowerShell fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation

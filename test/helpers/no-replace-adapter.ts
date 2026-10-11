@@ -5,6 +5,15 @@ import type { NativeBinding } from "../../src/native.js";
 
 export function noReplaceAdapter(rootPath: string, onRename?: () => void, onOpen?: (relativePath: string) => void) {
   const directoryPaths = new Map<number, string>();
+  const open = fsSync.openSync.bind(fsSync);
+  vi.spyOn(fsSync, "openSync").mockImplementation((file, flags, mode) => {
+    const fd = open(file, flags, mode);
+    if (String(file) === rootPath) {
+      directoryPaths.set(fd, rootPath);
+      onOpen?.("");
+    }
+    return fd;
+  });
   const openBeneath = vi.fn((
     _rootFd: number,
     relativePath: string,
@@ -14,7 +23,7 @@ export function noReplaceAdapter(rootPath: string, onRename?: () => void, onOpen
     const directoryPath = relativePath
       ? path.join(rootPath, ...relativePath.split("/"))
       : rootPath;
-    const fd = fsSync.openSync(directoryPath, flags);
+    const fd = open(directoryPath, flags);
     directoryPaths.set(fd, directoryPath);
     return { fd, containment: "best-effort" as const };
   });

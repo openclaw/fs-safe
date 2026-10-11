@@ -1350,7 +1350,10 @@ jobs:
 
       - name: Pin native mutation syscall budgets
         if: runner.os == 'Linux'
-        run: node scripts/native-call-budget-proof.mjs
+        run: |
+          for operation in mkdir remove move; do
+            node scripts/native-call-budget-proof.mjs --operation "$operation"
+          done
 
       - name: Prove Linux copy offload EOF fallback
         if: runner.os == 'Linux'
