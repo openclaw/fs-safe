@@ -80,7 +80,7 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
-      const promises = { mkdir: [40, 19], remove: [32, 27], move: [90, 81], append: [68, 62], openWritable: [38, 32] }[operation];
+      const promises = { mkdir: [26, 19], remove: [32, 27], move: [90, 81], append: [68, 62], openWritable: [38, 32] }[operation];
       const expectedResources = row.mode === "require"
         ? { PROMISE: promises[1] }
         : { PROMISE: promises[0], FSREQPROMISE: 1 };
@@ -94,8 +94,8 @@ if (process.argv.includes("--child")) {
         let expected = row.mode !== "require"
           ? { statx: 9, readlink: 14, mkdir: 1 }
           : process.env.FS_SAFE_TEST_NO_OPENAT2 === "1"
-            ? { statx: 8, openat: 3, fstat: 11, readlink: 6, newfstatat: 6, mkdirat: 1, close: 3 }
-            : { statx: 8, openat: 1, fstat: 6, readlink: 6, newfstatat: 3, mkdirat: 1, openat2: 1, close: 2 };
+            ? { statx: 5, openat: 3, fstat: 11, readlink: 6, newfstatat: 6, mkdirat: 1, close: 3 }
+            : { statx: 5, openat: 1, fstat: 6, readlink: 6, newfstatat: 3, mkdirat: 1, openat2: 1, close: 2 };
         if (operation === "remove") expected = row.mode === "require"
           ? { statx: 6, readlink: 6, openat: 1, newfstatat: 2, unlinkat: 1, close: 1 }
           : { statx: 6, readlink: 6, unlink: 1 };

@@ -25,6 +25,7 @@ import type { WritableOpenResult } from "./root-impl.js";
 import type { RootOpenWritableOptions } from "./root-options.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { describePolicyStagedDirectory } from "./staged-directory.js";
+import { nativePolicyDirectoryObserver } from "./native-policy-directory-observation.js";
 
 export type OpenedWritableFileInRoot = {
   opened: WritableOpenResult;
@@ -216,8 +217,15 @@ function mkdirNativeRootChild(params: Creation): void {
     rootPath: params.root.rootReal, rootIdentity: params.root.rootIdentity,
   });
   const verifyDirectory = (fd: number, pathname: string) => {
-    const observed = describePolicyStagedDirectory(fd, pathname, binding);
-    observed.disposeObservation?.();
+    const observe = nativePolicyDirectoryObserver(binding, fd, pathname);
+    try {
+      // The native observation compares this retained descriptor before and
+      // after the no-follow name check, including mode, links, and canonical path.
+      if (observe?.()) return;
+    } finally {
+      observe?.dispose();
+    }
+    describePolicyStagedDirectory(fd, pathname);
   };
   verifyDirectory(rootOwner.fd, params.root.rootReal);
   const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |

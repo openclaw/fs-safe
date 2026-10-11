@@ -133,3 +133,34 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
     }
   });
 });
+
+it("bounds mkdir metadata promises without adding filesystem hops", async () => {
+  const { AsyncLocalStorage, createHook } = await import("node:async_hooks");
+  const context = new AsyncLocalStorage<Record<string, number>>();
+  const { createDirectorySync } = await import("../src/create.js");
+  const directory = await tempRoot("fs-safe-mkdir-budget-");
+  for (const mode of ["off"] as const) {
+    configureFsSafeNative({ mode });
+    const safe = await root(directory);
+    const cases: Array<[string, () => unknown, () => void]> = [
+      ["mkdir", () => safe.mkdir("child"), () => fsSync.rmdirSync(path.join(directory, "child"))],
+      ["mkdir-recursive", () => safe.mkdir("a/b/c"), () => fsSync.rmSync(path.join(directory, "a"), { recursive: true })],
+      ["ensureRoot", () => safe.ensureRoot(), () => {}],
+      ["mkdir-sync", () => createDirectorySync(path.join(directory, "sync")), () => fsSync.rmdirSync(path.join(directory, "sync"))],
+    ];
+    const promises: Record<string, number> = { mkdir: 26, "mkdir-recursive": 36, ensureRoot: 21, "mkdir-sync": 2 };
+    for (const [name, operation, cleanup] of cases) {
+      await operation(); cleanup();
+      const counts: Record<string, number> = {};
+      const hook = createHook({ init(_id, type) {
+        if (context.getStore() === counts) counts[type] = (counts[type] ?? 0) + 1;
+      } });
+      hook.enable();
+      try { await context.run(counts, operation); } finally { hook.disable(); }
+      cleanup();
+      expect(counts.PROMISE ?? 0, `${mode}/${name}`).toBeLessThanOrEqual(promises[name]!);
+      expect(counts.FSREQPROMISE ?? 0, `${mode}/${name}`).toBe(name === "mkdir-recursive" ? 3 : name === "mkdir" ? 1 : 0);
+    }
+  }
+  configureFsSafeNative({ mode: "auto" });
+});
