@@ -1,3 +1,4 @@
+import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import type { BigIntStats, Stats } from "node:fs";
 import { registerRootHandleContext } from "./root-handle-context.js";
 import fsSync, { constants as fsConstants } from "node:fs";
@@ -120,6 +121,7 @@ export type OpenResult = {
   containment: ContainmentGuarantee;
   realPath: string;
   stat: Stats;
+  exactIdentity: ExactFileIdentity;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
@@ -148,12 +150,13 @@ const OPEN_APPEND_CREATE_FLAGS =
   fsConstants.O_EXCL |
   (SUPPORTS_NOFOLLOW ? fsConstants.O_NOFOLLOW : 0);
 
-function openResult(params: Pick<OpenResult, "handle" | "realPath" | "stat">): OpenResult {
+function openResult(params: Pick<OpenResult, "handle" | "realPath" | "stat" | "exactIdentity">): OpenResult {
   return {
     handle: params.handle,
     containment: "best-effort",
     realPath: params.realPath,
     stat: params.stat,
+    exactIdentity: params.exactIdentity,
     [Symbol.asyncDispose]: () => params.handle.close().catch(() => undefined),
   };
 }
@@ -202,7 +205,7 @@ async function openVerifiedLocalFile(
       return realStat;
     });
 
-    return { opened: openResult({ handle, realPath, stat }), identity };
+    return { opened: openResult({ handle, realPath, stat, exactIdentity: exactFileIdentity(identity) }), identity };
   } catch (err) {
     await handle.close().catch(() => {});
     throw err;
@@ -639,7 +642,7 @@ async function openFileInRoot(
   // The admission helper owns the descriptor until the complete root/file/root
   // fence succeeds, then transfers that still-open handle to the caller.
   const admitted = await admitRootReadHandle({
-    root, filePath: resolved, opened: { handle, stat }, identity,
+    root, filePath: resolved, opened: { handle, stat, exactIdentity: exactFileIdentity(identity) }, identity,
     hardlinks: params.hardlinks, symlinks: params.symlinks,
     beforeFinalFence: fsSafeTestHooks?.beforeRootReadFinalFence,
     afterPathIdentityCheck: fsSafeTestHooks?.afterRootReadFinalPathIdentityCheck,
@@ -828,7 +831,6 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
   let realPathForCleanup: string | null = null;
   let createdIdentity: BigIntStats | null = null;
   try {
-    const stat = fsSync.fstatSync(handle.fd);
     const identity = inspectFileIdentitySync(() => {
       const observed = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!observed.isFile()) {
@@ -837,6 +839,7 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
       if (observed.nlink > 1n) throw hardlinkedPathNotAllowedError();
       return observed;
     });
+    const stat = numberStats(identity);
     if (createdForWrite) createdIdentity = identity;
 
     let observedIoPath = false;
@@ -915,6 +918,7 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
       createdForWrite,
       realPath,
       stat,
+      exactIdentity: exactFileIdentity(identity),
       [Symbol.asyncDispose]: () => handle.close().catch(() => undefined),
     };
     if (!params.keepCreationParent) releaseCreationParent?.();

@@ -199,3 +199,13 @@ See [Errors](errors.md) for the full list.
 - [Writing](writing.md) — companion verbs for produce-side I/O.
 - [JSON files](json.md) — standalone strict/lenient JSON helpers.
 - [Secure file reads](secure-file.md) — pinned absolute file reads with permission checks.
+
+## Exact identity metadata
+
+`OpenResult`, `WritableOpenResult`, `ReadResult`, and advanced `openRootFile()` /
+`openRootFileSync()` results include immutable bigint `exactIdentity` alongside
+`stat: Stats`. The legacy stat and companion derive from the same descriptor
+observation. Use the companion for later identity checks, especially on Windows;
+retain it rather than re-statting a pathname after closing the handle.
+`readRegularFile()` / `readRegularFileSync()`, `statRegularFile()` /
+`statRegularFileSync()`, and `readSecureFile()` follow the same rule.

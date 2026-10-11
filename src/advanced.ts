@@ -67,7 +67,7 @@ export {
   type ResolvedAbsolutePath,
   type ResolvedWritableAbsolutePath,
 } from "./absolute-path.js";
-export { sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
+export { sameFileIdentity, type FileIdentityStat, type FileIdentityInput, type ExactFileIdentity, type ExactIdentityReceipt } from "./file-identity.js";
 export { sanitizeUntrustedFileName } from "./filename.js";
 export { pathExists, pathExistsSync } from "./fs.js";
 export {

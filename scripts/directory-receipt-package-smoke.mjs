@@ -31,6 +31,8 @@ import {
   syncDirectory,
   syncDirectorySync,
   type DirectoryReceipt,
+  type ExactFileIdentity,
+  type ExactIdentityReceipt,
   type DirectorySyncOutcome,
 } from "@openclaw/fs-safe/durability";
 
@@ -40,7 +42,7 @@ type SyncCopyReturn = Expect<Equal<ReturnType<typeof copyRootFileSync>, CopiedRo
 type SyncCopyOptions = Expect<Equal<Parameters<typeof copyRootFileSync>, [CopyRootFileSyncOptions]>>;
 type SyncCopyMethod = Expect<Equal<CopiedRootFileSync["method"], "clone" | "copy-file-range" | "copy">>;
 type SyncCopyIdentity = Expect<Equal<CopiedRootFileSync["identity"], Readonly<{ dev: bigint; ino: bigint }>>>;
-type SyncCopyExpectedSourceIdentity = Expect<Equal<CopyRootFileSyncOptions["expectedSourceIdentity"], { dev: bigint; ino: bigint } | undefined>>;
+type SyncCopyExpectedSourceIdentity = Expect<Equal<CopyRootFileSyncOptions["expectedSourceIdentity"], ExactFileIdentity | ExactIdentityReceipt | undefined>>;
 type SyncCopySourceIdentity = Expect<Equal<CopiedRootFileSync["sourceIdentity"], Readonly<{ dev: bigint; ino: bigint }>>>;
 type SyncCopyClose = Expect<Equal<CopiedRootFileSync["close"], () => void>>;
 type SyncCopyDispose = Expect<Equal<CopiedRootFileSync[typeof Symbol.dispose], () => void>>;
@@ -117,6 +119,13 @@ export function rootWalkDeclarations(
   type FollowResult = Expect<Equal<WalkItem<typeof followed>, RootWalkEntry>>;
   type IncludeResult = Expect<Equal<WalkItem<typeof included>, RootWalkEntry<"include">>>;
   return { legacy, skipped, followed, included, annotated, dynamic };
+}
+
+export function exactReceiptInputs(receipt: Awaited<ReturnType<typeof publishFileExclusive>>) {
+  const legacy: Stats = receipt.identity;
+  const exact: ExactFileIdentity = receipt.exactIdentity;
+  const options: CopyRootFileSyncOptions["expectedSourceIdentity"] = receipt;
+  return { legacy, exact, options };
 }
 
 // Type-check the remaining input sites without requiring native staging support.

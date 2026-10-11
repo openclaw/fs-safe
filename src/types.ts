@@ -1,8 +1,12 @@
+import type { ExactFileIdentity } from "./exact-identity.js";
+
 export type FastPathMode = "auto" | "never" | "require";
 
 export type SafeEncoding = BufferEncoding | null;
 
 export type PathStat = {
+  /** Exact companion for identity checks; numeric fields are legacy metadata. */
+  exactIdentity?: ExactFileIdentity;
   dev: number;
   gid: number;
   ino: number;
@@ -24,3 +28,5 @@ export type BasePathOptions = {
   rootDir: string;
   relativePath: string;
 };
+
+export type { ExactFileIdentity } from "./exact-identity.js";

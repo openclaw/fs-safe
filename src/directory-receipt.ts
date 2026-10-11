@@ -1,8 +1,8 @@
 import fs, { type BigIntStats, type Stats } from "node:fs";
-import type { DirectoryReceipt } from "./directory-durability.js";
+import type { DirectoryReceipt, ExactDirectoryReceipt } from "./directory-durability.js";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
-import type { FileIdentityStat } from "./file-identity.js";
+import { identityFromReceipt, type FileIdentityInput, type FileIdentityStat } from "./file-identity.js";
 import { realpathSync } from "./realpath.js";
 import {
   assertNoWindowsPathAlias,
@@ -28,10 +28,11 @@ type DirectoryAuthority = DirectoryProvenance & Readonly<{
 const authorities = new WeakMap<DirectoryReceipt<Stats | BigIntStats>, DirectoryAuthority>();
 const identities = new WeakMap<FileIdentityStat, DirectoryProvenance>();
 
-export function directoryReceiptIdentity(identity: FileIdentityStat): ExactIdentity {
-  if (!identity) {
+export function directoryReceiptIdentity(input: FileIdentityInput): ExactIdentity {
+  if (!input) {
     throw new FsSafeError("path-mismatch", "directory receipt identity is missing");
   }
+  const identity = identityFromReceipt(input);
   const known = identities.get(identity);
   const dev = identity.dev;
   const ino = identity.ino;
@@ -62,9 +63,12 @@ function snapshotDirectoryReceipt(receipt: DirectoryReceipt<Stats | BigIntStats>
   }
   assertNoWindowsPathAlias(pathname, "filesystem");
   assertNoWindowsPathAlias(realPath, "filesystem");
-  const identity = directoryReceiptIdentity(stat);
+  const identity = directoryReceiptIdentity(receipt.exactIdentity ?? stat);
   const known = authorities.get(receipt);
-  if (known && (pathname !== known.path || realPath !== known.realPath ||
+  const matches = (value: number | bigint, expected: bigint) =>
+    typeof value === "bigint" ? value === expected : value === Number(expected);
+  if (known && (!matches(stat.dev, known.identity.dev) || !matches(stat.ino, known.identity.ino) ||
+    pathname !== known.path || realPath !== known.realPath ||
     identity.dev !== known.identity.dev || identity.ino !== known.identity.ino)) {
     throw new FsSafeError("path-mismatch", "directory receipt changed before admission");
   }
@@ -93,17 +97,18 @@ export function directoryReceiptAuthority(receipt: DirectoryReceipt<Stats | BigI
   return authorities.get(receipt) ?? snapshotDirectoryReceipt(receipt);
 }
 
-export function ownDirectoryReceipt(receipt: DirectoryReceipt<Stats | BigIntStats>): DirectoryReceipt {
+export function ownDirectoryReceipt(receipt: DirectoryReceipt<Stats | BigIntStats>): ExactDirectoryReceipt {
   return receiptFromAuthority(snapshotDirectoryReceipt(receipt));
 }
 
-export function copyRetainedDirectoryReceipt(receipt: DirectoryReceipt): DirectoryReceipt {
+export function copyRetainedDirectoryReceipt(receipt: DirectoryReceipt): ExactDirectoryReceipt {
   const authority = directoryReceiptAuthority(receipt);
   return receiptFromAuthority(authority);
 }
 
-function receiptFromAuthority(authority: DirectoryAuthority): DirectoryReceipt {
-  const receipt: DirectoryReceipt = {
+function receiptFromAuthority(authority: DirectoryAuthority): ExactDirectoryReceipt {
+  const receipt: ExactDirectoryReceipt = {
+    exactIdentity: authority.identity,
     path: authority.path,
     realPath: authority.realPath,
     identity: Object.assign(Object.create(fs.Stats.prototype) as Stats, authority.metadata),
@@ -118,7 +123,7 @@ export function createDirectoryReceiptFromIdentity(
   pathname: string,
   realPath: string,
   exactStat: BigIntStats,
-): DirectoryReceipt {
+): ExactDirectoryReceipt {
   const identity = Object.freeze({ dev: exactStat.dev, ino: exactStat.ino });
   return receiptFromAuthority(Object.freeze({
     path: pathname,
@@ -133,7 +138,7 @@ export function createDirectoryReceiptSync(
   directoryPath: string,
   label: string,
   canonicalize: (pathname: string) => string = realpathSync,
-): DirectoryReceipt {
+): ExactDirectoryReceipt {
   assertNoWindowsPathAlias(directoryPath, "filesystem", `${label} path uses a Windows filesystem namespace alias`);
   const pathname = resolvePathPreservingWindowsRoot(directoryPath);
   assertNoWindowsPathAlias(pathname, "filesystem", `${label} path uses a Windows filesystem namespace alias`);

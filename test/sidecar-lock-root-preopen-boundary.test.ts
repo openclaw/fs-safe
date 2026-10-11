@@ -43,7 +43,7 @@ itPosix.each(["root", "strict", "unlinked", "changed"] as const)(
   },
 );
 
-itPosix.each(["root", "ancestor", "symlink-leaf", "directory-leaf", "before-multilink", "opened-multilink", "numeric-multilink"])(
+itPosix.each(["root", "ancestor", "symlink-leaf", "directory-leaf", "before-multilink", "opened-multilink", "descriptor-multilink"])(
   "rejects a changed snapshot with %s evidence", async (mutation) => {
     const base = await tempRoot("sidecar-preopen-boundary-");
     const rootDir = path.join(base, "root"), relative = "ancestor/parent/state.lock";
@@ -74,12 +74,12 @@ itPosix.each(["root", "ancestor", "symlink-leaf", "directory-leaf", "before-mult
     }, async afterOpen(candidate, handle) {
       if (candidate !== lockPath) return;
       descriptor = handle;
-      if (mutation === "numeric-multilink") {
+      if (mutation === "descriptor-multilink") {
         const stat = fsSync.fstatSync.bind(fsSync);
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
           const value = stat(fd, options);
           if (fd !== handle.fd) return value;
-          return options?.bigint ? value : Object.assign(value, { nlink: 2 });
+          return Object.assign(value, { nlink: options?.bigint ? 2n : 2 });
         });
       }
       if (mutation === "symlink-leaf" || mutation === "directory-leaf") {

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
@@ -60,6 +61,7 @@ if (process.argv.includes("--child")) {
 } else {
   const trace = process.platform === "linux" && !process.argv.includes("--resources-only");
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-native-counts-"));
+  let succeeded = false;
   try {
     const tracePath = path.join(temporary, "trace");
     const child = spawnSync(trace ? "strace" : process.execPath, trace ? [
@@ -79,7 +81,7 @@ if (process.argv.includes("--child")) {
           if (current) counts[current] = {};
           continue;
         }
-        if (!current || /anon_inode:\[(?:eventfd|eventpoll)\]|pipe:\[/.test(line)) continue;
+        if (!current || /anon_inode:\[(?:eventfd|eventpoll)\]|pipe:\[/.test(line) || isRuntimeClockProbe(line)) continue;
         const syscall = /^\d+\s+(\w+)\(/.exec(line)?.[1];
         if ((syscall === "read" || syscall === "write") && !/\(\d+<\//.test(line)) continue;
         if (syscall) counts[current][syscall] = (counts[current][syscall] ?? 0) + 1;
@@ -161,12 +163,13 @@ if (process.argv.includes("--child")) {
         if (operation === "move") expected = row.mode === "require"
           ? { statx: 31, readlink: 6, openat: 1, newfstatat: 1, renameat: 1, close: 1 }
           : { statx: 28, readlink: 8, rename: 1 };
+        // Public writable receipts derive numeric metadata from the exact fstat.
         if (operation === "append") expected = row.mode === "require"
-          ? { statx: 13, readlink: 6, openat: 1, write: 1, close: 1 }
-          : { statx: 14, readlink: 8, openat: 1, write: 1, close: 1 };
+          ? { statx: 12, readlink: 6, openat: 1, write: 1, close: 1 }
+          : { statx: 13, readlink: 8, openat: 1, write: 1, close: 1 };
         if (operation === "openWritable") expected = row.mode === "require"
-          ? { statx: 13, readlink: 6, openat: 1 }
-          : { statx: 14, readlink: 8, openat: 1 };
+          ? { statx: 12, readlink: 6, openat: 1 }
+          : { statx: 13, readlink: 8, openat: 1 };
         if (operation === "create") expected = row.mode === "off"
           ? { statx: 23, readlink: 13, openat: 1, write: 1, fchmod: 1, close: 1 }
           : {statx: 20, readlink: 13, openat: 2, fcntl: 1, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat2: 1, close: 3};
@@ -182,7 +185,9 @@ if (process.argv.includes("--child")) {
       }
       console.log(JSON.stringify(row));
     }
+    succeeded = true;
   } finally {
-    fs.rmSync(temporary, { recursive: true, force: true });
+    if (succeeded || !trace) fs.rmSync(temporary, { recursive: true, force: true });
+    else console.error(`Failed syscall trace retained at ${path.join(temporary, "trace")}`);
   }
 }
