@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import promises from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, vi } from "vitest";
-import { replaceFileAtomic } from "../src/atomic.js";
+import { afterEach, expect, it, vi } from "vitest";
+import { replaceFileAtomic, replaceFileAtomicSync } from "../src/atomic.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -45,3 +45,16 @@ for (const fixture of [
     expect(fs.readdirSync(directory)).toEqual(["value"]);
   });
 }
+
+it.skipIf(process.platform !== "win32")("avoids redundant synchronous Windows mode mutations", async () => {
+  const directory = await tempRoot("fs-safe-atomic-sync-mode-");
+  const filePath = path.join(directory, "value");
+  const chmod = vi.spyOn(fs, "fchmodSync");
+  replaceFileAtomicSync({ filePath, content: "first", mode: 0o600 });
+  expect(chmod).not.toHaveBeenCalled();
+  replaceFileAtomicSync({ filePath, content: "second", mode: 0o400 });
+  expect(chmod).not.toHaveBeenCalled();
+  expect(fs.statSync(filePath).mode & 0o200).toBe(0);
+  expect(fs.readFileSync(filePath, "utf8")).toBe("second");
+  fs.chmodSync(filePath, 0o600);
+});
