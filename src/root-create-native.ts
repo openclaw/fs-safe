@@ -10,7 +10,7 @@ import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
-import { openNativeRootAdmission } from "./native-parent-admission.js";
+import { openExactNativeRootSync, openNativeRootAdmission } from "./native-parent-admission.js";
 import { capturePolicyAwareNativeParent } from "./native-policy-parent.js";
 import { hasNodeErrorCode, isNotFoundPathError, isPathInside } from "./path.js";
 import { preparePinnedWriteMutationAdmission, type PinnedMutationPolicySnapshot } from "./pinned-mutation-admission.js";
@@ -24,6 +24,7 @@ import type { RootWritePathSelection, RetainedRootWriteSelection } from "./root-
 import type { WritableOpenResult } from "./root-impl.js";
 import type { RootOpenWritableOptions } from "./root-options.js";
 import { createSuppressedError } from "./suppressed-error.js";
+import { describePolicyStagedDirectory } from "./staged-directory.js";
 
 export type OpenedWritableFileInRoot = {
   opened: WritableOpenResult;
@@ -193,11 +194,45 @@ export async function tryMkdirRootNative(params: Creation): Promise<boolean> {
   // and uses handle-relative NtCreateFile with its protected security descriptor.
   if (params.private && process.platform === "win32") return false;
   try {
+    if (!params.private && !params.policy && !params.assertBeforeMutation &&
+      !getFsSafeTestHooks()?.beforeRootFallbackMutation &&
+      params.originalPath === path.basename(params.target) &&
+      path.dirname(params.target) === params.root.rootReal &&
+      params.directory === params.target) {
+      mkdirNativeRootChild(params);
+      return true;
+    }
     return await withNativeDirectory(params, async (_binding, _fd, assertCurrent) => { assertCurrent(); return true; });
   } catch (error) {
     if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
     throw error;
   }
+}
+
+function mkdirNativeRootChild(params: Creation): void {
+  const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
+  if (!binding?.openBeneath || !binding.mkdirChildBeneath) return unavailable();
+  using rootOwner = openExactNativeRootSync(binding, {
+    rootPath: params.root.rootReal, rootIdentity: params.root.rootIdentity,
+  });
+  const verifyDirectory = (fd: number, pathname: string) => {
+    const observed = describePolicyStagedDirectory(fd, pathname, binding);
+    observed.disposeObservation?.();
+  };
+  verifyDirectory(rootOwner.fd, params.root.rootReal);
+  const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |
+    (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
+  const name = path.basename(params.target);
+  // The admitted Root is already this operation's immediate parent. Retain
+  // both handles through the same fresh pathname and canonical identity fences.
+  const child = binding.mkdirOpenChildBeneath
+    ? binding.mkdirOpenChildBeneath(rootOwner.fd, name, 0o777, flags).fd
+    : (binding.mkdirChildBeneath(rootOwner.fd, name, 0o777), binding.openBeneath(rootOwner.fd, name, flags).fd);
+  const close = captureNativeFdClose(binding);
+  using childOwner = { [Symbol.dispose]() { close(child); } };
+  assertRootIdentityCurrentSync(params.root);
+  verifyDirectory(child, params.target);
+  verifyDirectory(rootOwner.fd, params.root.rootReal);
 }
 
 export async function tryOpenCreateRootNative(params: Creation & {

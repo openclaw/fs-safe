@@ -330,6 +330,13 @@ Features without a safe fallback, including no-clobber
 when native support is absent or off. Staging is currently Linux/macOS only and
 rejects Windows with `unsupported-platform`.
 
+For an ordinary direct child, native `Root.mkdir()` retains the already-admitted
+Root directly instead of running a parent-creation walk. Its short descriptor
+open, creation, identity checks, and close are synchronous; the public method
+remains asynchronous. Root and child pathname/canonical identities are checked
+before success. Private creation, mutation policies, callbacks, and longer paths
+retain their existing admission paths.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [PowerShell fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation
