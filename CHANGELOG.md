@@ -6,6 +6,12 @@
 
 ### Performance
 
+- Reduce recursive removal stat allocation and same-parent move overhead while retaining identity, canonical-path and no-clobber checks.
+- Halve per-entry promise allocation for complete sorted `Root.walk()` scans.
+- Reuse privately owned Windows handles for asynchronous pathname hashing and remove metadata promise adapters while preserving borrowed-handle positions.
+- Reduce uncontended raw sidecar lock acquisition overhead without changing durability or ownership checks.
+- Skip redundant Windows write-mode changes while retaining both file flushes and speed up fallback `Root.copyIn()` metadata handling.
+- Remove ordinary `Root.mkdir()` dispatch hops and accelerate native root revalidation while retaining policy and alias admission.
 - Speed up portable Windows private file and directory creation about 5x on x64 (consumer probe median 65.1 s to 13.3 s) by running security checks in a prebuilt .NET Framework helper instead of compiling C# through PowerShell on every call; every check still runs on the inherited handle.
 - Speed up native `Root.mkdir()` for direct children while retaining descriptor-relative creation and exact root/child identity checks.
 - Speed up native removal and moves by retaining Root descriptors synchronously and reusing them for direct children, preserving policy, identity and no-replace checks.

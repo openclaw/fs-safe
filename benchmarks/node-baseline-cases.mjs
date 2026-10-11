@@ -135,6 +135,20 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
       `${sync ? "Standalone createDirectorySync" : "Root.mkdir"} versus ordinary mkdir in an existing parent; guarded ancestry and identity checks are extra.`,
       { sync, verify: () => assert(fs.statSync(p("new-dir")).isDirectory()), after: () => fs.rmdirSync(p("new-dir")) });
   }
+  add("mkdir-recursive", () => root.mkdir("new-tree/a/b"), () => fsp.mkdir(p("new-tree/a/b"), { recursive: true }),
+    "Three missing components; guarded per-component creation versus recursive Node mkdir.", {
+      verify: () => assert(fs.statSync(p("new-tree/a/b")).isDirectory()),
+      after: () => fs.rmSync(p("new-tree"), { recursive: true }),
+    });
+  add("mkdir-existing", () => root.mkdir("private"), () => fsp.mkdir(p("private"), { recursive: true }),
+    "Existing directory; identity and confinement revalidation versus recursive Node mkdir.",
+    { verify: () => assert(fs.statSync(p("private")).isDirectory()) });
+  add("mkdir-ensureRoot", () => root.ensureRoot(), () => fsp.mkdir(workspace, { recursive: true }),
+    "Existing Root revalidation versus recursive Node mkdir.", { verify: () => assert(fs.statSync(workspace).isDirectory()) });
+  add("mkdir-standalone", () => api.createDirectory(p("new-dir")), () => fsp.mkdir(p("new-dir")),
+    "Standalone createDirectory with guarded parent and child identities.", {
+      verify: () => assert(fs.statSync(p("new-dir")).isDirectory()), after: () => fs.rmdirSync(p("new-dir")),
+    });
   for (const count of [1000, 50000]) {
     const rel = `tree-${count}`;
     if (!["list", "walk", "walkDirectory", "walkDirectorySync"].some((name) => `${name}-${count}`.includes(filter))) continue;

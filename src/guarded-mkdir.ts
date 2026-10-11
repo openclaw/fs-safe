@@ -3,8 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createDirectoryWithAdmission } from "./create.js";
 import {
-  assertAsyncDirectoryGuard,
-  createAsyncDirectoryGuard,
+  assertDirectoryGuard,
+  captureDirectoryGuard,
   inspectDirectoryIdentitySync,
   type AsyncDirectoryGuard,
 } from "./directory-guard.js";
@@ -86,6 +86,10 @@ function createdDirectoryEvidence(
   }
 }
 
+function captureExactDirectoryGuard(dir: string): AsyncDirectoryGuard<BigIntStats> {
+  return captureDirectoryGuard(dir, "native", { bigint: true }) as AsyncDirectoryGuard<BigIntStats>;
+}
+
 type ExactRootIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 
 function suppliedExactRootIdentity(identity: RootBoundaryIdentity | undefined): ExactRootIdentity | undefined {
@@ -107,7 +111,7 @@ function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
   return typeof (value as Promise<T> | undefined)?.then === "function";
 }
 
-async function realpathOrThrowNotFile(target: string): Promise<string> {
+function realpathOrThrowNotFile(target: string): string {
   try {
     const canonical = realpathSync.native(
       pathForWindowsFilesystem(target),
@@ -152,6 +156,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   ) => PinnedMutationAuthorizationToken | undefined;
   assertBeforeMutation?: () => void;
   createMissing?: boolean;
+  synchronousMkdir?: boolean;
   mode?: number;
   private?: boolean;
   rejectSymlinks?: boolean;
@@ -175,7 +180,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   const root = resolvePathPreservingWindowsRoot(rawRootReal);
   const target = resolvePathPreservingWindowsRoot(rawTargetPath);
   const suppliedIdentity = suppliedExactRootIdentity(params.rootIdentity);
-  const configuredRootGuard = await createAsyncDirectoryGuard(root, { bigint: true });
+  const configuredRootGuard = captureExactDirectoryGuard(root);
   const checkedRootIdentity = suppliedIdentity ?? {
     dev: configuredRootGuard.stat.dev,
     ino: configuredRootGuard.stat.ino,
@@ -185,7 +190,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   const rootCanonical = resolvePathPreservingWindowsRoot(configuredRootGuard.realPath);
   const rootGuard = rootCanonical === root
     ? configuredRootGuard
-    : await createAsyncDirectoryGuard(rootCanonical, { bigint: true });
+    : captureExactDirectoryGuard(rootCanonical);
   assertGuardMatchesRootIdentity(rootGuard, checkedRootIdentity);
 
   const admissionParams = {
@@ -223,11 +228,11 @@ export async function mkdirPathComponentsWithGuards(params: {
     let created = false;
     let createReceipt: PinnedMutationAdmissionReceipt | undefined;
     if (!params.revalidateParentAfterBeforeComponent) {
-      await assertAsyncDirectoryGuard(parentGuard);
+      assertDirectoryGuard(parentGuard, "native");
     }
-    await params.beforeComponent?.(next);
+    if (params.beforeComponent) await params.beforeComponent(next);
     if (params.revalidateParentAfterBeforeComponent) {
-      await assertAsyncDirectoryGuard(parentGuard);
+      assertDirectoryGuard(parentGuard, "native");
     }
     let shouldCreate = true;
     if (params.beforeCreateComponent) {
@@ -253,7 +258,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         );
         if (isPromiseLike(authorization)) {
           createReceipt = await authorization;
-          await assertAsyncDirectoryGuard(parentGuard);
+          assertDirectoryGuard(parentGuard, "native");
         } else {
           createReceipt = authorization;
           // A synchronous authorization must still end at a live pathname
@@ -278,7 +283,8 @@ export async function mkdirPathComponentsWithGuards(params: {
             },
           });
         } else {
-          await fs.mkdir(next, { mode: params.mode });
+          if (params.synchronousMkdir) fsSync.mkdirSync(next, { mode: params.mode });
+          else await fs.mkdir(next, { mode: params.mode });
         }
         created = true;
       } catch (error) {
@@ -300,7 +306,7 @@ export async function mkdirPathComponentsWithGuards(params: {
         prospectiveParent = joinPathSegmentRoute(next, partRoute, index + 1);
       }
       await params.beforeUseComponent(next, prospectiveParent, retainedTargetPath);
-      await assertAsyncDirectoryGuard(parentGuard);
+      assertDirectoryGuard(parentGuard, "native");
     }
     const stat = createdAuthorization ? undefined : fsSync.lstatSync(next);
     if (stat && ((params.rejectSymlinks && stat.isSymbolicLink()) ||
@@ -311,7 +317,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     // segment at a time and realpath-check each segment before descending.
     const nextReal = createdAuthorization && createdEvidence
       ? createdEvidence.receipt.child.canonicalPath
-      : await realpathOrThrowNotFile(next);
+      : realpathOrThrowNotFile(next);
     const admittedNextReal = admitPathInsideRoot({
       rootPath: rootCanonical,
       candidatePath: nextReal,
@@ -328,13 +334,13 @@ export async function mkdirPathComponentsWithGuards(params: {
       if (!targetStat.isDirectory()) {
         throw directoryComponentNotDirectoryError();
       }
-      currentGuard = await createAsyncDirectoryGuard(admittedNextPath, { bigint: true });
+      currentGuard = captureExactDirectoryGuard(admittedNextPath);
       assertNoWindowsPathAlias(
         currentGuard.realPath,
         "filesystem",
         "canonical directory uses a Windows filesystem namespace alias",
       );
-      await assertAsyncDirectoryGuard(parentGuard);
+      assertDirectoryGuard(parentGuard, "native");
       retainedTargetPath = undefined;
       retainedParentPath = undefined;
       current = admittedNextPath;
@@ -343,7 +349,7 @@ export async function mkdirPathComponentsWithGuards(params: {
     if (createdAuthorization && createdEvidence) {
       currentGuard = createdEvidence.guard;
     } else {
-      currentGuard = await createAsyncDirectoryGuard(admittedNextPath, { bigint: true });
+      currentGuard = captureExactDirectoryGuard(admittedNextPath);
     }
     assertNoWindowsPathAlias(
       currentGuard.realPath,
@@ -351,7 +357,7 @@ export async function mkdirPathComponentsWithGuards(params: {
       "canonical directory uses a Windows filesystem namespace alias",
     );
     if (!createdAuthorization || !createdEvidence) {
-      await assertAsyncDirectoryGuard(parentGuard);
+      assertDirectoryGuard(parentGuard, "native");
     }
     current = admittedNextPath;
   }
