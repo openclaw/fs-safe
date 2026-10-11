@@ -43,6 +43,16 @@ function directoryEntryName(bytes: Buffer): string {
   return bytes.toString("utf8");
 }
 
+async function readDirectoryNames(directory: string): Promise<string[]> {
+  const names = await fs.readdir(directory);
+  // Invalid UTF-8 always decodes to U+FFFD. Re-read suspect batches as bytes
+  // so literal U+FFFD names remain valid without returning a lossy spelling.
+  if (names.some(name => name.includes("\ufffd"))) {
+    return (await fs.readdir(directory, { encoding: "buffer" })).map(directoryEntryName);
+  }
+  return names;
+}
+
 async function readDirectoryEntryName(handle: Dir, synchronous = false): Promise<string | undefined> {
   const entry = synchronous ? handle.readSync() : await handle.read();
   // Bun returns the raw Buffer directly; Node returns a Dirent whose name is a Buffer.
@@ -267,7 +277,7 @@ async function listGuardedDirectoryPath(
   try {
     const beforeObservation = getFsSafeTestHooks()?.beforeRootListObservation;
     if (beforeObservation) await beforeObservation(guard.realPath, withFileTypes);
-    const names = (await fs.readdir(guard.realPath, { encoding: "buffer" })).map(directoryEntryName).sort();
+    const names = (await readDirectoryNames(guard.realPath)).sort();
     if (withFileTypes) {
       // readdir supplies literal child names beneath the already-canonical directory.
       const prefix = guard.realPath.endsWith(path.sep) ? guard.realPath : `${guard.realPath}${path.sep}`;
