@@ -114,7 +114,7 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   add("json-store-update", () => store.update((value) => value), async () => {
     const value = JSON.parse(await fsp.readFile(p("private/state"), "utf8"));
     await fsp.writeFile(p("private/state"), JSON.stringify(value));
-  }, "No-op value update; Node read/parse/stringify/truncate versus locked atomic JSON update. Durability disabled.",
+  }, "No-op value update; Node read/parse/stringify/truncate versus process-serialized atomic JSON update without sidecar locking. Durability disabled.",
   { verify: () => verifyJson(JSON.parse(fs.readFileSync(p("private/state"), "utf8"))) });
   const lockOptions = { payload: () => ({ pid: process.pid }), timeoutMs: 1000 };
   for (const sync of [false, true]) {
