@@ -31,6 +31,9 @@ The equivalent environment variables are `FS_SAFE_NATIVE_MODE` and `OPENCLAW_FS_
 | `off` | Do not load a native package. Use supported fallbacks and reject native-only operations deterministically. |
 | `require` | Throw `FsSafeError("helper-unavailable")` instead of falling back when an operation needs the native binding and it cannot load. |
 
+See [What needs the native binding](native.md#what-needs-the-native-binding)
+for the native-only APIs and options.
+
 See [Archive extraction](archive.md) for native, bundled WASM, and ZIP backends.
 Native archive-operation failures are terminal; `auto` does not retry them through a
 fallback. `require` rejects missing bindings or required capabilities.
