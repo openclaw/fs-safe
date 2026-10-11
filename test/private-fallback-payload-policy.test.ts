@@ -139,6 +139,11 @@ describe.skipIf(process.platform === "win32")("private POSIX fallback payload po
     const scoped = await root(directory);
     const open = fsAsync.open.bind(fsAsync);
     let ignored = false;
+    const fchmod = fs.fchmodSync.bind(fs);
+    vi.spyOn(fs, "fchmodSync").mockImplementation((fd, mode) => {
+      if (mode === 0o400) { ignored = true; return; }
+      fchmod(fd, mode);
+    });
     vi.spyOn(fsAsync, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (fs.fstatSync(handle.fd).isFile()) {

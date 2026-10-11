@@ -37,7 +37,11 @@ describe.skipIf(!native || process.platform === "win32")("native Root lock exclu
     }));
     const lstat = fsSync.lstatSync;
     vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof lstat>) => {
-      try { return Reflect.apply(lstat, fsSync, args); }
+      try {
+        const stat = Reflect.apply(lstat, fsSync, args);
+        if (stat === undefined && nativeOpened && String(args[0]) === lockPath) allowed = false;
+        return stat;
+      }
       catch (error) { if (nativeOpened && String(args[0]) === lockPath) allowed = false; throw error; }
     }) as typeof lstat);
     await expect(createSidecarLockManager(directory).acquire({

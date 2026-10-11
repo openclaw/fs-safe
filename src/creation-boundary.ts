@@ -345,7 +345,9 @@ export function assertBeforeCreation(
 ): void {
   if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, kind);
   assertSynchronousCallbackResult(assertion?.(), "assertBeforeMutation");
-  selected.assertParent();
+  // Ordinary callers enter immediately after prepareCreationPath's identical fence.
+  // A callback or private ACL inspection needs a fresh observation afterward.
+  if (assertion !== undefined || permissions.private) selected.assertParent();
   if (permissions.private && kind === "directory") assertDarwinPrivateDirectoryMode(permissions.mode!);
   if (permissions.private) assertDarwinCreationDirectoryAcl(selected.parent.dir, selected.parent.stat, kind);
 }
