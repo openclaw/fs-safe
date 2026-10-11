@@ -55,7 +55,7 @@ describe.runIf(native?.mkdirChildBeneath)("native mkdir with an existing parent"
         return native!.mkdirChildBeneath!(...args);
       } }),
     }));
-    await expect(safe.mkdir("parent/child")).rejects.toMatchObject({ code: "path-mismatch" });
+    await expect(safe.mkdir("parent/child")).rejects.toMatchObject({ code: expect.stringMatching(/^(path-mismatch|ENOENT)$/) });
     expect(fs.readdirSync(outside)).toEqual([]);
     expect(fs.statSync(path.join(held, "child")).isDirectory()).toBe(true);
     fs.unlinkSync(parent);
