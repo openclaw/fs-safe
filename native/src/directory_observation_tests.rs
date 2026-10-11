@@ -31,6 +31,41 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn staged_directory_match_retains_identity_type_and_canonical_name() {
+    let fixture = Fixture::new("staged-match");
+    let (path, directory) = fixture.directory("directory");
+    let stat = rustix::fs::fstat(directory.as_fd()).unwrap();
+    let matches = |path: &std::path::Path, ino| staged_directory_matches(
+        directory.as_raw_fd(), path.to_str().unwrap(), stat.st_dev as u64, ino,
+    ).unwrap();
+    assert!(matches(&path, stat.st_ino as u64));
+    assert!(!matches(&path, stat.st_ino as u64 + 1));
+    let held = fixture.0.join("held");
+    fs::rename(&path, &held).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(!matches(&path, stat.st_ino as u64));
+    fs::remove_dir(&path).unwrap();
+    symlink(&held, &path).unwrap();
+    assert!(!matches(&path, stat.st_ino as u64));
+    assert!(matches(&held, stat.st_ino as u64));
+    directory.metadata().unwrap();
+}
+
+#[test]
+fn staged_directory_match_rejects_invalid_inputs_and_accepts_literal_deleted_suffix() {
+    let fixture = Fixture::new("staged-inputs");
+    let (path, directory) = fixture.directory("directory (deleted)");
+    let stat = rustix::fs::fstat(directory.as_fd()).unwrap();
+    assert!(staged_directory_matches(directory.as_raw_fd(), path.to_str().unwrap(), stat.st_dev as u64, stat.st_ino as u64).unwrap());
+    assert_eq!(staged_directory_matches(-1, path.to_str().unwrap(), 0, 0).unwrap_err().status, "EBADF");
+    assert_eq!(staged_directory_matches(directory.as_raw_fd(), "relative", 0, 0).unwrap_err().status, "EINVAL");
+    let file_path = fixture.0.join("file");
+    let file = File::create(&file_path).unwrap();
+    assert!(!staged_directory_matches(file.as_raw_fd(), file_path.to_str().unwrap(), stat.st_dev as u64, stat.st_ino as u64).unwrap());
+    file.metadata().unwrap();
+}
+
+#[test]
 fn retained_directory_observation_preserves_exact_metadata_and_fd_ownership() {
     let fixture = Fixture::new("exact");
     let (path, directory) = fixture.directory("directory");

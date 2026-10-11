@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
-assert(["mkdir", "ensureRoot", "remove", "move", "append", "openWritable"].includes(operation));
+assert(["mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write"].includes(operation));
 if (process.argv.includes("--child")) {
   const { configureFsSafeNative, root } = await import("../dist/index.js");
   const { getNativeBinding } = await import("../dist/native.js");
@@ -20,17 +20,20 @@ if (process.argv.includes("--child")) {
     const safe = await root(temporary);
     for (const mode of ["off", "require", "auto"]) {
       configureFsSafeNative({ mode });
-      const prepare = () => { if (operation !== "mkdir" && operation !== "ensureRoot") fs.writeFileSync(path.join(temporary, "child"), "payload"); };
+      const prepare = () => { if (operation !== "mkdir" && operation !== "ensureRoot" && operation !== "create") fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
       const perform = () => {
         if (operation === "ensureRoot") return safe.ensureRoot();
         if (operation === "mkdir") return safe.mkdir("child");
         if (operation === "remove") return safe.remove("child");
         if (operation === "append") return safe.append("child", "data", { durable: false });
         if (operation === "openWritable") return safe.openWritable("child", { writeMode: "append" });
+        if (operation === "create") return safe.create("child", "data", { durable: false });
+        if (operation === "write") return safe.write("child", "data", { durable: false });
         return safe.move("child", "target", { overwrite: true });
       };
       const cleanup = result => {
         if (operation === "mkdir") fs.rmdirSync(path.join(temporary, "child"));
+        if (operation === "create") fs.unlinkSync(path.join(temporary, "child"));
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
         if (operation === "openWritable") return result.handle.close();
       };
@@ -67,7 +70,7 @@ if (process.argv.includes("--child")) {
       let current;
       const counts = {};
       for (const line of fs.readFileSync(tracePath, "utf8").split("\n")) {
-        const marker = /BUDGET_(START|END) (?:mkdir|ensureRoot|remove|move|append|openWritable) (off|require|auto)/.exec(line);
+        const marker = /BUDGET_(START|END) (?:mkdir|ensureRoot|remove|move|append|openWritable|create|write) (off|require|auto)/.exec(line);
         if (marker) {
           current = marker[1] === "START" ? marker[2] : undefined;
           if (current) counts[current] = {};
@@ -81,10 +84,43 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
+      if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
       const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [82, 73], append: [66, 62], openWritable: [36, 32] }[operation];
-      const expectedResources = (operation === "mkdir" || operation === "ensureRoot") ? { PROMISE: promises[row.mode === "require" ? 1 : 0] }
-        : row.mode === "require" ? { PROMISE: promises[1] }
-        : { PROMISE: promises[0], FSREQPROMISE: 1 };
+      const publication = operation === "create" || operation === "write";
+      const publicationResources = {
+        create: {
+          off: {
+            PROMISE: 102,
+            FSREQPROMISE: 2,
+            FILEHANDLE: 1,
+            FILEHANDLECLOSEREQ: 1
+          },
+          require: {
+            PROMISE: 88
+          }
+        },
+        write: {
+          off: {
+            PROMISE: 143,
+            FSREQPROMISE: 4,
+            FILEHANDLE: 2,
+            FILEHANDLECLOSEREQ: 2
+          },
+          require: {
+            PROMISE: 117,
+            FSREQPROMISE: 1,
+            FILEHANDLE: 1,
+            FILEHANDLECLOSEREQ: 1
+          }
+        }
+      };
+      const expectedResources = publication
+        ? publicationResources[operation][row.mode === "off" ? "off" : "require"]
+        : (operation === "mkdir" || operation === "ensureRoot")
+          ? { PROMISE: promises[row.mode === "require" ? 1 : 0] }
+        : row.mode === "require"
+          ? { PROMISE: promises[1] }
+          : { PROMISE: promises[0], FSREQPROMISE: 1 };
       if (operation === "append" || operation === "openWritable") {
         expectedResources.FSREQPROMISE = operation === "append" ? 2 : 1;
         expectedResources.FILEHANDLE = 1;
@@ -112,6 +148,12 @@ if (process.argv.includes("--child")) {
         if (operation === "openWritable") expected = row.mode === "require"
           ? { statx: 13, readlink: 6, openat: 1 }
           : { statx: 14, readlink: 8, openat: 1 };
+        if (operation === "create") expected = row.mode === "off"
+          ? { statx: 23, readlink: 13, openat: 1, write: 1, fchmod: 1, close: 1 }
+          : {statx: 20, readlink: 13, openat: 2, fcntl: 1, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat2: 1, close: 3};
+        if (operation === "write") expected = row.mode === "off"
+          ? { statx: 27, readlink: 16, openat: 2, close: 2, write: 1, fchmod: 1, rename: 1 }
+          : {statx: 21, readlink: 16, openat: 3, close: 6, fcntl: 3, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat: 1};
         // Linux arm64 exposes the *at variants for these libc pathname calls.
         const aliases = { mkdir: "mkdirat", readlink: "readlinkat", unlink: "unlinkat", rename: "renameat" };
         const architectureExpected = process.arch === "arm64"

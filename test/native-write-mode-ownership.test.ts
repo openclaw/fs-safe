@@ -92,6 +92,12 @@ describe.skipIf(!nativeAvailable)("native Windows final-mode ownership", () => {
           if (scenario === "before-open" && published && args[1] === "token" && !replaced) swap();
           return binding.openBeneath(...args);
         },
+        openPublicationMetadata(fd, name) {
+          if (scenario === "before-open" && published && name === "token" && !replaced) swap();
+          return binding.openPublicationMetadata
+            ? binding.openPublicationMetadata(fd, name)
+            : binding.openBeneath(fd, name, fsSync.constants.O_RDONLY).fd;
+        },
         fstatIdentity(fd) {
           const stat = binding.fstatIdentity(fd);
           return stat.isFile ? { ...stat, ino: Number(projectedInode(fstat(fd, { bigint: true }))) } : stat;

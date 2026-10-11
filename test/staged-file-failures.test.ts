@@ -242,11 +242,20 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const cleanupFailure = new Error(`${fault} failed`);
     let failClose = false;
     let matchesCalls = 0;
+    const beforeMatch = () => {
+      // Preparation checks once; publication's second check precedes dispatch.
+      if (fault === "unlink" && ++matchesCalls === 2) throw writeFailure;
+    };
     __setNativeLoaderForTest(() => ({
       ...native!,
+      ...(native!.stagedFileMetadata ? {
+        stagedFileMetadata(parentFd: number, name: string, fileFd: number) {
+          beforeMatch();
+          return native!.stagedFileMetadata!(parentFd, name, fileFd);
+        },
+      } : {}),
       stagedFileMatches(...args) {
-        // Preparation checks once; publication's second check precedes dispatch.
-        if (fault === "unlink" && ++matchesCalls === 2) throw writeFailure;
+        beforeMatch();
         return native!.stagedFileMatches(...args);
       },
       closeOwnedFd(fd) {

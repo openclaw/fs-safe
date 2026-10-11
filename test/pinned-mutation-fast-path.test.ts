@@ -211,10 +211,10 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
         })).rejects.toBe(stopBeforeStage);
 
         expect(admissionReset).toBe(true);
-        expect(lstat).toHaveBeenCalledTimes(directoryObservations ? 4 * depth - 1 : 11 * depth);
+        expect(lstat).toHaveBeenCalledTimes(directoryObservations ? 4 * depth - 2 : 11 * depth);
         expect(nativeRealpath).toHaveBeenCalledTimes(directoryObservations ? 2 * depth - 2 : 9 * depth - 1);
         if (directoryObservations) expect(directoryObservations).toHaveBeenCalledTimes(6 * depth + 1);
-        expect(jsRealpath).toHaveBeenCalledTimes(1);
+        expect(jsRealpath).toHaveBeenCalledTimes(directoryObservations ? 0 : 1);
         expect(fstat).toHaveBeenCalledTimes(depth);
       },
     );

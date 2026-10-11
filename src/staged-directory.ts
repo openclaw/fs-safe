@@ -62,6 +62,38 @@ export function assertStagedDirectoryCurrent(receipt: StagedDirectorySnapshot): 
   return current;
 }
 
+export function assertNativeStagedDirectoryCurrent(
+  binding: NativeBinding,
+  fd: number,
+  directory: StagedDirectorySnapshot,
+): void {
+  if (typeof binding.stagedDirectoryMatches === "function" && directory.path === directory.realPath) {
+    try {
+      if (!binding.stagedDirectoryMatches(fd, directory.path, directory.identity.dev, directory.identity.ino)) {
+        throw new FsSafeError("path-mismatch", "staging directory pathname changed");
+      }
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "OBSERVATION_UNAVAILABLE") throw error;
+    }
+  }
+  assertStagedDirectoryCurrent(directory);
+}
+
+/** Ordinary publication fences identity, while sibling entries may change. */
+export function describeNativeStagedDirectory(binding: NativeBinding, fd: number, canonicalPath: string) {
+  const stat = fs.fstatSync(fd, { bigint: true });
+  if (!stat.isDirectory()) throw new FsSafeError("not-file", "staging parent must be a directory");
+  const pathname = resolvePathPreservingWindowsRoot(canonicalPath);
+  const directory = Object.freeze({
+    path: pathname,
+    realPath: pathname,
+    identity: Object.freeze({ dev: stat.dev, ino: stat.ino }),
+  });
+  assertNativeStagedDirectoryCurrent(binding, fd, directory);
+  return { directory, stat };
+}
+
 function sameDirectoryMetadata(left: MutationIdentity, right: MutationIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
     left.nlink === right.nlink;

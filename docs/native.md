@@ -363,6 +363,14 @@ identity components are safely representable; larger identities keep bigint
 observations, and unknown Windows components receive the existing bounded exact
 retry. Every directory identity and canonical-path observation remains in place.
 
+Native publication retains Root through synchronous descriptor open/close and
+checks canonical staging directories against their retained descriptors. Older
+bindings keep the existing guarded directory verification. Owned-descriptor
+staged buffers up to 64 KiB can write synchronously when no mutation assertion is
+configured; direct-publication buffers, larger buffers, streams, and assertion-bearing writes keep their
+asynchronous path. Publication, permission, and post-operation identity checks
+remain unchanged.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [Windows helper fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation

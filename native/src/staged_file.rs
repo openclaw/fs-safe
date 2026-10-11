@@ -2,7 +2,7 @@ use std::os::fd::IntoRawFd;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use rustix::fs::{Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
 use crate::unix::{
     borrowed, file_matches_child as matches, nonnegative_fd, os_error,
@@ -43,6 +43,39 @@ pub fn staged_file_matches(
     into_napi(env, matches(parent_fd, &basename, file_fd))
 }
 
+#[napi(object)]
+pub struct StagedFileMetadata {
+    pub mode: BigInt,
+    pub nlink: BigInt,
+}
+
+#[allow(clippy::unnecessary_cast)] // Stat widths differ across POSIX targets.
+fn inspect_staged_file(parent_fd: i32, name: &str, file_fd: i32) -> NativeResult<Option<StagedFileMetadata>> {
+    validate_child_basename(name)?;
+    let file_fd = nonnegative_fd(file_fd, "inspect staged descriptor")?;
+    let parent_fd = nonnegative_fd(parent_fd, "inspect staged child")?;
+    let named = rustix::fs::statat(borrowed(parent_fd), name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| os_error(error, "inspect staged child"))?;
+    // The synchronous caller owns this descriptor throughout the observation.
+    // Sample it after the name, replacing the former post-match JS fstat.
+    let retained = rustix::fs::fstat(borrowed(file_fd))
+        .map_err(|error| os_error(error, "inspect staged descriptor"))?;
+    if !FileType::from_raw_mode(named.st_mode).is_file()
+        || !FileType::from_raw_mode(retained.st_mode).is_file()
+        || named.st_dev != retained.st_dev || named.st_ino != retained.st_ino {
+        return Ok(None);
+    }
+    Ok(Some(StagedFileMetadata {
+        mode: BigInt::from(retained.st_mode as u64),
+        nlink: BigInt::from(retained.st_nlink as u64),
+    }))
+}
+
+#[napi(js_name = "stagedFileMetadata")]
+pub fn staged_file_metadata(env: Env, parent_fd: i32, basename: String, file_fd: i32) -> Result<Option<StagedFileMetadata>> {
+    into_napi(env, inspect_staged_file(parent_fd, &basename, file_fd))
+}
+
 #[napi(js_name = "removeStagedFile")]
 pub fn remove_staged_file(
     env: Env,
@@ -60,6 +93,31 @@ pub fn remove_staged_file(
 mod tests {
     use super::*;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    #[test]
+    fn staged_metadata_observes_the_named_inode_without_closing_it() {
+        let base = std::env::temp_dir().join(format!("fs-safe-stage-metadata-{}", std::process::id()));
+        std::fs::create_dir(&base).unwrap();
+        let parent = std::fs::File::open(&base).unwrap();
+        let fd = create(parent.as_raw_fd(), "stage").unwrap();
+        // SAFETY: create returned a descriptor uniquely owned by this test.
+        let file = unsafe { OwnedFd::from_raw_fd(fd) };
+        let observed = inspect_staged_file(parent.as_raw_fd(), "stage", file.as_raw_fd()).unwrap().unwrap();
+        assert_eq!(observed.nlink.get_u64().1, 1);
+        std::fs::hard_link(base.join("stage"), base.join("alias")).unwrap();
+        assert_eq!(inspect_staged_file(parent.as_raw_fd(), "stage", file.as_raw_fd()).unwrap().unwrap().nlink.get_u64().1, 2);
+        std::fs::rename(base.join("stage"), base.join("held")).unwrap();
+        std::fs::write(base.join("stage"), b"replacement").unwrap();
+        assert!(inspect_staged_file(parent.as_raw_fd(), "stage", file.as_raw_fd()).unwrap().is_none());
+        std::fs::remove_file(base.join("stage")).unwrap();
+        std::os::unix::fs::symlink("held", base.join("stage")).unwrap();
+        assert!(inspect_staged_file(parent.as_raw_fd(), "stage", file.as_raw_fd()).unwrap().is_none());
+        assert!(inspect_staged_file(parent.as_raw_fd(), "../escape", file.as_raw_fd()).is_err());
+        assert!(rustix::fs::fstat(&file).is_ok());
+        drop(file);
+        drop(parent);
+        std::fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn retained_child_cleanup_is_exact_and_nonfollowing() {

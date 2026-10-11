@@ -308,6 +308,12 @@ for (const mode of ["off", "require"] as const) {
       });
     } else {
       const write = fsSync.write.bind(fsSync);
+      const writeSync = fsSync.writeSync.bind(fsSync);
+      vi.spyOn(fsSync, "writeSync").mockImplementation((fd, ...args) => {
+        const written = writeSync(fd, ...args);
+        if (written > 0 && fsSync.fstatSync(fd).isFile()) swap();
+        return written;
+      });
       vi.spyOn(fsSync, "write").mockImplementation(((fd, buffer, offset, length, position, callback) => {
         write(fd, buffer, offset, length, position, (error, bytesWritten, writtenBuffer) => {
           if (!error && bytesWritten > 0 && fsSync.fstatSync(fd).isFile()) swap();

@@ -86,6 +86,11 @@ describe.each(routes)("Root mutation authority: $name", ({ mode, windows }) => {
       if (behavior === "stalled") callback(null, 0, buffer);
       else write(fd, buffer, offset, Math.min(length, 3), position, callback);
     }) as typeof fsSync.write);
+    const writeSync = fsSync.writeSync.bind(fsSync);
+    vi.spyOn(fsSync, "writeSync").mockImplementation(((fd, buffer, offset, length, position) => {
+      writes++;
+      return behavior === "stalled" ? 0 : writeSync(fd, buffer, offset, Math.min(length, 3), position);
+    }) as typeof fsSync.writeSync);
     const content = "é:🙂";
     const pending = scoped.write("target", content, { encoding: "utf16le" });
     if (behavior === "stalled") {

@@ -26,17 +26,17 @@ async function fixture(platform: "win32" | "linux", reportCloseErrors = false) {
   });
   const rootOpened: number[] = [];
   const rootClosed: number[] = [];
-  const actualOpen = fs.open.bind(fs);
-  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-    const handle = await actualOpen(...args);
-    const fd = handle.fd;
-    rootOpened.push(fd);
-    const close = handle.close.bind(handle);
-    vi.spyOn(handle, "close").mockImplementation(async () => {
-      rootClosed.push(fd);
-      await close();
-    });
-    return handle;
+  const actualOpen = fsSync.openSync.bind(fsSync);
+  const actualClose = native.close.getMockImplementation()!;
+  vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+    const fd = actualOpen(...args);
+    const stat = fsSync.fstatSync(fd, { bigint: true });
+    if (stat.dev === rootIdentity.dev && stat.ino === rootIdentity.ino) rootOpened.push(fd);
+    return fd;
+  });
+  native.close.mockImplementation(fd => {
+    if (rootOpened.includes(fd)) rootClosed.push(fd);
+    actualClose(fd);
   });
   Object.defineProperty(process, "platform", { value: platform });
   const authorize = vi.fn(async (_request: Readonly<PinnedMutationParentRequest>) => undefined);
@@ -59,7 +59,7 @@ function suppressedBy(failure: unknown, closeFailure: Error): unknown {
 function expectClosed(f: Awaited<ReturnType<typeof fixture>>) {
   expect(f.opened).toHaveLength(2);
   expect(f.paths.size).toBe(0);
-  expect(f.close).toHaveBeenCalledTimes(2);
+  expect(f.close.mock.calls.filter(([fd]) => f.opened.includes(fd))).toHaveLength(2);
   for (const fd of f.opened) expect(f.close.mock.calls.filter(([closed]) => closed === fd)).toHaveLength(1);
   expect(f.rootOpened).toHaveLength(1);
   expect(f.rootClosed).toEqual(f.rootOpened);
