@@ -9,6 +9,38 @@ const native = loadTestNative("optional");
 const { tempRoot } = useTempDirs();
 
 describe.runIf(native)("native owned-tree removal", () => {
+  it("removes only an empty, identity-matched direct child without traversal", async () => {
+    expect(native!.tryRemoveEmptyOwnedTree).toBeTypeOf("function");
+    const root = await tempRoot("fs-safe-native-empty-tree-");
+    const parentFd = fsSync.openSync(root, fsSync.constants.O_RDONLY);
+    try {
+      for (const populated of [false, true]) {
+        const name = populated ? "populated" : "empty";
+        const dir = path.join(root, name);
+        fsSync.mkdirSync(dir);
+        if (populated) fsSync.writeFileSync(path.join(dir, "keep"), "owned");
+        const fd = fsSync.openSync(dir, fsSync.constants.O_RDONLY);
+        try {
+          expect(native!.tryRemoveEmptyOwnedTree!(parentFd, name, fd))
+            .toMatchObject({ outcome: populated ? "not-empty" : "removed" });
+          if (populated) expect(fsSync.readFileSync(path.join(dir, "keep"), "utf8")).toBe("owned");
+        } finally { fsSync.closeSync(fd); }
+        expect(fsSync.existsSync(dir)).toBe(populated);
+      }
+      const dir = path.join(root, "replaced");
+      fsSync.mkdirSync(dir);
+      const fd = fsSync.openSync(dir, fsSync.constants.O_RDONLY);
+      try {
+        fsSync.renameSync(dir, `${dir}.owned`);
+        fsSync.mkdirSync(dir);
+        expect(native!.tryRemoveEmptyOwnedTree!(parentFd, "replaced", fd))
+          .toMatchObject({ outcome: "preserved" });
+        expect(fsSync.existsSync(dir)).toBe(true);
+        expect(fsSync.existsSync(`${dir}.owned`)).toBe(true);
+      } finally { fsSync.closeSync(fd); }
+    } finally { fsSync.closeSync(parentFd); }
+  });
+
   it("removes nested trees and link leaves while preserving outside targets and replacements", async () => {
     expect(native!.removeOwnedTree).toBeTypeOf("function");
     expect(native!.removeOwnedTreeSync).toBeTypeOf("function");

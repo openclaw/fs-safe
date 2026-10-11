@@ -151,6 +151,16 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
       "Empty workspace; Node rmdir versus guarded ownership, quarantine and bounded cleanup (compatible safety). Creation excluded.",
       { sync, before: (role) => role === "safe" ? tempCreate() : rawTemp(),
         verify: (_, role, input) => assert(!fs.existsSync(role === "safe" ? input.dir : input)) });
+    add(`temp-cleanup-populated${suffix}`, (temp) => temp.cleanup(),
+      sync ? (dir) => fs.rmSync(dir, { recursive: true }) : (dir) => fsp.rm(dir, { recursive: true }),
+      "Workspace with one nested file; includes the nonempty empty-removal attempt before guarded recursive cleanup. Creation excluded.",
+      { sync, before: async (role) => {
+          const temp = await (role === "safe" ? tempCreate() : rawTemp());
+          const dir = role === "safe" ? temp.dir : temp;
+          fs.mkdirSync(path.join(dir, "nested"));
+          fs.writeFileSync(path.join(dir, "nested", "owned"), data);
+          return temp;
+        }, verify: (_, role, input) => assert(!fs.existsSync(role === "safe" ? input.dir : input)) });
   }
   for (const kind of ["zip", "tar"]) {
     if (!`extract-${kind}`.includes(filter)) continue;

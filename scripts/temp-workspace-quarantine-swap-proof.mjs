@@ -10,7 +10,76 @@ async function prove() {
   const { configureFsSafeNative } = await import("../dist/config.js");
   const { tempWorkspace, tempWorkspaceSync } = await import("../dist/temp.js");
   const { __setFsSafeTestHooksForTest } = await import("../dist/test-hooks.js");
+  const { getNativeBinding, __setNativeLoaderForTest, __resetNativeLoaderForTest } = await import("../dist/native.js");
   configureFsSafeNative({ mode: "require" });
+  const binding = getNativeBinding();
+  assert.equal(typeof binding.tryRemoveEmptyOwnedTree, "function", "new native empty-removal binding required");
+
+  async function runEmptyCase(variant, replacement) {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-empty-quarantine-proof-"));
+    const outside = path.join(rootDir, "outside");
+    const originalBytes = Buffer.from([0x6f, 0x77, 0x6e, 0x65, 0x64, 0x00, 0xff]);
+    const outsideBytes = Buffer.from([0x6b, 0x65, 0x65, 0x70, 0x00, 0xfe]);
+    let workspace;
+    let quarantine;
+    let emptyCalls = 0;
+    let recursiveCalls = 0;
+    let hookCalls = 0;
+    __setNativeLoaderForTest(() => ({
+      ...binding,
+      tryRemoveEmptyOwnedTree: (...args) => {
+        emptyCalls += 1;
+        return binding.tryRemoveEmptyOwnedTree(...args);
+      },
+      removeOwnedTree: (...args) => { recursiveCalls += 1; return binding.removeOwnedTree(...args); },
+      removeOwnedTreeSync: (...args) => { recursiveCalls += 1; return binding.removeOwnedTreeSync(...args); },
+    }));
+    try {
+      await fs.mkdir(outside);
+      await fs.writeFile(path.join(outside, "keep"), outsideBytes);
+      const options = { rootDir, prefix: variant, cleanupSafety: "require-bounded" };
+      workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
+      assert.deepEqual(await fs.readdir(workspace.dir), []);
+      const beforeRemoval = (candidate) => {
+        hookCalls += 1;
+        quarantine = candidate;
+        if (replacement === "none") return;
+        // Add owned bytes only after cleanup captured its empty-attempt hint.
+        fsSync.writeFileSync(path.join(quarantine, "owned"), originalBytes);
+        fsSync.renameSync(quarantine, `${quarantine}.owned`);
+        if (replacement === "reparse") {
+          fsSync.symlinkSync(outside, quarantine, process.platform === "win32" ? "junction" : "dir");
+        } else {
+          fsSync.mkdirSync(quarantine);
+          fsSync.writeFileSync(path.join(quarantine, "keep"), outsideBytes);
+        }
+      };
+      __setFsSafeTestHooksForTest(variant === "async"
+        ? { beforeTempWorkspaceNativeRemoval: beforeRemoval }
+        : { beforeTempWorkspaceNativeRemovalSync: beforeRemoval });
+      const result = await workspace.cleanup();
+      const repeated = await workspace.cleanup();
+      assert.equal(hookCalls, 1);
+      assert.equal(emptyCalls, 1, "proof must select the real new native empty-removal route");
+      assert.equal(recursiveCalls, 0, "replacement must not enter recursive removal");
+      assert.equal(fsSync.existsSync(workspace.dir), false);
+      assert.equal(result, replacement === "none" ? "removed" : "indeterminate");
+      assert.equal(repeated, replacement === "none" ? "missing" : "indeterminate");
+      assert.deepEqual(await fs.readFile(path.join(outside, "keep")), outsideBytes);
+      if (replacement !== "none") {
+        assert.deepEqual(await fs.readFile(path.join(`${quarantine}.owned`, "owned")), originalBytes);
+        assert.deepEqual(await fs.readFile(path.join(quarantine, "keep")), outsideBytes);
+        assert.equal((await fs.lstat(quarantine)).isSymbolicLink(), replacement === "reparse");
+      }
+      return { variant, replacement, result, repeated, emptyCalls, recursiveCalls,
+        outsidePreserved: true, originalPreserved: replacement !== "none", publicNameAbsent: true };
+    } finally {
+      __setFsSafeTestHooksForTest();
+      __resetNativeLoaderForTest();
+      try { if (workspace) await workspace.cleanup(); }
+      finally { await fs.rm(rootDir, { recursive: true, force: true }); }
+    }
+  }
 
   async function runCase(variant, reparseRoot = false) {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-quarantine-proof-"));
@@ -97,12 +166,19 @@ async function prove() {
     async: await runCase("async", true),
     sync: await runCase("sync", true),
   };
+  const emptyRoute = [];
+  for (const variant of ["async", "sync"]) {
+    for (const replacement of ["none", "directory", "reparse"]) {
+      emptyRoute.push(await runEmptyCase(variant, replacement));
+    }
+  }
   console.log(JSON.stringify({
     proof: "temp-workspace-quarantine-swap",
     platform: process.platform,
     async: asyncProof,
     sync: syncProof,
     reparseRoot,
+    emptyRoute,
   }));
 }
 
