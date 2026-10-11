@@ -72,16 +72,19 @@ describe("exclusive leaf creation", () => {
     expect(fs.readdirSync(parent)).toEqual([]);
   });
 
-  it("rechecks the parent after the synchronous authority callback", async () => {
+  it.each(["directory", "file", "file-handle"])("rechecks the parent after the %s authority callback", async kind => {
     const base = await tempDirs.tempRoot("fs-safe-create-");
     const parent = path.join(base, "parent");
     fs.mkdirSync(parent);
-    expect(() => createDirectorySync(path.join(parent, "child"), {
-      assertBeforeMutation: () => {
-        fs.renameSync(parent, path.join(base, "original"));
-        fs.mkdirSync(parent);
-      },
-    })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+    const options = { assertBeforeMutation: () => {
+      fs.renameSync(parent, path.join(base, "original"));
+      fs.mkdirSync(parent);
+    } };
+    const target = path.join(parent, "child");
+    await expect(Promise.resolve().then(() => kind === "directory"
+      ? createDirectorySync(target, options)
+      : kind === "file" ? createFileSync(target, options) : createFileHandle(target, options),
+    )).rejects.toMatchObject({ code: "path-mismatch" });
     expect(fs.readdirSync(parent)).toEqual([]);
     expect(fs.readdirSync(path.join(base, "original"))).toEqual([]);
   });

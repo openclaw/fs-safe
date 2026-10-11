@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
+import { createFileSync } from "../src/create.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
 import { readLocalFileSafely, root } from "../src/root.js";
@@ -19,6 +20,8 @@ const budgets = {
   replaceFileAtomic: 20, // measured 18
   "writeJson durable:false": 20, // measured 18
   "root.write": 60, // measured 58, including canonical mode-inheritance identity
+  "root.create": 34,
+  createFileSync: 10,
   "root.exists": 7, // exact direct-child admission and final root path fence
 };
 const asyncBudgets = {
@@ -29,6 +32,8 @@ const asyncBudgets = {
   replaceFileAtomic: 9, // measured 8
   "writeJson durable:false": 9, // measured 8
   "root.write": 12, // measured 11, including two durability syncs
+  "root.create": 3,
+  createFileSync: 0,
   "root.exists": 1, // measured 0
 };
 const { tempRoot } = useRealTempDirs();
@@ -46,6 +51,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
     const counts = new Map<string, number>();
     const restore: Array<() => void> = [];
     let counting = false;
+    let nonthrowingTargetProbes = 0;
     const wrap = (object: object, keys: string[], prefix: string) => {
       for (const key of keys) {
         const descriptor = Object.getOwnPropertyDescriptor(object, key);
@@ -54,7 +60,11 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         Object.defineProperty(object, key, {
           ...descriptor,
           value: Object.assign(function (this: unknown, ...args: unknown[]) {
-            if (counting) counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
+            if (counting) {
+              counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
+              if (prefix === "s." && key === "statSync" &&
+                (args[1] as { throwIfNoEntry?: boolean } | undefined)?.throwIfNoEntry === false) nonthrowingTargetProbes++;
+            }
             const result = Reflect.apply(original, this, args);
             if (prefix === "p." && key === "open") {
               return result.then((opened: object) => {
@@ -74,6 +84,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
       wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
       wrap(fsSync, Object.keys(fsSync).filter((key) => key.endsWith("Sync") && key !== "writeSync"), "s.");
       wrap(prototype, Object.getOwnPropertyNames(prototype).filter((key) => key !== "constructor" && key !== "fd"), "h.");
+      let createSequence = 0;
       const operations: Record<keyof typeof budgets, () => Promise<unknown>> = {
         "root.readBytes": () => safe.readBytes("r.txt"),
         readLocalFileSafely: () => readLocalFileSafely({ filePath: path.join(directory, "r.txt") }),
@@ -82,11 +93,14 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         replaceFileAtomic: () => replaceFileAtomic({ filePath: path.join(directory, "a.txt"), content: "x" }),
         "writeJson durable:false": () => writeJson(path.join(directory, "w.json"), { a: 1 }, { durable: false }),
         "root.write": () => safe.write("w.txt", "x"),
+        "root.create": () => safe.create(`created-${createSequence++}`, "x", { durable: false }),
+        createFileSync: async () => createFileSync(path.join(directory, `exclusive-${createSequence++}`)).close(),
         "root.exists": () => safe.exists("r.txt"),
       };
       for (const name of Object.keys(budgets) as Array<keyof typeof budgets>) {
         await operations[name]();
         counts.clear();
+        nonthrowingTargetProbes = 0;
         counting = true;
         try { await operations[name](); } finally { counting = false; }
         const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
@@ -96,6 +110,11 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         expect.soft(total, `${name}: ${total} calls; ${breakdown}`).toBeLessThanOrEqual(budgets[name]);
         expect.soft(asyncTotal, `${name}: ${asyncTotal} async calls; ${breakdown}`)
           .toBeLessThanOrEqual(asyncBudgets[name]);
+        if (name === "root.create") expect.soft(nonthrowingTargetProbes).toBe(1);
+        if (name === "root.create" || name === "createFileSync") {
+          expect.soft(total, breakdown).toBe(name === "root.create" ? 34 : 10);
+          expect.soft(asyncTotal, breakdown).toBe(name === "root.create" ? 3 : 0);
+        }
         if (name === "root.readBytes") {
           expect.soft(total, breakdown).toBe(16);
           expect.soft(asyncTotal, breakdown).toBe(3); // open, read, close
