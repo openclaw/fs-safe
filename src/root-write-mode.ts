@@ -5,7 +5,7 @@ import { isNotFoundPathError } from "./path.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
 import { hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 
 // The caller has already resolved and guarded this write target.
@@ -23,7 +23,7 @@ export async function inheritWriteTargetMode(params: {
     });
     if (!admittedTarget) throw outsideWorkspaceError();
     const targetPath = admittedTarget.path;
-    const existing = await inspectFileIdentity(() => fsSync.lstatSync(targetPath, { bigint: true }));
+    const existing = inspectFileIdentitySync(() => fsSync.lstatSync(targetPath, { bigint: true }));
     if (existing.isSymbolicLink()) throw new FsSafeError("path-alias", "path alias escape blocked");
     if (!existing.isFile()) throw new FsSafeError("not-file", "not a file");
     if (existing.nlink > 1n) throw hardlinkedPathNotAllowedError();
@@ -32,7 +32,7 @@ export async function inheritWriteTargetMode(params: {
     const handle = await fs.open(targetPath, resolveReadOpenFlags());
     try {
       // Bind admission to the inode whose metadata is inherited.
-      await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), existing);
+      inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }), existing);
     } finally {
       await handle.close().catch(() => undefined);
     }
@@ -47,7 +47,7 @@ export async function inheritWriteTargetMode(params: {
       });
       if (!admittedRealPath) throw outsideWorkspaceError();
       const realPath = admittedRealPath.path;
-      await inspectFileIdentity(async () => {
+      inspectFileIdentitySync(() => {
         const current = fsSync.statSync(realPath, { bigint: true });
         if (!current.isFile()) throw new FsSafeError("not-file", "not a file");
         if (current.nlink > 1n) throw hardlinkedPathNotAllowedError();

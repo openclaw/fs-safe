@@ -75,7 +75,10 @@ export async function finishRootFallbackWrite(params: {
     // Final mode belongs to the accepted object, including on rename-unstable
     // filesystems; never chmod the old temp and assume its mode was transferred.
     try {
-      await handle.chmod(params.mode);
+      // Windows chmod only changes the owner-write bit (the read-only attribute).
+      const modeChange = process.platform !== "win32" ||
+        (fsSync.fstatSync(handle.fd).mode & 0o200) !== (params.mode & 0o200);
+      if (modeChange) fsSync.fchmodSync(handle.fd, params.mode);
     } catch (error) {
       await cleanupPinnedFilePath({
         pathname: params.targetPath, handle, identity, parentGuard: params.parentGuard,

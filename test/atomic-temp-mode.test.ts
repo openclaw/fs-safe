@@ -2,7 +2,7 @@ import fs from "node:fs";
 import promises from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, vi } from "vitest";
-import { replaceFileAtomic } from "../src/atomic.js";
+import { replaceFileAtomic, replaceFileAtomicSync } from "../src/atomic.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -45,3 +45,19 @@ for (const fixture of [
     expect(fs.readdirSync(directory)).toEqual(["value"]);
   });
 }
+
+itPosix("avoids a redundant synchronous mode mutation but corrects a restrictive umask", async () => {
+  const directory = await tempRoot("fs-safe-atomic-sync-mode-");
+  const filePath = path.join(directory, "value");
+  const chmod = vi.spyOn(fs, "fchmodSync");
+  const previousMask = process.umask(0o077);
+  try {
+    replaceFileAtomicSync({ filePath, content: "first", mode: 0o600 });
+    expect(chmod.mock.calls.filter(([, mode]) => mode === 0o600)).toHaveLength(0);
+    process.umask(0o777);
+    replaceFileAtomicSync({ filePath, content: "second", mode: 0o600 });
+    expect(chmod.mock.calls.filter(([, mode]) => mode === 0o600)).toHaveLength(1);
+  } finally { process.umask(previousMask); }
+  expect(fs.statSync(filePath).mode & 0o7777).toBe(0o600);
+  expect(fs.readFileSync(filePath, "utf8")).toBe("second");
+});

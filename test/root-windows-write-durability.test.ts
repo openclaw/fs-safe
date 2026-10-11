@@ -99,7 +99,7 @@ it.each(operations.flatMap(operation => settings.map(setting => ({ operation, ..
     else await scoped.write("target", "new bytes", { ...options, overwrite: operation !== "exclusive" });
     const replacing = ["write", "replace", "writeJson"].includes(operation);
     const expected = replacing
-      ? ["write", "sync", "rename", "chmod", "sync", "directory"]
+      ? ["write", "sync", "rename", "sync", "directory"]
       : ["write", "sync", "directory"];
     expect(events).toEqual(enabled ? expected : expected.filter(event => event !== "sync" && event !== "directory"));
     expect(parentSync).toHaveBeenCalledTimes(enabled ? 1 : 0);

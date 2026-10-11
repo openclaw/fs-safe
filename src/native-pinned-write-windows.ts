@@ -138,7 +138,7 @@ export async function runPinnedWriteWindows(
     // Creation is requested at 0600 in the binding, but a restrictive umask
     // can remove owner access. Keep the unpublished inode private and
     // reopenable until the published name has been identity-fenced.
-    fsSync.fchmodSync(tempFd, 0o600);
+    if ((verificationIdentity.mode & 0o200n) === 0n) fsSync.fchmodSync(tempFd, 0o600);
     if (!copied) await writePinnedInput(tempFd, params.input, params.maxBytes, params.assertBeforeMutation);
     if (params.input.kind === "file") restoreCopyMetadata(tempFd, params.input.metadata);
     if (params.sync !== false) {
@@ -205,8 +205,11 @@ export async function runPinnedWriteWindows(
     // Native exclusive creation starts at 0600. Apply the requested mode only
     // after reopening and fencing the published name, both so mode 000 stays
     // verifiable and so broader modes are never exposed before that fence.
+    // Windows chmod only changes the read-only attribute; use the fresh target
+    // observation to avoid rewriting an unchanged attribute.
+    const modeChange = (targetStat.mode & 0o200n) !== BigInt(params.mode & 0o200);
     try {
-      fsSync.fchmodSync(targetFd, params.mode);
+      if (modeChange) fsSync.fchmodSync(targetFd, params.mode);
       // Windows FlushFileBuffers needs write access; the verification reopen is read-only.
       if (params.sync !== false) {
         if (params.strictFileSync) fsSync.fsyncSync(tempFd);
