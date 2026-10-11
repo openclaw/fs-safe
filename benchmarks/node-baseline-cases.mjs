@@ -176,3 +176,21 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   }
   return cases;
 }
+
+// Keep each arm's fixture hooks and verification attached to its own fs-safe call.
+export function compareNodeBaselineCases(candidate, baseline) {
+  assert.deepEqual(candidate.map(row => row.operation), baseline.map(row => row.operation));
+  return candidate.map((row, index) => {
+    const original = baseline[index];
+    assert.equal(row.sync, original.sync);
+    const select = implementation => implementation === "safe" ? row : original;
+    return {
+      ...row,
+      raw: original.safe,
+      before: implementation => select(implementation).before?.("safe"),
+      verify: (output, implementation, input) => select(implementation).verify?.(output, "safe", input),
+      after: (output, implementation, input) => select(implementation).after?.(output, "safe", input),
+      caveat: "Both arms use fs-safe; baseline and candidate have separate equivalent fixtures. " + row.caveat,
+    };
+  });
+}

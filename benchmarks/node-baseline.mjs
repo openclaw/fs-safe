@@ -9,7 +9,7 @@ import { createHook } from "node:async_hooks";
 import { createRequire } from "node:module";
 import { spawnSync, execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { nodeBaselineCases } from "./node-baseline-cases.mjs";
+import { nodeBaselineCases, compareNodeBaselineCases } from "./node-baseline-cases.mjs";
 import { finalizeBenchmarkRun, finishBenchmarkInvocation } from "./runner-cleanup.mjs";
 import { median, parseSyscalls, renderNodeBaseline } from "./node-baseline-report.mjs";
 
@@ -18,13 +18,13 @@ for (let i = 2; i < process.argv.length; i++) {
   const key = process.argv[i].replace(/^--/u, "");
   if (key === "") continue;
   if (["syscalls", "trace-only", "help"].includes(key)) { args[key] = true; continue; }
-  assert(["mode", "iterations", "samples", "warmup", "filter", "temp-root", "json", "markdown", "dist"].includes(key), `Unknown argument: ${key}`);
+  assert(["mode", "iterations", "samples", "warmup", "filter", "temp-root", "json", "markdown", "dist", "compare-dist"].includes(key), `Unknown argument: ${key}`);
   const value = process.argv[++i];
   assert(value !== undefined && !value.startsWith("--"), `Missing value: ${key}`);
   args[key] = ["iterations", "samples", "warmup"].includes(key) ? Number(value) : value;
 }
 if (args.help) {
-  console.log("pnpm benchmark:node [--mode both|off|require] [--iterations 30] [--samples 7] [--warmup 3] [--filter substring] [--temp-root directory] [--json report.json] [--markdown report.md] [--syscalls] [--dist dist]");
+  console.log("pnpm benchmark:node [--mode both|off|require] [--iterations 30] [--samples 7] [--warmup 3] [--filter substring] [--temp-root directory] [--json report.json] [--markdown report.md] [--syscalls] [--dist dist] [--compare-dist baseline-dist]");
   process.exit(0);
 }
 assert(["both", "off", "require"].includes(args.mode), "Invalid native mode");
@@ -33,7 +33,7 @@ assert(!args.syscalls || process.platform === "linux", "--syscalls needs Linux a
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const dist = path.resolve(args.dist ?? path.join(packageRoot, "dist"));
 const write = (file, data) => { fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true }); fs.writeFileSync(file, data); };
-const forwarded = () => ["iterations", "samples", "warmup", "filter", "temp-root", "dist"].filter((key) => args[key] !== undefined).flatMap((key) => [`--${key}`, String(args[key])]);
+const forwarded = () => ["iterations", "samples", "warmup", "filter", "temp-root", "dist", "compare-dist"].filter((key) => args[key] !== undefined).flatMap((key) => [`--${key}`, String(args[key])]);
 const runChild = (command, argv) => {
   const result = spawnSync(command, argv, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 32 * 1024 * 1024 });
   if (result.error) throw result.error;
@@ -64,24 +64,48 @@ if (args.mode === "both") {
   await runMode();
 }
 
-async function runMode() {
+async function loadApi(directory) {
   const api = {};
   for (const sub of ["index", "root", "advanced", "atomic", "json", "store", "file-lock", "temp", "walk", "archive", "durability"]) {
-    Object.assign(api, await import(pathToFileURL(path.join(dist, `${sub}.js`))));
+    Object.assign(api, await import(pathToFileURL(path.join(directory, `${sub}.js`))));
   }
   api.configureFsSafeNative({ mode: args.mode });
+  return api;
+}
+
+async function runMode() {
+  const api = await loadApi(dist);
+  const compareDist = args["compare-dist"] && path.resolve(args["compare-dist"]);
+  const baselineApi = compareDist ? await loadApi(compareDist) : undefined;
+  const baselineBinding = compareDist
+    ? (await import(pathToFileURL(path.join(compareDist, "native.js")))).getNativeBinding() : undefined;
+  assert(!compareDist || args.mode !== "require" || baselineBinding, "Baseline native require must load a binding");
   const { getNativeBinding } = await import(pathToFileURL(path.join(dist, "native.js")));
   const binding = getNativeBinding();
   assert(args.mode !== "require" || binding, "Native require must load a binding");
   const addon = binding ? Object.values(createRequire(import.meta.url).cache).find((m) => m?.filename.endsWith(".node") && m.exports === binding) : undefined;
   assert(!binding || addon, "Cannot identify loaded native artifact");
+  const baselineAddon = baselineBinding ? Object.values(createRequire(import.meta.url).cache).find(m => m?.filename.endsWith(".node") && m.exports === baselineBinding) : undefined;
+  assert(!baselineBinding || baselineAddon, "Cannot identify baseline native artifact");
   const hash = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   const workspace = fs.realpathSync.native(fs.mkdtempSync(path.join(path.resolve(args["temp-root"]), "fs-safe-node-")));
   const loadStart = os.loadavg();
   let report;
   const failures = [];
   try {
-    const cases = await nodeBaselineCases(api, workspace, args.filter);
+    let cases;
+    if (baselineApi) {
+      const candidateWorkspace = path.join(workspace, "candidate");
+      const baselineWorkspace = path.join(workspace, "baseline");
+      fs.mkdirSync(candidateWorkspace);
+      fs.mkdirSync(baselineWorkspace);
+      cases = compareNodeBaselineCases(
+        await nodeBaselineCases(api, candidateWorkspace, args.filter),
+        await nodeBaselineCases(baselineApi, baselineWorkspace, args.filter),
+      );
+    } else {
+      cases = await nodeBaselineCases(api, workspace, args.filter);
+    }
     assert(cases.length > 0, "Filter selected no operations");
     const results = [];
     async function once(row, role, observe = false) {
@@ -144,11 +168,12 @@ async function runMode() {
         packageVersion: JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")).version,
         revision, mode: args.mode, nativeLoaded: Boolean(binding), nativeSha256: addon ? hash(addon.filename) : null,
         distSha256: createHash("sha256").update(fs.readdirSync(dist).filter((n) => /\.(js|wasm)$/u.test(n)).sort().map((n) => n + hash(path.join(dist, n))).join("\n")).digest("hex"),
+        comparison: compareDist ? { baselineDistSha256: createHash("sha256").update(fs.readdirSync(compareDist).filter(n => /\.(js|wasm)$/u.test(n)).sort().map(n => n + hash(path.join(compareDist, n))).join("\n")).digest("hex"), nativeLoaded: Boolean(baselineBinding), nativeSha256: baselineAddon ? hash(baselineAddon.filename) : null } : null,
         harnessSha256: createHash("sha256").update(["node-baseline.mjs", "node-baseline-cases.mjs", "node-baseline-report.mjs"].map((n) => hash(path.join(import.meta.dirname, n))).join("\n")).digest("hex"),
         filesystem: `0x${fs.statfsSync(workspace).type.toString(16)}`, cpu: os.cpus()[0]?.model, cpuCount: os.availableParallelism(),
         date: new Date().toISOString(), samples: args.samples, iterations: args.iterations, warmup: Math.max(1, args.warmup),
         payloadBytes: 23, treeEntries: [1000, 50000], loadStart, loadEnd: os.loadavg(),
-        method: "Median sample means in ns/op; alternating raw/safe/rawControl and reverse blocks; setup, verification, cleanup excluded. Resources observed separately. Raw is NOT security-equivalent." }, results };
+        method: "Median sample means in ns/op; alternating raw/safe/rawControl and reverse blocks; setup, verification, cleanup excluded. Resources observed separately. Without --compare-dist, raw is NOT security-equivalent; with it, raw/rawControl are the baseline fs-safe implementation." }, results };
     }
   } catch (error) { failures.push(error); }
   await finalizeBenchmarkRun({ initialFailures: failures, workspace });
