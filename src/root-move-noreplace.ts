@@ -1,6 +1,6 @@
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
-import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard } from "./directory-guard.js";
+import { assertDirectoryGuard, assertSyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { assertMutationNotDenied } from "./deny-mutations.js";
 import type { RootMoveOptions } from "./root-options.js";
@@ -12,7 +12,7 @@ import {
 } from "./native-parent-admission.js";
 import { requireNativeBinding } from "./native.js";
 import { isNotFoundPathError } from "./path.js";
-import { assertRootIdentityCurrent, assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
+import { assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
 import { resolveRootPathSync } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import {
@@ -22,6 +22,7 @@ import {
   isAlreadyExistsError,
   normalizePinnedPathError,
   outsideWorkspaceError,
+  rootPathChangedError,
 } from "./root-errors.js";
 import { assertFinalSymlinkRejected, mutationSymlinkResolution } from "./root-symlink-policy.js";
 import { PATH_ALIAS_POLICIES } from "./path-policy.js";
@@ -137,7 +138,8 @@ export async function movePathNative(
     const parentAdmissions = targetParent === sourceParent
       ? [sourceParent]
       : [sourceParent, targetParent];
-    await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("move", paths.targetPath);
+    const beforeMutation = getFsSafeTestHooks()?.beforeRootFallbackMutation;
+    if (beforeMutation) await beforeMutation("move", paths.targetPath);
     const admittedSourcePath = admitMovePath(root, sourceParent, path.basename(paths.sourcePath));
     const admittedTargetPath = admitMovePath(root, targetParent, path.basename(paths.targetPath));
     if (params.denyMutations) {
@@ -146,8 +148,18 @@ export async function movePathNative(
       await assertMutationNotDenied(admittedSourcePath, params.denyMutations, { protectAncestors: true });
       await assertMutationNotDenied(admittedTargetPath, params.denyMutations, { protectAncestors: true });
     }
-    await assertRootIdentityCurrent(root);
-    for (const admission of parentAdmissions) assertSyncDirectoryGuard(admission.guard);
+    const rootParent = sourceParentRelativePath === "" ? sourceParent
+      : targetParentRelativePath === "" ? targetParent : undefined;
+    if (rootParent) {
+      // This exact retained Root guard also checks its canonical pathname.
+      try { assertSyncDirectoryGuard(rootParent.guard); }
+      catch (error) { throw rootPathChangedError(error instanceof Error ? error : undefined); }
+    } else {
+      assertRootIdentityCurrentSync(root);
+    }
+    for (const admission of parentAdmissions) {
+      if (admission !== rootParent) assertSyncDirectoryGuard(admission.guard);
+    }
     // Linux auto fallback needs an exact source even without an authority callback.
     const sourceStat = overwrite || params.assertBeforeMutation || (process.platform === "linux" && !params.requireNative)
       ? inspectFileIdentitySync(
@@ -211,7 +223,7 @@ export async function movePathNative(
       throw normalizeMoveError(error);
     }
     try {
-      for (const admission of parentAdmissions) await assertAsyncDirectoryGuard(admission.guard);
+      for (const admission of parentAdmissions) assertDirectoryGuard(admission.guard, "native");
       if (overwrite) inspectFileIdentitySync(() => fsSync.lstatSync(admittedTargetPath, { bigint: true }), sourceStat!);
     } catch (error) {
       throw normalizePinnedPathError(error);
@@ -233,7 +245,7 @@ export async function movePathNative(
     }
   }
   try {
-    await rootAdmission.root.close();
+    rootAdmission.root.close();
   } catch (error) {
     closeErrors.push(error);
   }

@@ -78,6 +78,23 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   add("move", () => root.move("from", "to", { overwrite: true }), () => fsp.rename(p("from"), p("to")),
     "Same-directory overwrite rename versus guarded move.", { before: () => { fs.writeFileSync(p("from"), data); fs.writeFileSync(p("to"), data); },
       verify: () => { absent("from")(); content("to")(); } });
+  if (filter.includes("move") || filter === "") {
+    fs.mkdirSync(p("move-source"));
+    fs.mkdirSync(p("move-target"));
+    add("move-separate-parents", () => root.move("move-source/from", "move-target/to", { overwrite: true }),
+      () => fsp.rename(p("move-source/from"), p("move-target/to")),
+      "Overwrite move between distinct parents; guards must remain independent.", {
+        before: () => { fs.writeFileSync(p("move-source/from"), data); fs.writeFileSync(p("move-target/to"), data); },
+        verify: () => { absent("move-source/from")(); content("move-target/to")(); },
+      });
+    if (api.getFsSafeNativeConfig().mode !== "off") {
+      add("move-no-clobber", () => root.move("from", "to"), () => fsp.rename(p("from"), p("to")),
+        "Absent destination; fs-safe preserves atomic no-replace while raw Node rename can overwrite a racing destination.", {
+          before: () => { fs.writeFileSync(p("from"), data); fs.rmSync(p("to"), { force: true }); },
+          verify: () => { absent("from")(); content("to")(); },
+        });
+    }
+  }
   for (const sync of [false, true]) {
     add(`mkdir${sync ? "-sync" : ""}`, sync ? () => api.createDirectorySync(p("new-dir")) : () => root.mkdir("new-dir"),
       sync ? () => fs.mkdirSync(p("new-dir")) : () => fsp.mkdir(p("new-dir")),

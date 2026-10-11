@@ -1,13 +1,15 @@
+import { createHook } from "node:async_hooks";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { createFileSync } from "../src/create.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
 import { readLocalFileSafely, root } from "../src/root.js";
+import { __loadBundledNativeForTest } from "../src/native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 // Measured fallback calls on macOS; allow two calls for platform variation,
@@ -132,4 +134,70 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
       configureFsSafeNative({ mode: "auto" });
     }
   });
+});
+
+// Move owns no FileHandles: the fallback dispatches rename, while native move
+// owns and closes synchronous descriptors inside its admission helpers.
+let moveNativeAvailable = false;
+try { moveNativeAvailable = typeof __loadBundledNativeForTest().renameReplaceWithIdentity === "function"; }
+catch { /* Off mode needs no addon. */ }
+describe("move filesystem call budgets", () => {
+  afterEach(() => configureFsSafeNative({ mode: "auto" }));
+  for (const mode of ["off", "auto", "require"] as const) {
+    it.skipIf(mode !== "off" && !moveNativeAvailable)(`pins move observations in ${mode} mode`, async () => {
+      configureFsSafeNative({ mode });
+      const directory = await tempRoot("fs-safe-move-budget-");
+      const scoped = await root(directory);
+      const source = path.join(directory, "source");
+      const target = path.join(directory, "target");
+      for (const overwrite of mode === "off" ? [true] : [true, false]) {
+        const prepare = () => {
+          fsSync.writeFileSync(source, "source");
+          if (overwrite) fsSync.writeFileSync(target, "target");
+          else fsSync.rmSync(target, { force: true });
+        };
+        prepare();
+        await scoped.move("source", "target", { overwrite });
+        prepare();
+        const counts = new Map<string, number>();
+        const restore: Array<() => void> = [];
+        const wrap = (object: object, keys: string[], prefix: string) => {
+          for (const key of keys) {
+            const descriptor = Object.getOwnPropertyDescriptor(object, key);
+            if (!descriptor?.writable || typeof descriptor.value !== "function") continue;
+            const original = descriptor.value;
+            Object.defineProperty(object, key, { ...descriptor, value: Object.assign(function (this: unknown, ...args: unknown[]) {
+              counts.set(prefix + key, (counts.get(prefix + key) ?? 0) + 1);
+              return Reflect.apply(original, this, args);
+            }, original) });
+            restore.push(() => Object.defineProperty(object, key, descriptor));
+          }
+        };
+        let promises = 0;
+        const hook = createHook({ init(_id, type) { if (type === "PROMISE") promises++; } });
+        try {
+          wrap(fs, Object.keys(fs), "p.");
+          wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
+          wrap(fsSync, Object.keys(fsSync).filter(key => key.endsWith("Sync")), "s.");
+          hook.enable();
+          await scoped.move("source", "target", { overwrite });
+        } finally {
+          hook.disable();
+          for (const undo of restore.reverse()) undo();
+        }
+        const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+        const asyncTotal = [...counts].reduce((sum, [name, count]) => sum + (name.startsWith("p.") ? count : 0), 0);
+        const breakdown = JSON.stringify(Object.fromEntries(counts));
+        expect(promises, breakdown).toBe(overwrite && mode !== "require" ? 82 : 73);
+        if (process.platform !== "win32") {
+          const callBudget = overwrite ? mode === "require" ? 38 : 33 : mode === "require" ? 36 : 37;
+          expect(total, breakdown).toBe(callBudget);
+          expect(counts.get("s.realpathSync.native"), breakdown).toBe(4);
+        }
+        expect(asyncTotal).toBe(mode === "require" || !overwrite ? 0 : 1);
+        expect(fsSync.readFileSync(target, "utf8")).toBe("source");
+        expect(fsSync.existsSync(source)).toBe(false);
+      }
+    });
+  }
 });
