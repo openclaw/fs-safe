@@ -36,7 +36,7 @@ import { sameFileIdentity } from "./file-identity.js";
 import { removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
 import { realpathSync } from "./realpath.js";
 import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from "./root-directory-creation.js";
-import { buildAtomicWriteTempPath, rootWriteQueueKey, tryMkdirRootNative, tryOpenCreateRootNative, type MissingWritableFileInRoot, type OpenedWritableFileInRoot, type WritableFileInRootParams } from "./root-create-native.js";
+import { buildAtomicWriteTempPath, rootWriteQueueKey, ensureNativeRootCurrent, tryMkdirNativeDirectChild, tryMkdirRootNative, tryOpenCreateRootNative, type MissingWritableFileInRoot, type OpenedWritableFileInRoot, type WritableFileInRootParams } from "./root-create-native.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath, resolveRootPathSync, resolveRootPathForRemoval } from "./root-path.js";
 import { RemovalPathReceipts } from "./root-remove-receipt.js";
@@ -1039,6 +1039,13 @@ async function mkdirPathInRoot(
   const policy = params.denyMutations === undefined && params.mutationSymlinks === undefined
     ? undefined
     : snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks);
+  if (requireNative && !privateMode && !policy && !params.assertBeforeMutation) {
+    if (params.allowRoot && params.relativePath === "") {
+      ensureNativeRootCurrent(root);
+      return;
+    }
+    if (tryMkdirNativeDirectChild(root, params.relativePath)) return;
+  }
   const resolution = { relativePath: params.relativePath, allowRoot: params.allowRoot, ...policy };
   const resolveCurrent = policy
     ? async () => await resolvePinnedPathInRoot(root, resolution)
