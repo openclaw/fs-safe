@@ -191,11 +191,12 @@ export async function runPinnedWriteWindows(
     renamed = true;
     if (receipt) publication = Object.freeze({ status: "published", staged: receipt, basename: params.basename, overwrite: false });
     params.onPublished?.(verificationIdentity);
-    targetFd = binding.openBeneath(
-      parentFd,
-      params.basename,
-      nativeOpenFlags(fsSync.constants.O_RDONLY),
-    ).fd;
+    const metadataOnly = params.overwrite === false && params.input.kind === "buffer" &&
+      params.input.stageBeforePublish !== false && !params.private &&
+      !params.assertBeforeMutation && binding.openPublicationMetadata;
+    targetFd = metadataOnly
+      ? metadataOnly(parentFd, params.basename)
+      : binding.openBeneath(parentFd, params.basename, nativeOpenFlags(fsSync.constants.O_RDONLY)).fd;
     const targetStat = inspectFileIdentitySync(
       () => fsSync.fstatSync(targetFd!, { bigint: true }), verificationIdentity,
     );

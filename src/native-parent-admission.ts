@@ -9,7 +9,7 @@ import { hasSafeFileIdentity, type FileIdentityStat } from "./file-identity.js";
 import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { realpathSync } from "./realpath.js";
-import { describePolicyStagedDirectory, describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
+import { describeNativeStagedDirectory, describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
@@ -219,8 +219,7 @@ export async function openNativeParentAdmission(
       "native parent uses a Windows filesystem namespace alias",
     );
     if (observation === "native-directory" && process.platform !== "win32" && rootAdmission.exactRoot) {
-      const captured = describePolicyStagedDirectory(parentFd, parentPath, binding);
-      captured.disposeObservation?.();
+      const captured = describeNativeStagedDirectory(binding, parentFd, parentPath);
       return {
         fd: parentFd,
         close: () => closeFd(parentFd),

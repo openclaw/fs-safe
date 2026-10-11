@@ -43,7 +43,8 @@ export async function writePinnedInput(
     await writeCopyFileToFd(typeof target === "number" ? target : target.fd, input, maxBytes, assertBeforeMutation);
     return;
   }
-  if (typeof target === "number" && input.kind === "buffer" && !assertBeforeMutation) {
+  if (typeof target === "number" && input.kind === "buffer" &&
+    input.stageBeforePublish !== false && !assertBeforeMutation) {
     const data = typeof input.data === "string" ? Buffer.from(input.data, input.encoding ?? "utf8") : input.data;
     if (data.byteLength <= SMALL_BUFFER_BYTES) {
       if (maxBytes !== undefined && data.byteLength > maxBytes) {

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
 import { openNativeParentAdmission, openNativeRootAdmission } from "../src/native-parent-admission.js";
-import type { NativeBinding } from "../src/native.js";
+import { __loadBundledNativeForTest, type NativeBinding } from "../src/native.js";
 import { realpathSync } from "../src/realpath.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -75,3 +75,45 @@ it.each(["win32", "linux"] as const)("preserves %s parent-admission disposal sem
     await root.close();
   }
 });
+
+let native: NativeBinding | undefined;
+try { native = __loadBundledNativeForTest(); } catch { /* Optional outside native CI. */ }
+it.runIf(process.platform !== "win32" && native?.observeDirectoryFd)(
+  "ordinary native parent admission permits sibling churn without changing directory identity",
+  async () => {
+    const directory = await tempRoot("fs-safe-parent-sibling-churn-");
+    const root = await fs.open(directory, fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0));
+    const rootStat = await root.stat({ bigint: true });
+    const originalFstat = fsSync.fstatSync.bind(fsSync);
+    let parentFd: number | undefined;
+    let changed = false;
+    const binding: NativeBinding = {
+      ...native!,
+      openBeneath(...args) {
+        const result = native!.openBeneath(...args);
+        parentFd = result.fd;
+        return result;
+      },
+    };
+    vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
+      const stat = originalFstat(...args);
+      if (args[0] === parentFd && !changed) {
+        changed = true;
+        // APFS counts regular children too; a subdirectory reproduces the same
+        // benign link-count change on Linux at the exact observation boundary.
+        fsSync.mkdirSync(`${directory}/sibling`);
+      }
+      return stat;
+    }) as typeof fsSync.fstatSync);
+    try {
+      const admitted = await openNativeParentAdmission(binding, {
+        root, rootPath: directory, exactRoot: true, operation: "write",
+      }, "", "native-directory");
+      try {
+        expect(changed).toBe(true);
+        expect(admitted.guard.stat.dev).toBe(rootStat.dev);
+        expect(admitted.guard.stat.ino).toBe(rootStat.ino);
+      } finally { admitted.close(); }
+    } finally { await root.close(); }
+  },
+);

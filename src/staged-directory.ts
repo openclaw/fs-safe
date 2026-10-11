@@ -80,6 +80,20 @@ export function assertNativeStagedDirectoryCurrent(
   assertStagedDirectoryCurrent(directory);
 }
 
+/** Ordinary publication fences identity, while sibling entries may change. */
+export function describeNativeStagedDirectory(binding: NativeBinding, fd: number, canonicalPath: string) {
+  const stat = fs.fstatSync(fd, { bigint: true });
+  if (!stat.isDirectory()) throw new FsSafeError("not-file", "staging parent must be a directory");
+  const pathname = resolvePathPreservingWindowsRoot(canonicalPath);
+  const directory = Object.freeze({
+    path: pathname,
+    realPath: pathname,
+    identity: Object.freeze({ dev: stat.dev, ino: stat.ino }),
+  });
+  assertNativeStagedDirectoryCurrent(binding, fd, directory);
+  return { directory, stat };
+}
+
 function sameDirectoryMetadata(left: MutationIdentity, right: MutationIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
     left.nlink === right.nlink;

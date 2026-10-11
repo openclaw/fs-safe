@@ -48,6 +48,15 @@ describe("small owned-descriptor buffers", () => {
     } finally { await handle.close(); }
   });
 
+  it("keeps direct-publication buffers on their existing asynchronous write path", async () => {
+    const { target, handle } = await file();
+    const write = vi.spyOn(fsSync, "writeSync");
+    try { await writePinnedInput(handle.fd, { kind: "buffer", data: "payload", stageBeforePublish: false }); }
+    finally { await handle.close(); }
+    expect(write).not.toHaveBeenCalled();
+    expect(await fs.readFile(target, "utf8")).toBe("payload");
+  });
+
   it("keeps authority callbacks on the existing asynchronous write path", async () => {
     const { target, handle } = await file();
     const write = vi.spyOn(fsSync, "writeSync");

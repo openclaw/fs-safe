@@ -666,6 +666,20 @@ pub fn open_create_beneath(parent_fd: i32, name: &str, flags: i32, mode: u32) ->
     runtime_fd_from_handle_with_bridge(created, bridge)
 }
 
+pub fn open_publication_metadata(parent_fd: i32, name: &str) -> NativeResult<i32> {
+    crate::validate_child_basename(name)?;
+    let bridge = uv_bridge()?;
+    bridge.require_close()?;
+    let opened = nt_open_relative(
+        runtime_handle_from_fd(parent_fd, bridge)?,
+        name,
+        FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE,
+    )?;
+    runtime_fd_from_handle_with_bridge(opened, bridge)
+}
+
 pub fn mkdir_beneath(root_fd: i32, rel_path: &str, _mode: u32) -> NativeResult<()> {
     if rel_path.is_empty() || rel_path == "." {
         return Ok(());

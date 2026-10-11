@@ -366,8 +366,8 @@ retry. Every directory identity and canonical-path observation remains in place.
 Native publication retains Root through synchronous descriptor open/close and
 checks canonical staging directories against their retained descriptors. Older
 bindings keep the existing guarded directory verification. Owned-descriptor
-buffers up to 64 KiB can write synchronously when no mutation assertion is
-configured; larger buffers, streams, and assertion-bearing writes keep their
+staged buffers up to 64 KiB can write synchronously when no mutation assertion is
+configured; direct-publication buffers, larger buffers, streams, and assertion-bearing writes keep their
 asynchronous path. Publication, permission, and post-operation identity checks
 remain unchanged.
 
