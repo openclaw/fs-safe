@@ -378,3 +378,13 @@ describe("Windows fallback admission", () => {
     } finally { Object.defineProperty(process, "platform", descriptor); }
   });
 });
+
+describe("Windows helper synchronous launch failure", () => {
+  it.each(["ENOENT", "EACCES", "ENOEXEC"])("fails closed and explains recovery for %s", code => {
+    const error = Object.assign(new Error("fixture executable unavailable"), { code });
+    vi.mocked(spawnSync).mockReturnValue({ error, status: null, signal: null, stdout: "", stderr: "" } as ReturnType<typeof spawnSync>);
+    expect(() => readWindowsSecurityFactsCommand("C:\\private")).toThrow(
+      expect.objectContaining({ message: expect.stringContaining("rebuild with pnpm build:windows-helper or reinstall") }),
+    );
+  });
+});

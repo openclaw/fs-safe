@@ -13,11 +13,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up pinned Windows helper compiler
-      if: hashFiles('global.json') != ''
-      uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-      with:
-        global-json-file: global.json
     # pnpm 12 installs a native executable through npm. Select the requested
     # Node architecture first so its installer does not inherit the host arch.
     - name: Select Node architecture before installing pnpm

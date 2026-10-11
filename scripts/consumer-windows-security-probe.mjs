@@ -244,7 +244,7 @@ foreach($ace in $raw.DiscretionaryAcl) {
 Write-FixturePhase 'output:end'
 `;
 const powershell = path.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows",
-  "System32", "WindowsPowerShell", "v1.0", "windows-security-helper.exe");
+  "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 let fixtureCount = 0;
 function independentAcl(target, action = "inspect") {
   const fixture = ++fixtureCount;
@@ -539,7 +539,7 @@ try {
     timing: {
       applicable: !missingRequired, unit: "milliseconds", kind: "first and repeated public calls in one consumer process", benchmarkGuarantee: false,
       firstCallMeaning: "first invocation of that public operation, not an isolated cold-machine benchmark",
-      repeatedCallMeaning: "same consumer process; each portable call still starts and compiles a fresh PowerShell child, with no persistent warm helper",
+      repeatedCallMeaning: "same consumer process; each portable call still starts a fresh .NET Framework helper process, with no persistent warm helper",
       publicCallDurationMs: "only the public API invocation, with transparent observers enabled; excludes fixture setup and result assertions",
       durationMs: "whole scenario elapsed, including result assertions; not used for API timing comparisons",
     },

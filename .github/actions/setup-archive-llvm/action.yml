@@ -3,6 +3,7 @@ description: Install checksum-pinned LLVM tools for the portable archive build o
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/setup-windows-helper
     - name: Install portable archive compiler and archiver
       shell: bash
       env:

@@ -18,6 +18,7 @@ jobs:
       - uses: ./.github/actions/setup-node-pnpm
         with:
           node-version: 24
+      - uses: ./.github/actions/setup-windows-helper
       - run: pnpm build:windows-helper
       - name: Hash helper
         run: node --input-type=module -e "import fs from 'node:fs'; import crypto from 'node:crypto'; const hash = crypto.createHash('sha256').update(fs.readFileSync('dist/windows-security-helper.exe')).digest('hex'); fs.writeFileSync('helper.sha256', hash); console.log(hash);"

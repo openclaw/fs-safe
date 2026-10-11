@@ -390,7 +390,7 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCl
         }));
         managerProof.windowsSecurityTiming = {
           unit: "milliseconds", samplesPerOperationAndMode: 2,
-          interpretation: "First versus repeated invocation of the same public operation in one consumer process. Each portable call still launches and compiles a fresh PowerShell child; there is no persistent warm helper. Informational measurements without timing thresholds or performance guarantees.",
+          interpretation: "First versus repeated invocation of the same public operation in one consumer process. Each portable call still launches a fresh .NET Framework helper process; there is no persistent warm helper. Informational measurements without timing thresholds or performance guarantees.",
           firstAndRepeated: windowsSecurityTimingPairs.map(([operation, first, repeated]) => ({
             operation,
             nativeRequire: measuredPair(native, first, repeated),
