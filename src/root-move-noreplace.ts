@@ -5,8 +5,9 @@ import { FsSafeError } from "./errors.js";
 import { assertMutationNotDenied } from "./deny-mutations.js";
 import type { RootMoveOptions } from "./root-options.js";
 import {
+  borrowNativeRootParent,
   openNativeParentAdmission,
-  openNativeRootAdmission,
+  openExactNativeRootAdmissionSync,
   type NativeParentAdmission,
 } from "./native-parent-admission.js";
 import { requireNativeBinding } from "./native.js";
@@ -111,11 +112,10 @@ export async function movePathNative(
   if (typeof (overwrite ? binding.renameReplaceWithIdentity : binding.renameNoReplace) !== "function") {
     throw new FsSafeError("helper-unavailable", "native move is unavailable");
   }
-  const rootAdmission = await openNativeRootAdmission(binding, {
+  const rootAdmission = openExactNativeRootAdmissionSync(binding, {
     rootPath: root.rootReal,
     rootIdentity: root.rootIdentity,
     operation: "native move",
-    searchOnly: true,
   });
   let sourceParent: NativeParentAdmission | undefined;
   let targetParent: NativeParentAdmission | undefined;
@@ -123,15 +123,17 @@ export async function movePathNative(
   let operationError: unknown;
   try {
     const sourceParentRelativePath = nativeParentRelativePath(root.rootReal, paths.sourceParentPath);
-    sourceParent = await openNativeParentAdmission(
+    sourceParent = sourceParentRelativePath === "" ? borrowNativeRootParent(rootAdmission) : await openNativeParentAdmission(
       binding,
       rootAdmission,
       sourceParentRelativePath,
+      "native-directory",
     );
     const targetParentRelativePath = nativeParentRelativePath(root.rootReal, paths.targetParentPath);
     targetParent = targetParentRelativePath === sourceParentRelativePath
       ? sourceParent
-      : await openNativeParentAdmission(binding, rootAdmission, targetParentRelativePath);
+      : targetParentRelativePath === "" ? borrowNativeRootParent(rootAdmission)
+        : await openNativeParentAdmission(binding, rootAdmission, targetParentRelativePath, "native-directory");
     const parentAdmissions = targetParent === sourceParent
       ? [sourceParent]
       : [sourceParent, targetParent];

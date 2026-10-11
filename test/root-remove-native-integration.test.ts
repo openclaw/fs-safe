@@ -50,7 +50,7 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
     const directory = await tempRoot("fs-safe-native-remove-root-error-");
     await fs.mkdir(path.join(directory, "tree"));
     const scoped = await root(directory);
-    vi.spyOn(fs, "open").mockRejectedValueOnce(Object.assign(new Error("denied"), { code: "EACCES" }));
+    vi.spyOn(fsSync, "openSync").mockImplementationOnce(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
     await expect(scoped.remove("tree", { recursive: true })).rejects.toMatchObject({ code: "path-alias" });
     expect(await fs.readdir(directory)).toEqual(["tree"]);
   });
@@ -232,6 +232,11 @@ describe.runIf(native?.rootRemovalStat)("native Root removal", () => {
     const reason = Object.freeze({ revoked: true });
     const closeError = new Error("parent close failed");
     let injected = false;
+    const closeRoot = fsSync.closeSync.bind(fsSync);
+    vi.spyOn(fsSync, "closeSync").mockImplementation(fd => {
+      closeRoot(fd);
+      if (closeFailure && controller.signal.aborted && !injected) { injected = true; throw closeError; }
+    });
     __setNativeLoaderForTest(() => ({ ...native!,
       openRootRemovalDirectory(...args) {
         const opened = native!.openRootRemovalDirectory!(...args);

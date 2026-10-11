@@ -5,9 +5,9 @@ import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directo
 import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError, type FsSafeErrorDetails } from "./errors.js";
 import { MutationAuthorityError } from "./mutation-authority.js";
-import { getNativeBinding } from "./native.js";
+import { getNativeBinding, type NativeBinding } from "./native.js";
 import type { NativeRootRemovalEntry, NativeRootRemovalDirectory } from "./native-binding.js";
-import { openNativeParentAdmission, openNativeRootAdmission, type NativeParentAdmission } from "./native-parent-admission.js";
+import { borrowNativeRootParent, openNativeParentAdmission, openExactNativeRootAdmissionSync, type NativeParentAdmission } from "./native-parent-admission.js";
 import { isNotFoundPathError, isPathInside } from "./path.js";
 import { assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
 import { normalizeRemoveGuardError, normalizeRemovePathError } from "./root-errors.js";
@@ -31,6 +31,57 @@ function normalize(error: unknown, details?: FsSafeErrorDetails): unknown {
   return normalizeRemovePathError(error, details);
 }
 
+async function removeNativeLeaf(
+  binding: NativeBinding, parent: NativeParentAdmission, target: string,
+  options: InternalRemoveOptions,
+  boundary: NonNullable<Awaited<ReturnType<typeof captureNonrecursiveRemovalAdmission>>>,
+  rootGuardCurrent: boolean,
+): Promise<void> {
+  const assertNotAborted = () => {
+    try { options.signal?.throwIfAborted(); } catch (error) { throw new MutationAuthorityError(error); }
+  };
+  assertNotAborted();
+  const before = getFsSafeTestHooks()?.beforeRootFallbackMutation;
+  if (before) {
+    try { await before("remove", target); } catch (error) { throw normalizeRemoveGuardError(error); }
+  }
+  if (options.denyMutations) await assertMutationNotDenied(target, options.denyMutations, { protectAncestors: true });
+  const name = path.basename(target);
+  const observe = (expected?: NativeRootRemovalEntry) => {
+    assertNotAborted();
+    if (!rootGuardCurrent) boundary.assertCurrent();
+    rootGuardCurrent = false;
+    try {
+      const entry = binding.rootRemovalStat!(parent.fd, name);
+      if (expected && (entry.dev !== expected.dev || entry.ino !== expected.ino || entry.directory !== expected.directory)) {
+        throw new FsSafeError("path-mismatch", "removal entry changed");
+      }
+      if (entry.symlink && options.mutationSymlinks !== undefined) throw new FsSafeError("symlink", "symlink not allowed", {
+        details: { operation: "remove", phase: expected ? "remove" : "inspect", relativePath: "" },
+      });
+      return entry;
+    } catch (error) {
+      if (options.force && isNotFoundPathError(error)) return undefined;
+      throw normalize(error, { operation: "remove", phase: expected ? "remove" : "inspect", relativePath: "" });
+    }
+  };
+  const entry = observe();
+  if (!entry) return;
+  if (!entry.directory && options[nonrecursiveRemovalKind] === "directory") {
+    throw new FsSafeError("path-mismatch", "store entry is no longer a directory");
+  }
+  if (options.assertBeforeMutation) {
+    options.assertBeforeMutation();
+    if (!observe(entry)) return;
+  }
+  try { binding.rootRemovalUnlink!(parent.fd, name, entry.dev, entry.ino, entry.directory); }
+  catch (error) {
+    if (!(options.force && isNotFoundPathError(error))) throw normalize(error, { operation: "remove", phase: "remove", relativePath: "" });
+  }
+  boundary.assertAfterMutation();
+  assertNotAborted();
+}
+
 export async function removePathInRootNative(
   root: RootContext, target: string, options: InternalRemoveOptions, receipts?: RemovalPathReceipts,
 ): Promise<void> {
@@ -50,9 +101,12 @@ export async function removePathInRootNative(
       details: { operation: "remove", phase: "inspect", relativePath: "" },
     });
   }
-  const rootAdmission = await openNativeRootAdmission(binding, {
-    rootPath: root.rootReal, rootIdentity: root.rootIdentity, operation: "remove", reportCloseErrors: true, searchOnly: true,
-  }).catch(error => { throw normalizeRemoveGuardError(error); });
+  let rootAdmission: ReturnType<typeof openExactNativeRootAdmissionSync>;
+  try {
+    rootAdmission = openExactNativeRootAdmissionSync(binding, {
+      rootPath: root.rootReal, rootIdentity: root.rootIdentity, operation: "remove", reportCloseErrors: true,
+    });
+  } catch (error) { throw normalizeRemoveGuardError(error); }
   let parent: NativeParentAdmission | undefined;
   let initialEntry: NativeRootRemovalEntry | undefined;
   let initialDirectory: NativeRootRemovalDirectory | undefined;
@@ -63,8 +117,8 @@ export async function removePathInRootNative(
     const parentPath = path.dirname(target);
     if (!isPathInside(root.rootReal, parentPath)) throw new FsSafeError("outside-workspace", "removal parent is outside root");
     try {
-      parent = await openNativeParentAdmission(binding, rootAdmission,
-        path.relative(root.rootReal, parentPath).split(path.sep).join("/"));
+      parent = parentPath === root.rootReal ? borrowNativeRootParent(rootAdmission) : await openNativeParentAdmission(binding, rootAdmission,
+        path.relative(root.rootReal, parentPath).split(path.sep).join("/"), "native-directory");
     } catch (error) {
       assertRootIdentityCurrentSync(root);
       boundary.assertCurrent();
@@ -96,7 +150,12 @@ export async function removePathInRootNative(
           }
         }
       }
-      if (!options.recursive || initialEntry) await removeEntries(parent);
+      if (!options.recursive) await removeNativeLeaf(binding, parent, target, options, boundary,
+        // The borrowed Root guard is the complete parent fence. Without an
+        // intervening callback or await, the first leaf sample shares its phase.
+        parentPath === root.rootReal && !options.signal && !options.denyMutations &&
+        !options.assertBeforeMutation && !getFsSafeTestHooks()?.beforeRootFallbackMutation);
+      else if (initialEntry) await removeEntries(parent);
     }
   } catch (error) {
     failed = true;
@@ -166,7 +225,6 @@ export async function removePathInRootNative(
         throw new FsSafeError("too-large", "recursive removal budget exceeded", { details: details(entryPath, "inspect") });
       }
       if (!counted) examined++;
-      if (!options.recursive) await beforeMutation(entryPath);
       await assertMutationNotDenied(entryPath, options.denyMutations, { protectAncestors: true });
       const initial = observe(fd, name, entryPath, depth === 0 ? initialEntry : undefined);
       if (!initial) return;
@@ -239,8 +297,7 @@ export async function removePathInRootNative(
       try { unlink(fd, name, initial.dev, initial.ino, initial.directory); } catch (error) {
         if (!(options.force && isNotFoundPathError(error))) throw normalize(error, details(entryPath, "remove"));
       }
-      if (options.recursive) boundary!.assertCurrent();
-      else boundary!.assertAfterMutation();
+      boundary!.assertCurrent();
       assertTraversalCurrent();
       assertNotAborted();
     }

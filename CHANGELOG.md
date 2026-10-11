@@ -7,6 +7,7 @@
 ### Performance
 
 - Speed up native `Root.mkdir()` for direct children while retaining descriptor-relative creation and exact root/child identity checks.
+- Speed up native removal and moves by retaining Root descriptors synchronously and reusing them for direct children, preserving policy, identity and no-replace checks.
 
 ## 0.26.0 - 2026-10-10
 

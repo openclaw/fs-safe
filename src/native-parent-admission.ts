@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
+import { assertSyncDirectoryGuard, inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { inspectNativeDirectoryObservation, type NativeDirectoryObservationBackend } from "./native-directory-observation.js";
 import { FsSafeError } from "./errors.js";
@@ -10,7 +10,7 @@ import type { FileIdentityStat } from "./file-identity.js";
 import { assertNativeCapabilities, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { realpathSync } from "./realpath.js";
-import { describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
+import { describePolicyStagedDirectory, describeStagedDirectory, exactIdentityMatches } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-path-alias.js";
@@ -56,7 +56,7 @@ function assertParentAdmissionAvailable(binding: NativeBinding): asserts binding
 export function openExactNativeRootSync(
   binding: NativeBinding,
   params: { rootPath: string; rootIdentity: { dev: bigint; ino: bigint } },
-): { fd: number; [Symbol.dispose](): void } {
+): { fd: number; stat: BigIntStats; close(): void; [Symbol.dispose](): void } {
   assertParentAdmissionAvailable(binding);
   assertNoWindowsPathAlias(params.rootPath, "filesystem", "native root uses a Windows filesystem namespace alias");
   const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fsSync.constants.O_RDONLY) |
@@ -71,13 +71,35 @@ export function openExactNativeRootSync(
   try {
     const stat = inspectFileIdentitySync(() => fsSync.fstatSync(fd, { bigint: true }), params.rootIdentity);
     if (!stat.isDirectory()) throw new FsSafeError("path-mismatch", "native root is not a directory");
-    return { fd, [Symbol.dispose]: close };
+    return { fd, stat, close, [Symbol.dispose]: close };
   } catch (error) {
     try { close(); } catch (closeError) {
       throw createSuppressedError(closeError, error, "native root admission and close failed");
     }
     throw error;
   }
+}
+
+export function openExactNativeRootAdmissionSync(
+  binding: NativeBinding,
+  params: { rootPath: string; rootIdentity: { dev: bigint; ino: bigint }; operation: string; reportCloseErrors?: boolean },
+) {
+  return {
+    directoryFlags: (nodeDirectorySearchOnlyFlags()?.flags ?? fsSync.constants.O_RDONLY) | (fsSync.constants.O_DIRECTORY ?? 0),
+    exactRoot: true,
+    reportCloseErrors: params.reportCloseErrors,
+    operation: params.operation,
+    root: openExactNativeRootSync(binding, params),
+    rootPath: params.rootPath,
+  };
+}
+
+export function borrowNativeRootParent(
+  admission: ReturnType<typeof openExactNativeRootAdmissionSync>,
+): NativeParentAdmission {
+  const guard = { dir: admission.rootPath, realPath: admission.rootPath, stat: admission.root.stat };
+  assertSyncDirectoryGuard(guard);
+  return { fd: admission.root.fd, guard, close() { /* The enclosing Root owner closes this descriptor. */ } };
 }
 
 export async function openNativeRootAdmission(
@@ -186,6 +208,16 @@ export async function openNativeParentAdmission(
       "filesystem",
       "native parent uses a Windows filesystem namespace alias",
     );
+    if (observation === "native-directory" && process.platform !== "win32" && rootAdmission.exactRoot) {
+      const captured = describePolicyStagedDirectory(parentFd, parentPath, binding);
+      captured.disposeObservation?.();
+      return {
+        fd: parentFd,
+        close: () => closeFd(parentFd),
+        guard: { dir: parentPath, realPath: parentPath, stat: captured.stat },
+        stagedDirectory: captured.directory,
+      };
+    }
     const stagedDirectory = process.platform === "win32"
       ? undefined
       : describeStagedDirectory(parentFd, parentPath);

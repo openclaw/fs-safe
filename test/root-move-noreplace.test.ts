@@ -105,7 +105,7 @@ it("dispatches successful no-replace moves through admitted native parent descri
   await expect(fs.readFile(target, "utf8")).resolves.toBe("source");
 });
 
-it("shares one native parent admission for an exact same-parent move", async () => {
+it("reuses the retained Root for an exact same-parent move", async () => {
   const directory = await tempRoot("fs-safe-root-move-same-parent-");
   await fs.writeFile(path.join(directory, "source.txt"), "source");
   const adapter = noReplaceAdapter(directory);
@@ -115,8 +115,7 @@ it("shares one native parent admission for an exact same-parent move", async () 
   const scoped = await root(directory);
   await scoped.move("source.txt", "target.txt");
 
-  expect(adapter.openBeneath).toHaveBeenCalledOnce();
-  expect(adapter.openBeneath).toHaveBeenCalledWith(expect.any(Number), "", expect.any(Number));
+  expect(adapter.openBeneath).not.toHaveBeenCalled();
   const [sourceParentFd, , targetParentFd] = adapter.renameNoReplace.mock.calls[0]!;
   expect(sourceParentFd).toBe(targetParentFd);
   await expect(fs.lstat(path.join(directory, "source.txt"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -138,7 +137,7 @@ it("keeps the requested basename under an admitted contained parent alias", asyn
     mutationSymlinks: "follow-parents-within-root",
   });
 
-  expect(adapter.openBeneath.mock.calls.map((call) => call[1])).toEqual(["actual", ""]);
+  expect(adapter.openBeneath.mock.calls.map((call) => call[1])).toEqual(["actual"]);
   expect(adapter.renameNoReplace).toHaveBeenCalledWith(
     expect.any(Number),
     "source.txt",
