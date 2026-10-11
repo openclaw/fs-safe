@@ -32,6 +32,53 @@ Each published package must have this trusted publisher configured in npm:
 
 Use the existing package and publisher configuration; do not bootstrap or reconfigure it merely to retry a release. Publishing maintainers must have 2FA enabled. Do not add `NPM_TOKEN` or an automation token to GitHub.
 
+## Windows Authenticode signing (one-time maintainer setup)
+
+Release Windows addons (`win32-x64-msvc` and `win32-arm64-msvc`) and the main
+package's `dist/windows-security-helper.exe` must pass signing before collection
+or publication. There is no unsigned fallback. Only `release.yml` uses this
+signing environment; PR and main-push CI build and test unsigned binaries without
+requesting it. npm trusted publishing above remains unchanged and does not use
+this environment.
+
+1. Create GitHub environment `release-signing` in `openclaw/fs-safe`. Select custom deployment branch/tag policies and restrict it to release tags `v*.*.*` (type **tag**), matching `npm-publish`'s current policy. Match its required reviewers (`steipete` or `vincentkoc`) and prevent self-review. Do not add a standing branch rule.
+2. Add environment secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, with the same values as `openclaw/openclaw-windows-node`'s `release-signing` environment.
+3. On that Azure app registration, add a federated identity credential with issuer `https://token.actions.githubusercontent.com`, subject `repo:openclaw/fs-safe:environment:release-signing`, and audience `api://AzureADTokenExchange`.
+4. Ensure the identity has the **Artifact Signing Certificate Profile Signer** role on the `openclaw` signing account/profile. This is already granted for windows-node if the same identity is reused. The workflow uses endpoint `https://eus.codesigning.azure.net/`, account `openclaw`, and certificate profile `openclaw`.
+
+These are maintainer actions; do not create environments, secrets, or Azure
+resources as part of a code change. Missing configuration or failed signature
+validation stops the release with a pointer to this section.
+
+### Signing dry run (no publication)
+
+After setup, a maintainer can run the entire build/sign/verify/load-test/package
+collection path without creating a GitHub Release or publishing to npm:
+
+```bash
+gh workflow run release.yml --repo openclaw/fs-safe --ref <branch> -f dry_run=true
+```
+
+For this PR, `<branch>` is `feat/windows-release-signing`. A branch dry run needs
+a temporary deployment branch rule allowing that exact reviewed branch in
+`release-signing`; retain the required reviewer gate and remove the rule after
+proof. The dispatch trigger must first exist on the default branch for GitHub
+CLI dispatch to be available. Until then, keep the PR draft; do not push a release
+tag just to exercise signing. Once merged, the same command can use `main` with
+a temporary exact `main` rule, or an existing allowed release tag with no branch
+exception. Every manual dispatch is publication-disabled, even on a release tag.
+`dry_run=false` skips the run; it does not enable publication.
+
+Inspect `Sign Windows release binaries`, both `Load signed Windows binaries`
+jobs, and `Assemble and validate release packages`. Download the `signed-windows`
+and `release-package` artifacts: `windows-signing.json` records the unsigned
+build and signed SHA-256 hashes, valid Foundation subject, and timestamp signer
+thumbprint. Windows verifies embedded Authenticode signatures before upload and
+again before native runtime tests. Collection hashes the actual packed Windows
+binary entries against that proof. The unsigned helper's Ubuntu/Windows hashes
+must match before signing. A normal PR or main CI run should contain only
+unsigned builds/tests, with no `release-signing` deployment or approval request.
+
 ## Prepare the release candidate
 
 Update the root package version, all native package versions and exact root optional-dependency pins, the private native npm workspace version, and the crate version in `native/Cargo.toml`. The root `Cargo.toml` is an unversioned workspace.
@@ -80,7 +127,7 @@ pnpm docs:site
 git diff --check
 ```
 
-Host-native package proof additionally uses `pnpm native:build` (`pnpm native:build:freebsd` on FreeBSD) followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect` requires every real binding assembled by the release workflow and must run through pnpm. FreeBSD builds and installed-package smoke run inside 14.4 VMs for x64 and arm64; ARM64 uses QEMU CPU emulation with a real FreeBSD kernel. FreeBSD x64 tests npm and pnpm installs. ARM64 tests npm installs only because pnpm publishes no native executable for that target; CI prepares its proof harness dependencies on Linux, syncs the workspace into the VM, and runs `npm run package:smoke` there.
+Host-native package proof additionally uses `pnpm native:build` (`pnpm native:build:freebsd` on FreeBSD) followed by `pnpm package:smoke`. Its synthetic foreign-platform filtering fixtures are not foreign runtime proof. Full `pnpm package:collect --windows-signing-manifest <path>` requires every real binding assembled by the release workflow plus its `windows-signing.json` proof, and must run through pnpm. Host-only `pnpm package:smoke` remains unsigned development proof. FreeBSD builds and installed-package smoke run inside 14.4 VMs for x64 and arm64; ARM64 uses QEMU CPU emulation with a real FreeBSD kernel. FreeBSD x64 tests npm and pnpm installs. ARM64 tests npm installs only because pnpm publishes no native executable for that target; CI prepares its proof harness dependencies on Linux, syncs the workspace into the VM, and runs `npm run package:smoke` there.
 
 Do not commit generated `dist/` files, native binaries, or release artifacts.
 
@@ -90,7 +137,7 @@ Merge the reviewed release preparation into `main` after its exact-head CI is gr
 
 The workflow checks tag format, annotation, protection, main ancestry, matching package/crate versions and pins, and dated changelog content. Main ancestry alone does not guarantee the tag points to latest main, and the workflow does not wait for a separate CI run; maintainers must enforce both conditions before tagging.
 
-The automated order is source validation, all-target native build, assembly and package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
+The automated order is source validation, all-target native and reproducible helper builds, Windows signing and signed runtime tests, assembly and package smoke validation, draft GitHub Release creation, platform-package publication, root-package publication, cryptographic registry verification, release-note proof generation, and draft promotion. A tag push alone is not a completed release.
 
 Package publication and release-proof generation use batches of at most four packages under their unchanged 90-minute job ceilings. Every platform package must finish publication and byte-identity, registry-signature, and provenance verification before root publication starts. A failed batch settles its in-flight operations, then stops without starting another batch or publishing the root. Final release proof retains manifest order and is appended only after every package verifies.
 

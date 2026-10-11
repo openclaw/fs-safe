@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Windows signing:** native addons and the security helper are Authenticode-signed by OpenClaw Foundation with timestamped signatures.
+
 ## 0.26.1 - 2026-10-11
 
 ### Highlights
