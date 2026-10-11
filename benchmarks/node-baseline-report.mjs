@@ -34,13 +34,17 @@ export function parseSyscalls(trace) {
 
 export function renderNodeBaseline(reports) {
   assert(reports.length > 0);
-  const lines = ["# Node / fs-safe baseline", "",
-    "Raw Node baselines are NOT security-equivalent. Ratios are fs-safe/raw median ns/op; lower is faster. A/A compares identical raw calls, and exposes noise, not a correction factor.", ""];
+  const comparing = Boolean(reports[0].metadata.comparison);
+  assert(reports.every(report => Boolean(report.metadata.comparison) === comparing));
+  const lines = [comparing ? "# fs-safe baseline / candidate" : "# Node / fs-safe baseline", "",
+    comparing
+      ? "Ratios are candidate/baseline median ns/op; lower is faster. A/A repeats the baseline implementation. Both arms retain equivalent fixtures and their own verification."
+      : "Raw Node baselines are NOT security-equivalent. Ratios are fs-safe/raw median ns/op; lower is faster. A/A compares identical raw calls, and exposes noise, not a correction factor.", ""];
   for (const report of reports) {
     const m = report.metadata;
     lines.push(`${m.platform}/${m.arch}, Node ${m.node}, package ${m.packageVersion}, mode ${m.mode}, filesystem ${m.filesystem}, ${m.samples} alternating blocks (median sample means).`, "");
   }
-  lines.push("| Operation | Raw off ns/op | Safe off ns/op | off/raw | A/A off | Raw require ns/op | Safe require ns/op | require/raw | A/A require |",
+  lines.push((comparing ? "| Operation | Baseline off ns/op | Candidate off ns/op | candidate/base off | A/A off | Baseline require ns/op | Candidate require ns/op | candidate/base require | A/A require |" : "| Operation | Raw off ns/op | Safe off ns/op | off/raw | A/A off | Raw require ns/op | Safe require ns/op | require/raw | A/A require |"),
     "|---|---:|---:|---:|---:|---:|---:|---:|---:|");
   const names = [...new Set(reports.flatMap((r) => r.results.map((row) => row.operation)))];
   const format = (value, ratio = false) => value === undefined ? "—" : ratio ? `${value.toFixed(2)}×` : Math.round(value).toLocaleString("en-US");

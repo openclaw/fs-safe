@@ -97,11 +97,23 @@ export async function readFileHandleBounded(
   handle: ReadableFileHandle,
   maxBytes: number,
 ): Promise<Buffer> {
+  return await readFileHandleBoundedWithSize(handle, maxBytes);
+}
+
+// Internal: the admitted size bounds the first allocation, never the read.
+export function readFileHandleBoundedWithSize(
+  handle: ReadableFileHandle,
+  maxBytes: number,
+  initialSize?: number,
+): Promise<Buffer> {
   normalizeMaxBytes(maxBytes);
   const fd = "fd" in handle && typeof handle.fd === "number" ? handle.fd : undefined;
-  return await readBoundedAsync(maxBytes, async (scratch, length) => {
+  return readBoundedAsync(maxBytes, async (scratch, length) => {
     return (await handle.read(scratch, 0, length, null)).bytesRead;
-  }, { observeRegularFileSize: fd === undefined ? undefined : () => regularFileSize(fd) });
+  }, {
+    initialSize,
+    observeRegularFileSize: fd === undefined ? undefined : () => regularFileSize(fd),
+  });
 }
 
 function regularFileSize(fd: number): number | undefined {

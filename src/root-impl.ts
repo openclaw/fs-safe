@@ -91,7 +91,7 @@ import { prepareSharedRootWriteTarget } from "./root-write-complete-parent.js";
 import { finishRootFallbackWrite } from "./root-write-publication.js";
 import { withRootFallbackCompatibilityLock } from "./root-write-compatibility.js";
 import { assertRootFallbackWritePath } from "./root-write-lock-binding.js";
-import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { admitMoveSourceStat, movePathNative } from "./root-move-noreplace.js";
 import { admitRootReadHandle, inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { onCopyPublication, onCopySourceAdmission, type CopyPublicationOptions } from "./copy-publication.js";
@@ -165,9 +165,9 @@ async function openVerifiedLocalFile(
   const fsSafeTestHooks = getFsSafeTestHooks();
   const { handle, stat, identity, preOpenStat } = await openLocalFileDescriptor(filePath, options);
   try {
-    const inspectPathIdentity = async (inspect: () => Promise<BigIntStats>) => {
+    const inspectPathIdentity = async (inspect: () => BigIntStats) => {
       try {
-        return await inspectFileIdentity(inspect, identity);
+        return inspectFileIdentitySync(inspect, identity);
       } catch (error) {
         const failure = isNotFoundPathError(error) ? openedPathResolutionError(fileNotFoundError()) : error;
         if (stat.nlink <= 1 && (!preOpenStat || preOpenStat.nlink <= 1n)) {
@@ -176,9 +176,11 @@ async function openVerifiedLocalFile(
         throw failure;
       }
     };
-    await inspectPathIdentity(async () => inspectOpenedPathIdentitySync(filePath, options?.symlinks));
+    await inspectPathIdentity(() => inspectOpenedPathIdentitySync(filePath, options?.symlinks));
 
-    await fsSafeTestHooks?.afterOpenedPathIdentityCheck?.(filePath, handle);
+    if (fsSafeTestHooks?.afterOpenedPathIdentityCheck) {
+      await fsSafeTestHooks.afterOpenedPathIdentityCheck(filePath, handle);
+    }
     const resolved = await resolveOpenedFileRealPathForFd(handle.fd, identity, filePath)
       .catch(async (error: unknown) => {
         if (stat.nlink <= 1 && (!preOpenStat || preOpenStat.nlink <= 1n)) {
@@ -189,7 +191,7 @@ async function openVerifiedLocalFile(
     const { realPath } = resolved;
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
     let resolvedStat: BigIntStats | undefined = resolved.stat;
-    await inspectPathIdentity(async () => {
+    await inspectPathIdentity(() => {
       // Reuse the post-realpath observation; unknown Windows identities still
       // get a fresh observation on inspectFileIdentity's retry.
       const realStat = resolvedStat ?? fsSync.statSync(realPath, { bigint: true });

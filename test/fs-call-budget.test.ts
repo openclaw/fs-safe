@@ -1,3 +1,4 @@
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -13,7 +14,9 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 // Measured fallback calls on macOS; allow two calls for platform variation,
 // except for the exact root.readBytes final-fence ceiling.
 const budgets = {
-  "root.readBytes": 16, // one final admission: four identities, canonicalization, and EOF size
+  "root.open": 13, // includes caller close, excludes reading bytes
+  "readLocalFileSafely bounded": 10,
+  "root.readBytes": 15, // final admission plus fresh EOF size; initial allocation reuses the receipt
   readLocalFileSafely: 9,
   readRegularFile: 9, // measured 7
   tryReadJson: 10, // measured 8
@@ -25,6 +28,8 @@ const budgets = {
   "root.exists": 7, // exact direct-child admission and final root path fence
 };
 const asyncBudgets = {
+  "root.open": 2, // open and caller close
+  "readLocalFileSafely bounded": 3,
   "root.readBytes": 4, // measured 3: open, read, close
   readLocalFileSafely: 3,
   readRegularFile: 4, // measured 3: open, readFile, close
@@ -36,6 +41,8 @@ const asyncBudgets = {
   createFileSync: 0,
   "root.exists": 1, // measured 0
 };
+// Includes the instrumentation wrapper around open; metadata checks add no promises.
+const promiseBudgets = { "root.readBytes": 51, readLocalFileSafely: 47, "root.open": 35, "readLocalFileSafely bounded": 46 };
 const { tempRoot } = useRealTempDirs();
 
 describe.skipIf(process.platform === "win32")("fallback filesystem call budgets", () => {
@@ -52,6 +59,13 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
     const restore: Array<() => void> = [];
     let counting = false;
     let nonthrowingTargetProbes = 0;
+    let promises = 0;
+    const promiseScope = new AsyncLocalStorage<object>();
+    let currentScope: object;
+    const hook = createHook({ init(_, type) {
+      if (counting && type === "PROMISE" && promiseScope.getStore() === currentScope) promises++;
+    } });
+    hook.enable();
     const wrap = (object: object, keys: string[], prefix: string) => {
       for (const key of keys) {
         const descriptor = Object.getOwnPropertyDescriptor(object, key);
@@ -86,6 +100,8 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
       wrap(prototype, Object.getOwnPropertyNames(prototype).filter((key) => key !== "constructor" && key !== "fd"), "h.");
       let createSequence = 0;
       const operations: Record<keyof typeof budgets, () => Promise<unknown>> = {
+        "root.open": async () => { const opened = await safe.open("r.txt"); await opened.handle.close(); },
+        "readLocalFileSafely bounded": () => readLocalFileSafely({ filePath: path.join(directory, "r.txt"), maxBytes: 2 }),
         "root.readBytes": () => safe.readBytes("r.txt"),
         readLocalFileSafely: () => readLocalFileSafely({ filePath: path.join(directory, "r.txt") }),
         readRegularFile: () => readRegularFile({ filePath: path.join(directory, "r.txt") }),
@@ -101,8 +117,13 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         await operations[name]();
         counts.clear();
         nonthrowingTargetProbes = 0;
+        promises = 0;
+        currentScope = {};
         counting = true;
-        try { await operations[name](); } finally { counting = false; }
+        try { await promiseScope.run(currentScope, operations[name]); } finally { counting = false; }
+        if (name in promiseBudgets) {
+          expect.soft(promises, `${name} promises`).toBeLessThanOrEqual(promiseBudgets[name as keyof typeof promiseBudgets]);
+        }
         const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
         const breakdown = [...counts].map(([key, count]) => `${key}=${count}`).join(" ");
         const asyncTotal = [...counts].reduce((sum, [key, count]) =>
@@ -116,7 +137,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           expect.soft(asyncTotal, breakdown).toBe(name === "root.create" ? 3 : 0);
         }
         if (name === "root.readBytes") {
-          expect.soft(total, breakdown).toBe(16);
+          expect.soft(total, breakdown).toBe(15);
           expect.soft(asyncTotal, breakdown).toBe(3); // open, read, close
         }
         if (name === "readLocalFileSafely") {
@@ -127,6 +148,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         }
       }
     } finally {
+      hook.disable();
       counting = false;
       for (const undo of restore.reverse()) undo();
       configureFsSafeNative({ mode: "auto" });
