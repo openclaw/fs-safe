@@ -8,10 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
-assert(["mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write"].includes(operation));
+assert(["mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write", "tempWorkspace"].includes(operation));
 if (process.argv.includes("--child")) {
   const { configureFsSafeNative, root } = await import("../dist/index.js");
   const { getNativeBinding } = await import("../dist/native.js");
+  const { tempWorkspace } = await import("../dist/temp.js");
   configureFsSafeNative({ mode: "require" });
   assert(getNativeBinding("openBeneath", "mkdirChildBeneath"));
   // Keep the Linux path depth constant for deterministic canonicalization counts.
@@ -20,8 +21,9 @@ if (process.argv.includes("--child")) {
     const safe = await root(temporary);
     for (const mode of ["off", "require", "auto"]) {
       configureFsSafeNative({ mode });
-      const prepare = () => { if (operation !== "mkdir" && operation !== "ensureRoot" && operation !== "create") fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
+      const prepare = () => { if (!["mkdir", "ensureRoot", "create", "tempWorkspace"].includes(operation)) fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
       const perform = () => {
+        if (operation === "tempWorkspace") return tempWorkspace({ rootDir: temporary, prefix: "child" });
         if (operation === "ensureRoot") return safe.ensureRoot();
         if (operation === "mkdir") return safe.mkdir("child");
         if (operation === "remove") return safe.remove("child");
@@ -32,6 +34,7 @@ if (process.argv.includes("--child")) {
         return safe.move("child", "target", { overwrite: true });
       };
       const cleanup = result => {
+        if (operation === "tempWorkspace") return result.cleanup();
         if (operation === "mkdir") fs.rmdirSync(path.join(temporary, "child"));
         if (operation === "create") fs.unlinkSync(path.join(temporary, "child"));
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
@@ -70,7 +73,7 @@ if (process.argv.includes("--child")) {
       let current;
       const counts = {};
       for (const line of fs.readFileSync(tracePath, "utf8").split("\n")) {
-        const marker = /BUDGET_(START|END) (?:mkdir|ensureRoot|remove|move|append|openWritable|create|write) (off|require|auto)/.exec(line);
+        const marker = /BUDGET_(START|END) (?:mkdir|ensureRoot|remove|move|append|openWritable|create|write|tempWorkspace) (off|require|auto)/.exec(line);
         if (marker) {
           current = marker[1] === "START" ? marker[2] : undefined;
           if (current) counts[current] = {};
@@ -85,6 +88,22 @@ if (process.argv.includes("--child")) {
     }
     for (const row of rows) {
       if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
+      if (operation === "tempWorkspace") {
+        const expectedResources = row.mode === "off"
+          ? {"PROMISE": 11, "FSREQPROMISE": 1} : {"PROMISE": 6};
+        assert.deepEqual(row.resources, expectedResources, `${row.mode} temp creation resources`);
+        if (trace) {
+          const expected = row.mode === "off" ? {"statx": 14, "readlink": 8, "openat": 2, "mkdir": 1, "close": 1}
+            : process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? {"statx": 16, "readlink": 10, "openat": 3, "mkdirat": 1, "newfstatat": 3, "fstat": 5, "close": 2} : {"statx": 16, "readlink": 10, "openat": 1, "openat2": 2, "close": 1, "mkdirat": 1};
+          const aliases = { mkdir: "mkdirat", readlink: "readlinkat" };
+          const architectureExpected = process.arch === "arm64"
+            ? Object.fromEntries(Object.entries(expected).map(([name, count]) => [aliases[name] ?? name, count]))
+            : expected;
+          assert.deepEqual(row.syscalls, architectureExpected, `${row.mode} temp creation filesystem syscalls`);
+        }
+        console.log(JSON.stringify(row));
+        continue;
+      }
       const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [82, 73], append: [66, 62], openWritable: [36, 32] }[operation];
       const publication = operation === "create" || operation === "write";
       const publicationResources = {

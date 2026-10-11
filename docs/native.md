@@ -371,6 +371,13 @@ configured; direct-publication buffers, larger buffers, streams, and assertion-b
 asynchronous path. Publication, permission, and post-operation identity checks
 remain unchanged.
 
+Asynchronous temp workspaces create their exclusive child relative to the
+retained cleanup parent when the binding provides that operation. The returned
+descriptor remains owned through the existing mode, parent, ancestry and final
+pathname/descriptor checks. Collisions retry with a fresh random name and never
+adopt or remove the existing directory. Capability probing still completes before
+creation. Synchronous creation and older bindings retain their existing routes.
+
 Windows owner/DACL inspection, private-directory creation, and secure-file
 inspection support [Windows helper fallbacks](install.md#windows-security-fallback)
 in `auto` and `off`. `require` rejects missing capabilities, and native operation

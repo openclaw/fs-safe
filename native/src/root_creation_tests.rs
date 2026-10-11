@@ -2,7 +2,25 @@ use std::{fs, path::PathBuf};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt};
 use crate::test_support::temp_path;
-use crate::unix::{mkdir_child_beneath, mkdir_open_child_beneath, open_create_beneath};
+use crate::unix::{create_temp_directory_beneath, mkdir_child_beneath, mkdir_open_child_beneath, open_create_beneath};
+
+#[test]
+fn temp_creation_retains_parent_and_never_adopts_collisions() {
+    let fixture = Fixture::new();
+    let parent = fs::File::open(fixture.0.join("parent")).unwrap();
+    fixture.before_final();
+    let (raw, search_only) = create_temp_directory_beneath(parent.as_raw_fd(), "temp").unwrap();
+    assert!(!search_only);
+    // SAFETY: exclusive creation transfers this one owned descriptor.
+    let child = unsafe { fs::File::from_raw_fd(raw) };
+    assert!(child.metadata().unwrap().is_dir());
+    assert_eq!(child.metadata().unwrap().ino(), fs::metadata(fixture.0.join("held/temp")).unwrap().ino());
+    assert!(!fixture.0.join("outside/temp").exists());
+    assert_eq!(create_temp_directory_beneath(parent.as_raw_fd(), "temp").unwrap_err().status, "EEXIST");
+    symlink("../outside", fixture.0.join("held/link")).unwrap();
+    assert_eq!(create_temp_directory_beneath(parent.as_raw_fd(), "link").unwrap_err().status, "EEXIST");
+    assert!(create_temp_directory_beneath(parent.as_raw_fd(), "../escape").is_err());
+}
 
 struct Fixture(PathBuf);
 impl Fixture {

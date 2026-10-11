@@ -458,6 +458,9 @@ describe.runIf(native && typeof native.removeOwnedTree === "function")("retained
     const failure = new Error("injected registration failure");
     vi.spyOn(cleanup, "registerTempPathForExit").mockImplementationOnce(() => { throw failure; });
     const opened = vi.spyOn(fsSync, "openSync");
+    const nativeCreated = native!.createTempDirectoryBeneath
+      ? vi.fn(native!.createTempDirectoryBeneath.bind(native)) : undefined;
+    if (nativeCreated) __setNativeLoaderForTest(() => ({ ...native!, createTempDirectoryBeneath: nativeCreated }));
     await expect(async () => variant === "async"
       ? await tempWorkspace({ rootDir, prefix: "workspace-" })
       : tempWorkspaceSync({ rootDir, prefix: "workspace-" }))
@@ -465,6 +468,9 @@ describe.runIf(native && typeof native.removeOwnedTree === "function")("retained
     const fds = opened.mock.results
       .filter((result) => result.type === "return")
       .map((result) => result.value as number);
+    for (const result of nativeCreated?.mock.results ?? []) {
+      if (result.type === "return") fds.push(result.value.fd);
+    }
     expect(fds.length).toBeGreaterThanOrEqual(2);
     for (const fd of fds) {
       expect(() => fsSync.fstatSync(fd)).toThrowError(expect.objectContaining({ code: "EBADF" }));

@@ -725,6 +725,24 @@ pub fn mkdir_child_beneath(parent_fd: i32, basename: &str, _mode: u32) -> Native
     mkdir_child_at_handle(root_handle(parent_fd)?, basename)
 }
 
+pub fn create_temp_directory_beneath(parent_fd: i32, basename: &str) -> NativeResult<(i32, bool)> {
+    let bridge = uv_bridge()?;
+    bridge.require_close()?;
+    let created = create_temp_directory_at_handle(runtime_handle_from_fd(parent_fd, bridge)?, basename)?;
+    runtime_fd_from_handle_with_bridge(created, bridge).map(|fd| (fd, false))
+}
+
+fn create_temp_directory_at_handle(parent: HANDLE, basename: &str) -> NativeResult<OwnedHandle> {
+    crate::validate_child_basename(basename)?;
+    nt_open_relative(
+        parent,
+        basename,
+        FILE_GENERIC_READ,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+}
+
 const FILE_NAME_OFFSET: usize = 20;
 
 fn aligned_name_buffer(byte_len: usize) -> Vec<usize> {
@@ -1417,6 +1435,24 @@ mod tests {
     use crate::test_support::{directory, temp_path, unique_path_in};
 
     use super::*;
+
+    #[test]
+    fn temp_directory_creation_pins_parent_and_rejects_collisions() {
+        let base = temp_path("temp-directory-create");
+        fs::create_dir_all(base.join("parent")).unwrap();
+        let parent = directory(&base.join("parent"));
+        fs::rename(base.join("parent"), base.join("held")).unwrap();
+        fs::create_dir(base.join("parent")).unwrap();
+        let child = create_temp_directory_at_handle(parent.as_raw_handle(), "child").unwrap();
+        assert!(handle_identity(child.0).unwrap().2);
+        assert!(base.join("held/child").is_dir());
+        assert!(!base.join("parent/child").exists());
+        assert!(matches!(create_temp_directory_at_handle(parent.as_raw_handle(), "child"), Err(error) if error.status == "EEXIST"));
+        assert!(create_temp_directory_at_handle(parent.as_raw_handle(), "../escape").is_err());
+        drop(child);
+        drop(parent);
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn absolute_path_encoding_preserves_drive_and_unc_namespaces() {

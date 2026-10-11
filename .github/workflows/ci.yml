@@ -1351,9 +1351,13 @@ jobs:
       - name: Pin native mutation syscall budgets
         if: runner.os == 'Linux'
         run: |
-          for operation in mkdir ensureRoot remove move append openWritable create write; do
+          for operation in mkdir ensureRoot remove move append openWritable create write tempWorkspace; do
             node scripts/native-call-budget-proof.mjs --operation "$operation"
           done
+
+      - name: Pin native temp creation resources
+        if: runner.os != 'Linux'
+        run: node scripts/native-call-budget-proof.mjs --operation tempWorkspace --resources-only
 
       - name: Prove Linux copy offload EOF fallback
         if: runner.os == 'Linux'
