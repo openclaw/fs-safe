@@ -4,10 +4,17 @@ import type { DirEntry } from "./types.js";
 /** Strings only: cached spellings never replace an observation or its identity fences. */
 export type RootDirectoryListingPaths = { directory: string; names: Map<string, string> };
 
+export type RootDirectoryListingResult =
+  | { kind: "entry"; entry: DirEntry; identity?: ExactStatIdentity }
+  | { kind: "limit"; name: string }
+  | undefined;
+
 export type RootDirectoryListing = {
   paths: RootDirectoryListingPaths;
   assertCurrent(): Promise<void>;
-  next(): Promise<{ kind: "entry"; entry: DirEntry; identity?: ExactStatIdentity } | { kind: "limit"; name: string } | undefined>;
+  next(): Promise<RootDirectoryListingResult>;
+  /** Only a complete, already-fenced snapshot can be consumed without awaiting. */
+  nextSnapshot?: () => RootDirectoryListingResult;
   [Symbol.asyncDispose](): Promise<void>;
 };
 

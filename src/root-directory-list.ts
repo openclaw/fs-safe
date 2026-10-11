@@ -32,7 +32,7 @@ import { realpathSync } from "./realpath.js";
 import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
-import type { RootDirectoryListing, RootDirectoryListingOptions, RootDirectoryListingPaths } from "./root-directory-list-types.js";
+import type { RootDirectoryListing, RootDirectoryListingOptions, RootDirectoryListingPaths, RootDirectoryListingResult } from "./root-directory-list-types.js";
 
 const METADATA_BATCH_SIZE = 32;
 
@@ -409,16 +409,22 @@ export async function openRootDirectoryListing(
     }
   };
 
+  const nextSnapshot = snapshot ? (): RootDirectoryListingResult => {
+    try {
+      options.signal?.throwIfAborted();
+      const entry = snapshot[index++];
+      if (!entry) return;
+      return options.admitEntry() ? { kind: "entry", entry } : { kind: "limit", name: entry.name };
+    } catch (error) { throw normalizeDirectoryError(error); }
+  } : undefined;
+
   return {
     paths,
     assertCurrent,
+    nextSnapshot,
     async next() { try {
+        if (nextSnapshot) return nextSnapshot();
         options.signal?.throwIfAborted();
-        if (snapshot) {
-          const entry = snapshot[index++];
-          if (!entry) return;
-          return options.admitEntry() ? { kind: "entry", entry } : { kind: "limit", name: entry.name };
-        }
         if (names) {
           if (preparedIndex >= prepared.length && !pendingFailure && pendingLimit === undefined) {
             await prepareBatch(names);
