@@ -209,8 +209,6 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use std::os::windows::ffi::OsStrExt;
-
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -220,25 +218,8 @@ mod platform {
     use super::ExactDirectoryObservation;
     use crate::{
         NativeResult, native_error,
-        windows::{observe_directory_identity, open_existing_handle, win_error},
+        windows::{observe_directory_identity, open_existing_handle, wide_absolute_path, win_error},
     };
-
-    fn wide_path(path: &str) -> NativeResult<Vec<u16>> {
-        let normalized = path.replace('/', r"\");
-        let opened = if normalized.starts_with(r"\\?\") || normalized.starts_with(r"\\.\") {
-            normalized
-        } else if let Some(unc) = normalized.strip_prefix(r"\\") {
-            format!(r"\\?\UNC\{unc}")
-        } else {
-            format!(r"\\?\{normalized}")
-        };
-        let mut wide: Vec<u16> = std::ffi::OsStr::new(&opened).encode_wide().collect();
-        if wide.contains(&0) {
-            return Err(native_error("EINVAL", "directory path contains a NUL byte"));
-        }
-        wide.push(0);
-        Ok(wide)
-    }
 
     const INITIAL_PATH_WCHARS: usize = 512;
 
@@ -306,7 +287,10 @@ mod platform {
     }
 
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
-        let path = wide_path(path)?;
+        if path.contains('\0') {
+            return Err(native_error("EINVAL", "directory path contains a NUL byte"));
+        }
+        let path = wide_absolute_path(path);
         let handle = open_existing_handle(
             &path,
             FILE_READ_ATTRIBUTES,

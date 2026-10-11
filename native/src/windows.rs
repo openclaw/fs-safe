@@ -51,6 +51,23 @@ const O_EXCL: i32 = 0x0400;
 
 pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 
+/// Encode an admitted, resolved path without changing namespace semantics.
+/// Admission and resolution belong to the caller, not this representation step.
+pub(crate) fn wide_absolute_path(path: &str) -> Vec<u16> {
+    let normalized = path.replace('/', "\\");
+    let bytes = normalized.as_bytes();
+    let opened = if normalized.starts_with(r"\\?\") || normalized.starts_with(r"\\.\") {
+        path.to_owned()
+    } else if let Some(unc) = normalized.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{unc}")
+    } else if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && &bytes[1..3] == b":\\" {
+        format!(r"\\?\{normalized}")
+    } else {
+        path.to_owned()
+    };
+    opened.encode_utf16().chain(Some(0)).collect()
+}
+
 pub(crate) fn open_existing_handle(
     path: &[u16],
     access: u32,
@@ -1357,6 +1374,25 @@ mod tests {
     use crate::test_support::{directory, temp_path, unique_path_in};
 
     use super::*;
+
+    #[test]
+    fn absolute_path_encoding_preserves_drive_and_unc_namespaces() {
+        for (input, expected) in [
+            (r"C:\parent\file", r"\\?\C:\parent\file"),
+            ("C:/parent/file", r"\\?\C:\parent\file"),
+            (r"\\server\share\file", r"\\?\UNC\server\share\file"),
+            (r"\\?\C:\parent\file", r"\\?\C:\parent\file"),
+            (r"\\?\UNC\server\share\file", r"\\?\UNC\server\share\file"),
+            (r"\\.\C:\parent\file", r"\\.\C:\parent\file"),
+            (r"\\.\C:\", r"\\.\C:\"),
+            (r"\\?\C:\parent\.\file", r"\\?\C:\parent\.\file"),
+            (r"relative\file", r"relative\file"),
+        ] {
+            let wide = wide_absolute_path(input);
+            assert_eq!(wide.last(), Some(&0));
+            assert_eq!(String::from_utf16(&wide[..wide.len() - 1]).unwrap(), expected);
+        }
+    }
 
     #[test]
     #[cfg(target_pointer_width = "64")]

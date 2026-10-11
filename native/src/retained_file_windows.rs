@@ -10,7 +10,7 @@ use windows_sys::Win32::System::IO::{CancelIoEx, DeviceIoControl, GetOverlappedR
 use windows_sys::Win32::System::Ioctl::{FSCTL_REQUEST_OPLOCK, REQUEST_OPLOCK_INPUT_BUFFER, REQUEST_OPLOCK_OUTPUT_BUFFER, OPLOCK_LEVEL_CACHE_READ, REQUEST_OPLOCK_INPUT_FLAG_REQUEST};
 use windows_sys::Win32::System::Threading::CreateEventW;
 use crate::{NativeResult, native_error};
-use crate::windows::{OwnedHandle, open_retained_child, guarded_handle_information, handle_attributes, handle_file_identity, handle_identity_and_size, win_error};
+use crate::windows::{OwnedHandle, open_retained_child, guarded_handle_information, handle_attributes, handle_file_identity, handle_identity_and_size, wide_absolute_path, win_error};
 
 pub(super) fn basename(name: &str) -> NativeResult<()> {
     crate::validate_child_basename(name)?;
@@ -33,7 +33,7 @@ pub(super) fn path_parts(path: &str) -> NativeResult<Vec<&str>> {
 }
 
 pub(super) fn fixed_drive(path: &str) -> NativeResult<()> {
-    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    let wide = wide_absolute_path(path);
     // Fixed local drives only; network, removable and namespace aliases are unsupported.
     if unsafe { GetDriveTypeW(wide.as_ptr()) } != 3 /* DRIVE_FIXED */ {
         return Err(native_error("ENOTSUP", "retained files require a fixed local NTFS drive"));
@@ -43,7 +43,7 @@ pub(super) fn fixed_drive(path: &str) -> NativeResult<()> {
 
 pub(super) fn root(path: &str) -> NativeResult<OwnedHandle> {
     fixed_drive(path)?;
-    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    let wide = wide_absolute_path(path);
     let handle = unsafe { CreateFileW(wide.as_ptr(), FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
         FILE_SHARE_READ | FILE_SHARE_WRITE, null(), OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null_mut()) };

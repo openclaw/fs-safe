@@ -12,7 +12,7 @@ use crate::windows::{OwnedHandle, handle_is_reparse, win_error};
 fn open(path: &str, access: u32, sharing: u32) -> NativeResult<OwnedHandle> {
     validate_windows_filesystem_path(path)?;
     if path.contains('\0') { return Err(native_error("EINVAL", "path contains NUL")); }
-    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    let wide = crate::windows::wide_absolute_path(path);
     let raw = unsafe { CreateFileW(wide.as_ptr(), access, sharing, null(), OPEN_EXISTING,
         FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, null_mut()) };
     if raw == INVALID_HANDLE_VALUE { return Err(win_error(unsafe { GetLastError() }, "open test fixture")); }

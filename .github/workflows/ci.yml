@@ -1230,6 +1230,35 @@ jobs:
           node scripts/platform-import-timings.mjs
           bun scripts/platform-import-timings.mjs
 
+      - name: Prove Windows long paths on Node and Bun
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          node test/fixtures/windows-long-path-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/fixtures/windows-native-path-spelling.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/windows-private-repro-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun test/fixtures/windows-long-path-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun test/fixtures/windows-native-path-spelling.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun scripts/windows-private-repro-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows long-path proof
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-long-path-${{ matrix.os }}
+          path: |
+            artifacts-windows-long-path
+            artifacts-platform-imports
+          if-no-files-found: error
+
       - name: Prove Root copy metadata and literal links on Node and Bun
         if: ${{ !matrix.no-openat2 }}
         env:
@@ -1644,6 +1673,29 @@ jobs:
         env:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test native
+
+      - name: Prove Windows long paths and unchanged historical reproduction
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          node test/fixtures/windows-long-path-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/fixtures/windows-native-path-spelling.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/windows-private-repro-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/platform-import-timings.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows long-path proof
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-long-path-arm64-host-node-${{ matrix.arch }}
+          path: |
+            artifacts-windows-long-path
+            artifacts-platform-imports
+          if-no-files-found: error
 
       - name: Verify root-only npm and pnpm consumer installs
         env:

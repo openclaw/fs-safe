@@ -182,7 +182,6 @@ windows_security_export!(
 mod windows {
     use std::ffi::c_void;
     use std::mem::{size_of, zeroed};
-    use std::os::windows::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::ptr::{null, null_mut};
 
@@ -254,10 +253,12 @@ mod windows {
         if value.encode_utf16().any(|unit| unit == 0) {
             return Err(native_error("EINVAL", "Windows path contains a NUL byte"));
         }
-        Ok(std::ffi::OsStr::new(value)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect())
+        // Raw private-creation components are admitted by split_parent first.
+        // Preserve relative security-inspection paths by resolving before encoding.
+        let resolved = std::path::absolute(value)
+            .map_err(|error| native_error("EINVAL", format!("resolve Windows path: {error}")))?;
+        Ok(crate::windows::wide_absolute_path(resolved.to_str()
+            .ok_or_else(|| native_error("EINVAL", "Windows path is not valid UTF-8"))?))
     }
 
     fn win_error(code: u32, operation: &str) -> crate::NativeError {
