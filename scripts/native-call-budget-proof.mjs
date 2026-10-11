@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
-assert(["mkdir", "remove", "move", "append", "openWritable"].includes(operation));
+assert(["mkdir", "ensureRoot", "remove", "move", "append", "openWritable"].includes(operation));
 if (process.argv.includes("--child")) {
   const { configureFsSafeNative, root } = await import("../dist/index.js");
   const { getNativeBinding } = await import("../dist/native.js");
@@ -20,8 +20,9 @@ if (process.argv.includes("--child")) {
     const safe = await root(temporary);
     for (const mode of ["off", "require", "auto"]) {
       configureFsSafeNative({ mode });
-      const prepare = () => { if (operation !== "mkdir") fs.writeFileSync(path.join(temporary, "child"), "payload"); };
+      const prepare = () => { if (operation !== "mkdir" && operation !== "ensureRoot") fs.writeFileSync(path.join(temporary, "child"), "payload"); };
       const perform = () => {
+        if (operation === "ensureRoot") return safe.ensureRoot();
         if (operation === "mkdir") return safe.mkdir("child");
         if (operation === "remove") return safe.remove("child");
         if (operation === "append") return safe.append("child", "data", { durable: false });
@@ -66,7 +67,7 @@ if (process.argv.includes("--child")) {
       let current;
       const counts = {};
       for (const line of fs.readFileSync(tracePath, "utf8").split("\n")) {
-        const marker = /BUDGET_(START|END) (?:mkdir|remove|move|append|openWritable) (off|require|auto)/.exec(line);
+        const marker = /BUDGET_(START|END) (?:mkdir|ensureRoot|remove|move|append|openWritable) (off|require|auto)/.exec(line);
         if (marker) {
           current = marker[1] === "START" ? marker[2] : undefined;
           if (current) counts[current] = {};
@@ -80,9 +81,9 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
-      const promises = { mkdir: [26, 19], remove: [32, 27], move: [90, 81], append: [68, 62], openWritable: [38, 32] }[operation];
-      const expectedResources = row.mode === "require"
-        ? { PROMISE: promises[1] }
+      const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [90, 81], append: [68, 62], openWritable: [38, 32] }[operation];
+      const expectedResources = (operation === "mkdir" || operation === "ensureRoot") ? { PROMISE: promises[row.mode === "require" ? 1 : 0] }
+        : row.mode === "require" ? { PROMISE: promises[1] }
         : { PROMISE: promises[0], FSREQPROMISE: 1 };
       if (operation === "append" || operation === "openWritable") {
         expectedResources.FSREQPROMISE = operation === "append" ? 2 : 1;
@@ -94,8 +95,11 @@ if (process.argv.includes("--child")) {
         let expected = row.mode !== "require"
           ? { statx: 9, readlink: 14, mkdir: 1 }
           : process.env.FS_SAFE_TEST_NO_OPENAT2 === "1"
-            ? { statx: 5, openat: 3, fstat: 11, readlink: 6, newfstatat: 6, mkdirat: 1, close: 3 }
-            : { statx: 5, openat: 1, fstat: 6, readlink: 6, newfstatat: 3, mkdirat: 1, openat2: 1, close: 2 };
+            ? { statx: 4, openat: 3, fstat: 11, readlink: 6, newfstatat: 6, mkdirat: 1, close: 3 }
+            : { statx: 4, openat: 1, fstat: 6, readlink: 6, newfstatat: 3, mkdirat: 1, openat2: 1, close: 2 };
+        if (operation === "ensureRoot") expected = row.mode === "require"
+          ? { statx: 2, openat: 1, fstat: 2, readlink: 2, newfstatat: 1, close: 1 }
+          : { statx: 3, readlink: 2 };
         if (operation === "remove") expected = row.mode === "require"
           ? { statx: 6, readlink: 6, openat: 1, newfstatat: 2, unlinkat: 1, close: 1 }
           : { statx: 6, readlink: 6, unlink: 1 };

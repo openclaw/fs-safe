@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -29,6 +30,15 @@ it.each(["temp", "output"] as const)(
     const atGate = new Promise<void>((resolve) => { reachedGate = resolve; });
     const released = new Promise<void>((resolve) => { releaseGate = resolve; });
     let gated = false;
+    const realMkdirSync = fsSync.mkdirSync.bind(fsSync);
+    vi.spyOn(fsSync, "mkdirSync").mockImplementation((...args) => {
+      const result = realMkdirSync(...args);
+      if (api === "output" && !gated && path.resolve(String(args[0])) === dir) {
+        gated = true;
+        reachedGate();
+      }
+      return result;
+    });
     vi.spyOn(fs, "mkdir").mockImplementation(async (...args) => {
       const result = await realMkdir(...args);
       if (!gated && path.resolve(String(args[0])) === dir) {

@@ -331,11 +331,18 @@ when native support is absent or off. Staging is currently Linux/macOS only and
 rejects Windows with `unsupported-platform`.
 
 For an ordinary direct child, native `Root.mkdir()` retains the already-admitted
-Root directly instead of running a parent-creation walk. Its short descriptor
+Root directly instead of running a parent-creation walk. A missing portable
+single-component name also skips general alias resolution after a fresh Root
+identity check and no-follow missing-entry observation; retained Root and child
+identity checks still surround creation. Its short descriptor
 open, creation, identity checks, and close are synchronous; the public method
 remains asynchronous. Root and child pathname/canonical identities are checked
 before success. Private creation, mutation policies, callbacks, and longer paths
-retain their existing admission paths.
+retain their existing admission paths. Policy-free `ensureRoot()` verifies the
+retained native Root directly. In `off` and `auto`, ordinary `Root.mkdir()` keeps
+its metadata-only creation syscall in the synchronous guard sequence; supplied
+mutation callbacks, mutation policies, and private creation retain their existing
+asynchronous path. Both public methods continue to return promises.
 
 Native removal and moves also retain Root synchronously and reuse that descriptor
 when Root is an immediate parent. Nonrecursive removal keeps its own leaf path,

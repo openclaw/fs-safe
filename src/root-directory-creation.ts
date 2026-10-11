@@ -234,6 +234,8 @@ export async function mkdirPathFallback(
   const baseParams = {
     rootReal: resolved.rootReal, targetPath: resolved.resolved, assertBeforeMutation,
     rootIdentity: root.rootIdentity,
+    synchronousMkdir: !privateMode && !mutationAdmission && !assertBeforeMutation &&
+      !getFsSafeTestHooks()?.beforeRootFallbackMutation,
     rejectSymlinks,
     private: privateMode,
     mode: privateMode ? 0o700 : undefined,

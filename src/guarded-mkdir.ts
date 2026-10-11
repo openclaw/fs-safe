@@ -156,6 +156,7 @@ export async function mkdirPathComponentsWithGuards(params: {
   ) => PinnedMutationAuthorizationToken | undefined;
   assertBeforeMutation?: () => void;
   createMissing?: boolean;
+  synchronousMkdir?: boolean;
   mode?: number;
   private?: boolean;
   rejectSymlinks?: boolean;
@@ -282,7 +283,8 @@ export async function mkdirPathComponentsWithGuards(params: {
             },
           });
         } else {
-          await fs.mkdir(next, { mode: params.mode });
+          if (params.synchronousMkdir) fsSync.mkdirSync(next, { mode: params.mode });
+          else await fs.mkdir(next, { mode: params.mode });
         }
         created = true;
       } catch (error) {

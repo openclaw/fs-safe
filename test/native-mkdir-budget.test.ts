@@ -13,9 +13,11 @@ const { tempRoot } = useRealTempDirs();
 afterEach(() => { vi.restoreAllMocks(); configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); });
 
 it.runIf(native?.mkdirChildBeneath && !process.versions.bun)("pins direct-child mkdir async resource counts in every native mode", () => {
-  expect(() => execFileSync(process.execPath, ["scripts/native-call-budget-proof.mjs", "--resources-only"], {
-    cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8", stdio: "pipe",
-  })).not.toThrow();
+  for (const operation of ["mkdir", "ensureRoot"]) {
+    expect(() => execFileSync(process.execPath, ["scripts/native-call-budget-proof.mjs", "--resources-only", "--operation", operation], {
+      cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8", stdio: "pipe",
+    })).not.toThrow();
+  }
 });
 
 it.runIf(native?.mkdirOpenChildBeneath)("confines direct-child creation when Root is replaced at dispatch", async () => {
@@ -51,4 +53,18 @@ it.runIf(native?.mkdirOpenChildBeneath)("rejects a replaced child while retainin
   } }));
   await expect(safe.mkdir("child")).rejects.toMatchObject({ code: "path-mismatch" });
   expect(fs.readdirSync(directory)).toEqual(["child", "held"]);
+});
+
+it.runIf(native?.mkdirChildBeneath)("keeps existing direct-child aliases on their admitted target", async () => {
+  const directory = await tempRoot("fs-safe-mkdir-alias-admission-");
+  fs.mkdirSync(path.join(directory, "actual"));
+  fs.symlinkSync(path.join(directory, "actual"), path.join(directory, "alias"),
+    process.platform === "win32" ? "junction" : "dir");
+  const safe = await root(directory);
+  for (const mode of ["off", "require"] as const) {
+    configureFsSafeNative({ mode });
+    await safe.mkdir("alias");
+    expect(fs.lstatSync(path.join(directory, "alias")).isSymbolicLink()).toBe(true);
+    expect(fs.readdirSync(path.join(directory, "actual"))).toEqual([]);
+  }
 });
