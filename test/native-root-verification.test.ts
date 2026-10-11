@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -60,13 +62,17 @@ describe.runIf(native?.verifyRootDirectory)("native Root verification", () => {
       return originalOpen(...args);
     });
     const close = vi.spyOn(fs, "closeSync");
-    __setNativeLoaderForTest(() => ({ ...native!, verifyRootDirectory() {
-      fallbackFd = fs.openSync(pathname, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+    const closeNative = vi.fn(native!.closeOwnedFd!.bind(native));
+    __setNativeLoaderForTest(() => ({ ...native!, closeOwnedFd: closeNative, verifyRootDirectory() {
+      const parent = fs.openSync(pathname, fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0));
+      try { fallbackFd = native!.openBeneath!(parent, "", fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0)).fd; }
+      finally { fs.closeSync(parent); }
       return { fallbackFd };
     } }));
     await expect(safe.ensureRoot()).resolves.toBeUndefined();
     expect(fallbackOpens).toBeGreaterThan(0);
-    expect(close.mock.calls.filter(([fd]) => fd === fallbackFd)).toHaveLength(1);
+    expect(closeNative.mock.calls.filter(([fd]) => fd === fallbackFd)).toHaveLength(1);
+    expect(close.mock.calls.filter(([fd]) => fd === fallbackFd)).toHaveLength(0);
   });
 
   it("checks the captured Root identity before native opening", async () => {
@@ -99,3 +105,37 @@ describe.runIf(native?.verifyRootDirectory)("native Root verification", () => {
     await expect(safe.ensureRoot()).resolves.toBeUndefined();
   });
 });
+
+it.runIf(native?.openBeneath && native?.closeOwnedFd && !process.versions.bun)(
+  "closes transferred addon descriptors in a real Worker without poisoning Node ownership",
+  async () => {
+    const directory = await tempRoot("native-root-worker-fallback-");
+    const sentinel = path.join(directory, "sentinel");
+    fs.writeFileSync(sentinel, "node-owned");
+    const identity = fs.statSync(sentinel, { bigint: true });
+    const worker = new Worker(new URL("./fixtures/native-root-fallback-worker.mjs", import.meta.url), {
+      workerData: { directory }, stdout: true, stderr: true,
+    });
+    let stderr = "";
+    let result: { nativeCloses: number; warnings: string[] } | undefined;
+    let sentinelFd: number | undefined;
+    worker.stdout.resume();
+    worker.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    worker.on("message", message => {
+      if (message.kind === "sentinel") sentinelFd = message.fd;
+      else result = message;
+    });
+    try {
+      const [code] = await once(worker, "exit", { signal: AbortSignal.timeout(15_000) });
+      expect(code).toBe(0);
+      expect(result?.nativeCloses).toBe(1);
+      expect(result?.warnings).toEqual([]);
+      expect(stderr).not.toMatch(/File descriptor .*closed but not opened in unmanaged mode/u);
+      expect(sentinelFd).toBeTypeOf("number");
+      let current;
+      try { current = fs.fstatSync(sentinelFd!, { bigint: true }); }
+      catch (error) { expect((error as NodeJS.ErrnoException).code).toBe("EBADF"); }
+      expect(current?.dev === identity.dev && current?.ino === identity.ino).toBe(false);
+    } finally { await worker.terminate(); }
+  }, 20_000,
+);

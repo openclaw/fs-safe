@@ -252,12 +252,13 @@ export function ensureNativeRootCurrent(root: RootContext): void {
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath) return unavailable();
   if (binding.verifyRootDirectory) {
+    const closeNative = captureNativeFdClose(binding);
     const failure = binding.verifyRootDirectory(root.rootReal, root.rootIdentity.dev, root.rootIdentity.ino);
     if (failure === null) return;
     if (failure?.fallbackFd !== undefined && failure.fallbackFd !== null) {
       const fd = failure.fallbackFd;
       if (!Number.isInteger(fd) || fd < 0) throw new FsSafeError("helper-failed", "invalid root fallback descriptor");
-      using owner = { [Symbol.dispose]() { fs.closeSync(fd); } };
+      using owner = { [Symbol.dispose]() { closeNative(fd); } };
       if (failure.errorCode || failure.closeErrorCode) throw new FsSafeError("helper-failed", "invalid root verification result");
       ensureNativeRootCurrentLegacy(root, binding);
       return;
