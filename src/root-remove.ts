@@ -313,7 +313,9 @@ export async function removePathInRootFallback(
   let examined = 0;
   const rootGuard = await createAsyncDirectoryGuard(root.rootReal, { bigint: true });
   if (!sameFileIdentityForCleanup(rootGuard.stat, root.rootIdentity)) throw rootPathChangedError();
-  const guards: AsyncDirectoryGuard<BigIntStats>[] = [rootGuard];
+  const guards: RemovalDirectoryAssertion[] = [
+    createRemovalDirectoryAssertion(rootGuard.dir, rootGuard.stat, rootGuard.realPath),
+  ];
   let ancestor = root.rootReal;
   const parentRelative = path.relative(root.rootReal, path.dirname(targetPath));
   for (const segment of parentRelative.split(path.sep).filter(Boolean)) {
@@ -332,13 +334,13 @@ export async function removePathInRootFallback(
     if (!isPathInside(guard.realPath, ancestor) || !isPathInside(ancestor, guard.realPath)) {
       throw new FsSafeError("path-mismatch", "removal ancestor changed during operation");
     }
-    guards.push(guard);
+    guards.push(createRemovalDirectoryAssertion(guard.dir, guard.stat, guard.realPath));
   }
 
   function assertCurrent(): void {
     for (const guard of guards) {
       try {
-        assertSyncDirectoryGuard(guard);
+        assertRemovalDirectoryCurrent(guard);
       } catch (error) {
         // force tolerates a vanished leaf, never a lost traversal boundary.
         throw new FsSafeError("path-mismatch", "removal ancestor changed during operation", { cause: error });
@@ -382,7 +384,7 @@ export async function removePathInRootFallback(
         !sameFileIdentityForCleanup(directoryGuard.stat, initial)) {
         throw new FsSafeError("path-mismatch", "removal directory changed during operation");
       }
-      guards.push(directoryGuard);
+      guards.push(createRemovalDirectoryAssertion(directoryGuard.dir, directoryGuard.stat, directoryGuard.realPath));
       try {
         assertCurrent();
         assertNotAborted(options.signal);
