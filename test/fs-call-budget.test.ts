@@ -160,7 +160,10 @@ describe("write metadata budgets", () => {
   it.skipIf(mode === "require" && !writeNativeAvailable)(`preserves both Windows file flushes without redundant chmod in ${mode} mode`, async () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     const directory = await tempRoot("fs-safe-write-windows-mode-");
-    if (mode === "require") __setNativeLoaderForTest(loadWindowsSimulationNative);
+    if (mode === "require") {
+      const binding = loadWindowsSimulationNative();
+      __setNativeLoaderForTest(() => binding);
+    }
     Object.defineProperty(process, "platform", { value: "win32" });
     configureFsSafeNative({ mode });
     const safe = await root(directory);
