@@ -39,7 +39,11 @@ describe.each(["async", "sync"] as const)("%s native empty cleanup dispatch", (v
     }) as unknown as NativeBinding);
     const options = { rootDir, prefix: "workspace-", cleanupSafety: "require-bounded" as const };
     const workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
-    if (kind === "populated") fsSync.writeFileSync(path.join(workspace.dir, "owned"), "owned");
+    if (kind === "populated") {
+      fsSync.writeFileSync(path.join(workspace.dir, "owned"), "owned");
+      // Windows may defer directory timestamp updates after child creation.
+      fsSync.utimesSync(workspace.dir, 0, 1);
+    }
     expect(await workspace.cleanup()).toBe("removed");
     expect(empty).toHaveBeenCalledTimes(kind === "empty" ? 1 : 0);
     expect(remove).toHaveBeenCalledTimes(kind === "empty" ? 0 : 1);
