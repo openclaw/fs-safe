@@ -30,6 +30,14 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   add("read", () => root.readBytes("input"), () => fsp.readFile(p("input")), readCaveat, { verify: bytes });
   add("read-sync", () => api.readRegularFileSync({ filePath: p("input") }).buffer,
     () => fs.readFileSync(p("input")), "Standalone readRegularFileSync versus readFileSync; regular-file and identity checks are extra.", { sync: true, verify: bytes });
+  add("read-open", () => root.open("input"), () => fsp.open(p("input"), "r"), readCaveat, {
+    verify: (opened) => assert((opened.handle ?? opened).fd >= 0),
+    after: async (opened) => { await (opened.handle ?? opened).close(); },
+  });
+  add("read-local", async () => (await api.readLocalFileSafely({ filePath: p("input") })).buffer,
+    () => fsp.readFile(p("input")), "Unrooted regular-file and identity admission, without Root confinement.", { verify: bytes });
+  add("read-local-bounded", async () => (await api.readLocalFileSafely({ filePath: p("input"), maxBytes: data.length })).buffer,
+    () => fsp.readFile(p("input")), "Unrooted identity admission and bounded reading; Node has no byte cap.", { verify: bytes });
   const verifyJson = (result) => assert.deepEqual(result, json);
   add("readJson", () => root.readJson("input"), async () => JSON.parse(await fsp.readFile(p("input"), "utf8")), readCaveat, { verify: verifyJson });
   add("readJson-sync", () => api.readJsonSync(p("input")), () => JSON.parse(fs.readFileSync(p("input"), "utf8")), readCaveat, { sync: true, verify: verifyJson });
