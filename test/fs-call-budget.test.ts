@@ -142,9 +142,10 @@ describe("uncontended raw sidecar acquisition budgets", () => {
     const originalLstat = fsSync.lstatSync;
     let guardObservations = 0, guardErrors = 0;
     const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation(((...args: Parameters<typeof fsSync.lstatSync>) => {
-      if (String(args[0]).endsWith(".reclaim")) guardObservations++;
+      const isGuard = String(args[0]).endsWith(".reclaim");
+      if (isGuard) guardObservations++;
       try { return Reflect.apply(originalLstat, fsSync, args); }
-      catch (error) { guardErrors++; throw error; }
+      catch (error) { if (isGuard) guardErrors++; throw error; }
     }) as typeof fsSync.lstatSync);
     const mkdir = vi.spyOn(fsSync, "mkdirSync");
     const open = vi.spyOn(fs, "open");
