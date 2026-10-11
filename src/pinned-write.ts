@@ -328,7 +328,7 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
       await writePinnedInput(handle, params.input, params.maxBytes, assertBeforeWrite);
       if (verifyPosixMode) assertPinnedWriteMode(handle.fd, 0o600, params.private);
       // Content writes may clear set-ID bits; finalize them through the owned fd.
-      await handle.chmod(params.mode);
+      fsSync.fchmodSync(handle.fd, params.mode);
       if (verifyPosixMode) assertPinnedWriteMode(handle.fd, params.mode, params.private);
       if (params.sync !== false) {
         if (params.strictFileSync) await handle.sync();
