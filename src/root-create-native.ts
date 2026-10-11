@@ -251,6 +251,36 @@ export function ensureNativeRootCurrent(root: RootContext): void {
   assertRootIdentityCurrentSync(root);
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath) return unavailable();
+  if (binding.verifyRootDirectory) {
+    const failure = binding.verifyRootDirectory(root.rootReal, root.rootIdentity.dev, root.rootIdentity.ino);
+    if (failure === null) return;
+    if (failure?.fallbackFd !== undefined && failure.fallbackFd !== null) {
+      const fd = failure.fallbackFd;
+      if (!Number.isInteger(fd) || fd < 0) throw new FsSafeError("helper-failed", "invalid root fallback descriptor");
+      using owner = { [Symbol.dispose]() { fs.closeSync(fd); } };
+      if (failure.errorCode || failure.closeErrorCode) throw new FsSafeError("helper-failed", "invalid root verification result");
+      ensureNativeRootCurrentLegacy(root, binding);
+      return;
+    }
+    const error = failure?.errorCode ? rootVerificationError(failure.errorCode, failure.errorMessage, failure.errorErrno) : undefined;
+    const closeError = failure?.closeErrorCode ? Object.assign(new Error(failure.closeErrorMessage), {
+      code: failure.closeErrorCode,
+      ...(typeof failure.closeErrorErrno === "number" ? { errno: failure.closeErrorErrno } : {}),
+    }) : undefined;
+    if (error && closeError) throw createSuppressedError(closeError, error, "root verification and close failed");
+    if (error || closeError) throw error ?? closeError;
+    throw new FsSafeError("helper-failed", "invalid root verification result");
+  }
+  ensureNativeRootCurrentLegacy(root, binding);
+}
+
+function rootVerificationError(code: string, message?: string, errno?: number): Error {
+  const error = Object.assign(new Error(message), { code, ...(typeof errno === "number" ? { errno } : {}) });
+  return code === "path-mismatch" || code === "OBSERVATION_REDIRECTED"
+    ? new FsSafeError("path-mismatch", "root identity changed during verification", { cause: error }) : error;
+}
+
+function ensureNativeRootCurrentLegacy(root: RootContext, binding: NativeBinding): void {
   using rootOwner = openExactNativeRootSync(binding, {
     rootPath: root.rootReal, rootIdentity: root.rootIdentity,
   });

@@ -1359,6 +1359,10 @@ jobs:
         if: runner.os != 'Linux'
         run: node scripts/native-call-budget-proof.mjs --operation tempWorkspace --resources-only
 
+      - name: Pin native Root verification resources
+        if: runner.os != 'Linux'
+        run: node scripts/native-call-budget-proof.mjs --operation ensureRoot --resources-only
+
       - name: Prove Linux copy offload EOF fallback
         if: runner.os == 'Linux'
         run: node scripts/copy-offload-eof-proof.mjs

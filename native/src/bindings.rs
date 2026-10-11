@@ -14,6 +14,7 @@ mod hash_reader;
 mod clone_tree;
 mod clone_metadata;
 mod directory_observation;
+mod root_verification;
 #[cfg(target_os = "linux")]
 mod clone_linux;
 #[cfg(unix)]
