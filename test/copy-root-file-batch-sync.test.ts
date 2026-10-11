@@ -181,3 +181,19 @@ it.runIf(process.platform !== "win32").each(["source", "destination"] as const)(
   expect(observations).toBe(2);
   expect(fs.existsSync(options.destination.absolutePath)).toBe(false);
 });
+
+it.runIf(process.platform === "win32").each(["source", "destination"] as const)("rejects a Windows stream in a warmed %s parent before filesystem access", async side => {
+  configureFsSafeNative({ mode: "off" });
+  const f = await fixture();
+  using batch = createRootFileCopyBatchSync();
+  using first = batch.copyFile(f.options("first"));
+  first.close();
+  const options = f.options("second");
+  options[side].absolutePath += ":stream";
+  const lstat = vi.spyOn(fs, "lstatSync");
+  expect(() => batch.copyFile(options)).toThrow(expect.objectContaining({
+    code: "invalid-path", details: { reason: "windows-path-alias" },
+  }));
+  expect(lstat.mock.calls.some(([name]) => String(name).includes(":stream"))).toBe(false);
+  expect(fs.existsSync(f.options("second").destination.absolutePath)).toBe(false);
+});

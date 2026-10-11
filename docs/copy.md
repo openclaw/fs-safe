@@ -302,15 +302,15 @@ for (const name of ["plugin.js", "package.json"]) {
 }
 ```
 
-On canonical POSIX paths, the batch retains root and ancestor directory
+On canonical POSIX and ordinary Windows drive paths, the batch retains root and ancestor directory
 identities across files. Every use still checks those identities without
 following directory symlinks; root and parent canonical paths are rechecked.
 Source opens, source and destination file identities, hardlink policy, exclusive
 creation, bounds, permissions, and cleanup are checked separately for every file.
 No source descriptor, file contents, or successful file-admission result is cached.
 An ancestor replacement rejects even when the leaf parent has not changed.
-Windows and noncanonical path spellings keep the full per-file resolver and its
-alias handling. There is no option to bypass validation.
+Windows namespaces, short-name spellings, trailing-dot/space components, and
+noncanonical path spellings keep the full per-file resolver and its alias handling. There is no option to bypass validation.
 
 Keep the batch scoped to one capture or materialization, with unchanged source
 and destination directory topology. `close()` and `Symbol.dispose` idempotently
@@ -321,9 +321,9 @@ identity-checked cleanup contract; the batch is not an atomic tree transaction
 or a coherent snapshot of concurrent edits. The single-file helper also reuses
 directory admissions for the duration of its one copy.
 
-Both APIs reuse the freshly checked canonical root during initial POSIX path
+Both APIs reuse the freshly checked canonical root during initial canonical path
 admission. This avoids repeatedly resolving every absolute root component while
 retaining lexical traversal and the before/after root and parent identity checks.
-Windows and root aliases retain the ordinary resolver, including its handling
+Windows namespace spellings and root aliases retain the ordinary resolver, including its handling
 of dot segments in symlink targets. No caller changes are needed for the
 single-file improvement.
