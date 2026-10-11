@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
-assert(["mkdir", "remove", "move"].includes(operation));
+assert(["mkdir", "remove", "move", "append", "openWritable"].includes(operation));
 if (process.argv.includes("--child")) {
   const { configureFsSafeNative, root } = await import("../dist/index.js");
   const { getNativeBinding } = await import("../dist/native.js");
@@ -21,24 +21,30 @@ if (process.argv.includes("--child")) {
     for (const mode of ["off", "require", "auto"]) {
       configureFsSafeNative({ mode });
       const prepare = () => { if (operation !== "mkdir") fs.writeFileSync(path.join(temporary, "child"), "payload"); };
-      const perform = () => operation === "mkdir" ? safe.mkdir("child") : operation === "remove"
-        ? safe.remove("child") : safe.move("child", "target", { overwrite: true });
-      const cleanup = () => {
+      const perform = () => {
+        if (operation === "mkdir") return safe.mkdir("child");
+        if (operation === "remove") return safe.remove("child");
+        if (operation === "append") return safe.append("child", "data", { durable: false });
+        if (operation === "openWritable") return safe.openWritable("child", { writeMode: "append" });
+        return safe.move("child", "target", { overwrite: true });
+      };
+      const cleanup = result => {
         if (operation === "mkdir") fs.rmdirSync(path.join(temporary, "child"));
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
+        if (operation === "openWritable") return result.handle.close();
       };
       prepare();
-      await perform();
-      cleanup();
+      const warm = await perform();
+      await cleanup(warm);
       const resources = {};
       const hook = createHook({ init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; } });
       prepare();
       fs.writeSync(2, `BUDGET_START ${operation} ${mode}\n`);
       hook.enable();
-      await perform();
+      const result = await perform();
       hook.disable();
       fs.writeSync(2, `BUDGET_END ${operation} ${mode}\n`);
-      cleanup();
+      await cleanup(result);
       console.log(JSON.stringify({ operation, mode, resources }));
     }
   } finally {
@@ -51,7 +57,7 @@ if (process.argv.includes("--child")) {
     const tracePath = path.join(temporary, "trace");
     const child = spawnSync(trace ? "strace" : process.execPath, trace ? [
       "-f", "-yy", "-s", "256", "-o", tracePath,
-      "-e", "trace=%file,read,write,close,fstat,fsync,fdatasync,getdents64,lseek,copy_file_range,sendfile,fcntl",
+      "-e", "trace=%file,read,write,pread64,pwrite64,readv,writev,preadv,pwritev,preadv2,pwritev2,close,fstat,fsync,fdatasync,getdents64,lseek,copy_file_range,sendfile,fcntl,ftruncate,fchmod,fchown,flock,ioctl",
       process.execPath, script, "--child", "--operation", operation,
     ] : [script, "--child", "--operation", operation], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
     assert.equal(child.status, 0, child.stderr || child.error?.message);
@@ -60,7 +66,7 @@ if (process.argv.includes("--child")) {
       let current;
       const counts = {};
       for (const line of fs.readFileSync(tracePath, "utf8").split("\n")) {
-        const marker = /BUDGET_(START|END) (?:mkdir|remove|move) (off|require|auto)/.exec(line);
+        const marker = /BUDGET_(START|END) (?:mkdir|remove|move|append|openWritable) (off|require|auto)/.exec(line);
         if (marker) {
           current = marker[1] === "START" ? marker[2] : undefined;
           if (current) counts[current] = {};
@@ -74,10 +80,15 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
-      const promises = { mkdir: [40, 19], remove: [32, 27], move: [90, 81] }[operation];
+      const promises = { mkdir: [40, 19], remove: [32, 27], move: [90, 81], append: [68, 62], openWritable: [38, 32] }[operation];
       const expectedResources = row.mode === "require"
         ? { PROMISE: promises[1] }
         : { PROMISE: promises[0], FSREQPROMISE: 1 };
+      if (operation === "append" || operation === "openWritable") {
+        expectedResources.FSREQPROMISE = operation === "append" ? 2 : 1;
+        expectedResources.FILEHANDLE = 1;
+        if (operation === "append") expectedResources.FILEHANDLECLOSEREQ = 1;
+      }
       assert.deepEqual(row.resources, expectedResources, `${row.mode} ${operation} async resources`);
       if (trace) {
         let expected = row.mode !== "require"
@@ -91,6 +102,12 @@ if (process.argv.includes("--child")) {
         if (operation === "move") expected = row.mode === "require"
           ? { statx: 33, readlink: 8, openat: 1, newfstatat: 1, renameat: 1, close: 1 }
           : { statx: 31, readlink: 14, rename: 1 };
+        if (operation === "append") expected = row.mode === "require"
+          ? { statx: 13, readlink: 6, openat: 1, write: 1, close: 1 }
+          : { statx: 14, readlink: 8, openat: 1, write: 1, close: 1 };
+        if (operation === "openWritable") expected = row.mode === "require"
+          ? { statx: 13, readlink: 6, openat: 1 }
+          : { statx: 14, readlink: 8, openat: 1 };
         // Linux arm64 exposes the *at variants for these libc pathname calls.
         const aliases = { mkdir: "mkdirat", readlink: "readlinkat", unlink: "unlinkat", rename: "renameat" };
         const architectureExpected = process.arch === "arm64"
