@@ -16,6 +16,7 @@ jobs:
           node-version: 24
       - uses: ./.github/actions/setup-windows-helper
       - uses: ./.github/actions/setup-archive-llvm
+      - run: rustup target add wasm32-unknown-unknown
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:windows-helper
       - run: pnpm build
