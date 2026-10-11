@@ -11,6 +11,7 @@ import { assertSynchronousCallbackResult, isMutationAuthorityError } from "./mut
 import type { FileIdentityStat } from "./file-identity.js";
 import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
 import { replayPinnedInput, writePinnedInput } from "./pinned-write-input.js";
+import { nativeStagedFileMode } from "./native-staged-file-metadata.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write-types.js";
 import { assertNativeStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
@@ -207,6 +208,9 @@ class NativeStagedFile implements StagedFile {
 
   #assertNamed(name: string, expectedMode: number): number {
     const fd = this.#file();
+    const mode = !this.#private ? nativeStagedFileMode(this.#owner.binding, this.#owner.parentFd,
+      name, fd, this.#verifyMode ? expectedMode : undefined) : undefined;
+    if (mode !== undefined) return mode;
     const stat = this.#owner.binding.stagedFileMatches(this.#owner.parentFd, name, fd)
       ? fs.fstatSync(fd, { bigint: true }) : undefined;
     if (!stat || stat.nlink !== 1n) {

@@ -129,10 +129,10 @@ if (process.argv.includes("--child")) {
           : { statx: 14, readlink: 8, openat: 1 };
         if (operation === "create") expected = row.mode === "off"
           ? { statx: 23, readlink: 13, openat: 1, write: 1, fchmod: 1, close: 1 }
-          : {statx: 24, readlink: 13, openat: 2, fcntl: 1, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat2: 1, close: 3};
+          : {statx: 20, readlink: 13, openat: 2, fcntl: 1, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat2: 1, close: 3};
         if (operation === "write") expected = row.mode === "off"
           ? { statx: 27, readlink: 16, openat: 2, close: 2, write: 1, fchmod: 1, rename: 1 }
-          : {statx: 25, readlink: 16, openat: 3, close: 6, fcntl: 3, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat: 1};
+          : {statx: 21, readlink: 16, openat: 3, close: 6, fcntl: 3, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat: 1};
         // Linux arm64 exposes the *at variants for these libc pathname calls.
         const aliases = { mkdir: "mkdirat", readlink: "readlinkat", unlink: "unlinkat", rename: "renameat" };
         const architectureExpected = process.arch === "arm64"

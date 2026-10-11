@@ -38,8 +38,19 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
     const observeMode = (name: string) => {
       beforeRenameModes.push(fsSync.lstatSync(path.join(directory, name)).mode & 0o777);
     };
+    const observePublished = (name: string) => {
+      if (name === "final" && firstPublishedFenceMode === undefined) {
+        firstPublishedFenceMode = fsSync.lstatSync(path.join(directory, "final")).mode & 0o777;
+      }
+    };
     __setNativeLoaderForTest(() => ({
       ...binding,
+      ...(binding.stagedFileMetadata ? {
+        stagedFileMetadata(parentFd: number, name: string, fileFd: number) {
+          observePublished(name);
+          return binding.stagedFileMetadata!(parentFd, name, fileFd);
+        },
+      } : {}),
       renameReplace(...args) {
         observeMode(args[1]);
         binding.renameReplace(...args);
@@ -49,9 +60,7 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
         binding.renameNoReplace(...args);
       },
       stagedFileMatches(...args) {
-        if (args[1] === "final" && firstPublishedFenceMode === undefined) {
-          firstPublishedFenceMode = fsSync.lstatSync(path.join(directory, "final")).mode & 0o777;
-        }
+        observePublished(args[1]);
         return binding.stagedFileMatches!(...args);
       },
     }));
