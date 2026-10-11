@@ -400,10 +400,12 @@ export async function resolvePinnedWriteTargetInRoot(
   }
   if (!overwrite) {
     try {
-      const existing = fsSync.statSync(resolved);
-      if (!existing.isFile() && !existing.isDirectory()) throw new FsSafeError("not-file", "not a file");
-      if (existing.isFile() && existing.nlink > 1) throw hardlinkedPathNotAllowedError();
-      throw new FsSafeError("already-exists", "file already exists");
+      const existing = fsSync.statSync(resolved, { throwIfNoEntry: false });
+      if (existing) {
+        if (!existing.isFile() && !existing.isDirectory()) throw new FsSafeError("not-file", "not a file");
+        if (existing.isFile() && existing.nlink > 1) throw hardlinkedPathNotAllowedError();
+        throw new FsSafeError("already-exists", "file already exists");
+      }
     } catch (error) {
       if (!isNotFoundPathError(error)) throw error;
     }

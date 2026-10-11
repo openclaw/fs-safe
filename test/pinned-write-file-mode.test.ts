@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +22,11 @@ describe.skipIf(process.platform === "win32")("fallback final file mode", () => 
       await fs.chown(rootPath, process.geteuid!(), process.getegid!());
       const target = path.join(rootPath, "target");
       const events: string[] = [];
+      const fchmod = fsSync.fchmodSync.bind(fsSync);
+      vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+        events.push("chmod");
+        fchmod(fd, mode);
+      });
       const open = fs.open.bind(fs);
       vi.spyOn(fs, "open").mockImplementation(async (...args) => {
         const handle = await open(...args);

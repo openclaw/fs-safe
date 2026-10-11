@@ -91,8 +91,9 @@ export async function runPinnedWriteNative(
     }
     if (params.overwrite === false) {
       try {
-        fsSync.lstatSync(path.join(parentPath, params.basename));
-        throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
+        if (fsSync.lstatSync(path.join(parentPath, params.basename), { throwIfNoEntry: false })) {
+          throw Object.assign(new Error("destination already exists"), { code: "EEXIST" });
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           throw error;
