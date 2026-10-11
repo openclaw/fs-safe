@@ -67,6 +67,8 @@ try {
           wrap(fs, "readdirSync", "readdirSync");
           wrap(fsp, "readdir", "readdir");
         }
+        // Keep garbage from a previous arm out of the next arm's measurement.
+        global.gc?.();
         let count;
         const iterations = observe || width === 50000 ? 1 : 5;
         let elapsed;
@@ -103,7 +105,7 @@ try {
     }
   }
   console.log(JSON.stringify({ node: process.version, platform: process.platform, arch: process.arch,
-    cpu: os.cpus()[0]?.model, filesystem: `0x${fs.statfsSync(tree).type.toString(16)}`, pairs,
+    explicitGc: Boolean(global.gc), cpu: os.cpus()[0]?.model, filesystem: `0x${fs.statfsSync(tree).type.toString(16)}`, pairs,
     baseDirectory, candidateDirectory, rows }, null, 2));
 } finally {
   fs.rmSync(tree, { recursive: true, force: true });
