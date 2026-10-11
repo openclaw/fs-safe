@@ -117,16 +117,30 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
 });
 
 describe("recursive removal observation budgets", () => {
-  let nativeRemoval = false;
-  try { nativeRemoval = process.platform !== "win32" && Boolean(__loadBundledNativeForTest()?.openRootRemovalDirectory); }
+  let nativeRemoval: ReturnType<typeof __loadBundledNativeForTest> | undefined;
+  try { if (process.platform !== "win32") nativeRemoval = __loadBundledNativeForTest(); }
   catch { /* The fallback budget runs without an installed binding. */ }
-  it.each(["off", ...(nativeRemoval ? ["require"] : [])] as const)("keeps every %s directory fence while avoiding repeated BigIntStats allocation", async mode => {
+  it.each(["off", ...(nativeRemoval?.openRootRemovalDirectory ? ["require"] : [])] as const)("keeps every %s directory fence while avoiding repeated BigIntStats allocation", async mode => {
     configureFsSafeNative({ mode });
     const directory = await tempRoot("fs-safe-remove-call-budget-");
     const safe = await root(directory);
     const tree = path.join(safe.rootReal, "tree");
     await fs.mkdir(tree);
     await fs.writeFile(path.join(tree, "leaf"), "value");
+    if (mode === "require") {
+      const parent = fsSync.openSync(safe.rootReal, fsSync.constants.O_RDONLY | (fsSync.constants.O_DIRECTORY ?? 0));
+      let available: boolean;
+      try { available = nativeRemoval?.ownedTreeRemovalAvailable?.(parent) === true; }
+      finally { fsSync.closeSync(parent); }
+      // The export can exist even when the kernel cannot confine recursion.
+      if (!available) {
+        try {
+          await expect(safe.remove("tree", { recursive: true })).rejects.toMatchObject({ code: "helper-unavailable" });
+          expect(await fs.readFile(path.join(tree, "leaf"), "utf8")).toBe("value");
+        } finally { configureFsSafeNative({ mode: "auto" }); }
+        return;
+      }
+    }
     const boundaries = new Set([safe.rootReal, tree]);
     const observations = { exact: 0, numeric: 0, canonical: 0 };
     const lstat = fsSync.lstatSync.bind(fsSync);
