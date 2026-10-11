@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Windows portable permission and ACL inspection uses the prebuilt security helper without launching PowerShell, preserving the structured executor contract and .NET ACL semantics.
+
 ## 0.26.1 - 2026-10-11
 
 ### Highlights

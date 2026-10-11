@@ -294,7 +294,7 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
     return summarizeWindowsOwnerAcl({ error: String(error), errorCause: error });
   }
   let owner: WindowsOwnerSummary | undefined;
-  if (process.platform === "win32" && opts?.env === undefined && opts?.exec === undefined) {
+  if (process.platform === "win32" && opts?.exec === undefined) {
     const native = getNativeBinding("readOwnerAndDacl");
     const stat = native && await safeStat(targetPath);
     // Keep the named-query behavior for leaf links; the native reader follows them.

@@ -487,7 +487,10 @@ under `native/windows-security-helper/` targets .NET Framework 4.0 using
 Microsoft's `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3 and its committed
 NuGet lock file; builds restore in locked mode. CI compares Ubuntu and Windows
 SHA-256 hashes to enforce byte-identical output. The main package includes only
-the exe; the two C# source files remain available in the repository.
+the exe; the C# source files remain available in the repository. The separate
+`windows-owner-query.cs` compatibility query preserves the former PowerShell
+query's .NET API sequence, normalization, link behavior, and locality rules;
+the raw security bridge remains independent.
 
 Build output is copied beside the source modules for Vitest and beside the
 compiled modules in `dist/`; both use the same module-relative filename.

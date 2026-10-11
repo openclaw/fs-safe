@@ -18,5 +18,6 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
     <Compile Include="../../src/windows-security-bridge.cs" />
     <Compile Include="../../src/windows-security-helper.cs" />
+    <Compile Include="../../src/windows-owner-query.cs" />
   </ItemGroup>
 </Project>

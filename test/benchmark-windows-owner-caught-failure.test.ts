@@ -72,7 +72,7 @@ async function inspectPermissionFixture(
   options?: { platform?: string; exec?: (command: string, args: string[]) => Promise<unknown> },
 ) {
   if (options?.platform === "win32") {
-    await options.exec?.("powershell.exe", []);
+    await options.exec?.("windows-security-helper.exe", []);
     return {
       ...permissionResult("windows-acl"),
       ownerSid: "s-1-5-21-42",
