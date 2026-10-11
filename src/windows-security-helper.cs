@@ -11,13 +11,20 @@ public static class FsSafeWindowsHelper {
   static readonly Encoding Utf8 = new UTF8Encoding(false, true);
 
   public static int Main(string[] args) {
-    Console.OutputEncoding = new UTF8Encoding(false);
-    if(args.Length!=1 || !Array.Exists(new[]{"path","paths","descriptor","create","directory","protect-file","verify-file"},
-      operation => string.Equals(operation,args[0],StringComparison.OrdinalIgnoreCase)))
-      throw new ArgumentException("Invalid Windows security operation");
-    string json=string.Equals(args[0],"paths",StringComparison.OrdinalIgnoreCase) ? Paths() : Json(FsSafeWindowsBridge.Execute(args[0],Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_PATH")));
-    Console.Write(json);
-    return 0;
+    // An unhandled exception can raise a Windows Error Reporting prompt that holds the
+    // child until the caller's deadline; exit nonzero so the caller fails closed at once.
+    try {
+      Console.OutputEncoding = new UTF8Encoding(false);
+      if(args.Length!=1 || !Array.Exists(new[]{"path","paths","descriptor","create","directory","protect-file","verify-file"},
+        operation => string.Equals(operation,args[0],StringComparison.OrdinalIgnoreCase)))
+        throw new ArgumentException("Invalid Windows security operation");
+      string json=string.Equals(args[0],"paths",StringComparison.OrdinalIgnoreCase) ? Paths() : Json(FsSafeWindowsBridge.Execute(args[0],Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_PATH")));
+      Console.Write(json);
+      return 0;
+    } catch(Exception error) {
+      try { Console.Error.Write(error.GetType().Name+": "+error.Message); } catch(Exception) {}
+      return 1;
+    }
   }
 
   static Dictionary<string,object> Failure(string code,string message) {

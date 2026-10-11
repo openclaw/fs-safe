@@ -6,7 +6,7 @@ import { runWindowsSecurityScript } from "./helpers/windows-security-script.js";
 
 const SCRIPT = fs.readFileSync(new URL("../src/windows-security-helper.cs", import.meta.url), "utf8");
 const SERIALIZE_ROW = '      string rowJson=Json(new Dictionary<string,object>{{"path",path},{"security",reply["result"]}});';
-const WRITE_SUCCESS = "    Console.Write(json);";
+const WRITE_SUCCESS = "      Console.Write(json);";
 const { tempRoot } = useTempDirs();
 
 // The real production C# loop and serializer run against observable facts.
@@ -85,7 +85,7 @@ async function runBatch(input: string, options: {
       "$expected=Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject ([FsSafeWindowsBridge]::Expected([string[]]$oracle.paths)) -Depth 8 -Compress",
       "$expectedBytes=[Console]::OutputEncoding.GetByteCount($expected)",
       "$cap=$expectedBytes+[int][Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_OFFSET')",
-      '$null=[FsSafeWindowsHelper]::Main(@("paths"))',
+      '$exitCode=[FsSafeWindowsHelper]::Main(@("paths")); if ($exitCode -ne 0) { exit $exitCode }',
       "$trace=[ordered]@{paths=@([FsSafeWindowsBridge]::Paths());expected=$expected;expectedBytes=$expectedBytes;limit=$cap}",
       "[IO.File]::WriteAllText([Environment]::GetEnvironmentVariable('FS_SAFE_BATCH_TRACE'),(Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject $trace -Depth 4 -Compress),[Text.UTF8Encoding]::new($false))",
     ], {
