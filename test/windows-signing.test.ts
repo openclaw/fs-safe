@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,6 +33,17 @@ function signingProof() {
 }
 
 describe("Windows release signing", () => {
+  it("records and compares build hashes before installing any npm dependencies", () => {
+    const directory = workspace();
+    const script = join(directory, "windows-signing.mjs");
+    copyFileSync("scripts/windows-signing.mjs", script);
+    const reference = buildInputs(directory);
+    execFileSync(process.execPath, [script, "record", reference], { cwd: directory });
+    execFileSync(process.execPath, [script, "prepare", directory, reference], { cwd: directory });
+    expect(JSON.parse(readFileSync(join(directory, "unsigned-windows-sha256.json"), "utf8")))
+      .toHaveProperty("windows-security-helper.exe", sha256(readFileSync(reference)));
+  });
+
   it("binds inputs to build hashes and records the reproducible unsigned helper hash", () => {
     const directory = workspace();
     const reference = buildInputs(directory);

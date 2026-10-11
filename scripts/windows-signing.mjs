@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const windowsSigner = "CN=OpenClaw Foundation, O=OpenClaw Foundation, L=Mill Valley, S=California, C=US";
@@ -67,7 +67,7 @@ export async function verifyWindowsPackage(manifest, packageName, tarball) {
   assert.equal(actual, manifest.files[expected.file].signedSha256, `${expected.file}: packed bytes differ from the verified signed binary`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const [command, ...args] = process.argv.slice(2);
   if (command === "record" && args.length === 1) recordBuild(args[0]);
   else if (command === "prepare" && args.length === 2) prepareSigning(...args);
