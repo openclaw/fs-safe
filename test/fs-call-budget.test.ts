@@ -1,5 +1,6 @@
 import { AsyncLocalStorage, createHook } from "node:async_hooks";
 import fsSync from "node:fs";
+import { createHook } from "node:async_hooks";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import { createFileSync } from "../src/create.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
 import { readLocalFileSafely, root } from "../src/root.js";
+import { tempWorkspace, tempWorkspaceSync } from "../src/temp.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 // Measured fallback calls on macOS; allow two calls for platform variation,
@@ -248,6 +250,45 @@ describe("synchronous copy admission budgets", () => {
     } finally {
       counting = false;
       for (const undo of restore.reverse()) undo();
+      configureFsSafeNative({ mode: "auto" });
+    }
+  });
+});
+
+describe("empty temp workspace cleanup call budgets", () => {
+  it.each(["async", "sync"] as const)("holds %s cleanup to its platform call budget", async (variant) => {
+    configureFsSafeNative({ mode: "off" });
+    const rootDir = await tempRoot("fs-safe-temp-cleanup-budget-");
+    const options = { rootDir, prefix: "workspace-" };
+    const workspace = variant === "async" ? await tempWorkspace(options) : tempWorkspaceSync(options);
+    const named = vi.spyOn(fsSync, "lstatSync");
+    const descriptor = vi.spyOn(fsSync, "fstatSync");
+    const canonical = vi.spyOn(fsSync.realpathSync, "native");
+    const rmdir = vi.spyOn(fs, "rmdir");
+    const rmdirSync = vi.spyOn(fsSync, "rmdirSync");
+    const rm = vi.spyOn(fs, "rm");
+    const rmSync = vi.spyOn(fsSync, "rmSync");
+    const requests: string[] = [];
+    const hook = createHook({ init: (_id, type) => {
+      if (type.startsWith("FSREQ")) requests.push(type);
+    } });
+    try {
+      hook.enable();
+      expect(await workspace.cleanup()).toBe("removed");
+      hook.disable();
+      expect(named).toHaveBeenCalledTimes(10);
+      expect(descriptor).toHaveBeenCalledTimes(7);
+      expect(canonical).toHaveBeenCalledTimes(7);
+      const windows = process.platform === "win32";
+      expect(rmdir).toHaveBeenCalledTimes(!windows && variant === "async" ? 1 : 0);
+      expect(rmdirSync).toHaveBeenCalledTimes(!windows && variant === "sync" ? 1 : 0);
+      expect(rm).toHaveBeenCalledTimes(windows && variant === "async" ? 1 : 0);
+      expect(rmSync).toHaveBeenCalledTimes(windows && variant === "sync" ? 1 : 0);
+      expect(requests).toEqual(variant === "sync" ? []
+        : windows ? ["FSREQCALLBACK", "FSREQCALLBACK", "FSREQCALLBACK"] : ["FSREQPROMISE"]);
+    } finally {
+      hook.disable();
+      vi.restoreAllMocks();
       configureFsSafeNative({ mode: "auto" });
     }
   });

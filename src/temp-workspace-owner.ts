@@ -6,7 +6,7 @@ import { FsSafeError } from "./errors.js";
 import { assertNoWindowsPathAlias, resolvePathPreservingWindowsRoot } from "./windows-path-alias.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
-import type { NativeOwnedTreeRemovalResult } from "./native-binding.js";
+import type { NativeEmptyTreeRemovalResult } from "./native-binding.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
 import {
   openTempWorkspaceCleanupParent,
@@ -21,7 +21,7 @@ import { cachedNoReplaceUnavailable, noReplaceUnavailable, rememberNoReplaceUnav
 export type TempWorkspaceCleanupResult = "removed" | "missing" | "identity-mismatch" | "indeterminate";
 export type TempWorkspaceCleanupSafety = "compatible" | "require-bounded";
 
-type Quarantine = { name: string; path: string; nativeRemoval: boolean };
+type Quarantine = { name: string; path: string; nativeRemoval: boolean; tryEmpty: boolean };
 type CleanupCapabilityPhase = "new" | "ready" | "sealed" | "failed" | "closed";
 
 function isNativeCleanupBinding(
@@ -216,6 +216,7 @@ export class TempWorkspaceCleanupOwner {
   readonly #identity: FileIdentityStat;
   readonly #capability: TempWorkspaceCleanupCapability;
   readonly #directory: RetainedChildDirectory | undefined;
+  readonly #creationActivity: Readonly<{ mtimeNs: bigint; ctimeNs: bigint }> | undefined;
   #closed = false;
   #running = false;
   #exitInterrupted = false;
@@ -232,6 +233,7 @@ export class TempWorkspaceCleanupOwner {
     this.#identity = child.identity;
     this.#capability = capability;
     this.#directory = child.directory;
+    this.#creationActivity = child.creationActivity;
   }
 
   #repeat(): TempWorkspaceCleanupResult {
@@ -329,7 +331,12 @@ export class TempWorkspaceCleanupOwner {
         !sameFileIdentityForCleanup(quarantined, this.#identity)) {
         return "indeterminate";
       }
-      return { name, path: quarantinePath, nativeRemoval };
+      // Timestamps are only a performance hint. Every identity fence still
+      // runs, and even an unchanged/coarse timestamp must pass OS empty removal.
+      const tryEmpty = this.#creationActivity !== undefined &&
+        current.mtimeNs === this.#creationActivity.mtimeNs &&
+        current.ctimeNs === this.#creationActivity.ctimeNs;
+      return { name, path: quarantinePath, nativeRemoval, tryEmpty };
     } catch (error) {
       if (error instanceof FsSafeError && error.code === "helper-unavailable") throw error;
       // A failed rename can still have committed on a remote filesystem.
@@ -346,7 +353,7 @@ export class TempWorkspaceCleanupOwner {
     this.#capability.assertCurrent();
   }
 
-  #mapRemoval(result: NativeOwnedTreeRemovalResult): TempWorkspaceCleanupResult {
+  #mapRemoval(result: NativeEmptyTreeRemovalResult): TempWorkspaceCleanupResult {
     if (result.errorCode) {
       const error = Object.assign(new Error(result.errorMessage ?? "native owned-tree cleanup failed"), {
         code: result.errorCode,
@@ -357,10 +364,22 @@ export class TempWorkspaceCleanupOwner {
     return result.outcome === "removed" ? "removed" : "indeterminate";
   }
 
+  #tryRemoveEmptyNative(quarantine: Quarantine): TempWorkspaceCleanupResult | undefined {
+    if (!quarantine.tryEmpty) return undefined;
+    const binding = this.#capability.binding!;
+    const result = binding.tryRemoveEmptyOwnedTree?.(
+      this.#capability.parent!.fd, quarantine.name, this.#directory!.fd,
+    );
+    if (!result || (!result.errorCode && result.outcome === "not-empty")) return undefined;
+    return this.#mapRemoval(result);
+  }
+
   async #remove(quarantine: Quarantine): Promise<TempWorkspaceCleanupResult> {
     if (quarantine.nativeRemoval) {
       const beforeNativeRemoval = getFsSafeTestHooks()?.beforeTempWorkspaceNativeRemoval;
       if (beforeNativeRemoval) await beforeNativeRemoval(quarantine.path);
+      const emptyResult = this.#tryRemoveEmptyNative(quarantine);
+      if (emptyResult !== undefined) return emptyResult;
       return this.#mapRemoval(await this.#capability.binding!.removeOwnedTree!(
         this.#capability.parent!.fd,
         quarantine.name,
@@ -373,7 +392,21 @@ export class TempWorkspaceCleanupOwner {
       return "indeterminate";
     }
     // Removal failures propagate unchanged; only authority uncertainty becomes a receipt.
-    await fs.rm(quarantine.path, { recursive: true, force: true });
+    const tryEmpty = quarantine.tryEmpty && process.platform !== "win32";
+    try {
+      if (tryEmpty) await fs.rmdir(quarantine.path);
+      else await fs.rm(quarantine.path, { recursive: true, force: true });
+    } catch (error) {
+      if (!tryEmpty) throw error;
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code !== "ENOENT") {
+        if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "EPERM") throw error;
+        // rmdir yielded before reporting a nonempty directory. Re-admit the
+        // quarantine before allowing pathname-recursive removal to follow it.
+        try { this.#assertQuarantine(quarantine); } catch { return "indeterminate"; }
+        await fs.rm(quarantine.path, { recursive: true, force: true });
+      }
+    }
     try {
       this.#capability.assertCurrent();
       return "removed";
@@ -385,6 +418,8 @@ export class TempWorkspaceCleanupOwner {
   #removeSync(quarantine: Quarantine): TempWorkspaceCleanupResult {
     if (quarantine.nativeRemoval) {
       getFsSafeTestHooks()?.beforeTempWorkspaceNativeRemovalSync?.(quarantine.path);
+      const emptyResult = this.#tryRemoveEmptyNative(quarantine);
+      if (emptyResult !== undefined) return emptyResult;
       return this.#mapRemoval(this.#capability.binding!.removeOwnedTreeSync!(
         this.#capability.parent!.fd,
         quarantine.name,
@@ -396,7 +431,19 @@ export class TempWorkspaceCleanupOwner {
     } catch {
       return "indeterminate";
     }
-    fsSync.rmSync(quarantine.path, { recursive: true, force: true });
+    const tryEmpty = quarantine.tryEmpty && process.platform !== "win32";
+    try {
+      if (tryEmpty) fsSync.rmdirSync(quarantine.path);
+      else fsSync.rmSync(quarantine.path, { recursive: true, force: true });
+    } catch (error) {
+      if (!tryEmpty) throw error;
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code !== "ENOENT") {
+        if (code !== "ENOTEMPTY" && code !== "EEXIST" && code !== "EPERM") throw error;
+        try { this.#assertQuarantine(quarantine); } catch { return "indeterminate"; }
+        fsSync.rmSync(quarantine.path, { recursive: true, force: true });
+      }
+    }
     try {
       this.#capability.assertCurrent();
       return "removed";

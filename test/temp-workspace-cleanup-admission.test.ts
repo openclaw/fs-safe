@@ -193,14 +193,24 @@ describe.each(["async", "sync"] as const)("%s compatible cleanup receipt reuse",
       return rename(from, to);
     });
     if (variant === "async") {
-      const rm = fs.rm.bind(fs);
+      const recursive = fs.rm.bind(fs);
       vi.spyOn(fs, "rm").mockImplementation(async (...args) => {
+        removeObservation = numericNameObservations;
+        return await recursive(...args);
+      });
+      const rm = fs.rmdir.bind(fs);
+      vi.spyOn(fs, "rmdir").mockImplementation(async (...args) => {
         removeObservation = numericNameObservations;
         return await rm(...args);
       });
     } else {
-      const rm = fsSync.rmSync.bind(fsSync);
+      const recursive = fsSync.rmSync.bind(fsSync);
       vi.spyOn(fsSync, "rmSync").mockImplementation((...args) => {
+        removeObservation = numericNameObservations;
+        return recursive(...args);
+      });
+      const rm = fsSync.rmdirSync.bind(fsSync);
+      vi.spyOn(fsSync, "rmdirSync").mockImplementation((...args) => {
         removeObservation = numericNameObservations;
         return rm(...args);
       });
@@ -228,14 +238,24 @@ describe.each(["async", "sync"] as const)("%s compatible cleanup receipt reuse",
       fsSync.writeFileSync(path.join(rootDir, "keep.txt"), "replacement");
     };
     if (variant === "async") {
-      const rm = fs.rm.bind(fs);
+      const recursive = fs.rm.bind(fs);
       vi.spyOn(fs, "rm").mockImplementationOnce(async (...args) => {
+        await recursive(...args);
+        replaceParent();
+      });
+      const rm = fs.rmdir.bind(fs);
+      vi.spyOn(fs, "rmdir").mockImplementationOnce(async (...args) => {
         await rm(...args);
         replaceParent();
       });
     } else {
-      const rm = fsSync.rmSync.bind(fsSync);
+      const recursive = fsSync.rmSync.bind(fsSync);
       vi.spyOn(fsSync, "rmSync").mockImplementationOnce((...args) => {
+        recursive(...args);
+        replaceParent();
+      });
+      const rm = fsSync.rmdirSync.bind(fsSync);
+      vi.spyOn(fsSync, "rmdirSync").mockImplementationOnce((...args) => {
         rm(...args);
         replaceParent();
       });

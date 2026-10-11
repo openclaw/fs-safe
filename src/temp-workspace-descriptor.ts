@@ -126,6 +126,7 @@ export class TempWorkspaceRetainedChild {
   readonly #dir: string;
   readonly #identity: Readonly<{ dev: bigint; ino: bigint }>;
   readonly #numericIdentity: TempWorkspaceNumericIdentity | undefined;
+  readonly #creationActivity: Readonly<{ mtimeNs: bigint; ctimeNs: bigint }> | undefined;
   #access: DirectoryDescriptorAccess;
   #fd: number | undefined;
   #modeLease = false;
@@ -135,7 +136,7 @@ export class TempWorkspaceRetainedChild {
 
   private constructor(
     dir: string,
-    identity: FileIdentityStat,
+    identity: FileIdentityStat & Partial<Pick<fsSync.BigIntStats, "mtimeNs" | "ctimeNs">>,
     descriptor: OpenedDirectory,
     initialReceipt?: Readonly<fsSync.BigIntStats>,
   ) {
@@ -144,6 +145,8 @@ export class TempWorkspaceRetainedChild {
     }
     this.#dir = dir;
     this.#identity = Object.freeze({ dev: identity.dev, ino: identity.ino });
+    this.#creationActivity = typeof identity.mtimeNs === "bigint" && typeof identity.ctimeNs === "bigint"
+      ? Object.freeze({ mtimeNs: identity.mtimeNs, ctimeNs: identity.ctimeNs }) : undefined;
     this.#numericIdentity = TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY
       ? projectTempWorkspaceNumericIdentity(this.#identity)
       : undefined;
@@ -413,6 +416,7 @@ export class TempWorkspaceRetainedChild {
     dir: string;
     identity: Readonly<{ dev: bigint; ino: bigint }>;
     directory: RetainedChildDirectory | undefined;
+    creationActivity: Readonly<{ mtimeNs: bigint; ctimeNs: bigint }> | undefined;
   } {
     this.#assertModeLeaseReleased();
     this.discardInitialReceipt();
@@ -433,9 +437,9 @@ export class TempWorkspaceRetainedChild {
     }
     if (!retainDescriptor) {
       fsSync.closeSync(fd);
-      return { dir: this.#dir, identity: this.#identity, directory: undefined };
+      return { dir: this.#dir, identity: this.#identity, directory: undefined, creationActivity: this.#creationActivity };
     }
-    return { dir: this.#dir, identity: this.#identity, directory: { fd } };
+    return { dir: this.#dir, identity: this.#identity, directory: { fd }, creationActivity: this.#creationActivity };
   }
 
   close(): void {
