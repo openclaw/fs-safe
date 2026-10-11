@@ -151,9 +151,14 @@ export async function movePathNative(
     const rootParent = sourceParentRelativePath === "" ? sourceParent
       : targetParentRelativePath === "" ? targetParent : undefined;
     if (rootParent) {
-      // This exact retained Root guard also checks its canonical pathname.
-      try { assertSyncDirectoryGuard(rootParent.guard); }
-      catch (error) { throw rootPathChangedError(error instanceof Error ? error : undefined); }
+      // Borrowing Root already checked this guard in the same synchronous phase.
+      const borrowedRootCurrent = sourceParent === targetParent &&
+        sourceParentRelativePath === "" && !beforeMutation &&
+        params.denyMutations === undefined && params.assertBeforeMutation === undefined;
+      if (!borrowedRootCurrent) {
+        try { assertSyncDirectoryGuard(rootParent.guard); }
+        catch (error) { throw rootPathChangedError(error instanceof Error ? error : undefined); }
+      }
     } else {
       assertRootIdentityCurrentSync(root);
     }
