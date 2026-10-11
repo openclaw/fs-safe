@@ -161,7 +161,10 @@ for (const route of routes) {
         for (const method of ["statSync", "lstatSync"] as const) {
           const original = fsSync[method].bind(fsSync);
           vi.spyOn(fsSync, method).mockImplementation(((...args: Parameters<typeof fsSync.statSync>) =>
-            project(original(...args), currentInode())) as typeof fsSync.statSync);
+            {
+              const observed = original(...args);
+              return observed === undefined ? undefined : project(observed, currentInode());
+            }) as typeof fsSync.statSync);
         }
         const open = fs.open.bind(fs);
         vi.spyOn(fs, "open").mockImplementation(async (...args) => {

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
@@ -26,6 +27,14 @@ describe("fallback mode-failure cleanup ownership", () => {
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);
       if (!(await handle.stat()).isFile()) return handle;
+      const fchmod = fsSync.fchmodSync.bind(fsSync);
+      vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+        if (fd !== handle.fd || fsSync.fstatSync(fd).size === 0) return fchmod(fd, mode);
+        replacedPath = String(args[0]);
+        fsSync.renameSync(replacedPath, saved);
+        fsSync.writeFileSync(replacedPath, "replacement", { mode: 0o600 });
+        throw failure;
+      });
       const chmod = handle.chmod.bind(handle);
       vi.spyOn(handle, "chmod").mockImplementation(async (mode) => {
         if ((await handle.stat()).size === 0) return await chmod(mode);
