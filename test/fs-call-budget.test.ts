@@ -1,4 +1,4 @@
-import { createHook } from "node:async_hooks";
+import { execFileSync } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -149,23 +149,26 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
   });
 });
 
-it("keeps async hash admission free of metadata promise adapters", async () => {
-  configureFsSafeNative({ mode: "off" });
+it.skipIf(Boolean(process.versions.bun))("keeps async hash admission free of metadata promise adapters", async () => {
   const directory = await tempRoot("fs-safe-hash-promises-");
   const file = path.join(directory, "input");
   await fs.writeFile(file, "hash budget");
-  await sha256File(file);
-  const resources: Record<string, number> = {};
-  const hook = createHook({
-    init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; },
-  });
-  try {
+  // Coverage and test-runner activity create unrelated promises in this process.
+  const resources = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+    import { createHook } from "node:async_hooks";
+    import { sha256File } from "./dist/file-hash.js";
+    import { configureFsSafeNative } from "./dist/config.js";
+    configureFsSafeNative({ mode: "off" });
+    await sha256File(process.argv[1]);
+    const resources = {};
+    const hook = createHook({
+      init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; },
+    });
     hook.enable();
-    await sha256File(file);
-  } finally {
+    await sha256File(process.argv[1]);
     hook.disable();
-    configureFsSafeNative({ mode: "auto" });
-  }
+    console.log(JSON.stringify(resources));
+  `, file], { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8" })) as Record<string, number>;
   // Previously 47: all three exact metadata observations now stay synchronous.
   expect(resources.PROMISE).toBeLessThanOrEqual(35);
   expect(resources.FSREQPROMISE).toBe(3);
