@@ -87,14 +87,35 @@ if (process.argv.includes("--child")) {
       if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
       const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [82, 73], append: [66, 62], openWritable: [36, 32] }[operation];
       const publication = operation === "create" || operation === "write";
+      const publicationResources = {
+        create: {
+          off: {
+            PROMISE: 102,
+            FSREQPROMISE: 2,
+            FILEHANDLE: 1,
+            FILEHANDLECLOSEREQ: 1
+          },
+          require: {
+            PROMISE: 88
+          }
+        },
+        write: {
+          off: {
+            PROMISE: 143,
+            FSREQPROMISE: 4,
+            FILEHANDLE: 2,
+            FILEHANDLECLOSEREQ: 2
+          },
+          require: {
+            PROMISE: 117,
+            FSREQPROMISE: 1,
+            FILEHANDLE: 1,
+            FILEHANDLECLOSEREQ: 1
+          }
+        }
+      };
       const expectedResources = publication
-        ? operation === "create"
-          ? row.mode === "off"
-            ? { PROMISE: 104, FSREQPROMISE: 2, FILEHANDLE: 1, FILEHANDLECLOSEREQ: 1 }
-            : { PROMISE: 88 }
-          : row.mode === "off"
-            ? { PROMISE: 152, FSREQPROMISE: 5, FILEHANDLE: 2, FILEHANDLECLOSEREQ: 2 }
-            : { PROMISE: 117, FSREQPROMISE: 1, FILEHANDLE: 1, FILEHANDLECLOSEREQ: 1 }
+        ? publicationResources[operation][row.mode === "off" ? "off" : "require"]
         : (operation === "mkdir" || operation === "ensureRoot")
           ? { PROMISE: promises[row.mode === "require" ? 1 : 0] }
         : row.mode === "require"
