@@ -1,4 +1,5 @@
 name: Windows creation diagnostic
+# Same-run base/candidate comparison with the final helper entry point.
 on:
   push:
     branches: [perf/windows-security-helper-transport]

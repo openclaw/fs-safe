@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const project = "native/windows-security-helper/WindowsSecurityHelper.csproj";
 const probe = spawnSync("dotnet", ["--version"], { cwd: root, encoding: "utf8" });
-if (probe.error?.code === "ENOENT" && process.argv.includes("--if-available") && process.platform !== "win32") {
+if ((probe.error?.code === "ENOENT" || (!probe.error && probe.status !== 0)) &&
+  process.argv.includes("--if-available") && process.platform !== "win32") {
   const staged = new URL("../src/windows-security-helper.exe", import.meta.url);
   if (existsSync(staged)) {
     mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });

@@ -12,9 +12,10 @@ public static class FsSafeWindowsHelper {
 
   public static int Main(string[] args) {
     Console.OutputEncoding = new UTF8Encoding(false);
-    if(args.Length!=1 || Array.IndexOf(new[]{"path","paths","descriptor","create","directory","protect-file","verify-file"},args[0])<0)
+    if(args.Length!=1 || !Array.Exists(new[]{"path","paths","descriptor","create","directory","protect-file","verify-file"},
+      operation => string.Equals(operation,args[0],StringComparison.OrdinalIgnoreCase)))
       throw new ArgumentException("Invalid Windows security operation");
-    string json=args[0]=="paths" ? Paths() : Json(FsSafeWindowsBridge.Execute(args[0],Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_PATH")));
+    string json=string.Equals(args[0],"paths",StringComparison.OrdinalIgnoreCase) ? Paths() : Json(FsSafeWindowsBridge.Execute(args[0],Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_PATH")));
     Console.Write(json);
     return 0;
   }
