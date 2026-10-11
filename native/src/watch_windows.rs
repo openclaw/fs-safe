@@ -1,6 +1,6 @@
 use super::{Directory, Notify, Pending, SharedPending};
 use crate::windows::{
-    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, win_error,
+    OwnedHandle, handle_identity_and_size, handle_is_reparse, open_existing_handle, wide_absolute_path, win_error,
 };
 use crate::{ExactFileIdentity, NativeResult, native_error};
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use windows_sys::Win32::System::WindowsProgramming::{DRIVE_NO_ROOT_DIR, DRIVE_RE
 const NETWORK_CAPACITY: usize = 64 * 1024;
 const LOCAL_CAPACITY: usize = 1024 * 1024;
 fn buffer_capacity(root: &str) -> usize {
-    let root: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+    let Ok(root) = wide_absolute_path(root) else { return NETWORK_CAPACITY; };
     let mut volume = vec![0u16; 32768];
     if unsafe { GetVolumePathNameW(root.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) } == 0 {
         return NETWORK_CAPACITY;
@@ -130,7 +130,7 @@ fn open_root(root: &str, identity: ExactFileIdentity) -> NativeResult<OwnedHandl
     if root.contains('\0') {
         return Err(native_error("EINVAL", "invalid watch root"));
     }
-    let root: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+    let root = wide_absolute_path(root)?;
     let root = open_existing_handle(
         &root,
         FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,

@@ -108,6 +108,10 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   use `GetSecurityInfo`; private directories receive their protected DACL in
   an exclusive, handle-relative `NtCreateFile` call. Their created handles remain
   open through ACL and pathname-association checks and own any failure cleanup.
+  Admitted, resolved absolute paths use extended-length Win32 spelling for
+  pathname calls, including internal staging and public-name verification;
+  relative child names remain relative to retained handles. Long paths retain
+  the same alias validation, ACL checks, identity fences and cleanup ownership.
   N-API descriptors cross into and out of
   this layer only through the host executable's paired libuv descriptor bridge;
   missing or partial exports fail with `ENOTSUP` instead of trying a raw HANDLE

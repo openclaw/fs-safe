@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix Windows private directory and file creation beyond MAX_PATH, including internal staging and pathname verification, while preserving ACL, alias, identity and cleanup checks.
+
 ## 0.26.0 - 2026-10-10
 
 ### Highlights

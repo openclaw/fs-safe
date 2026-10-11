@@ -51,6 +51,31 @@ const O_EXCL: i32 = 0x0400;
 
 pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 
+/// Encode an admitted, fully resolved path for a Win32 pathname API. Relative
+/// names belong to the retained-handle NT operations, never this conversion.
+pub(crate) fn wide_absolute_path(path: &str) -> NativeResult<Vec<u16>> {
+    if path.contains('\0') {
+        return Err(native_error("EINVAL", "Windows path contains a NUL byte"));
+    }
+    let normalized = path.replace('/', "\\");
+    if normalized.split('\\').any(|part| part == "." || part == "..") {
+        return Err(native_error("EINVAL", "Win32 path must be fully resolved before encoding"));
+    }
+    let bytes = normalized.as_bytes();
+    let opened = if normalized.starts_with(r"\\?\") {
+        normalized
+    } else if normalized.starts_with(r"\\.\") {
+        return Err(native_error("EINVAL", "Windows device paths are not filesystem paths"));
+    } else if let Some(unc) = normalized.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{unc}")
+    } else if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && &bytes[1..3] == b":\\" {
+        format!(r"\\?\{normalized}")
+    } else {
+        return Err(native_error("EINVAL", "Win32 path must be fully resolved before encoding"));
+    };
+    Ok(opened.encode_utf16().chain(Some(0)).collect())
+}
+
 pub(crate) fn open_existing_handle(
     path: &[u16],
     access: u32,
@@ -1357,6 +1382,24 @@ mod tests {
     use crate::test_support::{directory, temp_path, unique_path_in};
 
     use super::*;
+
+    #[test]
+    fn absolute_path_encoding_preserves_drive_and_unc_namespaces() {
+        for (input, expected) in [
+            (r"C:\parent\file", r"\\?\C:\parent\file"),
+            ("C:/parent/file", r"\\?\C:\parent\file"),
+            (r"\\server\share\file", r"\\?\UNC\server\share\file"),
+            (r"\\?\C:\parent\file", r"\\?\C:\parent\file"),
+            (r"\\?\UNC\server\share\file", r"\\?\UNC\server\share\file"),
+        ] {
+            let wide = wide_absolute_path(input).unwrap();
+            assert_eq!(wide.last(), Some(&0));
+            assert_eq!(String::from_utf16(&wide[..wide.len() - 1]).unwrap(), expected);
+        }
+        for path in [r"relative\file", r"C:file", r"\file", r"C:\parent\..\file", r"\\.\C:\file", "C:\\file\0suffix"] {
+            assert!(wide_absolute_path(path).is_err(), "{path:?}");
+        }
+    }
 
     #[test]
     #[cfg(target_pointer_width = "64")]
