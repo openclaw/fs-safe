@@ -8,7 +8,7 @@ import path from "node:path";
 import { configureFsSafeNative, getFsSafeNativeConfig } from "@openclaw/fs-safe/config";
 import { createPrivateDirectory, readOwnerAndDacl } from "@openclaw/fs-safe/permissions";
 import { readSecureFile } from "@openclaw/fs-safe/secure-file";
-import { assertInstalledScriptPath, nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
+import { assertInstalledHelperPath, nativeBinaryLoaded, windowsSecurityFixturePhases } from "./consumer-proof-metadata.mjs";
 
 // This file is copied into disposable consumers and uses only public subpaths.
 assert.equal(process.platform, "win32");
@@ -78,7 +78,7 @@ assert.deepEqual(Object.keys(expected.windowsSecurity.assetsSha256).sort(), scri
 const scriptAssets = Object.fromEntries(scriptAssetNames.map((name) =>
   [name, hash(inside(path.join(rootDirectory, "dist", name)))]));
 assert.deepEqual(scriptAssets, expected.windowsSecurity.assetsSha256);
-const bridgeScript = inside(path.join(rootDirectory, "dist", "windows-security-helper.exe"));
+const bridgeHelper = inside(path.join(rootDirectory, "dist", "windows-security-helper.exe"));
 const probeSha256 = hash(new URL(import.meta.url));
 const metadataHelperSha256 = hash(new URL("./consumer-proof-metadata.mjs", import.meta.url));
 assert.equal(probeSha256, expected.windowsSecurity.probeSha256);
@@ -135,7 +135,7 @@ const onWarning = (warning) => warnings.push({ code: warning.code ?? null, name:
   feature: warningFeatures.find((feature) => warning.message.includes(feature)) ?? null });
 process.on("warning", onWarning);
 function observedCommandArgs(file, args) {
-  assertInstalledScriptPath(file, bridgeScript);
+  assertInstalledHelperPath(file, bridgeHelper);
   return args;
 }
 childProcess.spawn = (...args) => {

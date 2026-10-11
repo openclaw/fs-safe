@@ -22,10 +22,10 @@ export function nativeBinaryLoaded(binary, sharedObjects = process.report.getRep
     .some((file) => realpathSync.native(file) === expected);
 }
 
-export function assertInstalledScriptPath(observed, verifiedCanonicalScript) {
+export function assertInstalledHelperPath(observed, verifiedCanonicalHelper) {
   // Windows short names can reach the same asset through a different spelling.
-  assert.equal(realpathSync.native(observed), verifiedCanonicalScript,
-    "production helper must execute the verified installed script");
+  assert.equal(realpathSync.native(observed), verifiedCanonicalHelper,
+    "production helper must execute the verified installed asset");
 }
 
 const windowsFixtureSteps = new Set([

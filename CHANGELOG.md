@@ -6,6 +6,8 @@
 
 ### Performance
 
+- Reduce portable Windows private-creation probe time from 65.1 s to 13.3 s (x64 median) with a prebuilt .NET Framework helper, retaining every inherited-handle check.
+
 - Speed up native `Root.mkdir()` for direct children while retaining descriptor-relative creation and exact root/child identity checks.
 - Speed up native removal and moves by retaining Root descriptors synchronously and reusing them for direct children, preserving policy, identity and no-replace checks.
 
