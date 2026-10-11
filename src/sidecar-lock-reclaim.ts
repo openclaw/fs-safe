@@ -324,7 +324,7 @@ export type SidecarReclaimGuard = {
 export async function sidecarReclaimGuardExists(pathname: string, lockRoot?: Root): Promise<boolean> {
   try {
     if (lockRoot) await lockRoot.stat(relativeSidecarLockPath(lockRoot, pathname));
-    else fsSync.lstatSync(pathname);
+    else if (fsSync.lstatSync(pathname, { throwIfNoEntry: false }) === undefined) return false;
     return true;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;

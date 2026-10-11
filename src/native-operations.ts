@@ -1,5 +1,4 @@
 import fsSync, { type BigIntStats } from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
@@ -59,7 +58,7 @@ export async function createNativeExclusiveFile(
   const closeFd = captureNativeFdClose(binding);
   const parentPath = path.dirname(targetPath);
   const basename = path.basename(targetPath);
-  const parent = await fs.open(
+  const parentFd = fsSync.openSync(
     parentPath,
     fsSync.constants.O_RDONLY |
       (typeof fsSync.constants.O_DIRECTORY === "number" ? fsSync.constants.O_DIRECTORY : 0),
@@ -70,7 +69,7 @@ export async function createNativeExclusiveFile(
     let opened: ReturnType<NonNullable<NativeBinding["openBeneath"]>>;
     try {
       opened = binding.openBeneath(
-        parent.fd,
+        parentFd,
         basename,
         nativeOpenFlags(
           fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
@@ -120,13 +119,13 @@ export async function createNativeExclusiveFile(
       }
       removeNativeCreatedFileIfStillPinned({
         parentPath,
-        parentFd: parent.fd,
+        parentFd,
         basename,
         created,
       });
     }
     throw error;
   } finally {
-    await parent.close().catch(() => undefined);
+    try { fsSync.closeSync(parentFd); } catch { /* Preserve the creation outcome. */ }
   }
 }
