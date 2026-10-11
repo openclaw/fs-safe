@@ -15,6 +15,7 @@ it.each(modes)("bounds a 200,000-entry directory to eleven reads (%s)", async mo
   await fs.writeFile(path.join(directory, "sample"), "value");
   const sample = fsSync.readdirSync(directory, { withFileTypes: true })[0]!;
   const stat = fsSync.lstatSync(path.join(directory, "sample"));
+  const exactStat = fsSync.lstatSync(path.join(directory, "sample"), { bigint: true });
   const capability = await root(directory);
   const count = 200_000;
   const name = (index: number) => `file-${String(count - index).padStart(6, "0")}`;
@@ -50,7 +51,8 @@ it.each(modes)("bounds a 200,000-entry directory to eleven reads (%s)", async mo
   const syncRead = vi.spyOn(fsSync, "readdirSync").mockImplementation(eager as never);
   const lstat = fsSync.lstatSync.bind(fsSync);
   vi.spyOn(fsSync, "lstatSync").mockImplementation(((candidate, options) =>
-    path.dirname(String(candidate)) === directory ? stat : lstat(candidate, options as never)) as typeof fsSync.lstatSync);
+    path.dirname(String(candidate)) === directory
+      ? (options?.bigint ? exactStat : stat) : lstat(candidate, options as never)) as typeof fsSync.lstatSync);
   const before = process.memoryUsage().heapUsed;
   let peak = before;
   const sampleHeap = () => { peak = Math.max(peak, process.memoryUsage().heapUsed); return true; };

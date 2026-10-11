@@ -104,7 +104,7 @@ describe.each([
     expect(opened).not.toHaveProperty("fd");
     expect(openSync).toHaveBeenCalledTimes(1);
     const fd = openSync.mock.results[0]!.value as number;
-    expect(fstatSync).toHaveBeenCalledExactlyOnceWith(fd);
+    expect(fstatSync).toHaveBeenCalledExactlyOnceWith(fd, { bigint: true });
     expect(closeSync).toHaveBeenCalledExactlyOnceWith(fd);
     expect(readFileSync).not.toHaveBeenCalled();
     expect(() => fsSync.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));

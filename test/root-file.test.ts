@@ -96,6 +96,7 @@ describe("root-file", () => {
       path: "/real/plugin.json",
       fd: 7,
       stat,
+      identity: { dev: 1n, ino: 2n },
     });
 
     const opened = openRootFileSync({
@@ -131,6 +132,7 @@ describe("root-file", () => {
       path: "/real/plugin.json",
       fd: 7,
       stat,
+      exactIdentity: { dev: 1n, ino: 2n },
       rootRealPath: "/real/root",
     });
   });

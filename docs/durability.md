@@ -77,15 +77,16 @@ otherwise usable directory. A failed preflight identity check never syncs the
 descriptor; a replacement discovered after sync still rejects the operation.
 
 `DirectoryReceipt.identity` remains a numeric Node `Stats` object for metadata
-compatibility, projected from the same exact observation as the private
-identity. Library-created receipts and their identity objects retain a
+compatibility. Its `exactIdentity` companion contains immutable bigint `dev`
+and `ino`, projected from the same observation. Library-created receipts and their identity objects retain a
 private exact snapshot; mutating their public fields cannot change the
 directory authorized by that snapshot. Each returned receipt owns a mutable
 numeric metadata copy. Later admissions retain the original metadata snapshot
 even if advisory fields such as mode or timestamps were edited; changed paths
 or identity components reject. Pass the receipt or its original
-identity object through to later operations to retain this evidence. A copied
-or reconstructed numeric identity is accepted only when both components are
+identity object through to later operations to retain this evidence. When copying
+a receipt, preserve `exactIdentity`; pass it to `expectedExistingIdentity`. A copied
+numeric identity without its exact companion is accepted only when both components are
 safe integers and, on Windows, nonzero. Rounded or unknown caller identities
 fail with `path-mismatch` rather than authorizing a different directory.
 
@@ -154,6 +155,22 @@ Pass `expectedSourceIdentity` from `fs.stat(path, { bigint: true })` (or
 identity and reject with `FsSafeError("path-mismatch")` before publication;
 safe integer Numbers remain supported. Internal source fences use bigint stats.
 
+Every successful publication returns `exactIdentity: Readonly<{ dev: bigint;
+ino: bigint }>` alongside the unchanged `identity: Stats` metadata view. Both
+come from one final bigint `fstat` of the retained descriptor. Pass
+`result.exactIdentity` back as `expectedSourceIdentity` when publishing that file
+again. Passing the whole publication result is also supported: its explicit
+`exactIdentity` takes precedence. `sameFileIdentity()` and
+`copyRootFileSync().expectedSourceIdentity` accept that same receipt shape.
+
+On Windows, the Number view may round an NTFS file ID; it must not be used for
+identity checks. Do not re-stat a pathname to reconstruct an earlier publication
+receipt: that can observe a replacement. After a failed publication,
+`PublishFileExclusiveFailureDetails.exactTargetIdentity` identifies the created
+target when known; `targetIdentity` remains the legacy numeric view. Retain the
+exact failure field when inspecting a preserved target. Unknown or mismatching
+identities still fail closed.
+
 Trusted relative source and target paths are resolved to absolute paths before
 authority checks. On Windows, ordinary drive-relative operands are anchored at
 entry before namespace-alias admission. A caller-supplied `parentReceipt` must
@@ -176,7 +193,7 @@ try {
     onSyncFailure: "preserve",
     parentReceipt: backupDirectory,
   });
-  recordDurableBackup(result.identity, result.directorySync);
+  recordDurableBackup(result.exactIdentity, result.directorySync);
 } catch (error) {
   if (
     error instanceof FsSafeError &&

@@ -1,3 +1,4 @@
+import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import { nativeMoveNoReplace } from "./native-move-fallback.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import { createHash } from "node:crypto";
@@ -18,6 +19,8 @@ import {
   sameFileIdentityForCleanup,
   hasSafeFileIdentity,
   type FileIdentityStat,
+  type FileIdentityInput,
+  identityFromReceipt,
 } from "./file-identity.js";
 import { syncFileBestEffortSync } from "./file-sync.js";
 import { getNativeBinding, requireNativeBinding, selectNativeBinding, type NativeBinding } from "./native.js";
@@ -45,6 +48,7 @@ export type PublishFileExclusiveResult = {
   /** Linux auto fallback; exclusive and identity-checked, but not crash-atomic. */
   fallback?: "link-unlink";
   identity: Stats;
+  exactIdentity: ExactFileIdentity;
   directorySync: DirectorySyncOutcome;
 };
 
@@ -254,7 +258,7 @@ async function syncPublishedParent(params: {
     await getFsSafeTestHooks()?.beforePublishDirectorySync?.(
       params.method,
       params.targetPath,
-      params.failure.targetIdentity!,
+      params.failure.exactTargetIdentity!,
     );
     // PinnedDirectory.sync() revalidates descriptor/path identity immediately
     // before and after fsync; keep that check inside the shared sync boundary.
@@ -268,13 +272,14 @@ async function syncPublishedParent(params: {
 export async function publishFileExclusive(params: {
   sourcePath: string;
   targetPath: string;
-  expectedSourceIdentity?: FileIdentityStat;
+  expectedSourceIdentity?: FileIdentityInput;
   strategy: PublishFileExclusiveStrategy;
   onSyncFailure?: PublishFileExclusiveSyncFailurePolicy;
   parentReceipt?: DirectoryReceipt<Stats | BigIntStats>;
 }): Promise<PublishFileExclusiveResult> {
   const expectedInput = params.expectedSourceIdentity;
-  const expectedSourceIdentity = expectedInput && { dev: expectedInput.dev, ino: expectedInput.ino };
+  const expected = expectedInput && identityFromReceipt(expectedInput);
+  const expectedSourceIdentity = expected && { dev: expected.dev, ino: expected.ino };
   if (expectedSourceIdentity && !hasSafeFileIdentity(expectedSourceIdentity)) {
     throw new FsSafeError("path-mismatch", "publication source identity is not exact; pass fs.stat(path, { bigint: true })");
   }
@@ -339,7 +344,9 @@ export async function publishFileExclusive(params: {
       if (method === "rename-noreplace") assertRenamedSourceAbsent(sourcePath);
       else assertSourceCurrent();
       assertPublishedTargetCurrent(targetPath, identity, "publication target changed during directory sync");
-      return { method, ...(failure.fallback ? { fallback: failure.fallback } : {}), identity: fsSync.fstatSync(handle.fd), directorySync };
+      const observed = fsSync.fstatSync(handle.fd, { bigint: true });
+      if (!sameFileIdentity(observed, identity)) throw new FsSafeError("path-mismatch", "publication descriptor changed");
+      return { method, ...(failure.fallback ? { fallback: failure.fallback } : {}), identity: numberStats(observed), exactIdentity: exactFileIdentity(observed), directorySync };
     };
     await parent.assertCurrent();
     assertSourceCurrent();

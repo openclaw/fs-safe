@@ -1,3 +1,4 @@
+import { exactFileIdentity, type ExactFileIdentity } from "./exact-identity.js";
 import { FsSafeError } from "./errors.js";
 import type { FileIdentityStat } from "./file-identity.js";
 
@@ -19,6 +20,7 @@ export type PublishFileExclusiveFailureDetails = {
   phase: PublishFileExclusiveFailurePhase;
   targetCreated: boolean;
   targetIdentity?: FileIdentityStat;
+  exactTargetIdentity?: ExactFileIdentity;
   cleanup: PublishFileExclusiveCleanup;
   directorySync?: PublishFileExclusiveDirectorySyncFailure;
   fallback?: "link-unlink";
@@ -30,6 +32,7 @@ export type PublishFailureState = {
   phase: PublishFileExclusiveFailurePhase;
   targetCreated: boolean;
   targetIdentity?: FileIdentityStat;
+  exactTargetIdentity?: ExactFileIdentity;
   targetCleanupIdentity?: FileIdentityStat;
   preserveTarget: boolean;
   directorySync?: PublishFileExclusiveDirectorySyncFailure;
@@ -43,6 +46,7 @@ export function rememberCreatedTarget(
   phase: PublishFileExclusiveFailurePhase,
 ): void {
   state.targetCreated = true;
+  state.exactTargetIdentity = exactFileIdentity(identity);
   state.targetIdentity = { dev: Number(identity.dev), ino: Number(identity.ino) };
   state.targetCleanupIdentity = { dev: identity.dev, ino: identity.ino };
   state.phase = phase;
@@ -57,6 +61,7 @@ export function publicationFailure(
   const details: PublishFileExclusiveFailureDetails = {
     phase: state.phase,
     targetCreated: state.targetCreated,
+    ...(state.exactTargetIdentity ? { exactTargetIdentity: state.exactTargetIdentity } : {}),
     ...(state.targetIdentity ? { targetIdentity: state.targetIdentity } : {}),
     ...(state.directorySync ? { directorySync: state.directorySync } : {}),
     ...(state.fallback ? { fallback: state.fallback, publication: "published" as const, sourceRemoval: state.sourceRemoval } : {}),

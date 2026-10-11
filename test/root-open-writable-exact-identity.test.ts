@@ -144,7 +144,7 @@ describe("Root.openWritable exact identity admission", () => {
     },
   );
 
-  it("keeps the ordinary descriptor-stat count while returning numeric Stats", async () => {
+  it("derives numeric Stats from the single exact descriptor observation", async () => {
     const { target, capability } = await existingFile();
     const fstat = fsSync.fstatSync.bind(fsSync);
     const precisions: string[] = [];
@@ -155,7 +155,7 @@ describe("Root.openWritable exact identity admission", () => {
     }) as typeof fsSync.fstatSync);
 
     const opened = await capability.openWritable("target", { writeMode: "update" });
-    expect(precisions).toEqual(["number", "bigint"]);
+    expect(precisions).toEqual(["bigint"]);
     expect(typeof opened.stat.ino).toBe("number");
     await opened.handle.close();
   });

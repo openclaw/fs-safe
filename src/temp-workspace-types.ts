@@ -1,3 +1,4 @@
+import type { ExactFileIdentity } from "./exact-identity.js";
 import type { FileStore, FileStoreSync } from "./file-store.js";
 import type { TempPathIdentityReceipt } from "./temp-cleanup.js";
 import type { TempWorkspaceCleanupResult, TempWorkspaceCleanupSafety } from "./temp-workspace-owner.js";
@@ -13,6 +14,7 @@ export type TempWorkspaceOptions = {
 export type TempWorkspace = {
   dir: string;
   identity: TempPathIdentityReceipt;
+  exactIdentity?: ExactFileIdentity;
   store: FileStore;
   path(fileName: string): string;
   write(fileName: string, data: string | Uint8Array): Promise<string>;
@@ -31,6 +33,7 @@ export type TempWorkspace = {
 export type TempWorkspaceSync = {
   dir: string;
   identity: TempPathIdentityReceipt;
+  exactIdentity?: ExactFileIdentity;
   store: FileStoreSync;
   path(fileName: string): string;
   write(fileName: string, data: string | Uint8Array): string;

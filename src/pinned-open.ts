@@ -1,3 +1,4 @@
+import { numberStats } from "./exact-identity.js";
 import fs from "node:fs";
 import { isUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
@@ -78,7 +79,6 @@ export function openPinnedFileSync(params: {
       return stat;
     });
     fd = ioFs.openSync(realPath, openReadFlags);
-    const openedStat = ioFs.fstatSync(fd);
     const identity = inspectFileIdentitySync(() => {
       const stat = ioFs.fstatSync(fd!, { bigint: true });
       assertAllowedStat(stat, allowedType, statPolicy);
@@ -95,6 +95,7 @@ export function openPinnedFileSync(params: {
       descriptorIdentity: identity,
     }) ?? realPath;
 
+    const openedStat = numberStats(identity);
     const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat, identity };
     fd = null;
     return opened;

@@ -1,3 +1,4 @@
+import { numberStats } from "./exact-identity.js";
 import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -81,24 +82,26 @@ export async function openLocalFileDescriptor(
 
   try {
     if (fsSafeTestHooks?.afterOpen) await fsSafeTestHooks.afterOpen(filePath, handle);
-    const stat = fsSync.fstatSync(handle.fd);
-    if (!stat.isFile()) {
-      throw new FsSafeError("not-file", "not a file");
-    }
     // Keep numeric Stats for the public receipt, never for identity verification.
     let openedIdentity: BigIntStats | undefined;
     let identity: BigIntStats;
     try {
       identity = inspectFileIdentitySync(
-        () => (openedIdentity = fsSync.fstatSync(handle.fd, { bigint: true })),
+        () => {
+          openedIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
+          if (!openedIdentity.isFile()) throw new FsSafeError("not-file", "not a file");
+          return openedIdentity;
+        },
         preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined,
       );
     } catch (error) {
-      if ([0, 1].includes(stat.nlink)) {
+      if (openedIdentity && [0n, 1n].includes(openedIdentity.nlink)) {
         await recordPreOpenFileChange(error, handle, filePath, preOpenStat, openedIdentity);
       }
       throw error;
     }
+    if (!identity.isFile()) throw new FsSafeError("not-file", "not a file");
+    const stat = numberStats(identity);
     if (options?.hardlinks === "reject" && stat.nlink > 1) {
       throw hardlinkedPathNotAllowedError();
     }

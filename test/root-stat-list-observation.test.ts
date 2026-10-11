@@ -50,7 +50,7 @@ it.skipIf(process.platform === "win32")("uses ordinary metadata within unchanged
     await operation.run();
     expect(lstat).toHaveBeenCalledTimes(operation.lstats);
     expect(realpath).toHaveBeenCalledTimes(operation.canonical);
-    expect(lstat.mock.calls.every(call => call.length === 1)).toBe(true);
+    expect(lstat.mock.calls.every(call => call.length === 1 || call[1]?.bigint === true)).toBe(true);
   }
 });
 

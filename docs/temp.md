@@ -765,3 +765,11 @@ it("processes a fixture", async () => {
 - [Atomic writes](atomic.md) — `replaceDirectoryAtomic` for whole-directory swaps.
 - [`root()`](root.md) — `fs.copyIn(rel, sourceAbs)` for moving files from a temp into a `Root`.
 - [File lock](sidecar-lock.md) — when many processes share a temp tree.
+
+## Exact workspace receipts
+
+`tempWorkspace()` and `tempWorkspaceSync()` return `exactIdentity` alongside
+their unchanged legacy `identity`. Preserve the bigint companion for identity
+comparisons. `tempFile().identity` already uses bigint `dev` and `ino` and needs
+no conversion. Cleanup retains its own exact authority; editing or discarding a
+public receipt does not rebind cleanup to another file or directory.

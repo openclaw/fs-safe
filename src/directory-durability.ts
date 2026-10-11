@@ -1,10 +1,11 @@
+import type { ExactFileIdentity, ExactIdentityReceipt } from "./exact-identity.js";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { ensureAbsoluteDirectory } from "./absolute-path.js";
 import { FsSafeError } from "./errors.js";
-import type { FileIdentityStat } from "./file-identity.js";
+import type { FileIdentityInput } from "./file-identity.js";
 import {
   assertDirectoryReceiptCurrentSync,
   copyRetainedDirectoryReceipt,
@@ -25,14 +26,17 @@ export type DirectoryReceipt<T extends Stats | BigIntStats = Stats> = {
   path: string;
   realPath: string;
   identity: T;
+  exactIdentity?: ExactFileIdentity;
 };
+
+export type ExactDirectoryReceipt = DirectoryReceipt & ExactIdentityReceipt;
 
 export type DurableDirectoryReceipt = DirectoryReceipt & {
   parentSync: DirectorySyncOutcome | { status: "not-needed" };
 };
 
 export type PinnedDirectory = {
-  readonly receipt: DirectoryReceipt;
+  readonly receipt: ExactDirectoryReceipt;
   assertCurrent(): Promise<void>;
   sync(): Promise<DirectorySyncOutcome>;
   close(): Promise<void>;
@@ -42,7 +46,7 @@ export type EnsureDurableDirectoryOptions = {
   directoryPath: string;
   label?: string;
   mode?: number;
-  expectedExistingIdentity?: FileIdentityStat;
+  expectedExistingIdentity?: FileIdentityInput;
   create?: (directoryPath: string) => Promise<void>;
 };
 
@@ -114,7 +118,7 @@ async function assertOpenDirectoryCurrent(
 }
 
 class PinnedDirectoryImpl implements PinnedDirectory {
-  readonly receipt: DirectoryReceipt;
+  readonly receipt: ExactDirectoryReceipt;
   readonly #authority: DirectoryReceipt;
   readonly #handle: FileHandle;
   readonly #label: string;
@@ -288,7 +292,7 @@ async function findExistingAncestorReceipt(
 
 export async function ensureDurableDirectory(
   options: EnsureDurableDirectoryOptions,
-): Promise<DurableDirectoryReceipt> {
+): Promise<DurableDirectoryReceipt & ExactIdentityReceipt> {
   const label = options.label ?? "directory";
   const requestedDirectoryPath = options.directoryPath;
   assertNoWindowsPathAlias(

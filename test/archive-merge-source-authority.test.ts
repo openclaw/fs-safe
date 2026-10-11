@@ -125,9 +125,9 @@ describe("archive merge source authority", () => {
 
     await expect(fs.readFile(value.target, "utf8")).resolves.toBe("ADMITTED");
     await expect(fs.readFile(value.source, "utf8")).resolves.toBe("ADMITTED");
-    // Two opening observations and the existing
+    // One exact opening observation and the existing
     // before-copy, before-publication and after-publication descriptor checks.
-    expect(observed.result()).toEqual({ opens: 1, closes: 1, bytes: 8, stats: 5, fd: -1 });
+    expect(observed.result()).toEqual({ opens: 1, closes: 1, bytes: 8, stats: 4, fd: -1 });
   });
 
   it.each([1, 4, 8])("bounds whole-merge source metadata work at depth %s", async (depth) => {
