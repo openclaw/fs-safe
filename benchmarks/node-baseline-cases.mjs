@@ -26,6 +26,20 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   const bytes = (result) => assert.deepEqual(result, data);
   const content = (name, expected = data) => () => assert.deepEqual(fs.readFileSync(p(name)), expected);
   const absent = (name) => () => assert.equal(fs.existsSync(p(name)), false);
+  const selectMove = ["move", "move-separate-parents", "move-no-clobber"].some(name => name.includes(filter));
+  const retainMoveTargets = process.platform === "win32" && selectMove;
+  if (retainMoveTargets) fs.mkdirSync(p("move-retired"));
+  let moveSequence = 0;
+  const prepareMove = (from, to, overwrite) => {
+    // Repeated NTFS record reuse can flip Node's signed bigint inode projection.
+    // Keep retired targets during setup; timed paths still have one link each.
+    if (retainMoveTargets && fs.existsSync(p(to))) {
+      fs.renameSync(p(to), p(`move-retired/${moveSequence++}`));
+    }
+    fs.writeFileSync(p(from), data);
+    if (overwrite) fs.writeFileSync(p(to), data);
+    else fs.rmSync(p(to), { force: true });
+  };
   const readCaveat = "Node reads a trusted path; fs-safe additionally validates confinement and file identity.";
   add("read", () => root.readBytes("input"), () => fsp.readFile(p("input")), readCaveat, { verify: bytes });
   add("read-sync", () => api.readRegularFileSync({ filePath: p("input") }).buffer,
@@ -84,8 +98,25 @@ export async function nodeBaselineCases(api, workspace, filter = "") {
   add("remove", () => root.remove("remove"), () => fsp.unlink(p("remove")),
     "Single regular file; unlink versus guarded removal.", { before: () => fs.writeFileSync(p("remove"), data), verify: absent("remove") });
   add("move", () => root.move("from", "to", { overwrite: true }), () => fsp.rename(p("from"), p("to")),
-    "Same-directory overwrite rename versus guarded move.", { before: () => { fs.writeFileSync(p("from"), data); fs.writeFileSync(p("to"), data); },
+    "Same-directory overwrite rename versus guarded move.", { before: () => prepareMove("from", "to", true),
       verify: () => { absent("from")(); content("to")(); } });
+  if (selectMove) {
+    fs.mkdirSync(p("move-source"));
+    fs.mkdirSync(p("move-target"));
+    add("move-separate-parents", () => root.move("move-source/from", "move-target/to", { overwrite: true }),
+      () => fsp.rename(p("move-source/from"), p("move-target/to")),
+      "Overwrite move between distinct parents; guards must remain independent.", {
+        before: () => prepareMove("move-source/from", "move-target/to", true),
+        verify: () => { absent("move-source/from")(); content("move-target/to")(); },
+      });
+    if (api.getFsSafeNativeConfig().mode !== "off") {
+      add("move-no-clobber", () => root.move("from", "to"), () => fsp.rename(p("from"), p("to")),
+        "Absent destination; fs-safe preserves atomic no-replace while raw Node rename can overwrite a racing destination.", {
+          before: () => prepareMove("from", "to", false),
+          verify: () => { absent("from")(); content("to")(); },
+        });
+    }
+  }
   for (const sync of [false, true]) {
     add(`mkdir${sync ? "-sync" : ""}`, sync ? () => api.createDirectorySync(p("new-dir")) : () => root.mkdir("new-dir"),
       sync ? () => fs.mkdirSync(p("new-dir")) : () => fsp.mkdir(p("new-dir")),

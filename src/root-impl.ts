@@ -1357,10 +1357,13 @@ async function movePathFallback(
 
   const guardOptions = { bigint: sourceIdentity !== undefined };
   const sourceParentGuard = await createAsyncDirectoryGuard(path.dirname(source.resolved), guardOptions);
-  const targetParentGuard = await createNearestExistingDirectoryGuard(target.rootReal, path.dirname(target.resolved), guardOptions);
-  await getFsSafeTestHooks()?.beforeRootFallbackMutation?.("move", target.resolved);
+  const targetParentGuard = path.dirname(target.resolved) === sourceParentGuard.dir
+    ? sourceParentGuard
+    : await createNearestExistingDirectoryGuard(target.rootReal, path.dirname(target.resolved), guardOptions);
+  const beforeMutation = getFsSafeTestHooks()?.beforeRootFallbackMutation;
+  if (beforeMutation) await beforeMutation("move", target.resolved);
   await assertAsyncDirectoryGuard(sourceParentGuard);
-  await assertAsyncDirectoryGuard(targetParentGuard);
+  if (targetParentGuard !== sourceParentGuard) await assertAsyncDirectoryGuard(targetParentGuard);
   try {
     assertFinalSymlinkRejected(source.resolved, params.mutationSymlinks !== undefined);
     assertFinalSymlinkRejected(target.resolved, params.mutationSymlinks !== undefined);
@@ -1368,7 +1371,7 @@ async function movePathFallback(
     if (sourceIdentity) {
       assertRootIdentityCurrentSync(root);
       assertSyncDirectoryGuard(sourceParentGuard);
-      assertSyncDirectoryGuard(targetParentGuard);
+      if (targetParentGuard !== sourceParentGuard) assertSyncDirectoryGuard(targetParentGuard);
       for (const [route, selected, expected, policy] of [
         [originalRoutes![0]!, source.resolved, pinnedSource.canonicalPath, PATH_ALIAS_POLICIES.strict],
         [originalRoutes![1]!, target.resolved, pinnedTarget.canonicalPath, PATH_ALIAS_POLICIES.unlinkTarget],
@@ -1398,7 +1401,7 @@ async function movePathFallback(
   }
   try {
     await assertAsyncDirectoryGuard(sourceParentGuard);
-    await assertAsyncDirectoryGuard(targetParentGuard);
+    if (targetParentGuard !== sourceParentGuard) await assertAsyncDirectoryGuard(targetParentGuard);
   } catch (error) {
     throw normalizePinnedPathError(error);
   }
