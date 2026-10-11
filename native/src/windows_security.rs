@@ -257,8 +257,8 @@ mod windows {
         // Preserve relative security-inspection paths by resolving before encoding.
         let resolved = std::path::absolute(value)
             .map_err(|error| native_error("EINVAL", format!("resolve Windows path: {error}")))?;
-        crate::windows::wide_absolute_path(resolved.to_str()
-            .ok_or_else(|| native_error("EINVAL", "Windows path is not valid UTF-8"))?)
+        Ok(crate::windows::wide_absolute_path(resolved.to_str()
+            .ok_or_else(|| native_error("EINVAL", "Windows path is not valid UTF-8"))?))
     }
 
     fn win_error(code: u32, operation: &str) -> crate::NativeError {

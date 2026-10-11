@@ -33,7 +33,7 @@ pub(super) fn path_parts(path: &str) -> NativeResult<Vec<&str>> {
 }
 
 pub(super) fn fixed_drive(path: &str) -> NativeResult<()> {
-    let wide = wide_absolute_path(path)?;
+    let wide = wide_absolute_path(path);
     // Fixed local drives only; network, removable and namespace aliases are unsupported.
     if unsafe { GetDriveTypeW(wide.as_ptr()) } != 3 /* DRIVE_FIXED */ {
         return Err(native_error("ENOTSUP", "retained files require a fixed local NTFS drive"));
@@ -43,7 +43,7 @@ pub(super) fn fixed_drive(path: &str) -> NativeResult<()> {
 
 pub(super) fn root(path: &str) -> NativeResult<OwnedHandle> {
     fixed_drive(path)?;
-    let wide = wide_absolute_path(path)?;
+    let wide = wide_absolute_path(path);
     let handle = unsafe { CreateFileW(wide.as_ptr(), FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
         FILE_SHARE_READ | FILE_SHARE_WRITE, null(), OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null_mut()) };

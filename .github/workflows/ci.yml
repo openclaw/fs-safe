@@ -1238,9 +1238,13 @@ jobs:
         run: |
           node test/fixtures/windows-long-path-proof.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/fixtures/windows-native-path-spelling.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/windows-private-repro-proof.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun test/fixtures/windows-long-path-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun test/fixtures/windows-native-path-spelling.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun scripts/windows-private-repro-proof.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -1675,6 +1679,8 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: |
           node test/fixtures/windows-long-path-proof.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/fixtures/windows-native-path-spelling.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/windows-private-repro-proof.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

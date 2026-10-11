@@ -287,7 +287,10 @@ mod platform {
     }
 
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
-        let path = wide_absolute_path(path)?;
+        if path.contains('\0') {
+            return Err(native_error("EINVAL", "directory path contains a NUL byte"));
+        }
+        let path = wide_absolute_path(path);
         let handle = open_existing_handle(
             &path,
             FILE_READ_ATTRIBUTES,

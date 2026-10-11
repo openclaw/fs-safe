@@ -101,7 +101,7 @@ fn a_reader_can_outlive_settled_namespace_absence() {
 #[test]
 fn writable_mapping_without_writer_handle_is_refused() {
     let f = Fixture::new();
-    let wide = crate::windows::wide_absolute_path(f.file.to_str().unwrap()).unwrap();
+    let wide = crate::windows::wide_absolute_path(f.file.to_str().unwrap());
     let file = unsafe { CreateFileW(wide.as_ptr(), FILE_GENERIC_READ | FILE_GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), OPEN_EXISTING, 0, null_mut()) };
     assert_ne!(file, INVALID_HANDLE_VALUE);

@@ -18,6 +18,7 @@ export default {
       "test/windows-native-fd-bridge.test.ts",
       "test/windows-native-creation-errno.test.ts",
       "test/windows-native-long-path.test.ts",
+      "test/windows-native-path-spelling.test.ts",
       "test/darwin-acl-native.test.ts",
       "test/platform-capabilities.test.ts",
       "test/native-loader.test.ts",

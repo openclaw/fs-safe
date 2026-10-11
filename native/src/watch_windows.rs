@@ -24,7 +24,7 @@ use windows_sys::Win32::System::WindowsProgramming::{DRIVE_NO_ROOT_DIR, DRIVE_RE
 const NETWORK_CAPACITY: usize = 64 * 1024;
 const LOCAL_CAPACITY: usize = 1024 * 1024;
 fn buffer_capacity(root: &str) -> usize {
-    let Ok(root) = wide_absolute_path(root) else { return NETWORK_CAPACITY; };
+    let root = wide_absolute_path(root);
     let mut volume = vec![0u16; 32768];
     if unsafe { GetVolumePathNameW(root.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) } == 0 {
         return NETWORK_CAPACITY;
@@ -130,7 +130,7 @@ fn open_root(root: &str, identity: ExactFileIdentity) -> NativeResult<OwnedHandl
     if root.contains('\0') {
         return Err(native_error("EINVAL", "invalid watch root"));
     }
-    let root = wide_absolute_path(root)?;
+    let root = wide_absolute_path(root);
     let root = open_existing_handle(
         &root,
         FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,

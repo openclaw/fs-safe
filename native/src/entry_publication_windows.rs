@@ -107,7 +107,7 @@ impl Parent {
     fn handle(&self) -> HANDLE { self.chain.last().expect("admitted parent").1.0 }
     fn open(&mut self) -> NativeResult<()> {
         let parts = path_parts(&self.path)?;
-        let root = &self.path[..3]; let wide = crate::windows::wide_absolute_path(root)?;
+        let root = &self.path[..3]; let wide = crate::windows::wide_absolute_path(root);
         if unsafe { GetDriveTypeW(wide.as_ptr()) } != 3 { return Err(native_error("ENOTSUP", "publication requires a fixed local drive")); }
         let h = unsafe { CreateFileW(wide.as_ptr(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, SHARING, null(), OPEN_EXISTING,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null_mut()) };

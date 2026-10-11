@@ -112,6 +112,8 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
   pathname calls, including internal staging and public-name verification;
   relative child names remain relative to retained handles. Long paths retain
   the same alias validation, ACL checks, identity fences and cleanup ownership.
+  Already-admitted namespace spellings pass through unchanged, including
+  filesystem-drive paths using `\\.\`; the encoder does not admit or reject paths.
   N-API descriptors cross into and out of
   this layer only through the host executable's paired libuv descriptor bridge;
   missing or partial exports fail with `ENOTSUP` instead of trying a raw HANDLE

@@ -19,7 +19,7 @@ impl Fixture {
 impl Drop for Fixture { fn drop(&mut self) { fs::remove_dir_all(&self.root).expect("settled publication fixture"); } }
 fn spelling(path: &Path) -> String { path.to_str().unwrap().trim_start_matches(r"\\?\").into() }
 fn handle(path: &Path, access: u32) -> OwnedHandle {
-    let wide = crate::windows::wide_absolute_path(path.to_str().unwrap()).unwrap();
+    let wide = crate::windows::wide_absolute_path(path.to_str().unwrap());
     open_existing_handle(&wide, access, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, |e| win_error(e, "test entry")).unwrap()
 }
 fn facts(path: &Path) -> (u64, u64) {
@@ -57,7 +57,7 @@ fn every_close_is_consumed_after_a_real_invalid_handle_error() {
     let errors = owner.close(); assert_eq!(errors.len(), 1); assert_eq!(owner.close().len(), 1);
     assert!(owner.owner.is_none());
     for directory in [&f.source, &f.target] {
-        let wide = crate::windows::wide_absolute_path(directory.to_str().unwrap()).unwrap();
+        let wide = crate::windows::wide_absolute_path(directory.to_str().unwrap());
         let h = unsafe { CreateFileW(wide.as_ptr(), FILE_LIST_DIRECTORY, 0, null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, null_mut()) };
         assert_ne!(h, INVALID_HANDLE_VALUE, "all parent and observation readers must have settled");
         OwnedHandle(h).close().unwrap();
