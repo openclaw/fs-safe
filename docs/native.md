@@ -522,9 +522,12 @@ loader conservatively attempts the glibc package and lets normal module loading
 fail into `auto` fallback. The loader requires only the package selected from
 the detected target; it never probes unrelated packages, downloads code, or
 runs a postinstall step. A missing or incompatible binary
-silently selects the JavaScript fallback in `auto`, throws typed
+selects the guarded fallback in `auto`, throws typed
 `helper-unavailable` in `require`, and is never inspected in `off`. Tests reject
 `child_process`, `exec`, or `spawn` usage in the loader.
+Windows security/private-creation fallbacks emit an actionable, path-free
+warning; other fallbacks remain silent. See
+[fallback troubleshooting](native-helper.md#troubleshooting-fallback-warnings).
 
 ## Anonymous pipes
 

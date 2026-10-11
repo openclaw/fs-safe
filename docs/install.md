@@ -171,7 +171,9 @@ in environment variables, and descriptor checks inherit the actual borrowed
 handle through stdin. No security facts are cached or checks combined. The
 fallback preserves private DACLs at creation and inspects the same open handle
 that supplies secure-file bytes. Each capability emits a path-free
-`FS_SAFE_NATIVE_FALLBACK` warning once per process.
+`FS_SAFE_NATIVE_FALLBACK` warning once per feature in each JavaScript context.
+It names the native availability reason and expected package version; see
+[troubleshooting fallback warnings](native-helper.md#troubleshooting-fallback-warnings).
 
 The executable is included in the main npm package and covered by its npm
 provenance, just like its JavaScript. Source lives in the repository; consumers

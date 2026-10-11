@@ -72,9 +72,9 @@ export function assertPrivateFileCreationAvailable(): void {
     typeof native.verifyPrivateWindowsFile !== "function") unavailable();
 }
 
-function commandFallback(): void {
+function commandFallback(capability: keyof NativeBinding): void {
   if (getFsSafeNativeConfig().mode === "require") unavailable();
-  warnNativeFallback("windows-private-creation", "Private Windows creation uses a slower built-in system command.");
+  warnNativeFallback("windows-private-creation", "Private Windows creation launches the packaged .NET helper for each check or creation.", capability);
 }
 
 function creationOperation<K extends "inspectWindowsDirectory" | "protectPrivateWindowsFile" | "verifyPrivateWindowsFile">(
@@ -83,7 +83,7 @@ function creationOperation<K extends "inspectWindowsDirectory" | "protectPrivate
   const native = getNativeBinding();
   const operation = native?.[name];
   if (typeof operation === "function") return operation.bind(native) as NonNullable<NativeBinding[K]>;
-  commandFallback();
+  commandFallback(name);
   return undefined;
 }
 

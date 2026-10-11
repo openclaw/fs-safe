@@ -52,6 +52,27 @@ Bun macOS/Linux canonicalization uses the addon under its
 
 Configure the mode once during startup. Loading is lazy and cached; changing from `auto` to `require` after a failed load changes failure policy but does not repeatedly probe the binary.
 
+## Troubleshooting fallback warnings
+
+Windows security and private-creation fallbacks emit `FS_SAFE_NATIVE_FALLBACK`
+once per feature in each JavaScript context (the main thread or a Worker).
+Warnings identify the reason and, on supported targets, the expected platform
+package and its exact version from fs-safe's manifest. They omit caller paths
+and raw loader error messages. Other guarded fallbacks, including Linux/macOS
+operations, do not currently emit this warning.
+
+| Reason | Next step |
+|---|---|
+| `package-missing` | Reinstall with optional dependencies included: npm `--include=optional`, or pnpm without `--no-optional` / `optional=false`. Check that the lockfile and registry mirror include the named package at the exact version. Install for the deployed Node architecture and Linux libc. |
+| `disabled` | The warning names the effective source: programmatic configuration, `FS_SAFE_NATIVE_MODE`, or `OPENCLAW_FS_SAFE_NATIVE_MODE`. If native loading is intended, set that source to `auto` or `require`. Programmatic configuration takes precedence, then `FS_SAFE_NATIVE_MODE`, then `OPENCLAW_FS_SAFE_NATIVE_MODE`. Keep intentional `off` settings for isolated runtimes. |
+| `unsupported-target` | Portable mode is expected on this platform/architecture/libc target; no matching native package is published. Native-only operations remain unavailable. |
+| `load-failed` | Check Node architecture, Linux libc compatibility, and OS code-integrity policy. A missing dependency inside an installed platform package is also a load failure. Reinstalling identical bytes may not help; resolve compatibility or approved signing/policy requirements without disabling security controls. |
+| `capability-missing` | Use matching fs-safe and platform-package versions. A loaded binding may intentionally provide a platform-specific subset; see the [FreeBSD capabilities](native.md#freebsd-14-4-and-newer). |
+
+Restart the process or Worker after repairing an installation: failed loads are
+cached. These diagnostics do not change `auto`, `off`, or `require` behavior,
+and a loaded addon does not imply that every operation is kernel-atomic.
+
 Native-created descriptors retain their originating native close operation through
 normal and error cleanup, including later mode changes. Node-created roots and
 directory handles keep Node's close operation, and borrowed handles keep their

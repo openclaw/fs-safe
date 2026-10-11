@@ -37,6 +37,19 @@ export function getFsSafeNativeConfig(): FsSafeNativeConfig {
   };
 }
 
+/** Internal provenance; keep the public configuration shape unchanged. */
+export function getNativeModeSetting(): {
+  mode: FsSafeNativeMode;
+  source: "programmatic configuration" | "FS_SAFE_NATIVE_MODE" | "OPENCLAW_FS_SAFE_NATIVE_MODE" | "default";
+} {
+  if (overrideConfig.mode !== undefined) return { mode: overrideConfig.mode, source: "programmatic configuration" };
+  for (const source of ["FS_SAFE_NATIVE_MODE", "OPENCLAW_FS_SAFE_NATIVE_MODE"] as const) {
+    const mode = parseMode(process.env[source]);
+    if (mode !== undefined) return { mode, source };
+  }
+  return { mode: "auto", source: "default" };
+}
+
 export function isFsSafeNativeRequired(): boolean {
   return (overrideConfig.mode ??
     parseMode(process.env.FS_SAFE_NATIVE_MODE) ??

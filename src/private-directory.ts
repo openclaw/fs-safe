@@ -43,6 +43,6 @@ export async function createPrivateDirectory(
   if (components.some(component => component.endsWith(".") || component.endsWith(" "))) {
     throw Object.assign(new Error("private directory path has an ambiguous component"), { code: "EINVAL" });
   }
-  warnNativeFallback("windows-private-directory", "Private Windows directory creation uses a slower built-in system command.");
+  warnNativeFallback("windows-private-directory", "Private Windows directory creation launches the packaged .NET helper for each check or creation.", "createPrivateDirectory");
   await createPrivateWindowsDirectoryCommand(path.win32.resolve(targetPath));
 }

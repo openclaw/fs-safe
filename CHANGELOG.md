@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks.
+
 ## 0.26.1 - 2026-10-11
 
 ### Highlights
