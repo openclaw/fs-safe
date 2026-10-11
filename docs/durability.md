@@ -321,6 +321,9 @@ thread. Both paths stream bounded buffers rather than loading the file into memo
 The fallback sizes its scratch buffer to small files and grows it if a stale
 size hint is exceeded, while still probing for actual EOF and byte-limit overflow.
 Native mode `require` keeps its usual fail-closed loader semantics.
+On Windows, pathname hashing can read through its privately owned handle
+without reopening it. Hashing a caller-owned handle still uses an independent
+reader to preserve the caller's position.
 
 ### Synchronous hashing
 

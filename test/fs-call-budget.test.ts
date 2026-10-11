@@ -1,3 +1,4 @@
+import { createHook } from "node:async_hooks";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { createFileSync } from "../src/create.js";
+import { sha256File, sha256FileSync } from "../src/file-hash.js";
 import { tryReadJson, writeJson } from "../src/json.js";
 import { readRegularFile } from "../src/regular-file.js";
 import { readLocalFileSafely, root } from "../src/root.js";
@@ -23,6 +25,8 @@ const budgets = {
   "root.create": 34,
   createFileSync: 10,
   "root.exists": 7, // exact direct-child admission and final root path fence
+  sha256File: 8, // two pathname checks, two descriptor checks, open/read/EOF/close
+  sha256FileSync: 8,
 };
 const asyncBudgets = {
   "root.readBytes": 4, // measured 3: open, read, close
@@ -35,6 +39,8 @@ const asyncBudgets = {
   "root.create": 3,
   createFileSync: 0,
   "root.exists": 1, // measured 0
+  sha256File: 4, // open, payload read, EOF read, close
+  sha256FileSync: 0,
 };
 const { tempRoot } = useRealTempDirs();
 
@@ -96,6 +102,8 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         "root.create": () => safe.create(`created-${createSequence++}`, "x", { durable: false }),
         createFileSync: async () => createFileSync(path.join(directory, `exclusive-${createSequence++}`)).close(),
         "root.exists": () => safe.exists("r.txt"),
+        sha256File: () => sha256File(path.join(directory, "r.txt")),
+        sha256FileSync: async () => sha256FileSync(path.join(directory, "r.txt")),
       };
       for (const name of Object.keys(budgets) as Array<keyof typeof budgets>) {
         await operations[name]();
@@ -125,6 +133,13 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           expect.soft(counts.get(process.platform === "linux" ? "s.readlinkSync" : "s.realpathSync.native"), breakdown).toBe(1);
           if (process.platform === "linux") expect.soft(counts.get("s.realpathSync.native"), breakdown).toBeUndefined();
         }
+        if (name === "sha256File" || name === "sha256FileSync") {
+          expect.soft(total, breakdown).toBe(8);
+          expect.soft(asyncTotal, breakdown).toBe(name === "sha256File" ? 4 : 0);
+          expect.soft(counts.get("s.lstatSync"), breakdown).toBe(2);
+          expect.soft(counts.get("s.fstatSync"), breakdown).toBe(2);
+          expect.soft(counts.get(name === "sha256File" ? "h.read" : "s.readSync"), breakdown).toBe(2);
+        }
       }
     } finally {
       counting = false;
@@ -132,4 +147,27 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
       configureFsSafeNative({ mode: "auto" });
     }
   });
+});
+
+it("keeps async hash admission free of metadata promise adapters", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-hash-promises-");
+  const file = path.join(directory, "input");
+  await fs.writeFile(file, "hash budget");
+  await sha256File(file);
+  const resources: Record<string, number> = {};
+  const hook = createHook({
+    init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; },
+  });
+  try {
+    hook.enable();
+    await sha256File(file);
+  } finally {
+    hook.disable();
+    configureFsSafeNative({ mode: "auto" });
+  }
+  // Previously 47: all three exact metadata observations now stay synchronous.
+  expect(resources.PROMISE).toBeLessThanOrEqual(35);
+  expect(resources.FSREQPROMISE).toBe(3);
+  expect(resources.FILEHANDLECLOSEREQ).toBe(1);
 });
