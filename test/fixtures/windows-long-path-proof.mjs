@@ -43,7 +43,8 @@ async function prove() {
         const stageNameLength = ".fs-safe-create-".length + 36;
         const parentLength = length - 1 - (boundary === "target" ? leaf.length
           : stageNameLength + (boundary === "stage-file" ? "/file".length : 0));
-        const parent = paddedParent(base, parentLength);
+        const caseBase = fs.mkdtempSync(path.join(base, "case-"));
+        const parent = paddedParent(caseBase, parentLength);
         fs.mkdirSync(path.toNamespacedPath(parent), { recursive: true });
         const target = path.join(parent, leaf);
         const scoped = await root(parent);
