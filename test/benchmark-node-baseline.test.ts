@@ -39,3 +39,36 @@ it("accepts the built-in A/A control name in syscall windows", () => {
     '11 write(2, "TRACE_END A/A-read raw\\n", 23) = 23',
   ].join("\n"))).toEqual({ "A/A-read/raw": { read: 1 } });
 });
+
+it("labels candidate comparisons without calling the baseline raw Node", () => {
+  const markdown = renderNodeBaseline([{
+    metadata: { mode: "off", samples: 9, comparison: { baselineDistSha256: "fixture" } },
+    results: [{ operation: "read", rawNs: 100, safeNs: 80, ratio: 0.8, aa: { ratio: 1 }, caveat: "Both arms retain admission." }],
+  }]);
+  expect(markdown).toContain("candidate/baseline");
+  expect(markdown).toContain("Baseline off ns/op");
+  expect(markdown).not.toContain("Raw Node");
+});
+
+it("keeps each comparison arm's setup, verification and cleanup with its implementation", async () => {
+  const { compareNodeBaselineCases } = await import("../benchmarks/node-baseline-cases.mjs");
+  const events: string[] = [];
+  const make = (name: string) => ({
+    operation: "read", sync: false,
+    safe: (input: string) => `${name}:${input}`,
+    before: (implementation: string) => { expect(implementation).toBe("safe"); events.push(`${name}:before`); return name; },
+    verify: (output: string, implementation: string, input: string) => {
+      expect(implementation).toBe("safe"); expect(output).toBe(`${name}:${input}`); events.push(`${name}:verify`);
+    },
+    after: (_output: string, implementation: string) => { expect(implementation).toBe("safe"); events.push(`${name}:after`); },
+  });
+  const [row] = compareNodeBaselineCases([make("candidate")], [make("baseline")]);
+  for (const role of ["raw", "safe"] as const) {
+    const input = row.before(role);
+    const output = row[role](input);
+    row.verify(output, role, input);
+    row.after(output, role, input);
+  }
+  expect(events).toEqual(["baseline:before", "baseline:verify", "baseline:after", "candidate:before", "candidate:verify", "candidate:after"]);
+  expect(() => compareNodeBaselineCases([make("candidate")], [])).toThrow();
+});

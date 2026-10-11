@@ -13,7 +13,7 @@ import {
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError } from "./root-errors.js";
 import type { RootReadOptions } from "./root-options.js";
-import { inspectFileIdentity } from "./strict-file-identity.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 const OPEN_READ_FLAGS = resolveReadOpenFlags();
@@ -39,7 +39,7 @@ export async function openLocalFileDescriptor(
   // Reject directories before opening so we never surface EISDIR to callers (e.g. tool
   // results that get sent to messaging channels). See openclaw/openclaw#31186.
   try {
-    preOpenStat = await inspectFileIdentity(() => {
+    preOpenStat = inspectFileIdentitySync(() => {
       const stat = fsSync.lstatSync(filePath, { bigint: true });
       observedBeforeOpen = true;
       if (stat.isSymbolicLink() && options?.symlinks !== "follow-within-root") {
@@ -56,14 +56,14 @@ export async function openLocalFileDescriptor(
     }
     // Only an initial lookup failure falls through; a failed re-inspection aborts.
   }
-  if (preOpenStat) {
-    await fsSafeTestHooks?.afterPreOpenLstat?.(filePath);
+  if (preOpenStat && fsSafeTestHooks?.afterPreOpenLstat) {
+    await fsSafeTestHooks.afterPreOpenLstat(filePath);
   }
 
   const openFlags = (options?.symlinks === "follow-within-root"
     ? OPEN_READ_FOLLOW_FLAGS
     : OPEN_READ_FLAGS) | (options?.readWrite ? fsSync.constants.O_RDWR : 0);
-  await fsSafeTestHooks?.beforeOpen?.(filePath, openFlags);
+  if (fsSafeTestHooks?.beforeOpen) await fsSafeTestHooks.beforeOpen(filePath, openFlags);
   let handle: FileHandle;
   try {
     handle = await fs.open(filePath, openFlags).catch((error: unknown) =>
@@ -80,22 +80,25 @@ export async function openLocalFileDescriptor(
   }
 
   try {
-    await fsSafeTestHooks?.afterOpen?.(filePath, handle);
+    if (fsSafeTestHooks?.afterOpen) await fsSafeTestHooks.afterOpen(filePath, handle);
     const stat = fsSync.fstatSync(handle.fd);
     if (!stat.isFile()) {
       throw new FsSafeError("not-file", "not a file");
     }
     // Keep numeric Stats for the public receipt, never for identity verification.
     let openedIdentity: BigIntStats | undefined;
-    const identity = await inspectFileIdentity(
-      () => (openedIdentity = fsSync.fstatSync(handle.fd, { bigint: true })),
-      preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined,
-    ).catch(async (error: unknown) => {
+    let identity: BigIntStats;
+    try {
+      identity = inspectFileIdentitySync(
+        () => (openedIdentity = fsSync.fstatSync(handle.fd, { bigint: true })),
+        preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined,
+      );
+    } catch (error) {
       if ([0, 1].includes(stat.nlink)) {
         await recordPreOpenFileChange(error, handle, filePath, preOpenStat, openedIdentity);
       }
       throw error;
-    });
+    }
     if (options?.hardlinks === "reject" && stat.nlink > 1) {
       throw hardlinkedPathNotAllowedError();
     }
