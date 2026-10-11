@@ -236,6 +236,15 @@ export async function tryMkdirRootNative(params: Creation): Promise<boolean> {
 }
 
 export function tryMkdirNativeExistingParent(root: RootContext, relativePath: string): boolean {
+  try {
+    return mkdirNativeExistingParent(root, relativePath);
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
+    throw error;
+  }
+}
+
+function mkdirNativeExistingParent(root: RootContext, relativePath: string): boolean {
   if (getFsSafeTestHooks()?.beforeRootFallbackMutation) return false;
   const segments = relativePath.split(path.sep === "\\" ? /[\\/]/ : "/");
   if (segments.length < 2 || segments.some(segment =>

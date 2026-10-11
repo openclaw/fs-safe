@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { root } from "../src/root.js";
+import { FsSafeError } from "../src/errors.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 let native: NativeBinding | undefined;
@@ -74,6 +75,30 @@ describe.runIf(native?.mkdirChildBeneath)("native mkdir with an existing parent"
       return child;
     } }));
     await expect(safe.mkdir("parent/child")).rejects.toMatchObject({ code: "path-mismatch" });
+  });
+
+  it("preserves typed ENOTDIR when a file races into the child name", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("mkdir-nested-file-race-");
+    const parent = path.join(directory, "parent");
+    const target = path.join(parent, "child");
+    fs.mkdirSync(parent);
+    const safe = await root(directory);
+    const replace = () => fs.writeFileSync(target, "raced file");
+    __setNativeLoaderForTest(() => ({ ...native!,
+      ...(native!.mkdirOpenChildBeneath ? { mkdirOpenChildBeneath(...args: Parameters<NonNullable<NativeBinding["mkdirOpenChildBeneath"]>>) {
+        replace();
+        return native!.mkdirOpenChildBeneath!(...args);
+      } } : { mkdirChildBeneath(...args: Parameters<NonNullable<NativeBinding["mkdirChildBeneath"]>>) {
+        replace();
+        return native!.mkdirChildBeneath!(...args);
+      } }),
+    }));
+    const failure = await safe.mkdir("parent/child").then(() => undefined, error => error);
+    expect(failure).toBeInstanceOf(FsSafeError);
+    expect(failure).toMatchObject({ code: "not-file" });
+    if (failure.cause !== undefined || process.platform !== "win32") expect(failure.cause).toMatchObject({ code: "ENOTDIR" });
+    expect(fs.readFileSync(target, "utf8")).toBe("raced file");
   });
 
   it("accepts repeated calls for an existing ordinary directory", async () => {

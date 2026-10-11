@@ -1358,6 +1358,9 @@ jobs:
             node scripts/native-call-budget-proof.mjs --operation mkdirNested --depth "$depth"
           done
 
+      - name: Prove native mkdir retained authority
+        run: node scripts/native-mkdir-authority-proof.mjs
+
       - name: Pin native temp creation resources
         if: runner.os != 'Linux'
         run: node scripts/native-call-budget-proof.mjs --operation tempWorkspace --resources-only
