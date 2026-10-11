@@ -236,6 +236,16 @@ checkout synchronization; record the tested source revision or diff, Testbox ID,
 and Actions run. This backend is Linux-only and does not accept Crabbox's direct
 SSH `--script` or `--download` flags. The workflow provides no application secrets.
 
+### Node baseline benchmark
+
+After `pnpm build` and `pnpm native:build`, run `pnpm benchmark:node --json results.json --markdown results.md` on an idle machine. This runs native `off` and `require` in separate processes and writes combined JSON, one JSON file per mode, and a side-by-side Markdown table. `require` fails if its binding cannot load. `--mode off` runs without a native build.
+
+Use `--temp-root /path/on/the/target/filesystem` to select the measured storage (otherwise the OS temporary directory is used). In particular, avoid tmpfs for durable-write comparisons. Record the filesystem, OS, Node version, CPU and load with the results; the JSON includes filesystem magic, artifact hashes, runtime details and sample observations. The [benchmark guide](https://github.com/openclaw/fs-safe/tree/main/benchmarks#node-baseline-comparison) describes the workloads and optional Linux syscall tracing.
+
+Defaults are seven alternating raw/safe/control blocks, three warmup invocations per arm, and 30 calls per sample (fewer for traversal and extraction). Each sample is a mean of timed calls; reported latency is the median sample mean, not a tail percentile. Setup, verification and cleanup are outside timing. Adjust `--iterations`, `--samples`, `--warmup`, or use `--filter read` for a focused run.
+
+Ratios divide fs-safe time by raw Node time; smaller is faster. The A/A row and per-operation A/A column compare identical raw calls and show measurement noise. Raw Node is **not security-equivalent**: raw writes truncate in place, while fs-safe stages and atomically publishes; durable raw writes sync the file, while fs-safe also synchronizes publication where supported. Each row documents the actual comparison. Treat ratios near the A/A spread cautiously, and retain all samples when comparing changes. No benchmark changes a production safety or durability default.
+
 ### Method benchmarks
 
 `pnpm benchmark:methods` measures the callable library surface against synthetic

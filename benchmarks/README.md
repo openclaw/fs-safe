@@ -626,3 +626,70 @@ path-normalization calls. The allocation probe samples ten complete walks at a
 32 KiB interval, including collected objects; its bytes estimate cumulative
 allocation, not retained memory. Both use the Node fallback and remove their
 synthetic trees after measurement. Use an otherwise idle host.
+
+## Node baseline comparison
+
+```sh
+pnpm build
+pnpm native:build
+pnpm benchmark:node --json results.json --markdown results.md
+# Select actual disk storage rather than a memory-backed temporary directory:
+pnpm benchmark:node --temp-root /path/to/disk --json disk.json --markdown disk.md
+# Linux only; strace must be installed:
+pnpm benchmark:node --syscalls --json traced.json --markdown traced.md
+```
+
+This preserves Campaign 2's 23-byte JSON and flat 1,000/50,000-file survey
+workloads. It covers Root reads, JSON reads, durable and non-durable writes,
+create, append, copy, remove, move, mkdir, list and walk; available standalone
+synchronous counterparts; SHA-256; JSON-store read/update; uncontended sidecar
+lock acquisition/release; and empty temporary workspace creation/cleanup.
+Root has no synchronous interface; there is no invented sync append/remove/
+move/list/store-update cell. ZIP and TAR extraction use ten flat 23-byte files
+with JSZip plus Node writes and the existing `tar` dependency as raw baselines.
+Node has no built-in archive extractor. These trusted-input library baselines
+are explicitly not security equivalents of guarded extraction.
+
+`--mode both` (default) uses separate processes for `off` and `require`; the
+latter must load a native binding. JSON records its hash and the distribution
+and harness hashes. `--dist /absolute/dist` selects another built distribution;
+`metadata.packageVersion` and `revision` describe the harness checkout, while
+`distSha256` identifies the selected build. Runs are serial, not concurrent.
+`--mode off` needs only `pnpm build`. `--filter substring` selects operations;
+a filter matching nothing fails. File output is emitted only after successful
+verification and workspace cleanup. A combined `results.json` also produces
+`results-off.json` and `results-require.json`.
+
+Samples alternate raw/safe/identical-raw-control and the reverse order. The
+median of sample means in ns/op and every sample are retained. Each synchronous
+call is timed without awaiting it. Fixture resets, output checks and handle
+cleanup happen outside timing. Copy-in replaces an existing destination;
+exclusive synchronous copy starts absent; writes and moves replace existing
+files. Append resets to one record for every call. Read-only calls use warmed
+page-cache data. This is a sequential small-file workload, not throughput,
+cold-cache, concurrent-contention or power-loss testing.
+
+**Raw baselines are NOT security-equivalent.** Writes truncate in place; safe
+writes atomically rename. Raw durable writes fsync only their file; safe writes
+also synchronize publication where supported. The standalone synchronous
+atomic-write rows explicitly set both `syncTempFile` and `syncParentDir` to
+the selected durability value. Raw lock acquisition is exclusive
+open without owner serialization or fsync. Empty-directory removal is less work
+than owned-workspace cleanup. Root list validates/sorts names; Root walk's raw
+baseline includes an lstat per file for size metadata. Per-row caveats in the
+JSON and Markdown document these differences. A ratio below one can reflect
+filesystem allocation/publication behavior; it does not prove safety is free.
+The explicit A/A-read row and per-row A/A controls show noise, not a correction
+factor to subtract from the measured ratio. Inspect the retained samples, A/A
+spread, load and storage before drawing conclusions.
+
+Async resource counts are collected in separate verified invocations, retaining
+all resource type names (FSREQ*, FILEHANDLECLOSEREQ, PROMISE and binding-specific
+NAPI types). They are not kernel syscall counts. `--syscalls` additionally runs
+a separate warmed process under `strace -f -yy -s 512` and counts selected
+filesystem/descriptor syscalls inside operation markers, including worker
+threads but excluding setup, cleanup, pipes, sockets and anonymous event fds.
+The JSON contains the syscall-name breakdown for each arm. It is a selected
+family, not all kernel calls, and traced durations are never used as latency
+measurements. Native task names vary by Node/binding; no unnamed resource is
+assumed to be a portable NAPI counter.
