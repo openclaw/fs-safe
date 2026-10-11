@@ -5,7 +5,7 @@ const probe = '14009 openat(AT_FDCWD</work/fixture>, "/sys/devices/system/cpu/cp
 
 it("excludes the runtime TSC probe on any thread, including unfinished calls", () => {
   expect(isRuntimeClockProbe(`${probe} = -1 ENOENT (No such file or directory)`)).toBe(true);
-  expect(isRuntimeClockProbe(`${probe.replace("14009", "14010")} <unfinished ...>`)).toBe(true);
+  expect(isRuntimeClockProbe(`${probe.replace("14009", "14010").slice(0, -1)} <unfinished ...>`)).toBe(true);
   expect(isRuntimeClockProbe(`${probe.replace("</work/fixture>", "")} = -1 ENOENT (No such file or directory)`)).toBe(true);
 });
 
