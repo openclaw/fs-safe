@@ -25,9 +25,6 @@ const outputIndex = process.argv.lastIndexOf("--output");
 const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "release-artifacts");
 const allowHostOnly = process.argv.includes("--allow-host-only");
 const signingIndex = process.argv.indexOf("--windows-signing-manifest");
-const signingManifest = !allowHostOnly || signingIndex >= 0
-  ? readSigningManifest(signingIndex >= 0 ? process.argv[signingIndex + 1] : undefined)
-  : undefined;
 mkdirSync(outputDir, { recursive: true });
 const packingConfig = mkdtempSync(join(tmpdir(), "fs-safe-pack-config-"));
 const npmEnv = isolatedConsumerEnv(packingConfig);
@@ -82,6 +79,9 @@ async function main() {
   if (rootPkg.publishConfig?.access !== "public" || rootPkg.publishConfig?.provenance !== true) {
     throw new Error("root package must publish publicly with provenance");
   }
+  const signingManifest = !allowHostOnly || signingIndex >= 0
+    ? readSigningManifest(signingIndex >= 0 ? process.argv[signingIndex + 1] : undefined)
+    : undefined;
 
   const targets = allowHostOnly ? [hostNativeTarget()].filter(Boolean) : nativeTargets;
   if (targets.length === 0) throw new Error(`no native target for ${process.platform}-${process.arch}`);

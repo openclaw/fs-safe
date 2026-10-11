@@ -494,7 +494,7 @@ the final npm tarball. Timestamped signatures change the distributed bytes, so
 rebuilding source is expected to reproduce the unsigned hash, not the signed
 file. Both Windows addons and the helper must have a valid, timestamped embedded
 signature from OpenClaw Foundation before signed x64/ARM64 runtime tests and
-release collection. See [release prerequisites](../RELEASE-PREREQS.md#windows-authenticode-signing-one-time-maintainer-setup)
+release collection. See [release prerequisites](https://github.com/openclaw/fs-safe/blob/main/RELEASE-PREREQS.md#windows-authenticode-signing-one-time-maintainer-setup)
 for setup and the publication-free dry run. The main package includes only
 the exe; the two C# source files remain available in the repository.
 

@@ -62,11 +62,11 @@ gh workflow run release.yml --repo openclaw/fs-safe --ref <branch> -f dry_run=tr
 For this PR, `<branch>` is `feat/windows-release-signing`. A branch dry run needs
 a temporary deployment branch rule allowing that exact reviewed branch in
 `release-signing`; retain the required reviewer gate and remove the rule after
-proof. The dispatch trigger must first exist on the default branch for GitHub
-CLI dispatch to be available. Until then, keep the PR draft; do not push a release
-tag just to exercise signing. Once merged, the same command can use `main` with
-a temporary exact `main` rule, or an existing allowed release tag with no branch
-exception. Every manual dispatch is publication-disabled, even on a release tag.
+proof. The existing release workflow is already registered in GitHub Actions;
+the CLI dispatch selects the version on the requested branch. After merge,
+the same command can use `main` with a temporary exact `main` rule, or an allowed
+release tag with no branch exception. Do not push a release tag merely to test
+signing. Every manual dispatch is publication-disabled, even on a release tag.
 `dry_run=false` skips the run; it does not enable publication.
 
 Inspect `Sign Windows release binaries`, both `Load signed Windows binaries`
