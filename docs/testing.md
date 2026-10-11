@@ -135,6 +135,19 @@ Lifecycle memory is sampled across ten intervals, with
 the first two excluded as warm-up; idle's Linux wakeup bound scales with the
 requested duration (three per minute). Adversarial cases remain unchanged.
 
+## Native syscall budgets
+
+After building the host addon and package, run the Linux syscall proof with
+`node scripts/native-call-budget-proof.mjs --operation remove` (or `mkdir`,
+`ensureRoot`, `move`, `append`, `openWritable`, `create`, `write`, `tempWorkspace`).
+It traces all threads with `strace -f -yy` and enforces exact per-mode syscall
+and async-resource counts. Canonicalization ancestors and worker-thread I/O
+remain counted. The only runtime filesystem exclusion is Node/V8 Abseil's
+read-only open of `/sys/devices/system/cpu/cpu0/tsc_freq_khz`, a lazy CPU-clock
+probe unrelated to the temporary fixture that can occur on the main thread.
+Other sysfs calls and subsequent I/O remain counted. Failed proofs print the
+retained raw trace path for diagnosis.
+
 ## Linux openat2 fallback
 
 Build the host addon and package first. The test hook is cached with the native
