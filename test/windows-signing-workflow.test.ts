@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const release = readFileSync(".github/workflows/release.yml", "utf8");
+const release = readFileSync(".github/workflows/release.yml", "utf8").replaceAll("\r\n", "\n");
 function job(name: string) {
   const start = release.indexOf(`\n  ${name}:\n`);
   expect(start).toBeGreaterThan(0);
