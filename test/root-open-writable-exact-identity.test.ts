@@ -160,6 +160,24 @@ describe("Root.openWritable exact identity admission", () => {
     await opened.handle.close();
   });
 
+  it("uses exact descriptor metadata for an append newline check", async () => {
+    const { target, capability } = await existingFile();
+    await fs.writeFile(target, "original", "utf16le");
+    const fstat = fsSync.fstatSync.bind(fsSync);
+    const precisions: string[] = [];
+    vi.spyOn(fsSync, "fstatSync").mockImplementation(((...args: Parameters<typeof fsSync.fstatSync>) => {
+      const observed = fstat(...args);
+      if (observed.isFile()) precisions.push(typeof observed.ino);
+      return observed;
+    }) as typeof fsSync.fstatSync);
+
+    await capability.append("target", "suffix", {
+      encoding: "utf16le", prependNewlineIfNeeded: true, durable: false,
+    });
+    expect(precisions).toEqual(["bigint"]);
+    expect(await fs.readFile(target, "utf16le")).toBe("original\nsuffix");
+  });
+
   it("removes an unchanged created file after append authority fails before dispatch", async () => {
     const directory = await tempRoot("fs-safe-open-writable-owned-cleanup-");
     const target = path.join(directory, "target");

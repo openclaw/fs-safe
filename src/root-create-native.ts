@@ -26,8 +26,8 @@ import type { RootOpenWritableOptions } from "./root-options.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { describePolicyStagedDirectory } from "./staged-directory.js";
 
-export type OpenedWritableFileInRoot = {
-  opened: WritableOpenResult;
+export type OpenedWritableFileInRoot<Metadata extends fs.Stats | fs.BigIntStats = fs.Stats> = {
+  opened: Omit<WritableOpenResult, "stat"> & { stat: Metadata };
   identity: fs.BigIntStats;
   writeSelection?: RetainedRootWriteSelection;
   cleanupCreated?: () => Promise<void>;

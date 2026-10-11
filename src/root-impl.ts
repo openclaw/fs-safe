@@ -682,10 +682,11 @@ export type WritableOpenResult = OpenResult & { createdForWrite: boolean };
 function emitWriteBoundaryWarning(reason: string) {
   logWarn(`security: fs-safe write boundary warning (${reason})`);
 }
-function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams, options: { createIfMissing: false }): Promise<OpenedWritableFileInRoot | MissingWritableFileInRoot>;
-function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams): Promise<OpenedWritableFileInRoot>;
-async function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams,
-  options?: { createIfMissing: false }): Promise<OpenedWritableFileInRoot | MissingWritableFileInRoot> {
+function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams & { bigintMetadata: true }): Promise<OpenedWritableFileInRoot<BigIntStats>>;
+function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams & { bigintMetadata?: false }, options: { createIfMissing: false }): Promise<OpenedWritableFileInRoot | MissingWritableFileInRoot>;
+function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams & { bigintMetadata?: false }): Promise<OpenedWritableFileInRoot>;
+async function openWritableFileInRoot(root: RootContext, params: WritableFileInRootParams & { bigintMetadata?: boolean },
+  options?: { createIfMissing: false }): Promise<OpenedWritableFileInRoot<Stats | BigIntStats> | MissingWritableFileInRoot> {
   const requireNative = isFsSafeNativeRequired();
   const policy = requireNative ? snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) : undefined;
   if (policy) params = { ...params, ...policy };
@@ -813,7 +814,7 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
   let realPathForCleanup: string | null = null;
   let createdIdentity: BigIntStats | null = null;
   try {
-    const stat = fsSync.fstatSync(handle.fd);
+    const stat = params.bigintMetadata ? undefined : fsSync.fstatSync(handle.fd);
     const identity = inspectFileIdentitySync(() => {
       const observed = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!observed.isFile()) {
@@ -894,12 +895,12 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
       await refreshRetainedRootWriteAdmission(root, writeSelection, handle.fd);
       assertRootWriteSelectionSync(root, writeSelection, handle.fd);
     }
-    const result: WritableOpenResult = {
+    const result: OpenedWritableFileInRoot<Stats | BigIntStats>["opened"] = {
       handle,
       containment: "best-effort",
       createdForWrite,
       realPath,
-      stat,
+      stat: stat ?? identity,
       [Symbol.asyncDispose]: () => handle.close().catch(() => undefined),
     };
     if (!params.keepCreationParent) releaseCreationParent?.();
@@ -931,27 +932,28 @@ async function appendFileInRoot(
     truncateExisting: false,
     append: true,
     keepCreationParent: true,
+    bigintMetadata: true,
   });
   using creationParent = { [Symbol.dispose]() { releaseCreationParent?.(); } };
   let dispatched = false;
   // Reverse disposal order closes the handle before path cleanup and retains both failures.
-  await using cleanup = {
+  await using cleanup = target.createdForWrite && !cleanupCreated ? {
     async [Symbol.asyncDispose]() {
       if (!dispatched && target.createdForWrite && !cleanupCreated) {
         await removePathIfIdentityUnchanged(target.realPath, identity);
       }
     },
-  };
+  } : undefined;
   await using handle = target.handle;
-  await using nativeCleanup = { async [Symbol.asyncDispose]() {
+  await using nativeCleanup = target.createdForWrite && cleanupCreated ? { async [Symbol.asyncDispose]() {
     if (!dispatched && target.createdForWrite) await cleanupCreated?.();
-  } };
+  } } : undefined;
   try {
     let prefix = "";
     if (
       params.prependNewlineIfNeeded === true &&
       !target.createdForWrite &&
-      target.stat.size > 0 &&
+      target.stat.size > 0n &&
       params.data.length > 0 &&
       ((typeof params.data === "string" && !params.data.startsWith("\n")) ||
         (Buffer.isBuffer(params.data) && params.data[0] !== 0x0a))
@@ -959,7 +961,7 @@ async function appendFileInRoot(
       const newline = Buffer.from("\n", typeof params.data === "string" ? params.encoding : "utf8");
       const tail = Buffer.alloc(newline.length);
       const { bytesRead } = await target.handle.read(
-        tail, 0, tail.length, Math.max(0, target.stat.size - tail.length),
+        tail, 0, tail.length, Math.max(0, Number(target.stat.size) - tail.length),
       );
       if (bytesRead > 0 && (bytesRead !== newline.length || !tail.equals(newline))) {
         prefix = "\n";

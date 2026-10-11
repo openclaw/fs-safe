@@ -1,4 +1,5 @@
 import fsSync from "node:fs";
+import { createHook } from "node:async_hooks";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,6 +21,7 @@ const budgets = {
   "writeJson durable:false": 20, // measured 18
   "root.write": 60, // measured 58, including canonical mode-inheritance identity
   "root.exists": 7, // exact direct-child admission and final root path fence
+  "root.append": 20, // one exact descriptor stat; no numeric metadata receipt
 };
 const asyncBudgets = {
   "root.readBytes": 4, // measured 3: open, read, close
@@ -30,6 +32,7 @@ const asyncBudgets = {
   "writeJson durable:false": 9, // measured 8
   "root.write": 12, // measured 11, including two durability syncs
   "root.exists": 1, // measured 0
+  "root.append": 3, // open, write, close; durable:false
 };
 const { tempRoot } = useRealTempDirs();
 
@@ -83,12 +86,18 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         "writeJson durable:false": () => writeJson(path.join(directory, "w.json"), { a: 1 }, { durable: false }),
         "root.write": () => safe.write("w.txt", "x"),
         "root.exists": () => safe.exists("r.txt"),
+        "root.append": () => safe.append("r.txt", "x", { durable: false }),
       };
       for (const name of Object.keys(budgets) as Array<keyof typeof budgets>) {
         await operations[name]();
         counts.clear();
+        let promises = 0;
+        const hook = name === "root.append" ? createHook({ init(_id, type) {
+          if (type === "PROMISE") promises++;
+        } }) : undefined;
         counting = true;
-        try { await operations[name](); } finally { counting = false; }
+        hook?.enable();
+        try { await operations[name](); } finally { hook?.disable(); counting = false; }
         const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
         const breakdown = [...counts].map(([key, count]) => `${key}=${count}`).join(" ");
         const asyncTotal = [...counts].reduce((sum, [key, count]) =>
@@ -105,6 +114,11 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           expect.soft(counts.get("s.statSync"), breakdown).toBe(1);
           expect.soft(counts.get(process.platform === "linux" ? "s.readlinkSync" : "s.realpathSync.native"), breakdown).toBe(1);
           if (process.platform === "linux") expect.soft(counts.get("s.realpathSync.native"), breakdown).toBeUndefined();
+        }
+        if (name === "root.append") {
+          expect.soft(counts.get("s.fstatSync"), breakdown).toBe(1);
+          expect.soft(asyncTotal, breakdown).toBe(3);
+          expect.soft(promises, "append Promise allocations (was 69)").toBeLessThanOrEqual(63);
         }
       }
     } finally {

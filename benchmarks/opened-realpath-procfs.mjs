@@ -1,5 +1,6 @@
 // node benchmarks/opened-realpath-procfs.mjs BASE_DIST CANDIDATE_DIST [off|require]
 // Add A or B as a fourth argument for a 1,000-lookup strace workload.
+// Add append as a fourth argument to compare existing-file appends instead.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,6 +9,7 @@ import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 const [baseDist, candidateDist, mode = "off", traceVariant] = process.argv.slice(2);
+const appendOnly = traceVariant === "append";
 if (!baseDist || !candidateDist) throw new Error("Supply baseline and candidate dist directories");
 const load = async directory => {
   const url = pathToFileURL(path.resolve(directory) + path.sep);
@@ -29,7 +31,7 @@ const fd = fs.openSync(target, "r");
 const identity = fs.fstatSync(fd, { bigint: true });
 const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 try {
-  if (traceVariant) {
+  if (traceVariant && !appendOnly) {
     const api = implementations[traceVariant === "A" ? 0 : 1];
     for (let i = 0; i < 1000; i++) {
       const result = await api.resolveOpenedFileRealPathForFd(fd, identity, target);
@@ -38,7 +40,14 @@ try {
     }
   } else {
     const roots = await Promise.all(implementations.map(api => api.root(directory)));
-    const cases = [
+    let appendCount = 0;
+    const appendData = data.subarray(0, 23);
+    const cases = appendOnly ? [
+      { name: "Root.append", count: 500, run: index => {
+        appendCount++;
+        return roots[index].append("append", appendData, { durable: false });
+      } },
+    ] : [
       { name: "resolve opened fd", count: 3000, run: index => implementations[index].resolveOpenedFileRealPathForFd(fd, identity, target) },
       { name: "readLocalFileSafely", count: 250, run: index => implementations[index].readLocalFileSafely({ filePath: target }) },
       { name: "Root.copyIn", count: 100, run: index => roots[index].copyIn(`${relative}/copy`, target, { durable: false }) },
@@ -62,7 +71,11 @@ try {
           pairedRatio: median(rightTimes.map((time, i) => time / leftTimes[i])), leftTimes, rightTimes }));
       }
     }
-    assert.deepEqual(fs.readFileSync(path.join(parent, "copy")), data);
-    assert.deepEqual(fs.readFileSync(path.join(parent, "write")), data);
+    if (appendOnly) {
+      assert.deepEqual(fs.readFileSync(path.join(directory, "append")), Buffer.alloc(appendCount * appendData.length, 120));
+    } else {
+      assert.deepEqual(fs.readFileSync(path.join(parent, "copy")), data);
+      assert.deepEqual(fs.readFileSync(path.join(parent, "write")), data);
+    }
   }
 } finally { fs.closeSync(fd); fs.rmSync(directory, { recursive: true, force: true }); }
