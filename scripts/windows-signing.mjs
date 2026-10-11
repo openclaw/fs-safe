@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { list } from "tar";
 
 export const windowsSigner = "CN=OpenClaw Foundation, O=OpenClaw Foundation, L=Mill Valley, S=California, C=US";
 export const windowsFiles = [
@@ -53,6 +52,7 @@ export function readSigningManifest(path) {
 export async function verifyWindowsPackage(manifest, packageName, tarball) {
   const expected = windowsFiles.find((entry) => entry.package === packageName);
   if (!expected) return;
+  const { list } = await import("tar");
   let matches = 0;
   let actual;
   await list({ file: tarball, onReadEntry(entry) {
