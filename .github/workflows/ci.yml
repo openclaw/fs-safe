@@ -1354,6 +1354,9 @@ jobs:
           for operation in mkdir ensureRoot remove move append openWritable create write tempWorkspace; do
             node scripts/native-call-budget-proof.mjs --operation "$operation"
           done
+          for depth in 1 8 32; do
+            node scripts/native-call-budget-proof.mjs --operation mkdirNested --depth "$depth"
+          done
 
       - name: Pin native temp creation resources
         if: runner.os != 'Linux'

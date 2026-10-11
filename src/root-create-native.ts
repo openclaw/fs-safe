@@ -237,7 +237,7 @@ export async function tryMkdirRootNative(params: Creation): Promise<boolean> {
 
 export function tryMkdirNativeExistingParent(root: RootContext, relativePath: string): boolean {
   if (getFsSafeTestHooks()?.beforeRootFallbackMutation) return false;
-  const segments = relativePath.split("/");
+  const segments = relativePath.split(path.sep === "\\" ? /[\\/]/ : "/");
   if (segments.length < 2 || segments.some(segment =>
     !isSafePathSegment(segment, { allowDotPrefix: true }) || segment.endsWith("."))) return false;
   assertRootIdentityCurrentSync(root);

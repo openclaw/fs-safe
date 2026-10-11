@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -81,7 +82,7 @@ describe.runIf(native?.mkdirChildBeneath)("native mkdir with an existing parent"
     fs.mkdirSync(path.join(directory, "parent"));
     const safe = await root(directory);
     await safe.mkdir("parent/child");
-    await safe.mkdir("parent/child");
+    await safe.mkdir(path.join("parent", "child"));
     expect(fs.readdirSync(path.join(directory, "parent"))).toEqual(["child"]);
   });
 
@@ -97,4 +98,13 @@ describe.runIf(native?.mkdirChildBeneath)("native mkdir with an existing parent"
     expect(fs.lstatSync(path.join(directory, "alias")).isSymbolicLink()).toBe(true);
     expect(fs.statSync(path.join(directory, "new/parent/child")).isDirectory()).toBe(true);
   });
+});
+
+it.runIf(native?.mkdirChildBeneath && !process.versions.bun)("pins nested mkdir resources at each depth", () => {
+  for (const depth of [1, 8, 32]) {
+    expect(() => execFileSync(process.execPath, ["scripts/native-call-budget-proof.mjs", "--operation", "mkdirNested", "--depth", String(depth),
+      "--resources-only"], {
+      cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8", stdio: "pipe",
+    })).not.toThrow();
+  }
 });
