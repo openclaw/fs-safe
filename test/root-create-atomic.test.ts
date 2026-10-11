@@ -16,7 +16,7 @@ afterEach(() => {
   __resetNativeLoaderForTest();
 });
 
-function afterFirstPartialWrite(inspect: (fd: number) => Promise<void> | void): void {
+function afterFirstPartialWrite(inspect: (fd: number) => void): void {
   let intercepted = false;
   const open = fs.open.bind(fs);
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
@@ -43,6 +43,14 @@ function afterFirstPartialWrite(inspect: (fd: number) => Promise<void> | void): 
       );
     });
   }) as typeof fsSync.write);
+  const writeSync = fsSync.writeSync.bind(fsSync);
+  vi.spyOn(fsSync, "writeSync").mockImplementation(((fd, buffer, offset, length, position) => {
+    if (intercepted) return writeSync(fd, buffer, offset, length, position);
+    intercepted = true;
+    const written = writeSync(fd, buffer, offset, Math.min(length, 3), position);
+    inspect(fd);
+    return written;
+  }) as typeof fsSync.writeSync);
 }
 
 function denyStageRemoval(directory: string, failure: Error): void {
@@ -74,9 +82,9 @@ describe.each(modes)("atomic buffered Root.create (native %s)", (mode) => {
       const value = { message: "é:🙂 complete" };
       const content = JSON.stringify(value);
       let observedPartial = false;
-      afterFirstPartialWrite(async (fd) => {
+      afterFirstPartialWrite((fd) => {
         expect(fsSync.fstatSync(fd).size).toBe(3);
-        await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(() => fsSync.lstatSync(target)).toThrow(expect.objectContaining({ code: "ENOENT" }));
         observedPartial = true;
       });
 
@@ -153,12 +161,12 @@ describe.each(modes)("atomic buffered Root.create (native %s)", (mode) => {
     const referent = path.join(capability.rootReal, "referent");
     if (kind === "hardlink") await fs.writeFile(referent, "winner");
     let winner: fsSync.BigIntStats | undefined;
-    const createWinner = async () => {
-      if (kind === "directory") await fs.mkdir(target);
-      else if (kind === "hardlink") await fs.link(referent, target);
-      else if (kind === "dangling-symlink") await fs.symlink(referent, target, "file");
-      else await fs.writeFile(target, "winner", { flag: "wx" });
-      winner = await fs.lstat(target, { bigint: true });
+    const createWinner = () => {
+      if (kind === "directory") fsSync.mkdirSync(target);
+      else if (kind === "hardlink") fsSync.linkSync(referent, target);
+      else if (kind === "dangling-symlink") fsSync.symlinkSync(referent, target, "file");
+      else fsSync.writeFileSync(target, "winner", { flag: "wx" });
+      winner = fsSync.lstatSync(target, { bigint: true });
     };
     if (raced) afterFirstPartialWrite(createWinner);
     else await createWinner();

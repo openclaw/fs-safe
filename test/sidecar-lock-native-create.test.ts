@@ -90,6 +90,7 @@ describe.skipIf(!native || process.platform === "win32")("native Root lock exclu
     const targetPath = path.join(directory, "state");
     const failure = Object.assign(new Error("synthetic write failure"), { code: "EIO" });
     vi.spyOn(fsSync, "write").mockImplementation(() => { throw failure; });
+    vi.spyOn(fsSync, "writeSync").mockImplementation(() => { throw failure; });
     const manager = createSidecarLockManager(directory);
     await expect(manager.acquire({
       targetPath, lockPath: `${targetPath}.lock`, lockRoot, timeoutMs: 0, staleMs: 0,

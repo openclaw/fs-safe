@@ -422,6 +422,14 @@ pub fn observe_directory(env: Env, path: String) -> Result<DirectoryObservation>
 }
 
 #[cfg(unix)]
+#[napi(js_name = "stagedDirectoryMatches")]
+pub fn staged_directory_matches(env: Env, fd: i32, path: String, dev: BigInt, ino: BigInt) -> Result<bool> {
+    into_napi(env, crate::exact_file_identity(&dev, &ino).and_then(|expected| {
+        directory_observation::staged_directory_matches(fd, &path, expected.dev, expected.ino)
+    }))
+}
+
+#[cfg(unix)]
 #[napi(js_name = "observeDirectoryFd")]
 pub fn observe_directory_fd(
     env: Env,

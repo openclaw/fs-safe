@@ -171,6 +171,33 @@ mod platform {
         observe_directory_fd_with(fd, expected_path, || inspect_named_directory(expected_path))
     }
 
+    #[allow(clippy::unnecessary_cast)] // stat field widths differ between Linux and Darwin.
+    pub(super) fn staged_directory_matches(fd: i32, path: &str, dev: u64, ino: u64) -> NativeResult<bool> {
+        if fd < 0 { return Err(native_error("EBADF", "invalid staged directory descriptor")); }
+        if !path.starts_with('/') || path.as_bytes().contains(&0) {
+            return Err(native_error("EINVAL", "staged directory requires an absolute path"));
+        }
+        // The caller retains the descriptor; verify its named and canonical
+        // identity without reopening the directory or closing a borrowed fd.
+        let named = inspect_named_directory(path)?;
+        let retained = rustix::fs::fstat(borrowed(fd))
+            .map_err(|error| os_error(error, "inspect staged directory descriptor"))?;
+        let matches = FileType::from_raw_mode(named.st_mode).is_dir()
+            && FileType::from_raw_mode(retained.st_mode).is_dir()
+            && retained.st_nlink != 0
+            && named.st_dev as u64 == dev && named.st_ino as u64 == ino
+            && retained.st_dev as u64 == dev && retained.st_ino as u64 == ino;
+        if !matches || canonical_path(fd, retained.st_nlink as u64)? != path { return Ok(false); }
+        #[cfg(target_os = "linux")]
+        if path.ends_with(" (deleted)") {
+            let after = rustix::fs::fstat(borrowed(fd))
+                .map_err(|error| os_error(error, "confirm staged directory link count"))?;
+            if after.st_nlink == 0 || !FileType::from_raw_mode(after.st_mode).is_dir()
+                || after.st_dev as u64 != dev || after.st_ino as u64 != ino { return Ok(false); }
+        }
+        Ok(true)
+    }
+
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
         let directory = rustix::fs::open(path, observation_open_flags(), Mode::empty())
             .map_err(|error| os_error(error, "open directory observation"))?;
@@ -322,4 +349,9 @@ pub(crate) fn observe_directory_fd(
     expected_path: &str,
 ) -> NativeResult<ExactDirectoryFdObservation> {
     platform::observe_directory_fd(fd, expected_path)
+}
+
+#[cfg(unix)]
+pub(crate) fn staged_directory_matches(fd: i32, path: &str, dev: u64, ino: u64) -> NativeResult<bool> {
+    platform::staged_directory_matches(fd, path, dev, ino)
 }

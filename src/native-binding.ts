@@ -219,6 +219,7 @@ export interface NativeBinding {
   removeStagedSymlink?(parentFd: number, basename: string, linkFd: number): "removed" | "name-absent" | "preserved";
   createStagedFile?(parentFd: number, basename: string): number;
   stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;
+  stagedDirectoryMatches?(fd: number, path: string, dev: bigint, ino: bigint): boolean;
   removeStagedFile?(
     parentFd: number,
     basename: string,

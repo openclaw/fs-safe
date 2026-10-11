@@ -1,6 +1,5 @@
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { assertSyncDirectoryGuard, inspectDirectoryIdentity, inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
@@ -17,12 +16,18 @@ import { assertNoWindowsPathAlias, pathForWindowsFilesystem } from "./windows-pa
 
 type RootIdentity = Pick<FileIdentityStat, "dev" | "ino">;
 
+type NativeRootHandle = {
+  readonly fd: number;
+  close(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
+};
+
 export type NativeRootAdmission = {
   directoryFlags?: number;
   exactRoot: boolean;
   reportCloseErrors?: boolean;
   operation: string;
-  root: FileHandle;
+  root: NativeRootHandle;
   rootPath: string;
 };
 
@@ -111,7 +116,14 @@ export async function openNativeRootAdmission(
   const directoryFlags = (params.searchOnly ? nodeDirectorySearchOnlyFlags()?.flags ?? fsSync.constants.O_RDONLY : fsSync.constants.O_RDONLY) |
     (fsSync.constants.O_DIRECTORY ?? 0);
   assertNoWindowsPathAlias(params.rootPath, "filesystem", "native root uses a Windows filesystem namespace alias");
-  const root = await fs.open(pathForWindowsFilesystem(params.rootPath), directoryFlags);
+  let fd = fsSync.openSync(pathForWindowsFilesystem(params.rootPath), directoryFlags);
+  const close = async () => {
+    if (fd < 0) return;
+    const owned = fd;
+    fd = -1;
+    fsSync.closeSync(owned);
+  };
+  const root: NativeRootHandle = { get fd() { return fd; }, close, [Symbol.asyncDispose]: close };
   try {
     const exactRoot = typeof params.rootIdentity?.dev === "bigint" &&
       typeof params.rootIdentity.ino === "bigint";

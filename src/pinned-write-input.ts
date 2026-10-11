@@ -24,6 +24,7 @@ export function replayPinnedInput(fd: number, input: PinnedWriteInput): PinnedWr
 }
 
 const isUint8Array = types.isUint8Array;
+const SMALL_BUFFER_BYTES = 64 * 1024;
 
 function streamChunkBytes(chunk: unknown): Uint8Array {
   if (Buffer.isBuffer(chunk)) return chunk;
@@ -41,6 +42,15 @@ export async function writePinnedInput(
   if (input.kind === "file") {
     await writeCopyFileToFd(typeof target === "number" ? target : target.fd, input, maxBytes, assertBeforeMutation);
     return;
+  }
+  if (typeof target === "number" && input.kind === "buffer" && !assertBeforeMutation) {
+    const data = typeof input.data === "string" ? Buffer.from(input.data, input.encoding ?? "utf8") : input.data;
+    if (data.byteLength <= SMALL_BUFFER_BYTES) {
+      if (maxBytes !== undefined && data.byteLength > maxBytes) {
+        throw new FsSafeError("too-large", `file exceeds limit of ${maxBytes} bytes (got at least ${data.byteLength})`);
+      }
+      return writeAllToFile(target, data, { synchronous: true });
+    }
   }
   let bytes = 0;
   const write = async (data: Uint8Array) => {

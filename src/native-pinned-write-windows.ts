@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import fsSync, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
+import type { NativeRootAdmission } from "./native-parent-admission.js";
 import { createFileHandle } from "./create.js";
 import { hasPreservedCreationArtifacts } from "./creation-boundary.js";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
@@ -75,7 +76,7 @@ function assertNamedParentCurrent(
 export async function runPinnedWriteWindows(
   binding: NativeBinding,
   params: PinnedWriteParams,
-  root: FileHandle,
+  root: NativeRootAdmission["root"],
   parentFd: number,
   parentGuard: AnyAsyncDirectoryGuard,
 ): Promise<FileIdentityStat> {

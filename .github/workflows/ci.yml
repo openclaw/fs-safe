@@ -1351,7 +1351,7 @@ jobs:
       - name: Pin native mutation syscall budgets
         if: runner.os == 'Linux'
         run: |
-          for operation in mkdir remove move append openWritable; do
+          for operation in mkdir remove move append openWritable create write; do
             node scripts/native-call-budget-proof.mjs --operation "$operation"
           done
 

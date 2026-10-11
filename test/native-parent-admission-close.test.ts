@@ -16,18 +16,17 @@ afterEach(() => {
 
 it.each(["win32", "linux"] as const)("preserves %s root-admission disposal semantics", async platform => {
   const directory = await tempRoot("fs-safe-root-admission-close-");
-  const actualOpen = fs.open.bind(fs);
+  const actualOpen = fsSync.openSync.bind(fsSync);
+  const actualClose = fsSync.closeSync.bind(fsSync);
   const closeFailure = new Error("root closed before reporting failure");
   let descriptor = -1;
-  vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-    const handle = await actualOpen(...args);
-    descriptor = handle.fd;
-    const close = handle.close.bind(handle);
-    vi.spyOn(handle, "close").mockImplementation(async () => {
-      await close();
-      throw closeFailure;
-    });
-    return handle;
+  vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+    descriptor = actualOpen(...args);
+    return descriptor;
+  });
+  vi.spyOn(fsSync, "closeSync").mockImplementation(fd => {
+    actualClose(fd);
+    if (fd === descriptor) throw closeFailure;
   });
   const identity = await fs.lstat(directory, { bigint: true });
   Object.defineProperty(process, "platform", { value: platform });
