@@ -5,7 +5,7 @@ const change = (before, after) => {
   if (!source.includes(before)) throw Error(`Missing diagnostic anchor: ${before}`);
   source = source.replace(before, after);
 };
-change('[["npm", [process.execPath, npmCli]], ["pnpm", pnpmCommand]]', '[["npm", [process.execPath, npmCli]]]');
+change('for (const [manager, command] of consumerCommands)', 'for (const [manager, command] of consumerCommands.filter(([name]) => name === "npm"))');
 change('for (const omitted of [false, true])', 'for (const omitted of [true])');
 const anchor = '        cases.creation = [];';
 change(anchor, `        const summaries = [];
@@ -22,6 +22,7 @@ change(anchor, `        const summaries = [];
             ], { cwd: directory, env: { ...env, FS_SAFE_CREATION_DIAGNOSTIC_OUTPUT: trace },
               encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
             const receipt = JSON.parse(stdout);
+            assert.equal(receipt.protocol, 1);
             assert.equal(receipt.omitted, true);
             assert.equal(receipt.nativeLoaded, false);
             assert.equal(receipt.mode, 'off');
