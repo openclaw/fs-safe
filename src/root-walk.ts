@@ -93,33 +93,13 @@ function limitEntry(relativePath: string): RootWalkEntry {
   return { relativePath, kind: "truncated", size: 0 };
 }
 
-export async function* walkRoot(
+export function walkRoot(
   root: RootWalkCapability,
   relativePath: string,
   options: AnyRootWalkOptions,
 ): AsyncGenerator<AnyRootWalkEntry> {
-  if (!(["skip", "follow-within-root", "include"] as const).includes(options.symlinkPolicy)) {
-    throw new TypeError(`invalid root walk symlink policy: ${String(options.symlinkPolicy)}`);
-  }
-  if (options.order !== undefined && !(["sorted", "filesystem"] as const).includes(options.order)) {
-    throw new TypeError(`invalid root walk order: ${String(options.order)}`);
-  }
-  if (
-    options.limitBehavior !== undefined &&
-    !(["truncate", "throw"] as const).includes(options.limitBehavior)
-  ) {
-    throw new TypeError(`invalid root walk limit behavior: ${String(options.limitBehavior)}`);
-  }
-  if (
-    options.onDirectoryError !== undefined &&
-    !(["throw", "skip-and-report"] as const).includes(options.onDirectoryError)
-  ) {
-    throw new TypeError(
-      `invalid root walk directory error behavior: ${String(options.onDirectoryError)}`,
-    );
-  }
-  const maxDepth = validateBudget("maxDepth", options.maxDepth);
-  const maxEntries = validateBudget("maxEntries", options.maxEntries);
+  let maxDepth: number;
+  let maxEntries: number;
   const visitedDirectories = new Set<string>();
   let examined = 0;
   let truncated = false;
@@ -149,6 +129,30 @@ export async function* walkRoot(
     depth: number,
     admittedChildPath?: string,
   ): AsyncGenerator<AnyRootWalkEntry> {
+    if (depth === 0) {
+      if (!(["skip", "follow-within-root", "include"] as const).includes(options.symlinkPolicy)) {
+        throw new TypeError(`invalid root walk symlink policy: ${String(options.symlinkPolicy)}`);
+      }
+      if (options.order !== undefined && !(["sorted", "filesystem"] as const).includes(options.order)) {
+        throw new TypeError(`invalid root walk order: ${String(options.order)}`);
+      }
+      if (
+        options.limitBehavior !== undefined &&
+        !(["truncate", "throw"] as const).includes(options.limitBehavior)
+      ) {
+        throw new TypeError(`invalid root walk limit behavior: ${String(options.limitBehavior)}`);
+      }
+      if (
+        options.onDirectoryError !== undefined &&
+        !(["throw", "skip-and-report"] as const).includes(options.onDirectoryError)
+      ) {
+        throw new TypeError(
+          `invalid root walk directory error behavior: ${String(options.onDirectoryError)}`,
+        );
+      }
+      maxDepth = validateBudget("maxDepth", options.maxDepth);
+      maxEntries = validateBudget("maxEntries", options.maxEntries);
+    }
     options.signal?.throwIfAborted();
     let listing: RootDirectoryListing;
     let canonicalDirectory: string;
@@ -223,7 +227,7 @@ export async function* walkRoot(
       while (true) {
         let next: Awaited<ReturnType<RootDirectoryListing["next"]>>;
         try {
-          next = await listing.next();
+          next = listing.nextSnapshot ? listing.nextSnapshot() : await listing.next();
           options.signal?.throwIfAborted();
         } catch (error) {
           yield onDirectoryError(directory, error);
@@ -307,5 +311,5 @@ export async function* walkRoot(
     }
   }
 
-  yield* visit(relativePath, 0);
+  return visit(relativePath, 0);
 }
