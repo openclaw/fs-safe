@@ -2,24 +2,34 @@
 
 ## Unreleased
 
+## 0.26.1 - 2026-10-11
+
+### Highlights
+
+- **Windows identity checks:** reject rounded file IDs; callers supplying identity stats must use bigint values. ([#949](https://github.com/openclaw/fs-safe/pull/949))
+- **Listings and copies:** measured listings are 38–54% faster on Linux and Windows; direct synchronous file copies are 11–31% faster, with Windows batches up to 48% faster. ([#934](https://github.com/openclaw/fs-safe/pull/934), [#932](https://github.com/openclaw/fs-safe/pull/932))
+- **Windows private creation:** the portable helper is about 5× faster, and private creation works beyond MAX_PATH. ([#930](https://github.com/openclaw/fs-safe/pull/930), [#924](https://github.com/openclaw/fs-safe/pull/924))
+- **Native overhead:** reduce dispatch and repeated admission for direct-child mkdir, removal, moves, existing-file opens, buffered publication, and async temp creation; measured eligible cases reach or improve on fallback performance while retaining native checks. ([#927](https://github.com/openclaw/fs-safe/pull/927), [#928](https://github.com/openclaw/fs-safe/pull/928), [#929](https://github.com/openclaw/fs-safe/pull/929), [#948](https://github.com/openclaw/fs-safe/pull/948), [#953](https://github.com/openclaw/fs-safe/pull/953))
+
 ### Fixes
 
-- Windows identity checks no longer accept rounded file IDs as a match; pass bigint stats for caller-supplied identities.
-
-- Fix Windows private directory and file creation beyond MAX_PATH, including internal staging and pathname verification, while preserving ACL, alias, identity and cleanup checks.
+- **Windows file identity:** stop accepting rounded Number file IDs as matches. Callers supplying identity stats must now pass bigint stats; unsafe Number identities fail with `path-mismatch`. ([#949](https://github.com/openclaw/fs-safe/pull/949))
+- **Windows long paths:** support private directory and file creation beyond MAX_PATH, including internal staging and pathname verification, while preserving ACL, alias, identity, and cleanup checks. ([#924](https://github.com/openclaw/fs-safe/pull/924))
 
 ### Performance
 
-- Reduce recursive removal stat allocation and same-parent move overhead while retaining identity, canonical-path and no-clobber checks.
-- Halve per-entry promise allocation for complete sorted `Root.walk()` scans.
-- Reuse privately owned Windows handles for asynchronous pathname hashing and remove metadata promise adapters while preserving borrowed-handle positions.
-- Reduce uncontended raw sidecar lock acquisition overhead without changing durability or ownership checks.
-- Skip redundant Windows write-mode changes while retaining both file flushes and speed up fallback `Root.copyIn()` metadata handling.
-- Remove ordinary `Root.mkdir()` dispatch hops and accelerate native root revalidation while retaining policy and alias admission.
-- Speed up portable Windows private file and directory creation about 5x on x64 (consumer probe median 65.1 s to 13.3 s) by running security checks in a prebuilt .NET Framework helper instead of compiling C# through PowerShell on every call; every check still runs on the inherited handle.
-- Speed up native `Root.mkdir()` for direct children while retaining descriptor-relative creation and exact root/child identity checks.
-- Speed up native removal and moves by retaining Root descriptors synchronously and reusing them for direct children, preserving policy, identity and no-replace checks.
-- Avoid redundant native parent creation for existing-file append and writable opens while retaining guarded handles and native missing-file creation.
+- **Listings and traversal:** avoid per-entry filename buffers for losslessly decoded names, making measured Linux and Windows listings 38–54% faster; halve per-entry promise allocation in complete sorted `Root.walk()` scans, improving measured 50,000-entry Linux walks by 3–4%. ([#934](https://github.com/openclaw/fs-safe/pull/934), [#937](https://github.com/openclaw/fs-safe/pull/937))
+- **File copies and moves:** reuse canonical admission in `copyRootFileSync`, improving measured direct copies by 11–31% on Linux and Windows and batches by up to 47–48% on Windows; reduce ordinary `Root.copyIn()` and same-parent move promise allocation without claiming a reproduced latency gain. ([#932](https://github.com/openclaw/fs-safe/pull/932), [#941](https://github.com/openclaw/fs-safe/pull/941), [#936](https://github.com/openclaw/fs-safe/pull/936))
+- **Reads and hashing:** trim file-admission and bounded-read metadata work for 2–9% faster measured Linux reads; reuse privately owned Windows handles for 42% faster native async SHA-256 on small pathname inputs, retaining borrowed-handle positions. ([#931](https://github.com/openclaw/fs-safe/pull/931), [#938](https://github.com/openclaw/fs-safe/pull/938))
+- **Locks and directories:** reduce uncontended sidecar-lock acquisition overhead by up to 34% with native; remove ordinary mkdir dispatch hops for 37% faster native direct-child creation, 17–22% faster existing-directory admission, and 81% faster native `ensureRoot` in the combined Linux benchmark. ([#939](https://github.com/openclaw/fs-safe/pull/939), [#944](https://github.com/openclaw/fs-safe/pull/944), [#927](https://github.com/openclaw/fs-safe/pull/927))
+- **Temporary workspaces and removal:** make measured empty-workspace cleanup 13–32% faster on Linux, create async workspaces through retained parents, and reduce recursive-removal stat allocation for 2–6% faster measured Linux recursive removal; retain identity-bound cleanup. ([#942](https://github.com/openclaw/fs-safe/pull/942), [#953](https://github.com/openclaw/fs-safe/pull/953), [#933](https://github.com/openclaw/fs-safe/pull/933))
+- **Private and exclusive creation:** run portable Windows security checks in a prebuilt helper for about 5× faster private creation; streamline exclusive-creation metadata and skip redundant Windows write-mode changes without removing flushes or permission checks. ([#930](https://github.com/openclaw/fs-safe/pull/930), [#935](https://github.com/openclaw/fs-safe/pull/935), [#940](https://github.com/openclaw/fs-safe/pull/940))
+- **Native operations:** reuse retained roots for removal and moves, defer parent creation until an opened file is missing, and streamline buffered creation and replacement-write publication; preserve descriptor-relative mutation and exact identity checks. Native non-durable publication reaches fallback parity in the measured cases; durable creation remains slower. ([#928](https://github.com/openclaw/fs-safe/pull/928), [#929](https://github.com/openclaw/fs-safe/pull/929), [#948](https://github.com/openclaw/fs-safe/pull/948))
+
+### Docs and Tooling
+
+- **Raw Node baseline:** add `pnpm benchmark:node` with alternating raw/safe/control samples and documented operation semantics; raw Node is a performance reference, not a security-equivalent implementation. ([#925](https://github.com/openclaw/fs-safe/pull/925))
+- **Native API reference:** enumerate APIs that require native bindings and their fallback availability. ([#926](https://github.com/openclaw/fs-safe/pull/926))
 
 ## 0.26.0 - 2026-10-10
 
