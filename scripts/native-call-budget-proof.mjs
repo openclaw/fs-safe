@@ -155,8 +155,8 @@ if (process.argv.includes("--child")) {
             ? { statx: 4, openat: 3, fstat: 11, readlink: 6, newfstatat: 6, mkdirat: 1, close: 3 }
             : { statx: 4, openat: 1, fstat: 6, readlink: 6, newfstatat: 3, mkdirat: 1, openat2: 1, close: 2 };
         if (operation === "ensureRoot") expected = row.mode === "require"
-          ? { statx: 3, openat: 1, fstat: 2, readlink: 2, newfstatat: 1, close: 1 }
-          : { statx: 3, readlink: 2 };
+          ? {"statx": 1, "openat": 1, "fstat": 1, "readlink": 2, "newfstatat": 2, "close": 1}
+          : {"statx": 3, "readlink": 2};
         if (operation === "remove") expected = row.mode === "require"
           ? { statx: 6, readlink: 6, openat: 1, newfstatat: 2, unlinkat: 1, close: 1 }
           : { statx: 6, readlink: 6, unlink: 1 };
