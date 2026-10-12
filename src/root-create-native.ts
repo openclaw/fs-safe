@@ -74,6 +74,12 @@ type Creation = {
   selectedParent?: NonNullable<ReturnType<typeof existingCreationParent>>;
 };
 
+const nativeCreateCollisions = new WeakSet<object>();
+
+export function isNativeCreateCollision(error: unknown): boolean {
+  return typeof error === "object" && error !== null && nativeCreateCollisions.has(error);
+}
+
 function unavailable(): never {
   throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
 }
@@ -460,7 +466,13 @@ export async function tryOpenCreateRootNative(params: Creation & {
     // Native creation owns the only O_CREAT dispatch. The subsequent Node open
     // carries neither O_CREAT nor O_TRUNC and must match this retained inode.
     const close = captureNativeFdClose(binding);
-    const fd = binding.openCreateBeneath!(parent, path.basename(params.target), params.flags, params.mode & 0o7777);
+    let fd: number;
+    try {
+      fd = binding.openCreateBeneath!(parent, path.basename(params.target), params.flags, params.mode & 0o7777);
+    } catch (error) {
+      if (hasNodeErrorCode(error, "EEXIST") && typeof error === "object" && error !== null) nativeCreateCollisions.add(error);
+      throw error;
+    }
     let rawOpen = true;
     const closeRaw = () => { if (rawOpen) { rawOpen = false; close(fd); } };
     using owner = { [Symbol.dispose]: closeRaw };

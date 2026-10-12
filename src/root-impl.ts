@@ -37,7 +37,7 @@ import { sameFileIdentity } from "./file-identity.js";
 import { removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
 import { realpathSync } from "./realpath.js";
 import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from "./root-directory-creation.js";
-import { buildAtomicWriteTempPath, rootWriteQueueKey, ensureNativeRootCurrent, probeNativeCreationPath, tryMkdirNativeDirectChild, tryMkdirNativeExistingParent, tryMkdirRootNative, tryOpenCreateRootNative, type MissingWritableFileInRoot, type OpenedWritableFileInRoot, type WritableFileInRootParams } from "./root-create-native.js";
+import { buildAtomicWriteTempPath, rootWriteQueueKey, ensureNativeRootCurrent, isNativeCreateCollision, probeNativeCreationPath, tryMkdirNativeDirectChild, tryMkdirNativeExistingParent, tryMkdirRootNative, tryOpenCreateRootNative, type MissingWritableFileInRoot, type OpenedWritableFileInRoot, type WritableFileInRootParams } from "./root-create-native.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath, resolveRootPathSync, resolveRootPathForRemoval } from "./root-path.js";
 import { RemovalPathReceipts } from "./root-remove-receipt.js";
@@ -786,7 +786,7 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
     let precreated: Awaited<ReturnType<typeof tryOpenCreateRootNative>> | undefined;
     if (requireNative && observedMissing && !guardedTarget && params.assertBeforeMutation === undefined && options?.createIfMissing !== false) {
       try { precreated = await createNative(); }
-      catch (error) { if (!hasNodeErrorCode(error, "EEXIST")) throw error; }
+      catch (error) { if (!hasNodeErrorCode(error, "EEXIST") || !isNativeCreateCollision(error)) throw error; }
     }
     if (precreated) {
       handle = precreated.handle;

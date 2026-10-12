@@ -73,6 +73,24 @@ describe.runIf(native?.openCreateBeneath)("native missing-file parent admission"
     expect(fs.readdirSync(path.join(directory, "parent"))).toEqual([]);
   });
 
+  it("does not retry a close failure whose errno is EEXIST", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("native-file-close-conflict-");
+    const safe = await root(directory);
+    const failure = Object.assign(new Error("close failed"), { code: "EEXIST" });
+    let failed = false, creates = 0;
+    __setNativeLoaderForTest(() => ({ ...native!,
+      openCreateBeneath(...args) { creates++; return native!.openCreateBeneath!(...args); },
+      closeOwnedFd(fd) {
+        native!.closeOwnedFd!(fd);
+        if (!failed) { failed = true; throw failure; }
+      },
+    }));
+    await expect(safe.append("file", "payload", { durable: false })).rejects.toBe(failure);
+    expect(creates).toBe(1);
+    expect(fs.existsSync(path.join(directory, "file"))).toBe(false);
+  });
+
   it("validates a file that appears after the missing-path observation", async () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("native-file-create-collision-");
