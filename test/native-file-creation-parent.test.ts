@@ -59,6 +59,31 @@ describe.runIf(native?.openCreateBeneath)("native missing-file parent admission"
     expect(fs.readdirSync(held)).toEqual([]);
   });
 
+  // Windows' Node-opened Root handle denies the fixture's directory rename.
+  it.skipIf(process.platform === "win32")("keeps the borrowed Root fence after native creation", async () => {
+    configureFsSafeNative({ mode: "require" });
+    const base = await tempRoot("native-file-root-dispatch-");
+    const directory = path.join(base, "root"), outside = path.join(base, "outside");
+    const held = path.join(base, "held");
+    fs.mkdirSync(directory);
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "sentinel"), "outside");
+    const safe = await root(directory);
+    let created = false;
+    __setNativeLoaderForTest(() => ({ ...native!, openCreateBeneath(...args) {
+      const fd = native!.openCreateBeneath!(...args);
+      created = true;
+      fs.renameSync(directory, held);
+      fs.symlinkSync(outside, directory, process.platform === "win32" ? "junction" : "dir");
+      return fd;
+    } }));
+    await expect(safe.append("file", "payload", { durable: false })).rejects.toMatchObject({ code: "path-mismatch" });
+    expect(created).toBe(true);
+    expect(fs.readdirSync(held)).toEqual([]);
+    expect(fs.readdirSync(outside)).toEqual(["sentinel"]);
+    expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("outside");
+  });
+
   it("retains a real authority callback on file creation", async () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("native-file-parent-callback-");

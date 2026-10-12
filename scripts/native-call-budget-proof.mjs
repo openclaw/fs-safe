@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
+import { canonicalizeBudgetSyscalls, isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
@@ -120,9 +120,15 @@ if (process.argv.includes("--child")) {
         continue;
       }
       if (creationOperation) {
-        const fixtures = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-file-creation-budget.json", import.meta.url), "utf8"));
+        const fixturePath = new URL("../test/fixtures/native-file-creation-budget.json", import.meta.url);
+        const fixtures = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
         const platform = process.platform === "win32" ? "win32" : "posix";
         const expected = fixtures[platform][operation][String(creationDepth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
+        if (process.argv.includes("--update")) {
+          expected.resources = row.resources;
+          if (trace) expected.syscalls = canonicalizeBudgetSyscalls(row.syscalls, process.arch);
+          fs.writeFileSync(fixturePath, `${JSON.stringify(fixtures, null, 2)}\n`);
+        }
         assert.deepEqual(row.resources, expected.resources, `${row.mode} ${operation} resources at depth ${creationDepth}`);
         if (trace) {
           const aliases = { readlink: "readlinkat", mkdir: "mkdirat" };

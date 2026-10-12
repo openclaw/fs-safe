@@ -91,9 +91,11 @@ function existingCreationParent(params: Creation) {
   const segments = params.originalPath.split(path.sep === "\\" ? /[\\/]/ : "/");
   if (segments.some(segment => !isSafePathSegment(segment, { allowDotPrefix: true }) || segment.endsWith(".")) ||
     path.join(params.root.rootReal, ...segments) !== params.target) return undefined;
-  assertRootIdentityCurrentSync(params.root);
+  let rootStat!: fs.BigIntStats;
+  assertRootIdentityCurrentSync(params.root, stat => { rootStat = stat; });
   try {
-    const identity = inspectDirectoryIdentitySync(params.directory);
+    const identity = inspectDirectoryIdentitySync(params.directory, undefined,
+      params.directory === params.root.rootReal ? rootStat : undefined);
     if (realpathSync.native(pathForWindowsFilesystem(params.directory)) !== params.directory) return undefined;
     return {
       path: params.directory, identity,
@@ -143,8 +145,17 @@ async function withNativeDirectory<T>(
       verifyMkdirDirectory(binding, fd, existing.path);
       const guard = { dir: existing.path, realPath: existing.path, stat: existing.identity };
       const assertCurrent = () => {
-        assertRootIdentityCurrentSync(params.root);
-        assertSyncDirectoryGuard(guard);
+        let currentRoot!: fs.BigIntStats;
+        assertRootIdentityCurrentSync(params.root, stat => { currentRoot = stat; });
+        if (borrowed) {
+          // Root and parent are the same name in this synchronous fence.
+          inspectDirectoryIdentitySync(existing.path, existing.identity, currentRoot);
+          if (realpathSync.native(pathForWindowsFilesystem(existing.path)) !== existing.path) {
+            throw new FsSafeError("path-mismatch", "directory changed during operation");
+          }
+        } else {
+          assertSyncDirectoryGuard(guard);
+        }
       };
       pending = { value: await operation(binding, fd, assertCurrent) };
       return pending.value;

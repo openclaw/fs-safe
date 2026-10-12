@@ -11,7 +11,9 @@ const cases = ["appendCreate", "openWritableCreate"].flatMap(operation =>
 describe.runIf(native?.openCreateBeneath && !process.versions.bun)("native file creation budgets", () => {
   it.each(cases)("pins $operation resources at parent depth $depth", ({ operation, depth }) => {
     expect(() => execFileSync(process.execPath, ["scripts/native-call-budget-proof.mjs", "--operation", operation,
-      "--creation-depth", String(depth), "--resources-only"], {
+      "--creation-depth", String(depth),
+      ...(process.env.FS_SAFE_UPDATE_NATIVE_BUDGETS === "1" ? ["--update"] : []),
+      ...(process.env.FS_SAFE_NATIVE_SYSCALL_BUDGETS === "1" ? [] : ["--resources-only"])], {
       cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8", stdio: "pipe",
     })).not.toThrow();
   }, 20_000);
