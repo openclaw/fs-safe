@@ -44,6 +44,7 @@ struct Spec {
     identity: ExactFileIdentity,
     kind: String,
     target: bool,
+    notes: u32,
 }
 struct Watch {
     fd: OwnedFd,
@@ -146,6 +147,10 @@ impl Queue {
                 identity: parent_identity,
                 kind: "directory".into(),
                 target: false,
+                // An admitted target's vnode reports replacement; sibling writes do not affect it.
+                notes: if entry.target.is_some() || entry.name.is_empty() {
+                    NOTES & !(libc::NOTE_WRITE | libc::NOTE_EXTEND | libc::NOTE_LINK)
+                } else { NOTES },
             };
             desired.insert((id, entry.scope.clone(), false), spec.clone());
             if let Some(target) = entry.target {
@@ -159,6 +164,9 @@ impl Queue {
                     Spec {
                         name: entry.name,
                         identity: crate::exact_file_identity(&target.dev, &target.ino)?,
+                        notes: if target.kind == "directory" {
+                            NOTES & !(libc::NOTE_WRITE | libc::NOTE_EXTEND | libc::NOTE_LINK)
+                        } else { NOTES },
                         kind: target.kind,
                         target: true,
                         ..spec
@@ -182,7 +190,7 @@ impl Queue {
             let fd = open(&spec)?;
             change(
                 self.waker.0.as_raw_fd(),
-                event(fd.as_raw_fd() as usize, libc::EVFILT_VNODE, libc::EV_ADD | libc::EV_CLEAR, NOTES),
+                event(fd.as_raw_fd() as usize, libc::EVFILT_VNODE, libc::EV_ADD | libc::EV_CLEAR, spec.notes),
             )?;
             self.watches.insert(key, Watch { fd, spec, pending: pending.clone() });
             changed = true;
@@ -251,7 +259,7 @@ mod tests {
     use super::*;
     use crate::watch::{Pending, WatchDirectory, WatchEntryTarget};
     use std::fs;
-    use std::os::unix::fs::{MetadataExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::sync::Mutex;
 
     fn entry(root: &std::path::Path) -> WatchEntryRegistration {
@@ -270,7 +278,7 @@ mod tests {
             target: fs::symlink_metadata(root.join("entry")).ok().map(|stat| WatchEntryTarget {
                 dev: stat.dev().into(),
                 ino: stat.ino().into(),
-                kind: if stat.is_symlink() { "symlink" } else { "file" }.into(),
+                kind: if stat.is_symlink() { "symlink" } else if stat.is_dir() { "directory" } else { "file" }.into(),
             }),
         }
     }
@@ -291,6 +299,11 @@ mod tests {
         assert!(!batch.overflow && batch.hints.is_empty());
         assert_eq!(configure(&mut queue).directories, 2);
         assert!(!configure(&mut queue).changed);
+        fs::write(root.join("sibling"), "unselected").unwrap();
+        fs::remove_file(root.join("sibling")).unwrap();
+        queue.waker().wake();
+        queue.wait();
+        assert!(pending.lock().unwrap().take().is_none());
         fs::write(root.join("entry"), "changed").unwrap();
         queue.waker().wake();
         queue.wait();
@@ -318,6 +331,27 @@ mod tests {
         }
         queue.waker().wake();
         queue.wait();
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn directory_entry_ignores_children_and_keeps_metadata_events() {
+        let root = std::env::temp_dir().join(format!("fs-safe-kqueue-directory-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("entry")).unwrap();
+        let pending = Arc::new(Mutex::new(Pending { limit: 32, ..Pending::default() }));
+        let mut queue = Queue::new().unwrap();
+        queue.configure(1, root.to_str().unwrap(), vec![entry(&root)], pending.clone()).unwrap();
+        fs::write(root.join("entry/child"), "unselected").unwrap();
+        fs::create_dir(root.join("entry/child-dir")).unwrap();
+        queue.waker().wake();
+        queue.wait();
+        assert!(pending.lock().unwrap().take().is_none());
+        let mode = fs::metadata(root.join("entry")).unwrap().permissions().mode();
+        fs::set_permissions(root.join("entry"), fs::Permissions::from_mode(mode ^ 0o020)).unwrap();
+        queue.waker().wake();
+        queue.wait();
+        assert!(pending.lock().unwrap().take().unwrap().hints.iter().any(|hint| hint.name == "entry"));
+        queue.remove(1);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

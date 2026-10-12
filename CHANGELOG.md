@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **macOS file watching:** avoid JavaScript reconciliation for unrelated sibling writes and child-only changes to directory entry scopes while preserving missing-entry discovery and replacement notifications.
+
 - **Windows signing:** native addons and the security helper are Authenticode-signed by OpenClaw Foundation with timestamped signatures.
 
 - Add async `getFsSafeNativeStatus()` for runtime health checks with optional probing, path-free load reasons, and actionable guidance.
