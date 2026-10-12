@@ -24,11 +24,11 @@ declare global {
 }
 `);
   let count = 0;
-  for (const file of ["README.md", "docs/sidecar-lock.md"]) {
+  for (const file of ["README.md", "docs/sidecar-lock.md", "docs/config.md", "docs/native-helper.md"]) {
     const markdown = readRepoFile(file);
     let selected = 0;
     for (const block of markdown.matchAll(/```(?:ts|typescript)\n([\s\S]*?)```/gu)) {
-      if (file !== "README.md" && !block[1].includes("shouldReclaim:") &&
+      if (file !== "README.md" && !block[1].includes("getFsSafeNativeStatus({ probe: true })") && !block[1].includes("shouldReclaim:") &&
         !block[1].includes("declare function acquireFileLock<")) continue;
       const line = markdown.slice(0, block.index).split("\n").length + 1;
       const name = `${path.basename(file, ".md")}-line-${line}.mts`;

@@ -174,6 +174,10 @@ export async function registerPaths({
   contract("PathScope", scope);
   for (const name of ["resolve", "resolveAll", "existing", "files", "writable", "ensureDir"]) add(`PathScope.${name}`, () => scope[name](["resolveAll", "existing", "files"].includes(name) ? ["input.json"] : name === "ensureDir" ? "tree" : "input.json"), { sync: name.startsWith("resolve") });
   add("getFsSafeNativeConfig", () => a.getFsSafeNativeConfig(), { sync: true, batch: 100 });
+  add("getFsSafeNativeStatus", () => a.getFsSafeNativeStatus(), { batch: 100,
+    skip: typeof a.getFsSafeNativeStatus !== "function" ? "Not exported by this older comparison build." : undefined,
+    verify: result => assert.equal(result.loaded, result.reason === "loaded"),
+  });
   add("configureFsSafeNative", () => a.configureFsSafeNative({ mode: args.mode }), { sync: true });
   add("getFsSafeLockConfig", () => a.getFsSafeLockConfig(), { sync: true, batch: 100 });
   add("configureFsSafeLocks", () => a.configureFsSafeLocks({}), { sync: true });

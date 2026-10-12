@@ -84,6 +84,12 @@ kernel-atomic. Read the [native helper policy](docs/native-helper.md) and
 [operation/platform matrix](docs/security-model.md#native-root-mutation-capabilities)
 when concurrent mutation is in scope.
 
+For doctor/startup checks, use
+[`await getFsSafeNativeStatus({ probe: true })`](docs/config.md#getfssafenativestatus-options)
+from `@openclaw/fs-safe/config` to report whether the native addon is active,
+why it is unavailable, and what to do next. Calling it without options only reads
+the cache. Status is per module instance; Workers must be checked separately.
+
 ## Migrating from the Python helper
 
 Version 0.5 replaced the Python worker with prebuilt native bindings. Follow the

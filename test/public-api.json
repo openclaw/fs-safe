@@ -9,6 +9,7 @@
         "configureFsSafeNative",
         "getFsSafeLockConfig",
         "getFsSafeNativeConfig",
+        "getFsSafeNativeStatus",
         "isNoReplaceUnsupported",
         "root",
         "writeExternalFileWithinRoot"
@@ -27,6 +28,8 @@
         "FsSafeLockConfig",
         "FsSafeNativeConfig",
         "FsSafeNativeMode",
+        "FsSafeNativeStatus",
+        "FsSafeNativeStatusReason",
         "HardlinkPolicy",
         "MutationSymlinkPolicy",
         "OpenResult",
@@ -177,12 +180,15 @@
         "configureFsSafeLocks",
         "configureFsSafeNative",
         "getFsSafeLockConfig",
-        "getFsSafeNativeConfig"
+        "getFsSafeNativeConfig",
+        "getFsSafeNativeStatus"
       ],
       "types": [
         "FsSafeLockConfig",
         "FsSafeNativeConfig",
-        "FsSafeNativeMode"
+        "FsSafeNativeMode",
+        "FsSafeNativeStatus",
+        "FsSafeNativeStatusReason"
       ],
       "errorCodes": {}
     },
