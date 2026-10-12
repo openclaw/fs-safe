@@ -350,6 +350,13 @@ including fresh policy, identity and post-removal checks; recursive traversal
 retains its directory, mount, budget and cancellation checks. Neither optimization
 changes the descriptor-relative mutation or atomic no-replace mechanism.
 
+Ordinary `Root.ensureRoot()` in `require` can combine retained-root opening,
+exact identity/metadata/canonical observations, the final named Root fence and
+checked close in one native call. The initial JavaScript Root identity fence
+remains before native lookup. Verification and close failures retain both errors;
+an unavailable native observer hands its still-open descriptor to the existing
+guarded observation route. Private or policy-bound calls keep their admission.
+
 Writable opens without an explicit mutation policy attempt the existing-file
 handle path before creating parents. Policy-bound opens first prepare the parent
 receipt needed to select the file.

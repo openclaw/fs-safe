@@ -39,7 +39,7 @@ mod platform {
     }
 
     #[cfg(target_os = "linux")]
-    fn canonical_path(fd: i32, link_count: u64) -> NativeResult<String> {
+    pub(super) fn canonical_path(fd: i32, link_count: u64) -> NativeResult<String> {
         // procfs appends " (deleted)" to an unlinked handle, but that suffix
         // is also a valid live basename. The retained handle's link count is
         // the unambiguous signal; never infer deletion from pathname text.
@@ -66,7 +66,7 @@ mod platform {
     }
 
     #[cfg(target_os = "macos")]
-    fn canonical_path(fd: i32, _link_count: u64) -> NativeResult<String> {
+    pub(super) fn canonical_path(fd: i32, _link_count: u64) -> NativeResult<String> {
         use std::ffi::CStr;
 
         let mut buffer = vec![0_i8; libc::PATH_MAX as usize];
@@ -293,7 +293,7 @@ mod platform {
         Ok(path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned())
     }
 
-    fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
+    pub(super) fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
         canonical_path_with_query(handle, |handle, buffer| {
             // Keep normalized names (flags 0): the opened spelling cannot prove
             // physical containment through a renamed or redirected ancestor.
@@ -341,6 +341,16 @@ mod platform {
 
 pub(crate) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
     platform::observe_directory(path)
+}
+
+#[cfg(unix)]
+pub(crate) fn canonical_unix_directory(fd: i32, nlink: u64) -> NativeResult<String> {
+    platform::canonical_path(fd, nlink)
+}
+
+#[cfg(windows)]
+pub(crate) fn canonical_windows_directory(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
+    platform::canonical_path(handle)
 }
 
 #[cfg(unix)]

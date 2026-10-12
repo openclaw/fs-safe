@@ -330,6 +330,16 @@ pub(crate) fn runtime_fd_from_handle(handle: OwnedHandle) -> NativeResult<i32> {
     runtime_fd_from_handle_with_bridge(handle, uv_bridge()?)
 }
 
+pub(crate) fn transfer_owned_handle_to_runtime(handle: &mut Option<OwnedHandle>) -> NativeResult<i32> {
+    let bridge = uv_bridge()?;
+    bridge.require_close()?;
+    let borrowed = handle.as_ref().ok_or_else(|| native_error("EBADF", "owned handle is closed"))?;
+    let fd = runtime_fd_for_handle(borrowed.0, bridge)?;
+    // Conversion succeeded; the host now owns this exact handle.
+    let _ = handle.take().unwrap().into_raw();
+    Ok(fd)
+}
+
 pub fn close_owned_fd(fd: i32) -> NativeResult<()> {
     uv_bridge()?.require_close()?.close_owned_fd(fd)
 }
