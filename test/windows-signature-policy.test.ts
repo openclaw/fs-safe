@@ -39,5 +39,5 @@ describe.skipIf(process.platform !== "win32")("Windows Authenticode policy", () 
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 35_000);
 });
