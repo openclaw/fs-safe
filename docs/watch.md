@@ -127,8 +127,9 @@ pending detail and queued batches are bounded. The last removal stops and joins
 the native thread. No Worker threads, eval programs, or JS `fs.watch` are used.
 
 macOS entry scopes use nonrecursive `EVFILT_VNODE` watches on the admitted parent
-and, when present, the entry itself. Parent activity requests a guarded scan
-without supplying filenames. The entry descriptor covers content and attribute
+and, when present, the entry itself. Child activity requests a guarded scan only
+while the selected entry is missing. Once it exists, sibling activity does not
+wake JavaScript; the entry descriptor covers replacement, content and attribute
 changes and is replaced when a guarded scan admits a new identity. Missing paths
 use their nearest admitted ancestor. Descriptors are opened without following
 symlinks; a symlink entry uses `O_SYMLINK` to observe the link itself. All
