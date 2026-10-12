@@ -13,7 +13,7 @@ import { captureNativeFdClose } from "./native-binding.js";
 import { openExactNativeRootSync, openNativeRootAdmission } from "./native-parent-admission.js";
 import { capturePolicyAwareNativeParent } from "./native-policy-parent.js";
 import { hasNodeErrorCode, isNotFoundPathError, isPathInside } from "./path.js";
-import { preparePinnedWriteMutationAdmission, type PinnedMutationPolicySnapshot } from "./pinned-mutation-admission.js";
+import { preparePinnedWriteMutationAdmission } from "./pinned-mutation-admission.js";
 import { resolvePathViaExistingAncestor } from "./root-path-existing.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
@@ -29,6 +29,8 @@ import { pathForWindowsFilesystem } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
 import { isSafePathSegment } from "./safe-path-segment.js";
 import { nativePolicyDirectoryObserver } from "./native-policy-directory-observation.js";
+import { existingCreationParent, type Creation } from "./root-native-creation-path.js";
+export { probeNativeCreationPath } from "./root-native-creation-path.js";
 
 export type OpenedWritableFileInRoot = {
   opened: WritableOpenResult;
@@ -61,17 +63,12 @@ export type MissingWritableFileInRoot = {
   writeSelection?: RootWritePathSelection;
 };
 
-type Creation = {
-  root: RootContext;
-  directory: string;
-  target: string;
-  mkdir: boolean;
-  private?: boolean;
-  policy?: PinnedMutationPolicySnapshot;
-  resolveCurrent(): Promise<string>;
-  assertBeforeMutation?: () => void;
-  originalPath?: string;
-};
+
+const nativeCreateCollisions = new WeakSet<object>();
+
+export function isNativeCreateCollision(error: unknown): boolean {
+  return typeof error === "object" && error !== null && nativeCreateCollisions.has(error);
+}
 
 function unavailable(): never {
   throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
@@ -84,6 +81,44 @@ async function withNativeDirectory<T>(
 ): Promise<T> {
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath || (params.private && process.platform === "win32")) return unavailable();
+  const existing = params.selectedParent ?? existingCreationParent(params);
+  if (existing) {
+    let pending: { value: T } | undefined;
+    try {
+      using rootOwner = openExactNativeRootSync(binding, {
+        rootPath: params.root.rootReal, rootIdentity: params.root.rootIdentity,
+      });
+      const close = captureNativeFdClose(binding);
+      const borrowed = existing.path === params.root.rootReal;
+      const fd = borrowed ? rootOwner.fd : binding.openBeneath(rootOwner.fd, existing.relative, existing.flags).fd;
+      using parentOwner = { [Symbol.dispose]() { if (!borrowed) close(fd); } };
+      inspectFileIdentitySync(() => borrowed ? rootOwner.stat : fs.fstatSync(fd, { bigint: true }), existing.identity);
+      verifyMkdirDirectory(binding, fd, existing.path);
+      const guard = { dir: existing.path, realPath: existing.path, stat: existing.identity };
+      const assertCurrent = () => {
+        let currentRoot!: fs.BigIntStats;
+        assertRootIdentityCurrentSync(params.root, stat => { currentRoot = stat; });
+        if (borrowed) {
+          // Root and parent are the same name in this synchronous fence.
+          inspectDirectoryIdentitySync(existing.path, existing.identity, currentRoot);
+          if (realpathSync.native(pathForWindowsFilesystem(existing.path)) !== existing.path) {
+            throw new FsSafeError("path-mismatch", "directory changed during operation");
+          }
+        } else {
+          assertSyncDirectoryGuard(guard);
+        }
+      };
+      pending = { value: await operation(binding, fd, assertCurrent) };
+      return pending.value;
+    } catch (error) {
+      if (pending && discard) {
+        try { await discard(pending.value); } catch (cleanupError) {
+          throw createSuppressedError(cleanupError, error, "creation handoff and cleanup failed");
+        }
+      }
+      throw error;
+    }
+  }
   const directoryTarget = params.directory === params.target;
   const canonicalTarget = async (target: string) => directoryTarget
     ? await resolvePathViaExistingAncestor(target)
@@ -393,7 +428,13 @@ export async function tryOpenCreateRootNative(params: Creation & {
     // Native creation owns the only O_CREAT dispatch. The subsequent Node open
     // carries neither O_CREAT nor O_TRUNC and must match this retained inode.
     const close = captureNativeFdClose(binding);
-    const fd = binding.openCreateBeneath!(parent, path.basename(params.target), params.flags, params.mode & 0o7777);
+    let fd: number;
+    try {
+      fd = binding.openCreateBeneath!(parent, path.basename(params.target), params.flags, params.mode & 0o7777);
+    } catch (error) {
+      if (hasNodeErrorCode(error, "EEXIST") && typeof error === "object" && error !== null) nativeCreateCollisions.add(error);
+      throw error;
+    }
     let rawOpen = true;
     const closeRaw = () => { if (rawOpen) { rawOpen = false; close(fd); } };
     using owner = { [Symbol.dispose]: closeRaw };

@@ -1357,9 +1357,17 @@ jobs:
           for depth in 1 8 32; do
             node scripts/native-call-budget-proof.mjs --operation mkdirNested --depth "$depth"
           done
+          for operation in appendCreate openWritableCreate; do
+            for depth in 0 1 8; do
+              node scripts/native-call-budget-proof.mjs --operation "$operation" --creation-depth "$depth"
+            done
+          done
 
       - name: Prove native mkdir retained authority
         run: node scripts/native-mkdir-authority-proof.mjs
+
+      - name: Prove native writable creation authority
+        run: node scripts/native-file-creation-authority-proof.mjs
 
       - name: Pin native temp creation resources
         if: runner.os != 'Linux'

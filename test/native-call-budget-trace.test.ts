@@ -1,5 +1,14 @@
 import { expect, it } from "vitest";
-import { isRuntimeClockProbe } from "../scripts/native-call-budget-trace.mjs";
+import { canonicalizeBudgetSyscalls, isRuntimeClockProbe } from "../scripts/native-call-budget-trace.mjs";
+
+it("stores ARM64 syscall aliases in the shared fixture spelling", () => {
+  expect(canonicalizeBudgetSyscalls({ readlinkat: 4, mkdirat: 1, openat: 2 }, "arm64"))
+    .toEqual({ readlink: 4, mkdir: 1, openat: 2 });
+  expect(canonicalizeBudgetSyscalls({ readlink: 1, readlinkat: 2 }, "arm64"))
+    .toEqual({ readlink: 3 });
+  expect(canonicalizeBudgetSyscalls({ readlinkat: 4, mkdirat: 1 }, "x64"))
+    .toEqual({ readlinkat: 4, mkdirat: 1 });
+});
 
 const probe = '14009 openat(AT_FDCWD</work/fixture>, "/sys/devices/system/cpu/cpu0/tsc_freq_khz", O_RDONLY|O_CLOEXEC)';
 

@@ -37,7 +37,7 @@ import { sameFileIdentity } from "./file-identity.js";
 import { removePathIfIdentityUnchanged } from "./replace-file-temp-owner.js";
 import { realpathSync } from "./realpath.js";
 import { mkdirPathFallback, prepareRootWriteTarget, tryMkdirAtExactParent } from "./root-directory-creation.js";
-import { buildAtomicWriteTempPath, rootWriteQueueKey, ensureNativeRootCurrent, tryMkdirNativeDirectChild, tryMkdirNativeExistingParent, tryMkdirRootNative, tryOpenCreateRootNative, type MissingWritableFileInRoot, type OpenedWritableFileInRoot, type WritableFileInRootParams } from "./root-create-native.js";
+import { buildAtomicWriteTempPath, rootWriteQueueKey, ensureNativeRootCurrent, isNativeCreateCollision, probeNativeCreationPath, tryMkdirNativeDirectChild, tryMkdirNativeExistingParent, tryMkdirRootNative, tryOpenCreateRootNative, type MissingWritableFileInRoot, type OpenedWritableFileInRoot, type WritableFileInRootParams } from "./root-create-native.js";
 import { isNonRegularWriteOpenError, resolveNonblockingWriteFlag } from "./write-open-flags.js";
 import { resolveRootPath, resolveRootPathSync, resolveRootPathForRemoval } from "./root-path.js";
 import { RemovalPathReceipts } from "./root-remove-receipt.js";
@@ -701,7 +701,9 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
       denyMutations: params.denyMutations,
       mutationSymlinks: params.mutationSymlinks,
     });
-  const { resolved } = guardedTarget?.resolvedPath ?? await resolveGuardedWritePathInRoot(root, {
+  const creationProbe = requireNative && !guardedTarget && params.assertBeforeMutation === undefined && options?.createIfMissing !== false
+    ? probeNativeCreationPath(root, params.relativePath) : undefined;
+  const { resolved } = creationProbe ?? guardedTarget?.resolvedPath ?? await resolveGuardedWritePathInRoot(root, {
     relativePath: params.relativePath,
   });
   const resolveCurrent = async () => (await resolveGuardedWritePathInRoot(root, {
@@ -728,7 +730,8 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
   let ioPath = nativeCreatesParents ? resolved : prepared?.targetPath ?? (params.mkdir === false ? resolved :
     await prepareRootWriteTarget(root, resolved, params.assertBeforeMutation));
   const operationTargetPath = ioPath;
-  try {
+  let observedMissing = Boolean(creationProbe);
+  if (!creationProbe) try {
     assertFinalSymlinkRejected(ioPath, params.mutationSymlinks !== undefined);
     const resolvedRealPath = params.mutationSymlinks === undefined ? realpathSync.native(ioPath) : ioPath;
     const admittedRealPath = admitPathInsideRoot({
@@ -747,6 +750,7 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
     if (!isNotFoundPathError(err)) {
       throw err;
     }
+    observedMissing = true;
   }
 
   assertRootFallbackWritePath(params.expectedWritePath, ioPath);
@@ -768,52 +772,67 @@ async function openWritableFileInRoot(root: RootContext, params: WritableFileInR
         preparedParent,
       )
       : undefined;
-    try {
-      if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
-      handle = await fs.open(ioPath, existingFlags, mode);
-    } catch (err) {
-      if (await isNonRegularWriteOpenError(err, ioPath, existingFlags)) {
-        throw new FsSafeError("not-file", "path is not a regular file under root");
-      }
-      if (!isNotFoundPathError(err)) {
-        throw err;
-      }
-      if (options?.createIfMissing === false) {
-        if (nativeCreatesParents && !guardedTarget) await tryMkdirRootNative({
-          originalPath: params.relativePath,
-          root, directory: path.dirname(ioPath), target: ioPath, mkdir: true, policy,
-          resolveCurrent, assertBeforeMutation: params.assertBeforeMutation,
-        });
-        const parentGuard = writePathSelection?.parentGuard ??
-          await createAsyncDirectoryGuard(path.dirname(ioPath), { bigint: true });
-        assertRootIdentityCurrentSync(root);
-        if (!admitPathInsideRoot({
-          rootPath: root.rootReal, candidatePath: parentGuard.realPath, rootIdentity: root.rootIdentity,
-        })) throw outsideWorkspaceError();
-        assertSyncDirectoryGuard(parentGuard);
-        return { missing: true, targetPath: ioPath, parentGuard, writeSelection: writePathSelection };
-      }
-      if (writePathSelection) await refreshRootWritePathSelection(writePathSelection);
-      const nativeCreated = requireNative ? await tryOpenCreateRootNative({
+    const createNative = () => tryOpenCreateRootNative({
         originalPath: params.relativePath,
         root, directory: path.dirname(ioPath), target: ioPath, mkdir: params.mkdir !== false, policy,
-        resolveCurrent, assertBeforeMutation() {
+        selectedParent: creationProbe?.parent,
+        resolveCurrent,
+        assertBeforeMutation: params.assertBeforeMutation !== undefined || writePathSelection !== undefined ? () => {
           params.assertBeforeMutation?.();
           if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
-        },
+        } : undefined,
         flags: createFlags, existingFlags, mode,
-      }) : undefined;
-      if (nativeCreated) handle = nativeCreated.handle;
-      else {
-        params.assertBeforeMutation?.();
-        if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
-        // Windows can follow a dangling symlink even with O_EXCL.
-        if (!SUPPORTS_NOFOLLOW) assertFinalSymlinkRejected(ioPath, true);
-        handle = await fs.open(ioPath, createFlags, mode);
-      }
-      cleanupCreated = nativeCreated?.cleanupCreated;
-      releaseCreationParent = nativeCreated?.releaseCreationParent;
+    });
+    let precreated: Awaited<ReturnType<typeof tryOpenCreateRootNative>> | undefined;
+    if (requireNative && observedMissing && !guardedTarget && params.assertBeforeMutation === undefined && options?.createIfMissing !== false) {
+      try { precreated = await createNative(); }
+      catch (error) { if (!hasNodeErrorCode(error, "EEXIST") || !isNativeCreateCollision(error)) throw error; }
+    }
+    if (precreated) {
+      handle = precreated.handle;
+      cleanupCreated = precreated.cleanupCreated;
+      releaseCreationParent = precreated.releaseCreationParent;
       createdForWrite = true;
+    } else {
+      try {
+        if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
+        handle = await fs.open(ioPath, existingFlags, mode);
+      } catch (err) {
+        if (await isNonRegularWriteOpenError(err, ioPath, existingFlags)) {
+          throw new FsSafeError("not-file", "path is not a regular file under root");
+        }
+        if (!isNotFoundPathError(err)) {
+          throw err;
+        }
+        if (options?.createIfMissing === false) {
+          if (nativeCreatesParents && !guardedTarget) await tryMkdirRootNative({
+            originalPath: params.relativePath,
+            root, directory: path.dirname(ioPath), target: ioPath, mkdir: true, policy,
+            resolveCurrent, assertBeforeMutation: params.assertBeforeMutation,
+          });
+          const parentGuard = writePathSelection?.parentGuard ??
+            await createAsyncDirectoryGuard(path.dirname(ioPath), { bigint: true });
+          assertRootIdentityCurrentSync(root);
+          if (!admitPathInsideRoot({
+            rootPath: root.rootReal, candidatePath: parentGuard.realPath, rootIdentity: root.rootIdentity,
+          })) throw outsideWorkspaceError();
+          assertSyncDirectoryGuard(parentGuard);
+          return { missing: true, targetPath: ioPath, parentGuard, writeSelection: writePathSelection };
+        }
+        if (writePathSelection) await refreshRootWritePathSelection(writePathSelection);
+        const nativeCreated = requireNative ? await createNative() : undefined;
+        if (nativeCreated) handle = nativeCreated.handle;
+        else {
+          params.assertBeforeMutation?.();
+          if (writePathSelection) assertRootWritePathSelectionSync(root, writePathSelection);
+          // Windows can follow a dangling symlink even with O_EXCL.
+          if (!SUPPORTS_NOFOLLOW) assertFinalSymlinkRejected(ioPath, true);
+          handle = await fs.open(ioPath, createFlags, mode);
+        }
+        cleanupCreated = nativeCreated?.cleanupCreated;
+        releaseCreationParent = nativeCreated?.releaseCreationParent;
+        createdForWrite = true;
+      }
     }
   } catch (err) {
     if (isNotFoundPathError(err)) {
