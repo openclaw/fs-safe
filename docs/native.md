@@ -367,6 +367,14 @@ In `require`, missing files and parents still use native confined creation;
 existing files keep their guarded Node handle path, identity fences and hardlink
 checks. Required creation capabilities are checked even when the file exists.
 
+For ordinary portable missing-file paths with an existing canonical parent,
+native writable creation retains that parent's exact identity through beneath
+admission. An absence observation selects exclusive native creation; an entry
+that appears concurrently returns to the checked existing-file open. The public
+FileHandle handoff and all post-open identity, link-count and canonical checks
+remain in place. Explicit policies, authority callbacks, aliases and missing
+parents retain their full admission path.
+
 Recursive removal in both implementations retains exact directory identities
 at admission. Repeated fences use ordinary numeric stats only when both captured
 identity components are safely representable; larger identities keep bigint

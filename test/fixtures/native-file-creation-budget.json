@@ -1,0 +1,906 @@
+{
+  "posix": {
+    "appendCreate": {
+      "0": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 17,
+              "readlink": 11,
+              "openat": 2,
+              "fstat": 2,
+              "newfstatat": 1,
+              "openat2": 1,
+              "close": 4,
+              "fcntl": 1,
+              "write": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 17,
+              "readlink": 11,
+              "openat": 3,
+              "fstat": 3,
+              "newfstatat": 2,
+              "close": 4,
+              "fcntl": 1,
+              "write": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          }
+        }
+      },
+      "1": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 15,
+              "openat": 2,
+              "openat2": 2,
+              "fstat": 2,
+              "newfstatat": 1,
+              "close": 5,
+              "fcntl": 1,
+              "write": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 15,
+              "openat": 5,
+              "newfstatat": 5,
+              "fstat": 8,
+              "close": 6,
+              "fcntl": 1,
+              "write": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          }
+        }
+      },
+      "8": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 43,
+              "openat": 2,
+              "openat2": 2,
+              "fstat": 2,
+              "newfstatat": 1,
+              "close": 5,
+              "fcntl": 1,
+              "write": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 43,
+              "openat": 12,
+              "newfstatat": 54,
+              "fstat": 57,
+              "close": 13,
+              "fcntl": 1,
+              "write": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2,
+              "write": 1,
+              "close": 1
+            }
+          }
+        }
+      }
+    },
+    "openWritableCreate": {
+      "0": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 17,
+              "readlink": 11,
+              "openat": 2,
+              "fstat": 2,
+              "newfstatat": 1,
+              "openat2": 1,
+              "close": 3,
+              "fcntl": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 17,
+              "readlink": 11,
+              "openat": 3,
+              "fstat": 3,
+              "newfstatat": 2,
+              "close": 3,
+              "fcntl": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 13,
+              "readlink": 8,
+              "openat": 2
+            }
+          }
+        }
+      },
+      "1": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 15,
+              "openat": 2,
+              "openat2": 2,
+              "fstat": 2,
+              "newfstatat": 1,
+              "close": 4,
+              "fcntl": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 15,
+              "openat": 5,
+              "newfstatat": 5,
+              "fstat": 8,
+              "close": 5,
+              "fcntl": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 20,
+              "readlink": 21,
+              "mkdir": 1,
+              "openat": 2
+            }
+          }
+        }
+      },
+      "8": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 43,
+              "openat": 2,
+              "openat2": 2,
+              "fstat": 2,
+              "newfstatat": 1,
+              "close": 4,
+              "fcntl": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 18,
+              "readlink": 43,
+              "openat": 12,
+              "newfstatat": 54,
+              "fstat": 57,
+              "close": 12,
+              "fcntl": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            },
+            "syscalls": {
+              "statx": 69,
+              "readlink": 252,
+              "mkdir": 8,
+              "openat": 2
+            }
+          }
+        }
+      }
+    }
+  },
+  "win32": {
+    "appendCreate": {
+      "0": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          }
+        }
+      },
+      "1": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          }
+        }
+      },
+      "8": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 48,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
+              "FILEHANDLE": 1,
+              "FILEHANDLECLOSEREQ": 1
+            }
+          }
+        }
+      }
+    },
+    "openWritableCreate": {
+      "0": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
+              "FILEHANDLE": 1
+            }
+          }
+        }
+      },
+      "1": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
+              "FILEHANDLE": 1
+            }
+          }
+        }
+      },
+      "8": {
+        "normal": {
+          "off": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            }
+          }
+        },
+        "fallback": {
+          "off": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            }
+          },
+          "require": {
+            "resources": {
+              "PROMISE": 18,
+              "FSREQPROMISE": 1,
+              "FILEHANDLE": 1
+            }
+          },
+          "auto": {
+            "resources": {
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
+              "FILEHANDLE": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -71,10 +71,48 @@ type Creation = {
   resolveCurrent(): Promise<string>;
   assertBeforeMutation?: () => void;
   originalPath?: string;
+  selectedParent?: NonNullable<ReturnType<typeof existingCreationParent>>;
 };
 
 function unavailable(): never {
   throw new FsSafeError("helper-unavailable", "native confined creation is unavailable");
+}
+
+function existingCreationParent(params: Creation) {
+  if (params.private || params.policy || params.assertBeforeMutation !== undefined ||
+    getFsSafeTestHooks()?.beforeRootFallbackMutation || !params.originalPath ||
+    params.directory !== path.dirname(params.target)) return undefined;
+  const segments = params.originalPath.split(path.sep === "\\" ? /[\\/]/ : "/");
+  if (segments.some(segment => !isSafePathSegment(segment, { allowDotPrefix: true }) || segment.endsWith(".")) ||
+    path.join(params.root.rootReal, ...segments) !== params.target) return undefined;
+  assertRootIdentityCurrentSync(params.root);
+  try {
+    const identity = inspectDirectoryIdentitySync(params.directory);
+    if (realpathSync.native(pathForWindowsFilesystem(params.directory)) !== params.directory) return undefined;
+    return {
+      path: params.directory, identity,
+      relative: path.relative(params.root.rootReal, params.directory).split(path.sep).join("/"),
+      flags: (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |
+        (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function probeNativeCreationPath(root: RootContext, relativePath: string) {
+  if (typeof relativePath !== "string") return undefined;
+  const segments = relativePath.split(path.sep === "\\" ? /[\\/]/ : "/");
+  if (segments.some(segment => !isSafePathSegment(segment, { allowDotPrefix: true }) || segment.endsWith("."))) return undefined;
+  const target = path.join(root.rootReal, ...segments);
+  assertRootIdentityCurrentSync(root);
+  try {
+    if (fs.lstatSync(pathForWindowsFilesystem(target), { throwIfNoEntry: false })) return undefined;
+  } catch { return undefined; }
+  const parent = existingCreationParent({ root, target, directory: path.dirname(target), mkdir: true,
+    originalPath: relativePath, resolveCurrent: async () => target });
+  if (!parent) return undefined;
+  return { rootReal: root.rootReal, rootWithSep: root.rootWithSep, resolved: target, parent };
 }
 
 async function withNativeDirectory<T>(
@@ -84,6 +122,35 @@ async function withNativeDirectory<T>(
 ): Promise<T> {
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath || (params.private && process.platform === "win32")) return unavailable();
+  const existing = params.selectedParent ?? existingCreationParent(params);
+  if (existing) {
+    let pending: { value: T } | undefined;
+    try {
+      using rootOwner = openExactNativeRootSync(binding, {
+        rootPath: params.root.rootReal, rootIdentity: params.root.rootIdentity,
+      });
+      const close = captureNativeFdClose(binding);
+      const borrowed = existing.path === params.root.rootReal;
+      const fd = borrowed ? rootOwner.fd : binding.openBeneath(rootOwner.fd, existing.relative, existing.flags).fd;
+      using parentOwner = { [Symbol.dispose]() { if (!borrowed) close(fd); } };
+      inspectFileIdentitySync(() => borrowed ? rootOwner.stat : fs.fstatSync(fd, { bigint: true }), existing.identity);
+      verifyMkdirDirectory(binding, fd, existing.path);
+      const guard = { dir: existing.path, realPath: existing.path, stat: existing.identity };
+      const assertCurrent = () => {
+        assertRootIdentityCurrentSync(params.root);
+        assertSyncDirectoryGuard(guard);
+      };
+      pending = { value: await operation(binding, fd, assertCurrent) };
+      return pending.value;
+    } catch (error) {
+      if (pending && discard) {
+        try { await discard(pending.value); } catch (cleanupError) {
+          throw createSuppressedError(cleanupError, error, "creation handoff and cleanup failed");
+        }
+      }
+      throw error;
+    }
+  }
   const directoryTarget = params.directory === params.target;
   const canonicalTarget = async (target: string) => directoryTarget
     ? await resolvePathViaExistingAncestor(target)

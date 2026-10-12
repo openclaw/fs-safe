@@ -12,7 +12,11 @@ const operation = process.argv.includes("--operation") ? process.argv[process.ar
 const depth = process.argv.includes("--depth") ? Number(process.argv[process.argv.indexOf("--depth") + 1]) : 1;
 assert([1, 8, 32].includes(depth));
 const nestedPath = [...Array(depth).fill("nested"), "child"].join(path.sep);
-assert(["mkdirNested", "mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write", "tempWorkspace"].includes(operation));
+const creationOperation = operation === "appendCreate" ? "append" : operation === "openWritableCreate" ? "openWritable" : undefined;
+const creationDepth = process.argv.includes("--creation-depth") ? Number(process.argv[process.argv.indexOf("--creation-depth") + 1]) : 0;
+assert([0, 1, 8].includes(creationDepth));
+const creationPath = [...Array(creationDepth).fill("nested"), "child"].join(path.sep);
+assert(["mkdirNested", "appendCreate", "openWritableCreate", "mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write", "tempWorkspace"].includes(operation));
 if (process.argv.includes("--child")) {
   const { configureFsSafeNative, root } = await import("../dist/index.js");
   const { getNativeBinding } = await import("../dist/native.js");
@@ -24,10 +28,13 @@ if (process.argv.includes("--child")) {
   try {
     const safe = await root(temporary);
     if (operation === "mkdirNested") fs.mkdirSync(path.join(temporary, path.dirname(nestedPath)), { recursive: true });
+    if (creationOperation) fs.mkdirSync(path.join(temporary, path.dirname(creationPath)), { recursive: true });
     for (const mode of ["off", "require", "auto"]) {
       configureFsSafeNative({ mode });
-      const prepare = () => { if (!["mkdirNested", "mkdir", "ensureRoot", "create", "tempWorkspace"].includes(operation)) fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
+      const prepare = () => { if (!["mkdirNested", "appendCreate", "openWritableCreate", "mkdir", "ensureRoot", "create", "tempWorkspace"].includes(operation)) fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
       const perform = () => {
+        if (operation === "appendCreate") return safe.append(creationPath, "data", { durable: false });
+        if (operation === "openWritableCreate") return safe.openWritable(creationPath, { writeMode: "append" });
         if (operation === "tempWorkspace") return tempWorkspace({ rootDir: temporary, prefix: "child" });
         if (operation === "ensureRoot") return safe.ensureRoot();
         if (operation === "mkdirNested") return safe.mkdir(nestedPath);
@@ -40,6 +47,8 @@ if (process.argv.includes("--child")) {
         return safe.move("child", "target", { overwrite: true });
       };
       const cleanup = result => {
+        if (operation === "appendCreate") return fs.unlinkSync(path.join(temporary, creationPath));
+        if (operation === "openWritableCreate") return result.handle.close().then(() => fs.unlinkSync(path.join(temporary, creationPath)));
         if (operation === "tempWorkspace") return result.cleanup();
         if (operation === "mkdirNested") fs.rmdirSync(path.join(temporary, nestedPath));
         if (operation === "mkdir") fs.rmdirSync(path.join(temporary, "child"));
@@ -53,11 +62,11 @@ if (process.argv.includes("--child")) {
       const resources = {};
       const hook = createHook({ init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; } });
       prepare();
-      fs.writeSync(2, `BUDGET_START ${operation === "mkdirNested" ? "mkdir" : operation} ${mode}\n`);
+      fs.writeSync(2, `BUDGET_START ${operation === "mkdirNested" ? "mkdir" : (creationOperation ?? operation)} ${mode}\n`);
       hook.enable();
       const result = await perform();
       hook.disable();
-      fs.writeSync(2, `BUDGET_END ${operation === "mkdirNested" ? "mkdir" : operation} ${mode}\n`);
+      fs.writeSync(2, `BUDGET_END ${operation === "mkdirNested" ? "mkdir" : (creationOperation ?? operation)} ${mode}\n`);
       await cleanup(result);
       console.log(JSON.stringify({ operation, mode, resources }));
     }
@@ -73,8 +82,8 @@ if (process.argv.includes("--child")) {
     const child = spawnSync(trace ? "strace" : process.execPath, trace ? [
       "-f", "-yy", "-s", "256", "-o", tracePath,
       "-e", "trace=%file,read,write,pread64,pwrite64,readv,writev,preadv,pwritev,preadv2,pwritev2,close,fstat,fsync,fdatasync,getdents64,lseek,copy_file_range,sendfile,fcntl,ftruncate,fchmod,fchown,flock,ioctl",
-      process.execPath, script, "--child", "--operation", operation, "--depth", String(depth),
-    ] : [script, "--child", "--operation", operation, "--depth", String(depth)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+      process.execPath, script, "--child", "--operation", operation, "--depth", String(depth), "--creation-depth", String(creationDepth),
+    ] : [script, "--child", "--operation", operation, "--depth", String(depth), "--creation-depth", String(creationDepth)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     const rows = child.stdout.trim().split("\n").map(line => JSON.parse(line));
     if (trace) {
@@ -108,6 +117,21 @@ if (process.argv.includes("--child")) {
           assert.deepEqual(row.syscalls, syscalls, `${row.mode} nested mkdir syscalls, depth ${depth}`);
         }
         console.log(JSON.stringify({ ...row, depth }));
+        continue;
+      }
+      if (creationOperation) {
+        const fixtures = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-file-creation-budget.json", import.meta.url), "utf8"));
+        const platform = process.platform === "win32" ? "win32" : "posix";
+        const expected = fixtures[platform][operation][String(creationDepth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
+        assert.deepEqual(row.resources, expected.resources, `${row.mode} ${operation} resources at depth ${creationDepth}`);
+        if (trace) {
+          const aliases = { readlink: "readlinkat", mkdir: "mkdirat" };
+          const syscalls = process.arch === "arm64"
+            ? Object.fromEntries(Object.entries(expected.syscalls).map(([name, count]) => [aliases[name] ?? name, count]))
+            : expected.syscalls;
+          assert.deepEqual(row.syscalls, syscalls, `${row.mode} ${operation} syscalls at depth ${creationDepth}`);
+        }
+        console.log(JSON.stringify({ ...row, creationDepth }));
         continue;
       }
       if (operation === "tempWorkspace") {
@@ -185,11 +209,11 @@ if (process.argv.includes("--child")) {
           : { statx: 28, readlink: 8, rename: 1 };
         // Public writable receipts derive numeric metadata from the exact fstat.
         if (operation === "append") expected = row.mode === "require"
-          ? { statx: 12, readlink: 6, openat: 1, write: 1, close: 1 }
-          : { statx: 13, readlink: 8, openat: 1, write: 1, close: 1 };
+          ? {"statx": 14, "readlink": 6, "openat": 1, "write": 1, "close": 1}
+          : {"statx": 13, "readlink": 8, "openat": 1, "write": 1, "close": 1};
         if (operation === "openWritable") expected = row.mode === "require"
-          ? { statx: 12, readlink: 6, openat: 1 }
-          : { statx: 13, readlink: 8, openat: 1 };
+          ? {"statx": 14, "readlink": 6, "openat": 1}
+          : {"statx": 13, "readlink": 8, "openat": 1};
         if (operation === "create") expected = row.mode === "off"
           ? { statx: 23, readlink: 13, openat: 1, write: 1, fchmod: 1, close: 1 }
           : {statx: 20, readlink: 13, openat: 2, fcntl: 1, newfstatat: 10, fstat: 10, fchmod: 1, write: 1, renameat2: 1, close: 3};
