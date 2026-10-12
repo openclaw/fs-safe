@@ -486,8 +486,17 @@ source path map, no debug symbols, AnyCPU and `Prefer32Bit=false`. The project
 under `native/windows-security-helper/` targets .NET Framework 4.6.2 using
 Microsoft's `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3 and its committed
 NuGet lock file; builds restore in locked mode. CI compares Ubuntu and Windows
-SHA-256 hashes to enforce byte-identical output. The main package includes only
-the exe; the C# source files remain available in the repository. The separate
+SHA-256 hashes to enforce byte-identical **unsigned** output. Release builds
+repeat this comparison before Authenticode signing on an x64 Windows runner.
+The signing manifest records that the helper's pre-signing SHA-256 equals both
+reproducible build hashes; its signed SHA-256 is checked against the exe inside
+the final npm tarball. Timestamped signatures change the distributed bytes, so
+rebuilding source is expected to reproduce the unsigned hash, not the signed
+file. Both Windows addons and the helper must have a valid, timestamped embedded
+signature from OpenClaw Foundation before signed x64/ARM64 runtime tests and
+release collection. See [release prerequisites](https://github.com/openclaw/fs-safe/blob/main/RELEASE-PREREQS.md#windows-authenticode-signing-one-time-maintainer-setup)
+for setup and the publication-free dry run. The main package includes only
+the exe; the three C# source files remain available in the repository. The separate
 `windows-owner-query.cs` compatibility query preserves the former PowerShell
 query's .NET API sequence, normalization, link behavior, and locality rules;
 the raw security bridge remains independent.

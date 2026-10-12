@@ -17,12 +17,14 @@ import { normalizePackResult } from "./npm-pack-result.mjs";
 import { resolveNpmCli } from "./npm-cli.mjs";
 import { consumerInstallSmoke, isolatedConsumerEnv, resolveConsumerCommands } from "./consumer-install-smoke.mjs";
 import { packageProofSource } from "./consumer-proof-metadata.mjs";
+import { readSigningManifest, verifyWindowsPackage } from "./windows-signing.mjs";
 
 const npmCli = resolveNpmCli();
 const consumerCommands = resolveConsumerCommands(npmCli);
 const outputIndex = process.argv.lastIndexOf("--output");
 const outputDir = resolve(outputIndex >= 0 ? process.argv[outputIndex + 1] : "release-artifacts");
 const allowHostOnly = process.argv.includes("--allow-host-only");
+const signingIndex = process.argv.indexOf("--windows-signing-manifest");
 mkdirSync(outputDir, { recursive: true });
 const packingConfig = mkdtempSync(join(tmpdir(), "fs-safe-pack-config-"));
 const npmEnv = isolatedConsumerEnv(packingConfig);
@@ -77,6 +79,9 @@ async function main() {
   if (rootPkg.publishConfig?.access !== "public" || rootPkg.publishConfig?.provenance !== true) {
     throw new Error("root package must publish publicly with provenance");
   }
+  const signingManifest = !allowHostOnly || signingIndex >= 0
+    ? readSigningManifest(signingIndex >= 0 ? process.argv[signingIndex + 1] : undefined)
+    : undefined;
 
   const targets = allowHostOnly ? [hostNativeTarget()].filter(Boolean) : nativeTargets;
   if (targets.length === 0) throw new Error(`no native target for ${process.platform}-${process.arch}`);
@@ -105,6 +110,7 @@ async function main() {
       throw new Error(`root package must pin ${target.package}@${rootPkg.version}`);
     }
     const artifact = packPackage(directory, pkg.name);
+    if (signingManifest) await verifyWindowsPackage(signingManifest, pkg.name, join(outputDir, artifact.filename));
     const paths = new Set(artifact.files.map((file) => file.path));
     if (!paths.has("fs-safe-native.node") || !paths.has("package.json") || paths.size !== 2) {
       throw new Error(`${pkg.name} must contain only package.json and fs-safe-native.node`);
@@ -113,6 +119,7 @@ async function main() {
   }
 
   const rootArtifact = packPackage(process.cwd(), rootPkg.name);
+  if (signingManifest) await verifyWindowsPackage(signingManifest, rootPkg.name, join(outputDir, rootArtifact.filename));
   const rootPaths = new Set(rootArtifact.files.map((file) => file.path));
   for (const expected of ["dist/index.js", "dist/index.d.ts", "package.json"]) {
     if (!rootPaths.has(expected)) throw new Error(`packed root package is missing ${expected}`);

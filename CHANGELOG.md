@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Windows signing:** native addons and the security helper are Authenticode-signed by OpenClaw Foundation with timestamped signatures.
+
 - Add async `getFsSafeNativeStatus()` for runtime health checks with optional probing, path-free load reasons, and actionable guidance.
 
 - **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks.

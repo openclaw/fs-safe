@@ -177,11 +177,14 @@ that supplies secure-file bytes. Each capability emits a path-free
 It names the native availability reason and expected package version; see
 [troubleshooting fallback warnings](native-helper.md#troubleshooting-fallback-warnings).
 
-The executable is included in the main npm package and covered by its npm
-provenance, just like its JavaScript. Source lives in the repository; consumers
-receive only the executable. Missing or disallowed execution fails closed with
-a rebuild/reinstall hint. AppLocker/WDAC policies may block this unsigned exe in
-user directories; there is no PowerShell retry. Such hosts can also restrict
+Release Windows native addons and `windows-security-helper.exe` are
+Authenticode-signed by **OpenClaw Foundation** with a timestamp. The executable
+is included in the main npm package and covered by its npm provenance, just
+like its JavaScript. Source lives in the repository; consumers receive only the
+executable. Missing or disallowed execution fails closed with a rebuild/reinstall
+hint. Signing does not guarantee acceptance by every Smart App Control,
+AppLocker, or WDAC policy; local policy can still block execution in user
+directories. There is no PowerShell retry. Such hosts can also restrict
 PowerShell to Constrained Language Mode, where the former Add-Type fallback
 was unavailable. The package does not bypass policies or add exclusions.
 

@@ -26,4 +26,3 @@ export function windowsOwnerQueryCommand(targetPath: string): string {
     "@{ownerSid=$ownerSid;currentUserSid=$currentSid;daclPresent=($null -ne $dacl);aces=$aces;complete=$complete;remote=$remote}|Microsoft.PowerShell.Utility\\ConvertTo-Json -Depth 4 -Compress",
   ].join(";");
 }
-
