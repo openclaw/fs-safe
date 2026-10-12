@@ -1,4 +1,4 @@
-// Process-per-check transport. All filesystem policy remains in the bridge.
+// Process-per-check transport for bridge operations and compatibility owner queries.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -15,10 +15,12 @@ public static class FsSafeWindowsHelper {
     // child until the caller's deadline; exit nonzero so the caller fails closed at once.
     try {
       Console.OutputEncoding = new UTF8Encoding(false);
-      if(args.Length!=1 || !Array.Exists(new[]{"path","paths","descriptor","create","directory","protect-file","verify-file"},
+      bool owner=args.Length>0 && string.Equals(args[0],"owner",StringComparison.OrdinalIgnoreCase);
+      if(args.Length!=(owner ? 2 : 1) || !Array.Exists(new[]{"owner","path","paths","descriptor","create","directory","protect-file","verify-file"},
         operation => string.Equals(operation,args[0],StringComparison.OrdinalIgnoreCase)))
         throw new ArgumentException("Invalid Windows security operation");
-      string json=string.Equals(args[0],"paths",StringComparison.OrdinalIgnoreCase) ? Paths() : Json(FsSafeWindowsBridge.Execute(args[0],Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_PATH")));
+      string json=owner ? Json(FsSafeWindowsOwnerQuery.Execute(args[1])) :
+        string.Equals(args[0],"paths",StringComparison.OrdinalIgnoreCase) ? Paths() : Json(FsSafeWindowsBridge.Execute(args[0],Environment.GetEnvironmentVariable("FS_SAFE_WINDOWS_SECURITY_PATH")));
       Console.Write(json);
       return 0;
     } catch(Exception error) {

@@ -38,7 +38,7 @@ type PathStat = {
 };
 ```
 
-The shape returned by `Root.stat()`. It is a serializable view of the identity,
+The shape returned by `Root.stat()`. Its enumerable fields are a serializable legacy view of the identity,
 ownership, mode, size, timestamp, link count, and three file-kind facts the
 boundary uses. Unlike Node's `Stats`, `isFile`, `isDirectory`, and
 `isSymbolicLink` are boolean fields rather than methods.
@@ -167,3 +167,8 @@ policy; omission preserves each mutation method's existing behavior.
 - [`root()`](root.md) — how `RootDefaults` and `Root*Options` are used.
 - [Errors](errors.md) — the closed code union in context.
 - [Reading](reading.md), [Writing](writing.md) — option shapes per verb.
+
+`PathStat.exactIdentity` is an immutable bigint `dev`/`ino` companion, present on
+returned values and non-enumerable to preserve the numeric JSON shape. Typed
+`list()` and `entries()` results have the same field. Copy it explicitly when
+spreading metadata that will later be used for identity checks.

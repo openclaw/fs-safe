@@ -8,7 +8,7 @@ import {
 import { createRequire } from "node:module";
 import { FsSafeError } from "./errors.js";
 import { captureNativeFdClose, type NativeBinding, type CapableNativeBinding } from "./native-binding.js";
-import { getFsSafeNativeConfig } from "./native-config.js";
+import { getFsSafeNativeConfig, getNativeModeSetting } from "./native-config.js";
 
 export type { NativeBinding } from "./native-binding.js";
 
@@ -20,6 +20,63 @@ let binding: NativeBinding | undefined;
 let loadError: unknown;
 let attempted = false;
 let loadBinding = loadBundledBinding;
+let resolvePackage = (name: string): string => require.resolve(name);
+type LoadOutcome =
+  | { reason: "not-probed" | "loaded" | "unsupported-target" | "package-missing" }
+  | { reason: "load-failed"; code: string }
+  | { reason: "capability-missing"; capabilities: (keyof NativeBinding)[] };
+let loadOutcome: LoadOutcome = { reason: "not-probed" };
+let selectedTarget: string | undefined;
+let targetDescription: string | undefined;
+
+function loadFailure(error: unknown, packageName: string): LoadOutcome {
+  try {
+    return classifyLoadFailure(error, packageName);
+  } catch {
+    // Diagnostic inspection must not replace an arbitrary thrown load value.
+    return { reason: "load-failed", code: "UNKNOWN" };
+  }
+}
+
+function classifyLoadFailure(error: unknown, packageName: string): LoadOutcome {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  // Resolution must fail for the selected package itself. An exception inside
+  // an installed package (even one naming this package) is not package omission.
+  if (code === "MODULE_NOT_FOUND" && error instanceof Error &&
+    error.message.split("\n", 1)[0] === `Cannot find module '${packageName}'`) {
+    try { resolvePackage(packageName); } catch (resolutionError) {
+      if (resolutionError instanceof Error && "code" in resolutionError &&
+        resolutionError.code === "MODULE_NOT_FOUND" &&
+        resolutionError.message.split("\n", 1)[0] === `Cannot find module '${packageName}'`) {
+        return { reason: "package-missing" };
+      }
+    }
+  }
+  // An allowlist excludes paths, secrets and arbitrary text in exception codes.
+  const knownCodes = ["ERR_DLOPEN_FAILED", "MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND",
+    "ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_INVALID_PACKAGE_CONFIG", "EACCES", "EPERM", "ENOENT"];
+  return { reason: "load-failed", code: typeof code === "string" && knownCodes.includes(code) ? code : "UNKNOWN" };
+}
+
+/** Internal view of the cached load; never attempts to load an addon. */
+export function getNativeFallbackDiagnostic(...capabilities: (keyof NativeBinding)[]) {
+  const setting = getNativeModeSetting();
+  const target = targetDescription === undefined ? bundledTarget() : selectedTarget;
+  const packageName = target === undefined ? undefined : nativePackageForTarget(target);
+  const manifest = require("../package.json") as { optionalDependencies: Record<string, string> };
+  const expected = {
+    target: targetDescription!,
+    packageName,
+    packageVersion: packageName === undefined ? undefined : manifest.optionalDependencies[packageName],
+  };
+  if (setting.mode === "off") return { ...expected, reason: "disabled" as const, source: setting.source };
+  const loaded = binding;
+  if (loaded) {
+    const missing = capabilities.filter(name => typeof loaded[name] !== "function");
+    if (missing.length) return { ...expected, reason: "capability-missing" as const, capabilities: missing };
+  }
+  return { ...expected, ...loadOutcome };
+}
 
 function isMuslFilename(file: string): boolean {
   return file.includes("libc.musl-") || file.includes("ld-musl-");
@@ -165,7 +222,10 @@ function targetFor(
 }
 
 function bundledTarget(): string | undefined {
-  return targetFor(process.platform, process.arch, isMusl());
+  const musl = isMusl();
+  selectedTarget = targetFor(process.platform, process.arch, musl);
+  targetDescription = selectedTarget ?? `${process.platform}-${process.arch}${process.platform === "linux" ? `-${musl ? "musl" : "gnu"}` : ""}`;
+  return selectedTarget;
 }
 
 function nativePackageForTarget(target: string): string {
@@ -175,9 +235,13 @@ function nativePackageForTarget(target: string): string {
 function loadBundledBinding(): NativeBinding {
   const target = bundledTarget();
   if (!target) {
+    loadOutcome = { reason: "unsupported-target" };
     throw new Error(`Unsupported OS or architecture: ${process.platform}-${process.arch}`);
   }
   const loaded = runNativeInitialization(() => require(nativePackageForTarget(target))) as NativeBinding;
+  if (typeof loaded.closeOwnedFd !== "function") {
+    loadOutcome = { reason: "capability-missing", capabilities: ["closeOwnedFd"] };
+  }
   captureNativeFdClose(loaded);
   return loaded;
 }
@@ -234,10 +298,18 @@ export function getNativeBinding<K extends keyof NativeBinding = never>(...capab
     attempted = true;
     try {
       const loaded = loadBinding();
+      if (typeof loaded.closeOwnedFd !== "function") {
+        loadOutcome = { reason: "capability-missing", capabilities: ["closeOwnedFd"] };
+      }
       captureNativeFdClose(loaded);
       binding = loaded;
+      loadOutcome = { reason: "loaded" };
     } catch (error) {
       loadError = error;
+      if (loadOutcome.reason === "not-probed") {
+        selectedTarget ??= bundledTarget();
+        loadOutcome = loadFailure(error, nativePackageForTarget(selectedTarget ?? `${process.platform}-${process.arch}`));
+      }
     }
   }
   if (binding) return selectNativeBinding(binding, ...capabilities);
@@ -259,11 +331,15 @@ export function requireNativeBinding<K extends keyof NativeBinding = never>(...c
   return native;
 }
 
-export function __setNativeLoaderForTest(loader: () => NativeBinding): void {
+export function __setNativeLoaderForTest(loader: () => NativeBinding, resolver?: (name: string) => string): void {
   binding = undefined;
   loadError = undefined;
   attempted = false;
   loadBinding = loader;
+  loadOutcome = { reason: "not-probed" };
+  selectedTarget = undefined;
+  targetDescription = undefined;
+  resolvePackage = resolver ?? ((name) => require.resolve(name));
 }
 
 export function __resetNativeLoaderForTest(): void {
@@ -271,4 +347,8 @@ export function __resetNativeLoaderForTest(): void {
   loadError = undefined;
   attempted = false;
   loadBinding = loadBundledBinding;
+  loadOutcome = { reason: "not-probed" };
+  selectedTarget = undefined;
+  targetDescription = undefined;
+  resolvePackage = (name) => require.resolve(name);
 }

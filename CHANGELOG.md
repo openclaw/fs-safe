@@ -4,6 +4,24 @@
 
 - **Windows signing:** native addons and the security helper are Authenticode-signed by OpenClaw Foundation with timestamped signatures.
 
+- Add async `getFsSafeNativeStatus()` for runtime health checks with optional probing, path-free load reasons, and actionable guidance.
+
+- **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks.
+
+## 0.26.2 - 2026-10-11
+
+### Highlights
+
+- **Windows receipt round trips:** use exact bigint identities from fs-safe receipts with the fail-closed identity checks introduced in 0.26.1. ([#962](https://github.com/openclaw/fs-safe/pull/962))
+
+### Fixes
+
+- **Windows file identity:** publication, reads, opens, directory and temporary-workspace receipts, typed listings, and clone metadata now expose bigint `exactIdentity`; publication failures expose `exactTargetIdentity`. Pass the exact form back to identity-checking APIs, including publication and copy expectations, to avoid rejecting rounded legacy Number identities on volumes with large file IDs. Existing exact copy and staged-file receipts remain supported. ([#962](https://github.com/openclaw/fs-safe/pull/962))
+
+### Performance
+
+- **Windows permission inspection:** avoid PowerShell startup for portable owner and ACL queries, about 8× faster in a Windows x64 probe, while preserving injected executors and .NET ACL semantics; requires .NET Framework 4.6.2+. ([#958](https://github.com/openclaw/fs-safe/pull/958))
+
 ## 0.26.1 - 2026-10-11
 
 ### Highlights

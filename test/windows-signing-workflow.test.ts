@@ -39,6 +39,7 @@ describe("release signing isolation", () => {
     expect(test).toContain("os: windows-latest");
     expect(test).toContain("os: windows-11-arm");
     expect(test).toContain("name: signed-windows");
+    expect(test).toContain("test/windows-owner-helper.windows.test.ts");
     const collect = job("collect");
     expect(collect).toContain("needs: [prebuild, prebuild-freebsd, test-signed-windows]");
     expect(collect).toContain("pattern: binding-*");

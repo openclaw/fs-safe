@@ -151,7 +151,7 @@ describe("Windows permission command execution", () => {
       message: expect.stringContaining(kind === "structured"
         ? "Windows permission inspection timed out after 30000ms" : "owner query timed out"),
       details: {
-        command: expect.stringContaining("powershell.exe"),
+        command: expect.stringContaining("windows-security-helper.exe"),
         durationMs: kind === "structured" ? 30_125 : expect.any(Number),
         timedOut: true, exitCode: null, signal: "SIGKILL",
         stderr: "owner inspection stalled\\u000a",
@@ -184,7 +184,7 @@ describe("Windows permission command execution", () => {
       code: "permission-unverified", category: "operational",
       message: expect.stringContaining("ACL query denied\\u000a"),
       details: {
-        command: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        command: expect.stringContaining("windows-security-helper.exe"),
         durationMs: expect.any(Number), timedOut: false, exitCode: 5, signal: null,
         stderr: expect.stringContaining("\\u001b[31mACL access denied\\u000a"),
       },
@@ -198,7 +198,7 @@ describe("Windows permission command execution", () => {
     expect(diagnostic).not.toContain("PRIVATE_CHILD_STDOUT");
     expect(diagnostic).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
     expect(exec.mock.calls.map(([command]) => path.win32.basename(command))).toEqual([
-      "powershell.exe",
+      "windows-security-helper.exe",
     ]);
   });
 
@@ -289,7 +289,7 @@ describe("Windows permission command execution", () => {
   itSimulatedWindows("inspects permissions once for one simulated Windows secure read", async () => {
     const target = await secretFile("fs-safe-permission-count-");
     const exec = vi.fn(async (command: string, args: string[]) => {
-      if (command.toLowerCase().endsWith("powershell.exe")) {
+      if (command.toLowerCase().endsWith("windows-security-helper.exe")) {
         return {
           stdout: JSON.stringify({
             ownerSid: "S-1-5-21-42",
@@ -317,7 +317,7 @@ describe("Windows permission command execution", () => {
     expect(result.permissions).toMatchObject({ source: "windows-acl", ownerTrusted: true });
     expect(exec).toHaveBeenCalledTimes(1);
     expect(exec.mock.calls.map(([command]) => path.win32.basename(command))).toEqual([
-      "powershell.exe",
+      "windows-security-helper.exe",
     ]);
   });
 });

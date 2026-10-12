@@ -186,11 +186,11 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           expect.soft(asyncTotal, breakdown).toBe(name === "root.create" ? 3 : 0);
         }
         if (name === "root.readBytes") {
-          expect.soft(total, breakdown).toBe(15);
+          expect.soft(total, breakdown).toBe(14);
           expect.soft(asyncTotal, breakdown).toBe(3); // open, read, close
         }
         if (name === "readLocalFileSafely") {
-          expect.soft(total, breakdown).toBe(9);
+          expect.soft(total, breakdown).toBe(8);
           expect.soft(counts.get("s.statSync"), breakdown).toBe(1);
           expect.soft(counts.get(process.platform === "linux" ? "s.readlinkSync" : "s.realpathSync.native"), breakdown).toBe(1);
           if (process.platform === "linux") expect.soft(counts.get("s.realpathSync.native"), breakdown).toBeUndefined();
@@ -257,7 +257,7 @@ describe("synchronous copy admission budgets", () => {
         const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
         // Windows exclusive creation adds two leaf checks and one canonical check.
         const windows = process.platform === "win32";
-        const totalBudget = nested ? (batched ? 123 : 150) : (batched ? 102 : 123);
+        const totalBudget = nested ? (batched ? 122 : 149) : (batched ? 101 : 122);
         const lstatBudget = nested ? (batched ? 61 : 75) : (batched ? 50 : 60);
         expect.soft(total, detail).toBe(totalBudget + (windows ? 3 : 0));
         expect.soft(counts.get("s.lstatSync"), detail).toBe(lstatBudget + (windows ? 2 : 0));

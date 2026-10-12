@@ -1,3 +1,4 @@
+import { identityFromReceipt, type ExactIdentityReceipt, type ExactFileIdentity } from "./file-identity.js";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { normalizeMaxBytes } from "./byte-budget.js";
@@ -19,7 +20,7 @@ import { inspectFileIdentitySync } from "./strict-file-identity.js";
 export type CopyRootFileSyncOptions = {
   source: CopyPath;
   destination: CopyPath;
-  expectedSourceIdentity?: { dev: bigint; ino: bigint };
+  expectedSourceIdentity?: ExactFileIdentity | ExactIdentityReceipt;
   clone?: CopyCloneMode;
   maxBytes?: number;
   mode?: number;
@@ -83,7 +84,8 @@ function copyRootFileWithAdmissionSync(
   const targetInput = options.destination;
   const targetPath = { rootPath: targetInput.rootPath, absolutePath: targetInput.absolutePath };
   const expectedInput = options.expectedSourceIdentity;
-  const expectedSourceIdentity = expectedInput === undefined ? undefined : { dev: expectedInput.dev, ino: expectedInput.ino };
+  const expected = expectedInput === undefined ? undefined : identityFromReceipt(expectedInput);
+  const expectedSourceIdentity = expected && { dev: expected.dev as bigint, ino: expected.ino as bigint };
   const clone = resolveCopyCloneMode(options.clone, "never");
   const maxBytes = normalizeMaxBytes(options.maxBytes);
   const mode = options.mode;

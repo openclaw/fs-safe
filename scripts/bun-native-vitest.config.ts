@@ -22,6 +22,8 @@ export default {
       "test/darwin-acl-native.test.ts",
       "test/platform-capabilities.test.ts",
       "test/native-loader.test.ts",
+      "test/native-status.test.ts",
+      "test/native-status-lazy.test.ts",
       "test/native-init-context.test.ts",
       "test/native-write-containment.test.ts",
       "test/native-staging-regression.test.ts",

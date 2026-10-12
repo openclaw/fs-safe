@@ -14,6 +14,7 @@ export {
   configureFsSafeNative,
   getFsSafeNativeConfig,
 } from "./native-config.js";
+export { getFsSafeNativeStatus } from "./config.js";
 export type * from "./config.js";
 export {
   writeExternalFileWithinRoot,

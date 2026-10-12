@@ -1,3 +1,4 @@
+import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import fsSync, { type BigIntStats, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
@@ -63,6 +64,7 @@ export type SecureFileReadResult = {
   buffer: Buffer;
   realPath: string;
   stat: Stats;
+  exactIdentity: ExactFileIdentity;
   permissions?: PermissionCheck;
 };
 
@@ -201,11 +203,15 @@ async function openSecureHandle(options: SecureFileReadOptions, maxBytes: number
   }
 
   try {
-    const openedStat = fsSync.fstatSync(handle.fd);
+    const openedIdentity = inspectFileIdentitySync(() => {
+      const observed = fsSync.fstatSync(handle.fd, { bigint: true });
+      if (!observed.isFile()) throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
+      return observed;
+    });
+    const openedStat = numberStats(openedIdentity);
     if (!openedStat.isFile()) {
       throw new FsSafeError("not-file", `${label(options)} must be a file: ${options.filePath}`);
     }
-    const openedIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }));
     assertNotHardlinked(options, openedIdentity);
     inspectFileIdentitySync(() => {
       const pathStat = options.trust?.allowSymlink
@@ -389,7 +395,7 @@ export async function readSecureFile(
       throw new FsSafeError("not-file", `${label(options)} must remain a file: ${options.filePath}`);
     }
     assertNotHardlinked(options, finalIdentity);
-    return { buffer, realPath: opened.realPath, stat: opened.pathStat, permissions };
+    return { buffer, realPath: opened.realPath, stat: opened.pathStat, exactIdentity: exactFileIdentity(opened.identity), permissions };
   } finally {
     await opened.handle.close().catch(() => undefined);
   }

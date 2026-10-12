@@ -41,14 +41,17 @@ signing environment; PR and main-push CI build and test unsigned binaries withou
 requesting it. npm trusted publishing above remains unchanged and does not use
 this environment.
 
-1. Create GitHub environment `release-signing` in `openclaw/fs-safe`. Select custom deployment branch/tag policies and restrict it to release tags `v*.*.*` (type **tag**), matching `npm-publish`'s current policy. Match its required reviewers (`steipete` or `vincentkoc`) and prevent self-review. Do not add a standing branch rule.
-2. Add environment secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, with the same values as `openclaw/openclaw-windows-node`'s `release-signing` environment.
-3. On that Azure app registration, add a federated identity credential with issuer `https://token.actions.githubusercontent.com`, subject `repo:openclaw/fs-safe:environment:release-signing`, and audience `api://AzureADTokenExchange`.
-4. Ensure the identity has the **Artifact Signing Certificate Profile Signer** role on the `openclaw` signing account/profile. This is already granted for windows-node if the same identity is reused. The workflow uses endpoint `https://eus.codesigning.azure.net/`, account `openclaw`, and certificate profile `openclaw`.
+The maintainer completed this setup for PR #960:
 
-These are maintainer actions; do not create environments, secrets, or Azure
-resources as part of a code change. Missing configuration or failed signature
-validation stops the release with a pointer to this section.
+1. GitHub environment `release-signing` exists in `openclaw/fs-safe` and mirrors `npm-publish`'s protections: release tag policy `v*.*.*` (type **tag**), required reviewers (`steipete` or `vincentkoc`), and prevention of self-review. A temporary exact branch policy for `feat/windows-release-signing` permits the signing dry run only; remove it after proof. There is no standing branch exception.
+2. Environment secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` are configured for the dedicated Azure app registration `openclaw-fs-safe-signing`, appId `d151e936-0326-4a9d-81b7-9fcc0850a795`.
+3. The app has a federated identity credential with issuer `https://token.actions.githubusercontent.com`, subject `repo:openclaw/fs-safe:environment:release-signing`, and audience `api://AzureADTokenExchange`.
+4. The identity has the **Artifact Signing Certificate Profile Signer** role scoped to the `openclaw` certificate profile. The workflow uses endpoint `https://eus.codesigning.azure.net/`, account `openclaw`, and certificate profile `openclaw`.
+
+Environment, secret, and Azure changes remain maintainer actions; do not change
+them as part of a code update. Missing configuration or failed signature
+validation stops the release with a pointer to this section. Setup completion
+does not substitute for the signing dry-run proof below.
 
 ### Signing dry run (no publication)
 
@@ -78,6 +81,11 @@ again before native runtime tests. Collection hashes the actual packed Windows
 binary entries against that proof. The unsigned helper's Ubuntu/Windows hashes
 must match before signing. A normal PR or main CI run should contain only
 unsigned builds/tests, with no `release-signing` deployment or approval request.
+
+The helper build targets .NET Framework 4.6.2 (`net462`) and includes
+`src/windows-owner-query.cs` alongside the raw security bridge and transport.
+Both signed runtime jobs exercise the portable security operations and the
+owner/ACL compatibility query against the signed executable.
 
 ## Prepare the release candidate
 

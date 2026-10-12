@@ -1,3 +1,4 @@
+import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -22,7 +23,7 @@ import {
   resolvePathPreservingWindowsRoot,
 } from "./windows-path-alias.js";
 
-export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats };
+export type RegularFileStatResult = { missing: true } | { missing: false; stat: Stats; exactIdentity: ExactFileIdentity };
 
 type RegularFileAppendFlagConstants = Pick<
   typeof fsSync.constants,
@@ -69,9 +70,9 @@ export async function statRegularFile(filePath: string): Promise<RegularFileStat
 
 export function statRegularFileSync(filePath: string): RegularFileStatResult {
   assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
-  let stat: Stats;
+  let stat: BigIntStats;
   try {
-    stat = fsSync.lstatSync(filePath);
+    stat = fsSync.lstatSync(filePath, { bigint: true });
   } catch (err) {
     if (isNotFoundPathError(err)) {
       return { missing: true };
@@ -81,13 +82,13 @@ export function statRegularFileSync(filePath: string): RegularFileStatResult {
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error("path must be a regular file");
   }
-  return { missing: false, stat };
+  return { missing: false, stat: numberStats(stat), exactIdentity: exactFileIdentity(stat) };
 }
 
 export async function readRegularFile(params: {
   filePath: string;
   maxBytes?: number;
-}): Promise<{ buffer: Buffer; stat: Stats }> {
+}): Promise<{ buffer: Buffer; stat: Stats; exactIdentity: ExactFileIdentity }> {
   const { filePath, maxBytes, before } = prepareRegularRead(params);
   let handle: FileHandle;
   try {
@@ -99,7 +100,7 @@ export async function readRegularFile(params: {
     throw err;
   }
   try {
-    const stat = inspectOpenedRegularRead(handle.fd, filePath, before, maxBytes);
+    const { stat, exactIdentity } = inspectOpenedRegularRead(handle.fd, filePath, before, maxBytes);
     // With a byte cap, avoid readFile(): a raced file growth would allocate
     // the oversized content before the post-read check could reject it.
     let buffer: Buffer;
@@ -114,7 +115,7 @@ export async function readRegularFile(params: {
       }
       throw error;
     }
-    return { buffer, stat };
+    return { buffer, stat, exactIdentity };
   } finally {
     await handle.close();
   }
@@ -162,8 +163,7 @@ function inspectOpenedRegularRead(
   filePath: string,
   preOpenStat: BigIntStats,
   maxBytes: number | undefined,
-): Stats {
-  const stat = fsSync.fstatSync(fd);
+): { stat: Stats; exactIdentity: ExactFileIdentity } {
   const identity = inspectFileIdentitySync(() => {
     const exact = fsSync.fstatSync(fd, { bigint: true });
     assertRegularReadStat(exact, filePath);
@@ -181,15 +181,16 @@ function inspectOpenedRegularRead(
     }
     throw error;
   }
-  if (maxBytes !== undefined && stat.size > maxBytes) {
+  if (maxBytes !== undefined && identity.size > maxBytes) {
     throw regularFileTooLargeError(filePath, maxBytes);
   }
-  return stat;
+  return { stat: numberStats(identity), exactIdentity: exactFileIdentity(identity) };
 }
 
 export function readRegularFileSync(params: { filePath: string; maxBytes?: number }): {
   buffer: Buffer;
   stat: Stats;
+  exactIdentity: ExactFileIdentity;
 } {
   const { filePath, maxBytes, before } = prepareRegularRead(params);
 
@@ -203,7 +204,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     throw error;
   }
   try {
-    const stat = inspectOpenedRegularRead(fd, filePath, before, maxBytes);
+    const { stat, exactIdentity } = inspectOpenedRegularRead(fd, filePath, before, maxBytes);
     // Keep capped reads incremental so raced growth cannot allocate unbounded content.
     let buffer: Buffer;
     try {
@@ -216,7 +217,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
       }
       throw error;
     }
-    return { buffer, stat };
+    return { buffer, stat, exactIdentity };
   } finally {
     fsSync.closeSync(fd);
   }

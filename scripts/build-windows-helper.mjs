@@ -17,6 +17,6 @@ if ((probe.error?.code === "ENOENT" || (!probe.error && probe.status !== 0)) &&
   const build = spawnSync("dotnet", ["build", project, "--configuration", "Release", "--nologo", "--verbosity", "minimal", "-p:RestoreLockedMode=true"], { cwd: root, stdio: "inherit" });
   if (build.status !== 0) throw new Error("Windows helper build failed");
   mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });
-  const exe = new URL("../native/windows-security-helper/bin/Release/net40/windows-security-helper.exe", import.meta.url);
+  const exe = new URL("../native/windows-security-helper/bin/Release/net462/windows-security-helper.exe", import.meta.url);
   for (const directory of ["src", "dist"]) copyFileSync(exe, new URL(`../${directory}/windows-security-helper.exe`, import.meta.url));
 }

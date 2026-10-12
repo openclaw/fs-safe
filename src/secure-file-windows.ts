@@ -73,7 +73,7 @@ export async function inspectSecureWindowsFile(params: {
     permissionUnverified("Windows descriptor ACL verification requires an up-to-date native helper");
   }
   if (!nativeAvailable) {
-    warnNativeFallback("windows-secure-file", "Windows descriptor ACL inspection uses a slower built-in system command.");
+    warnNativeFallback("windows-secure-file", "Windows descriptor ACL inspection launches the packaged .NET helper for each check.", "inspectWindowsSecureFileHandle");
   }
   let result: unknown;
   try {

@@ -483,7 +483,7 @@ infer native loading from timing.
 `pnpm build:windows-helper` builds the portable security executable with the
 .NET SDK pinned by `global.json`, Roslyn deterministic compilation, a fixed
 source path map, no debug symbols, AnyCPU and `Prefer32Bit=false`. The project
-under `native/windows-security-helper/` targets .NET Framework 4.0 using
+under `native/windows-security-helper/` targets .NET Framework 4.6.2 using
 Microsoft's `Microsoft.NETFramework.ReferenceAssemblies` 1.0.3 and its committed
 NuGet lock file; builds restore in locked mode. CI compares Ubuntu and Windows
 SHA-256 hashes to enforce byte-identical **unsigned** output. Release builds
@@ -496,7 +496,19 @@ file. Both Windows addons and the helper must have a valid, timestamped embedded
 signature from OpenClaw Foundation before signed x64/ARM64 runtime tests and
 release collection. See [release prerequisites](https://github.com/openclaw/fs-safe/blob/main/RELEASE-PREREQS.md#windows-authenticode-signing-one-time-maintainer-setup)
 for setup and the publication-free dry run. The main package includes only
-the exe; the two C# source files remain available in the repository.
+the exe; the three C# source files remain available in the repository. The separate
+`windows-owner-query.cs` compatibility query preserves the former PowerShell
+query's .NET API sequence, normalization, link behavior, and locality rules;
+the raw security bridge remains independent.
+
+The 4.6.2 target selects modern `System.IO` path handling on 4.6.2+ runtimes,
+matching Windows PowerShell 5.1. An executable targeting an earlier framework
+gets legacy handling that rejects extended-length `\\?\` paths with
+"Illegal characters in path." The helper still uses only APIs available in
+.NET Framework 4.0 and the same CLR v4.0.30319; it needs no `.exe.config` sidecar.
+Locked restore pins the `Microsoft.NETFramework.ReferenceAssemblies.net462`
+package to 1.0.3 with its content hash. The raw bridge keeps extended paths out
+of .NET normalization and uses `CreateFileW`; its security checks are unchanged.
 
 Build output is copied beside the source modules for Vitest and beside the
 compiled modules in `dist/`; both use the same module-relative filename.
@@ -518,7 +530,11 @@ Native initialization runs in the async context captured when fs-safe's loader
 module is evaluated. Import fs-safe during application startup, outside request
 or lease scopes, so the addon's process-lifetime housekeeping cannot retain the
 first operation's `AsyncLocalStorage` stores. Importing still does not load the
-addon: only the first native operation pays the registration cost. Subsequent
+addon: only the first native operation or explicit
+[`await getFsSafeNativeStatus({ probe: true })`](config.md#getfssafenativestatus-options)
+call pays the registration cost. The `config` subpath defers the internal loader
+until status is requested and shares that loader's cache with native operations.
+Subsequent
 operations and their callbacks retain their own caller context. Dynamically
 importing fs-safe for the first time inside a request scope captures that import
 scope instead; this boundary does not clear an already active import context.
@@ -531,9 +547,12 @@ loader conservatively attempts the glibc package and lets normal module loading
 fail into `auto` fallback. The loader requires only the package selected from
 the detected target; it never probes unrelated packages, downloads code, or
 runs a postinstall step. A missing or incompatible binary
-silently selects the JavaScript fallback in `auto`, throws typed
+selects the guarded fallback in `auto`, throws typed
 `helper-unavailable` in `require`, and is never inspected in `off`. Tests reject
 `child_process`, `exec`, or `spawn` usage in the loader.
+Windows security/private-creation fallbacks emit an actionable, path-free
+warning; other fallbacks remain silent. See
+[fallback troubleshooting](native-helper.md#troubleshooting-fallback-warnings).
 
 ## Anonymous pipes
 

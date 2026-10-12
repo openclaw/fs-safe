@@ -12,10 +12,13 @@ import {
   configureFsSafeNative,
   configureFsSafeLocks,
   getFsSafeNativeConfig,
+  getFsSafeNativeStatus,
   getFsSafeLockConfig,
   type FsSafeLockConfig,
   type FsSafeNativeConfig,
   type FsSafeNativeMode,
+  type FsSafeNativeStatus,
+  type FsSafeNativeStatusReason,
 } from "@openclaw/fs-safe/config";
 ```
 
@@ -52,6 +55,73 @@ function getFsSafeNativeConfig(): FsSafeNativeConfig;
 ```
 
 Return the effective configuration: programmatic overrides win, then env vars, then the package default (`auto`).
+
+## `getFsSafeNativeStatus(options?)`
+
+```ts
+function getFsSafeNativeStatus(options?: { probe?: boolean }): Promise<FsSafeNativeStatus>;
+
+type FsSafeNativeStatusReason =
+  | "not-probed" | "loaded" | "disabled" | "unsupported-target"
+  | "package-missing" | "load-failed" | "capability-missing";
+
+type FsSafeNativeStatus = {
+  mode: FsSafeNativeMode;
+  modeSource: "programmatic configuration" | "FS_SAFE_NATIVE_MODE" | "OPENCLAW_FS_SAFE_NATIVE_MODE" | "default";
+  reason: FsSafeNativeStatusReason;
+  loaded: boolean;
+  target: string;
+  packageName?: string;
+  packageVersion?: string;
+  loadErrorCode?: string;
+  guidance?: string;
+};
+```
+
+| Field | Meaning |
+|---|---|
+| `mode` | Effective `auto`, `off`, or `require` policy. |
+| `modeSource` | The winning programmatic setting, environment variable **name**, or default. |
+| `reason` | Cached loader outcome; `not-probed` until a load is attempted, unless the effective mode is `off` (`disabled`). |
+| `loaded` | `true` exactly when `reason` is `loaded`. This confirms the loader's core capability check, not every operation's capabilities or kernel-atomic behavior. |
+| `target` | Runtime platform/architecture/libc, such as `win32-x64-msvc` or `linux-x64-gnu`; also supplied for unsupported targets. |
+| `packageName` | Expected native platform package; absent for unsupported targets. |
+| `packageVersion` | Exact pinned version from fs-safe's manifest, when a platform package exists. |
+| `loadErrorCode` | Present only for `load-failed`: an allowlisted loader code, or `UNKNOWN`. |
+| `guidance` | Cause-specific next steps, shared with fallback warnings; absent for `not-probed` and `loaded`. |
+
+The function returns a promise and loads its status module on the first call,
+keeping the `config` import lightweight. The default, `{ probe: false }`, reads
+the cached outcome without loading the addon. `{ probe: true }` attempts the same
+lazy load as a native operation, unless
+the mode is `off`. It never changes the configured mode or performs filesystem
+mutations. Failed loads are reported even in `require` mode, without throwing.
+`package-missing` identifies an unresolved platform package; a missing dependency
+inside an installed package is `load-failed`. `capability-missing` means the
+loader's core required capability is absent. Individual operations can still
+lack capabilities when this API reports `loaded`.
+
+For a doctor or startup health check:
+
+```ts
+import { getFsSafeNativeStatus } from "@openclaw/fs-safe/config";
+
+const native = await getFsSafeNativeStatus({ probe: true });
+if (native.loaded) {
+  console.log(`Native filesystem support loaded for ${native.target}`);
+} else {
+  console.log(`Native filesystem support: ${native.reason}`);
+  if (native.guidance) console.log(native.guidance);
+}
+```
+
+Status is per module instance. A real Worker has its own configuration, loader
+cache, and status; checking the main thread does not probe its Workers. Restart
+the process or Worker after repairing an installation: successes and failures
+are cached, and neither repeated probes nor mode changes retry a failed load.
+No field contains filesystem paths, raw native error messages, or environment
+variable values. See [fallback troubleshooting](native-helper.md#troubleshooting-fallback-warnings)
+for the individual causes and next steps.
 
 ## `configureFsSafeLocks(config)`
 

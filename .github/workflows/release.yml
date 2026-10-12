@@ -399,7 +399,7 @@ jobs:
         run: |
           node -e "const r = require('node:child_process').spawnSync('./dist/windows-security-helper.exe', ['paths'], { input: JSON.stringify([process.cwd()]), encoding: 'utf8', timeout: 30000 }); if (r.error || r.status !== 0 || JSON.parse(r.stdout).ok !== true) throw Error('signed helper failed', { cause: r.error });"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm test test/windows-security-portable.test.ts
+          pnpm test test/windows-security-portable.test.ts test/windows-owner-helper.windows.test.ts
 
   collect:
     name: Assemble and validate release packages

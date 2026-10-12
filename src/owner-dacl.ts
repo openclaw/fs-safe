@@ -57,7 +57,7 @@ export function readOwnerAndDacl(targetPath: string): OwnerAndDaclResult {
     if (getFsSafeNativeConfig().mode === "require") {
       throw new FsSafeError("helper-unavailable", "Windows owner and DACL facts require an up-to-date native helper");
     }
-    warnNativeFallback("windows-owner-dacl", "Windows owner and DACL inspection uses a slower built-in system command.");
+    warnNativeFallback("windows-owner-dacl", "Windows owner and DACL inspection launches the packaged .NET helper for each check.", "readOwnerAndDacl");
   }
   const facts = typeof inspect === "function" ? inspect.call(native, targetPath) : readWindowsSecurityFactsCommand(targetPath);
   return projectOwnerAndDacl(facts);

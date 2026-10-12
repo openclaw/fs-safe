@@ -69,15 +69,18 @@ resolveWindowsUserPrincipal(env);
 ```
 
 The fallback Windows inspector reads the owner and DACL together through one
-built-in Windows PowerShell/.NET query. The query addresses its JSON command by
-module name and limits module discovery to PowerShell's bundled system modules.
+built-in prebuilt .NET Framework helper query. It runs the packaged
+`windows-security-helper.exe` with arguments `["owner", targetPath]`, without
+starting PowerShell. The query preserves .NET's named-path security lookup and
+ACL normalization, including leaf-link behavior.
 It returns canonical SIDs and numeric access masks, so Unicode paths and account
 names do not pass through lossy console display text. `inspectWindowsAcl()` uses native descriptor facts for
 complete local ACLs with nonzero inherited ACEs (or empty/null DACLs) when the
 optional Windows binding is available. It applies
 the same classifier to native facts and the fallback query, returning canonical
-SIDs in its `principal` fields with normalized rights tokens. Explicit `env` or
-`exec` options retain the query path. Disabled or unavailable native helpers,
+SIDs in its `principal` fields with normalized rights tokens. An explicit
+`exec` option retains the query path; `env` no longer selects a query executable
+or bypasses native inspection. Disabled or unavailable native helpers,
 remote or incomplete descriptors, leaf symbolic links, and native query errors
 use the fallback. Explicit ACEs and zero-mask entries also retain the query so
 .NET continues to own its ACE ordering and normalization.
@@ -89,6 +92,9 @@ result. The query returns SIDs directly; no translation cache is needed.
 Injected executors must return the same structured success JSON as the built-in
 query: valid `ownerSid` and `currentUserSid` strings, an explicit boolean
 `remote`, and complete DACL facts (`complete`, `daclPresent`, and `aces`).
+Pass-through executors can run the supplied helper command and arguments
+directly; canned-JSON executors use the same parser. `env` remains available for
+principal classification and remediation command construction.
 Missing or nonboolean locality leaves both inspectors unverified; only
 `remote: false` establishes locality for owner trust. An explicit `remote: true`
 retains the ACL report but never grants trusted ownership.
