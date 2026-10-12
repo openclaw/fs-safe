@@ -1,0 +1,227 @@
+{
+  "1": {
+    "normal": {
+      "off": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 15,
+          "readlink": 31,
+          "mkdir": 2
+        }
+      },
+      "require": {
+        "resources": {
+          "PROMISE": 5
+        },
+        "syscalls": {
+          "statx": 8,
+          "readlink": 13,
+          "openat": 1,
+          "fstat": 10,
+          "newfstatat": 5,
+          "openat2": 2,
+          "mkdirat": 1,
+          "close": 3
+        }
+      },
+      "auto": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 15,
+          "readlink": 31,
+          "mkdir": 2
+        }
+      }
+    },
+    "fallback": {
+      "off": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 15,
+          "readlink": 31,
+          "mkdir": 2
+        }
+      },
+      "require": {
+        "resources": {
+          "PROMISE": 5
+        },
+        "syscalls": {
+          "statx": 8,
+          "readlink": 13,
+          "openat": 5,
+          "fstat": 20,
+          "newfstatat": 11,
+          "close": 5,
+          "mkdirat": 1
+        }
+      },
+      "auto": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 15,
+          "readlink": 31,
+          "mkdir": 2
+        }
+      }
+    }
+  },
+  "8": {
+    "normal": {
+      "off": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 57,
+          "readlink": 290,
+          "mkdir": 9
+        }
+      },
+      "require": {
+        "resources": {
+          "PROMISE": 5
+        },
+        "syscalls": {
+          "statx": 8,
+          "readlink": 20,
+          "openat": 1,
+          "fstat": 10,
+          "newfstatat": 5,
+          "openat2": 2,
+          "mkdirat": 1,
+          "close": 3
+        }
+      },
+      "auto": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 57,
+          "readlink": 290,
+          "mkdir": 9
+        }
+      }
+    },
+    "fallback": {
+      "off": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 57,
+          "readlink": 290,
+          "mkdir": 9
+        }
+      },
+      "require": {
+        "resources": {
+          "PROMISE": 5
+        },
+        "syscalls": {
+          "statx": 8,
+          "readlink": 20,
+          "openat": 12,
+          "fstat": 69,
+          "newfstatat": 60,
+          "close": 12,
+          "mkdirat": 1
+        }
+      },
+      "auto": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 57,
+          "readlink": 290,
+          "mkdir": 9
+        }
+      }
+    }
+  },
+  "32": {
+    "normal": {
+      "off": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 201,
+          "readlink": 3038,
+          "mkdir": 33
+        }
+      },
+      "require": {
+        "resources": {
+          "PROMISE": 5
+        },
+        "syscalls": {
+          "statx": 8,
+          "readlink": 50,
+          "openat": 1,
+          "fstat": 10,
+          "newfstatat": 5,
+          "openat2": 2,
+          "mkdirat": 1,
+          "close": 3
+        }
+      },
+      "auto": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 201,
+          "readlink": 3038,
+          "mkdir": 33
+        }
+      }
+    },
+    "fallback": {
+      "off": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 201,
+          "readlink": 3038,
+          "mkdir": 33
+        }
+      },
+      "require": {
+        "resources": {
+          "PROMISE": 5
+        },
+        "syscalls": {
+          "statx": 8,
+          "readlink": 50,
+          "openat": 36,
+          "fstat": 609,
+          "newfstatat": 600,
+          "close": 36,
+          "mkdirat": 1
+        }
+      },
+      "auto": {
+        "resources": {
+          "PROMISE": 21
+        },
+        "syscalls": {
+          "statx": 201,
+          "readlink": 3038,
+          "mkdir": 33
+        }
+      }
+    }
+  }
+}

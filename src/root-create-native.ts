@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import fsAsync from "node:fs/promises";
 import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
-import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { assertSyncDirectoryGuard, inspectDirectoryIdentitySync, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { assertDarwinCreationAcl, assertPrivateDirectory } from "./creation-boundary.js";
 import { assertMutationNotDenied } from "./deny-mutations.js";
@@ -233,6 +233,61 @@ export async function tryMkdirRootNative(params: Creation): Promise<boolean> {
     if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
     throw error;
   }
+}
+
+export function tryMkdirNativeExistingParent(root: RootContext, relativePath: string): boolean {
+  try {
+    return mkdirNativeExistingParent(root, relativePath);
+  } catch (error) {
+    if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
+    throw error;
+  }
+}
+
+function mkdirNativeExistingParent(root: RootContext, relativePath: string): boolean {
+  if (getFsSafeTestHooks()?.beforeRootFallbackMutation) return false;
+  const segments = relativePath.split(path.sep === "\\" ? /[\\/]/ : "/");
+  if (segments.length < 2 || segments.some(segment =>
+    !isSafePathSegment(segment, { allowDotPrefix: true }) || segment.endsWith("."))) return false;
+  assertRootIdentityCurrentSync(root);
+  const params = { root, target: path.join(root.rootReal, ...segments) };
+  const parentPath = path.dirname(params.target);
+  let parentIdentity: fs.BigIntStats;
+  try {
+    const child = fs.lstatSync(pathForWindowsFilesystem(params.target), { throwIfNoEntry: false });
+    if (child && (!child.isDirectory() || realpathSync.native(pathForWindowsFilesystem(params.target)) !== params.target)) return false;
+    parentIdentity = inspectDirectoryIdentitySync(parentPath);
+    if (realpathSync.native(pathForWindowsFilesystem(parentPath)) !== parentPath) return false;
+  } catch {
+    // This probe has not mutated anything; aliases and missing parents retain
+    // the general resolver and its established error normalization.
+    return false;
+  }
+  const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
+  if (!binding?.openBeneath || !binding.mkdirChildBeneath) return unavailable();
+  using rootOwner = openExactNativeRootSync(binding, {
+    rootPath: params.root.rootReal, rootIdentity: params.root.rootIdentity,
+  });
+  verifyMkdirDirectory(binding, rootOwner.fd, params.root.rootReal);
+  const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |
+    (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
+  const close = captureNativeFdClose(binding);
+  const parent = binding.openBeneath(rootOwner.fd, segments.slice(0, -1).join("/"), flags).fd;
+  using parentOwner = { [Symbol.dispose]() { close(parent); } };
+  inspectFileIdentitySync(() => fs.fstatSync(parent, { bigint: true }), parentIdentity);
+  verifyMkdirDirectory(binding, parent, parentPath);
+  assertRootIdentityCurrentSync(params.root);
+  const name = segments.at(-1)!;
+  const child = binding.mkdirOpenChildBeneath
+    ? binding.mkdirOpenChildBeneath(parent, name, 0o777, flags).fd
+    : (binding.mkdirChildBeneath(parent, name, 0o777), binding.openBeneath(parent, name, flags).fd);
+  using childOwner = { [Symbol.dispose]() { close(child); } };
+  assertRootIdentityCurrentSync(params.root);
+  verifyMkdirDirectory(binding, child, params.target);
+  inspectDirectoryIdentitySync(parentPath, parentIdentity);
+  verifyMkdirDirectory(binding, parent, parentPath);
+  verifyMkdirDirectory(binding, rootOwner.fd, params.root.rootReal);
+  return true;
 }
 
 function verifyMkdirDirectory(binding: NativeBinding, fd: number, pathname: string): void {

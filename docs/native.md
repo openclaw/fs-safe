@@ -337,7 +337,10 @@ identity check and no-follow missing-entry observation; retained Root and child
 identity checks still surround creation. Its short descriptor
 open, creation, identity checks, and close are synchronous; the public method
 remains asynchronous. Root and child pathname/canonical identities are checked
-before success. Private creation, mutation policies, callbacks, and longer paths
+before success. Ordinary portable paths with existing canonical parents retain the admitted
+parent directly. A fresh exact parent snapshot must match its beneath-opened
+descriptor; parent, child and Root name/identity checks still surround creation.
+Aliases, missing parents, private creation, mutation policies and callbacks
 retain their existing admission paths. Policy-free `ensureRoot()` verifies the
 retained native Root directly. In `off` and `auto`, ordinary `Root.mkdir()` keeps
 its metadata-only creation syscall in the synchronous guard sequence; supplied
