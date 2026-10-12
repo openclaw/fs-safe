@@ -9,7 +9,10 @@ import { isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
 
 const script = fileURLToPath(import.meta.url);
 const operation = process.argv.includes("--operation") ? process.argv[process.argv.indexOf("--operation") + 1] : "mkdir";
-assert(["mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write", "tempWorkspace"].includes(operation));
+const depth = process.argv.includes("--depth") ? Number(process.argv[process.argv.indexOf("--depth") + 1]) : 1;
+assert([1, 8, 32].includes(depth));
+const nestedPath = [...Array(depth).fill("nested"), "child"].join(path.sep);
+assert(["mkdirNested", "mkdir", "ensureRoot", "remove", "move", "append", "openWritable", "create", "write", "tempWorkspace"].includes(operation));
 if (process.argv.includes("--child")) {
   const { configureFsSafeNative, root } = await import("../dist/index.js");
   const { getNativeBinding } = await import("../dist/native.js");
@@ -20,12 +23,14 @@ if (process.argv.includes("--child")) {
   const temporary = fs.mkdtempSync(path.join(process.platform === "linux" ? "/tmp" : os.tmpdir(), "fs-safe-native-budget-"));
   try {
     const safe = await root(temporary);
+    if (operation === "mkdirNested") fs.mkdirSync(path.join(temporary, path.dirname(nestedPath)), { recursive: true });
     for (const mode of ["off", "require", "auto"]) {
       configureFsSafeNative({ mode });
-      const prepare = () => { if (!["mkdir", "ensureRoot", "create", "tempWorkspace"].includes(operation)) fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
+      const prepare = () => { if (!["mkdirNested", "mkdir", "ensureRoot", "create", "tempWorkspace"].includes(operation)) fs.writeFileSync(path.join(temporary, "child"), "payload", operation === "write" ? { mode: 0o600 } : undefined); };
       const perform = () => {
         if (operation === "tempWorkspace") return tempWorkspace({ rootDir: temporary, prefix: "child" });
         if (operation === "ensureRoot") return safe.ensureRoot();
+        if (operation === "mkdirNested") return safe.mkdir(nestedPath);
         if (operation === "mkdir") return safe.mkdir("child");
         if (operation === "remove") return safe.remove("child");
         if (operation === "append") return safe.append("child", "data", { durable: false });
@@ -36,6 +41,7 @@ if (process.argv.includes("--child")) {
       };
       const cleanup = result => {
         if (operation === "tempWorkspace") return result.cleanup();
+        if (operation === "mkdirNested") fs.rmdirSync(path.join(temporary, nestedPath));
         if (operation === "mkdir") fs.rmdirSync(path.join(temporary, "child"));
         if (operation === "create") fs.unlinkSync(path.join(temporary, "child"));
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
@@ -47,11 +53,11 @@ if (process.argv.includes("--child")) {
       const resources = {};
       const hook = createHook({ init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; } });
       prepare();
-      fs.writeSync(2, `BUDGET_START ${operation} ${mode}\n`);
+      fs.writeSync(2, `BUDGET_START ${operation === "mkdirNested" ? "mkdir" : operation} ${mode}\n`);
       hook.enable();
       const result = await perform();
       hook.disable();
-      fs.writeSync(2, `BUDGET_END ${operation} ${mode}\n`);
+      fs.writeSync(2, `BUDGET_END ${operation === "mkdirNested" ? "mkdir" : operation} ${mode}\n`);
       await cleanup(result);
       console.log(JSON.stringify({ operation, mode, resources }));
     }
@@ -67,8 +73,8 @@ if (process.argv.includes("--child")) {
     const child = spawnSync(trace ? "strace" : process.execPath, trace ? [
       "-f", "-yy", "-s", "256", "-o", tracePath,
       "-e", "trace=%file,read,write,pread64,pwrite64,readv,writev,preadv,pwritev,preadv2,pwritev2,close,fstat,fsync,fdatasync,getdents64,lseek,copy_file_range,sendfile,fcntl,ftruncate,fchmod,fchown,flock,ioctl",
-      process.execPath, script, "--child", "--operation", operation,
-    ] : [script, "--child", "--operation", operation], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+      process.execPath, script, "--child", "--operation", operation, "--depth", String(depth),
+    ] : [script, "--child", "--operation", operation, "--depth", String(depth)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     const rows = child.stdout.trim().split("\n").map(line => JSON.parse(line));
     if (trace) {
@@ -90,6 +96,20 @@ if (process.argv.includes("--child")) {
     }
     for (const row of rows) {
       if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
+      if (operation === "mkdirNested") {
+        const fixture = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-mkdir-budget.json", import.meta.url), "utf8"));
+        const expected = fixture[String(depth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
+        assert.deepEqual(row.resources, expected.resources, `${row.mode} nested mkdir resources, depth ${depth}`);
+        if (trace) {
+          const aliases = { mkdir: "mkdirat", readlink: "readlinkat" };
+          const syscalls = process.arch === "arm64"
+            ? Object.fromEntries(Object.entries(expected.syscalls).map(([name, count]) => [aliases[name] ?? name, count]))
+            : expected.syscalls;
+          assert.deepEqual(row.syscalls, syscalls, `${row.mode} nested mkdir syscalls, depth ${depth}`);
+        }
+        console.log(JSON.stringify({ ...row, depth }));
+        continue;
+      }
       if (operation === "tempWorkspace") {
         const expectedResources = row.mode === "off"
           ? {"PROMISE": 11, "FSREQPROMISE": 1} : {"PROMISE": 6};
