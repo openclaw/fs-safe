@@ -28,7 +28,9 @@ function resolve(input: string, native: boolean): string {
     try { return fs.realpathSync.native(input); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EPERM" || (error as NodeJS.ErrnoException).syscall !== "realpath") throw error;
-      const binding = getNativeBinding();
+      let binding: ReturnType<typeof getNativeBinding>;
+      try { binding = getNativeBinding(); }
+      catch { binding = undefined; }
       if (!isAppContainer(binding)) throw error;
       if (!binding?.resolveWindowsCanonicalPath) {
         throw new FsSafeError("helper-unavailable", "Windows canonicalization after a denied DOS-name query requires the native binding", { cause: error });

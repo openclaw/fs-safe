@@ -49,6 +49,13 @@ it("does not probe the token for successful resolution or other filesystem failu
   expect(mocks.membership).not.toHaveBeenCalled();
 });
 
+it("preserves an ordinary denial when the required addon cannot load", async () => {
+  mocks.binding.mockImplementation(() => { throw new Error("addon unavailable"); });
+  const original = denied();
+  expect(thrownBy(await resolver(original))).toBe(original);
+  expect(mocks.membership).toHaveBeenCalledTimes(1);
+});
+
 it("preserves the original container denial when native resolution cannot replace it", async () => {
   mocks.binding.mockReturnValue({ isWindowsAppContainer: () => true, resolveWindowsCanonicalPath: () => null });
   const original = denied();
