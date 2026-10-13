@@ -914,7 +914,7 @@ pub fn clone_file_exclusive(
     clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn ficlone_unavailable(error: rustix::io::Errno) -> bool {
     // Only call for FICLONE on a target just created with O_EXCL: its own
     // immutable/append-only destination EPERM cannot apply. Seccomp/LSM can
@@ -932,6 +932,15 @@ pub(crate) fn ficlone_unavailable(error: rustix::io::Errno) -> bool {
         || error == rustix::io::Errno::OPNOTSUPP
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn ficlone_copy_unavailable(error: rustix::io::Errno) -> bool {
+    // ZFS can reject cloning dirty extents with EAGAIN or EIO while ordinary
+    // reads still work. Only the clone syscall qualifies, and the caller must
+    // successfully remove its unpublished exclusive target before retrying.
+    ficlone_unavailable(error)
+        || matches!(error, rustix::io::Errno::IO | rustix::io::Errno::AGAIN)
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn clone_file_exclusive_with_sync(
     source_fd: i32,
@@ -946,7 +955,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
         rustix::fs::ioctl_ficlone(target.as_fd(), borrowed(source_fd))
     };
     if let Err(error) = cloned {
-        let error = if ficlone_unavailable(error) {
+        let error = if ficlone_copy_unavailable(error) {
             native_error("ENOTSUP", format!("FICLONE is unavailable: {error}"))
         } else {
             os_error(error, "FICLONE")
@@ -1651,6 +1660,21 @@ mod macos {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ficlone_io_failures_are_retryable_only_before_publication() {
+        for errno in [rustix::io::Errno::IO, rustix::io::Errno::AGAIN] {
+            assert!(ficlone_copy_unavailable(errno), "{errno} must allow ordinary copying");
+            let failure = with_cleanup_error(
+                native_error("ENOTSUP", "FICLONE unavailable"),
+                Err(native_error("EIO", "substituted stage")),
+            );
+            assert_eq!(failure.status, "EIO");
+        }
+        for errno in [rustix::io::Errno::NOSPC, rustix::io::Errno::BADF, rustix::io::Errno::ACCESS] {
+            assert!(!ficlone_copy_unavailable(errno));
+        }
+    }
+
     use std::fs::{self, OpenOptions};
     use std::os::fd::{AsRawFd, FromRawFd};
     use crate::test_support::temp_path;
