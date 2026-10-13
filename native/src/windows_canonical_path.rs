@@ -25,7 +25,8 @@ fn translate_nt_path(
     let root = drive_root(&input);
     let input_unc = input.starts_with(r"\\")
         && !input.starts_with(r"\\.\")
-        && (!input.starts_with(r"\\?\") || input.starts_with(r"\\?\UNC\"));
+        && (!input.starts_with(r"\\?\")
+            || input.get(..8).is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\")));
     let nt: Vec<u16> = nt_path.encode_utf16().collect();
     let mup: Vec<u16> = r"\Device\Mup\".encode_utf16().collect();
     if (root.is_some() || input_unc) && nt.len() > mup.len() && equal(&nt[..mup.len()], &mup) {
@@ -283,6 +284,8 @@ mod tests {
             "//server/share/x",
             r"\\server/share\x",
             r"\\?\UNC/server/share/x",
+            r"\\?\unc\server\share\x",
+            r"\\?\UnC/server/share/x",
         ] {
             assert_eq!(
                 translate(input, r"\Device\Mup\server\share\x", None).unwrap(),
