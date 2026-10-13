@@ -289,7 +289,7 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
     };
   });
   const summary = summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid });
-  if (owner.currentAppContainerSid && owner.currentUserSid === owner.sid) {
+  if (owner.currentAppContainerSid) {
     const own = summary.untrustedGroup.filter(entry => entry.sid === owner.currentAppContainerSid);
     summary.trusted.push(...own);
     summary.untrustedGroup = summary.untrustedGroup.filter(entry => entry.sid !== owner.currentAppContainerSid);

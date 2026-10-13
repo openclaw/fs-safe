@@ -147,6 +147,32 @@ public static class AppContainerFixture {
       }
     }
   }
+  static void PrepareForeignOwner(string root,IntPtr containerSid) {
+    string path=Path.Combine(root,"foreign-owned");
+    File.WriteAllText(path,"foreign-owned fixture");
+    var security=new FileSecurity();
+    security.SetAccessRuleProtection(true,false);
+    var administrator=new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid,null);
+    security.SetOwner(administrator);
+    string user;
+    using(var identity=WindowsIdentity.GetCurrent()) user=identity.User.Value;
+    string container=new SecurityIdentifier(containerSid).Value;
+    foreach(string sid in new[]{user,"S-1-5-18",administrator.Value,container})
+      security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,AccessControlType.Allow));
+    File.SetAccessControl(path,security);
+    var actual=File.GetAccessControl(path,AccessControlSections.Access|AccessControlSections.Owner);
+    string owner=actual.GetOwner(typeof(SecurityIdentifier)).Value;
+    if(owner!=administrator.Value || owner==user) throw new Exception("Fixture owner must differ from the token user");
+    var aces=new List<string>();
+    foreach(FileSystemAccessRule ace in actual.GetAccessRules(true,true,typeof(SecurityIdentifier)))
+      aces.Add("{\"sid\":"+Json(ace.IdentityReference.Value)+",\"mask\":"+(uint)ace.FileSystemRights+
+        ",\"deny\":"+(ace.AccessControlType==AccessControlType.Deny ? "true" : "false")+
+        ",\"inheritOnly\":"+((ace.PropagationFlags&PropagationFlags.InheritOnly)!=0 ? "true" : "false")+"}");
+    // Independent .NET facts exercise the command parser without spawning a helper in the lowbox.
+    File.WriteAllText(Path.Combine(root,"foreign-owner-command.json"),"{\"ownerSid\":"+Json(owner)+
+      ",\"currentUserSid\":"+Json(user)+",\"currentAppContainerSid\":"+Json(container)+
+      ",\"remote\":false,\"complete\":true,\"daclPresent\":true,\"aces\":["+String.Join(",",aces.ToArray())+"]}");
+  }
   public static void Run(string root,bool diagnosticsOnly) {
     // Only fixture setup is elevated; CreateProcessW below creates restricted
     // AppContainer children. Refuse clearly before setting fixture integrity.
@@ -217,6 +243,9 @@ public static class AppContainerFixture {
       Launch(root,sidA,"diagnostic-node","",true);
       Launch(root,sidA,"diagnostic-native","",true);
       if(diagnosticsOnly) return;
+      Mark(root,"foreign-owner:prepare:before");
+      PrepareForeignOwner(root,sidA);
+      Mark(root,"foreign-owner:prepare:after");
       Launch(root,sidA,"create","require");
       Launch(root,sidA,"reopen","require");
       Launch(root,sidB,"deny","require");

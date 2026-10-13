@@ -9,8 +9,7 @@ fn unavailable() -> crate::NativeError {
 }
 
 fn drive_root(input: &str) -> Option<String> {
-    let normalized = input.replace('/', "\\");
-    let path = normalized.strip_prefix(r"\\?\").unwrap_or(&normalized);
+    let path = input.strip_prefix(r"\\?\").unwrap_or(input);
     let bytes = path.as_bytes();
     (bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && &bytes[1..3] == b":\\")
         .then(|| path[..3].to_owned())
@@ -22,7 +21,8 @@ fn translate_nt_path(
     drive_nt: Option<&str>,
     equal: impl Fn(&[u16], &[u16]) -> bool,
 ) -> NativeResult<String> {
-    let root = drive_root(input);
+    let input = input.replace('/', "\\");
+    let root = drive_root(&input);
     let input_unc = input.starts_with(r"\\")
         && !input.starts_with(r"\\.\")
         && (!input.starts_with(r"\\?\") || input.starts_with(r"\\?\UNC\"));
@@ -66,6 +66,11 @@ mod platform {
     };
 
     pub(crate) const INITIAL_PATH_WCHARS: usize = 512;
+
+    fn absolute_input(input: &str) -> NativeResult<String> {
+        let path = std::path::absolute(input).map_err(|_| unavailable())?;
+        Ok(path.to_str().ok_or_else(unavailable)?.replace('/', "\\"))
+    }
 
     fn unavailable_query() -> crate::NativeError {
         native_error(
@@ -158,13 +163,14 @@ mod platform {
             // A disappearing file is still the original denial, not a translation error.
             Err(_) => return Ok(Resolution::OriginalError(denied)),
         };
+        let input = absolute_input(input)?;
         if nt
             .get(..12)
             .is_some_and(|s| s.eq_ignore_ascii_case(r"\Device\Mup\"))
         {
-            return translate_nt_path(input, &nt, None, equal_ordinal).map(Resolution::Translated);
+            return translate_nt_path(&input, &nt, None, equal_ordinal).map(Resolution::Translated);
         }
-        let root = drive_root(input).ok_or_else(unavailable)?;
+        let root = drive_root(&input).ok_or_else(unavailable)?;
         // No cache: drive mappings and volume mount points can change in a live process.
         let root_handle = open_existing_handle(
             &wide_absolute_path(&root),
@@ -173,7 +179,7 @@ mod platform {
             |code| win_error(code, "open canonicalization drive root"),
         )?;
         let prefix = query_name(root_handle.0, VOLUME_NAME_NT)?;
-        translate_nt_path(input, &nt, Some(&prefix), equal_ordinal).map(Resolution::Translated)
+        translate_nt_path(&input, &nt, Some(&prefix), equal_ordinal).map(Resolution::Translated)
     }
 
     pub(crate) fn canonical_path(handle: HANDLE, input: &str) -> NativeResult<String> {
@@ -186,6 +192,16 @@ mod platform {
     #[cfg(test)]
     mod query_tests {
         include!("directory_observation_windows_tests.rs");
+
+        #[test]
+        fn resolves_relative_inputs_against_the_process_directory() {
+            let cwd = std::env::current_dir().unwrap();
+            let expected = cwd.join("secret").to_str().unwrap().replace('/', "\\");
+            for input in ["secret", "./secret", r"child\..\secret", "child/../secret"] {
+                assert_eq!(absolute_input(input).unwrap(), expected);
+            }
+            assert!(std::path::Path::new(&absolute_input("secret").unwrap()).is_absolute());
+        }
     }
 
     #[napi_derive::napi(js_name = "resolveWindowsCanonicalPath")]
@@ -199,6 +215,7 @@ mod platform {
                 if !crate::windows_appcontainer::is_app_container()? {
                     return Ok(None);
                 }
+                let path = absolute_input(&path)?;
                 let handle = match open_existing_handle(
                     &wide_absolute_path(&path),
                     0,
@@ -254,6 +271,22 @@ mod tests {
             .unwrap(),
             "C:\\"
         );
+    }
+    #[test]
+    fn classifies_unc_using_the_normalized_open_spelling() {
+        for input in [
+            "//server/share/x",
+            r"\\server/share\x",
+            r"\\?\UNC/server/share/x",
+        ] {
+            assert_eq!(
+                translate(input, r"\Device\Mup\server\share\x", None).unwrap(),
+                r"\\server\share\x"
+            );
+        }
+        for input in ["//./server/share/x", "//?/Volume{abc}/x"] {
+            assert!(translate(input, r"\Device\Mup\server\share\x", None).is_err());
+        }
     }
     #[test]
     fn rejects_mismatched_prefixes_and_mounted_folders() {

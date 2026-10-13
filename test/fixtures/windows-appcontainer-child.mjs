@@ -119,12 +119,34 @@ async function prove(thread) {
   mark('permissions-inspection:after');
   assert.equal(permissions.groupReadable, false, JSON.stringify(permissions));
   assert.equal(permissions.groupWritable, false, JSON.stringify(permissions));
+  if (!ordinary) {
+    const foreignPath = path.join(here, 'foreign-owned');
+    const facts = readOwnerAndDacl(foreignPath);
+    assert.equal(facts.ownerSid, 's-1-5-32-544');
+    assert.notEqual(facts.ownerSid, facts.currentUserSid);
+    assert.equal(facts.groupReadable, false);
+    assert.equal(facts.groupWritable, false);
+    const nativeAcl = await inspectWindowsAcl(foreignPath);
+    const stdout = fs.readFileSync(path.join(here, 'foreign-owner-command.json'), 'utf8');
+    const commandAcl = await inspectWindowsAcl(foreignPath, { exec: async () => ({ stdout, stderr: '' }) });
+    assert.deepEqual(commandAcl, nativeAcl);
+    assert.equal(commandAcl.untrustedGroup.length, 0);
+    aclEntries.push({ path: foreignPath, entries: nativeAcl.entries });
+    mark('foreign-owner-parity:after');
+  }
   const canonicalPaths = aclEntries.map(value => ({ ...value, canonical: realpathSync.native(value.path) }));
   if (!ordinary) {
     const expected = JSON.parse(fs.readFileSync(path.join(here, 'canonical-expected.json'), 'utf8'));
     const variants = fs.readFileSync(path.join(here, 'canonicalization-paths.txt'), 'utf8').trim().split(/\r?\n/)
       .map(line => line.split('\t')).filter(([label]) => label.startsWith('shared'));
     for (const [, value] of variants) assert.equal(realpathSync.native(value), expected);
+    const relative = path.relative(process.cwd(), file);
+    const canonical = realpathSync.native(relative);
+    assert.equal(canonical, realpathSync.native(file));
+    assert.equal((await readSecureFile({ filePath: relative })).buffer.toString(), 'private');
+    canonicalPaths.push({ ...aclEntries[1], input: relative, canonical });
+    assert.equal(realpathSync.native('.'), expected);
+    mark('relative-path:after');
   }
   mark('proof:complete');
   return canonicalPaths;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseWindowsSecurityCommandFacts, validateSecureWindowsSecurityFacts } from "../src/windows-security-facts.js";
+import { inspectWindowsAcl } from "../src/permissions-windows.js";
 
 const user = "s-1-5-21-1-2-3-1001";
 const own = "s-1-15-2-1-2-3-4-5-6-7";
@@ -18,6 +19,20 @@ function facts(currentAppContainerSid: string | null, granted: string) {
 }
 
 describe("AppContainer descriptor policy", () => {
+  it.each(["s-1-5-18", "s-1-5-32-544", "s-1-5-21-9-8-7-1002"])("keeps command SID trust independent of owner %s", async ownerSid => {
+    const value = { ...facts(own, own), ownerSid };
+    const nativePolicy = parseWindowsSecurityCommandFacts(value);
+    const command = await inspectWindowsAcl("C:\\fixture", { exec: async () => ({
+      stdout: JSON.stringify({ ...value, remote: false, complete: true,
+        aces: value.aces.map(ace => ({ sid: ace.sid, mask: ace.mask, deny: false, inheritOnly: false })),
+      }), stderr: "",
+    }) });
+    expect(command.ok).toBe(true);
+    expect(command.untrustedGroup.some(entry => entry.canRead)).toBe(nativePolicy.groupReadable);
+    expect(command.untrustedGroup.some(entry => entry.canWrite)).toBe(nativePolicy.groupWritable);
+    expect(command.untrustedGroup).toEqual([]);
+    expect(command.trusted.some(entry => entry.sid === own)).toBe(true);
+  });
   it("accepts only the inspecting process's own container grant", () => {
     const same = parseWindowsSecurityCommandFacts(facts(own, own));
     expect(same.groupReadable).toBe(false);
