@@ -12,8 +12,8 @@ public static class FsSafeWindowsOwnerQuery {
       ? (FileSystemSecurity)Directory.GetAccessControl(path,sections)
       : File.GetAccessControl(path,sections);
     string ownerSid=acl.GetOwner(typeof(SecurityIdentifier)).Value;
-    string currentSid;
-    using(var current=WindowsIdentity.GetCurrent()) currentSid=current.User.Value;
+    var current=new FsSafeWindowsBridge.PrivateIdentity();
+    string currentSid=current.User.Value;
     string root=Path.GetPathRoot(path);
     bool extendedDrive=path.Length>=7 && path.StartsWith(@"\\?\") && char.IsLetter(path[4]) && path[5]==':' && path[6]=='\\';
     string driveRoot=extendedDrive ? path.Substring(4,3) : root;
@@ -34,6 +34,7 @@ public static class FsSafeWindowsOwnerQuery {
     }
     return new Dictionary<string,object>{
       {"ownerSid",ownerSid},{"currentUserSid",currentSid},{"remote",remote},
+      {"currentAppContainerSid",current.AppContainer==null ? null : current.AppContainer.Value},
       {"complete",complete},{"daclPresent",dacl!=null},{"aces",aces}
     };
   }

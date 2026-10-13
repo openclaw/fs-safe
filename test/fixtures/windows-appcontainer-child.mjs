@@ -1,0 +1,68 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { Worker, isMainThread, workerData } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
+const here = path.dirname(fileURLToPath(import.meta.url));
+const operation = workerData?.operation ?? process.argv[2];
+const mode = workerData?.mode ?? process.argv[3];
+process.env.FS_SAFE_NATIVE_MODE = mode;
+const { createDirectorySync, createFileSync, inspectWindowsAcl } = await import('./pkg/dist/advanced.js');
+const { readOwnerAndDacl } = await import('./pkg/dist/permissions-public.js');
+const { readSecureFile } = await import('./pkg/dist/secure-file.js');
+const { tempWorkspaceSync } = await import('./pkg/dist/temp.js');
+const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.js');
+const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
+
+async function prove(thread) {
+  const ordinary = operation === 'ordinary';
+  const dir = path.join(here, `${ordinary ? 'ordinary-' : ''}${mode}-${thread}`), file = path.join(dir, 'file');
+  if (operation === 'deny') {
+    for (const read of [() => fs.readdirSync(dir), () => fs.readFileSync(file), () => fs.writeFileSync(file, 'attack'), () => readOwnerAndDacl(dir)]) {
+      assert.throws(read, e => ['EACCES', 'EPERM', 'permission-unverified', 'insecure-permissions'].includes(e.code), 'different container must be denied');
+    }
+    return;
+  }
+  if (operation === 'create' || ordinary) {
+    createDirectorySync(dir, { private: true });
+    const owned = createFileSync(file, { private: true });
+    try { fs.writeSync(owned.fd, 'private'); } finally { owned.close(); }
+    const workspace = tempWorkspaceSync({ rootDir: dir, prefix: 'workspace' });
+    workspace.writeText('payload', 'workspace');
+    assert.equal(workspace.read('payload').toString(), 'workspace');
+    workspace.cleanup();
+  }
+  assert.deepEqual(fs.readdirSync(dir), ['file']);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'private');
+  const secure = await readSecureFile({ filePath: file });
+  assert.equal(secure.ok, true, JSON.stringify(secure));
+  for (const target of [dir, file]) {
+    const facts = readOwnerAndDacl(target);
+    assert.equal(facts.status, 'supported');
+    assert.equal(facts.aces.length, ordinary ? 3 : 4);
+    assert.deepEqual(new Set(facts.aces.map(x => x.sid)), new Set([facts.currentUserSid, 's-1-5-18', 's-1-5-32-544', ...(ordinary ? [] : [principals[0]])]));
+    assert(facts.aces.every(x => x.mask === 0x1f01ff && x.aceType === 'allow'));
+    assert(facts.aces.every(x => x.flags.objectInherit === (target === dir) && x.flags.containerInherit === (target === dir)));
+    const acl = await inspectWindowsAcl(target);
+    assert.equal(acl.ok, true, JSON.stringify(acl));
+    assert.equal(acl.untrustedGroup.length, 0);
+    assert.equal(acl.untrustedWorld.length, 0);
+  }
+  const permissions = await inspectPathPermissions(dir);
+  assert.equal(permissions.groupReadable, false, JSON.stringify(permissions));
+  assert.equal(permissions.groupWritable, false, JSON.stringify(permissions));
+}
+if (isMainThread) {
+  try {
+    await prove('main');
+    await new Promise((resolve, reject) => {
+      const worker = new Worker(new URL(import.meta.url), { workerData: { operation, mode } });
+      worker.once('error', reject);
+      worker.once('exit', code => code === 0 ? resolve() : reject(new Error(`Worker exit ${code}`)));
+    });
+    fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ operation, mode, arch: process.arch, threads: ['main', 'worker'], ok: true }));
+  } catch (error) {
+    fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ error: error.stack, code: error.code }));
+    process.exitCode = 1;
+  }
+} else { await prove('worker'); }

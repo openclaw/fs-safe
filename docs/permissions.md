@@ -46,6 +46,14 @@ without letting the inspected pathname add shell syntax.
 
 ## Advanced Windows ACL helpers
 
+Private Windows DACLs grant full access to the process user, SYSTEM, and
+Administrators. Inside an AppContainer they additionally grant that process
+token's own container SID, with inheritance on directories. Other containers
+and ALL APPLICATION PACKAGES receive no grant. Creation and security inspection
+use the same token identity; a token-query failure rejects the operation.
+Outside an AppContainer the existing descriptors are unchanged. The native
+addon and packaged .NET security helper both enforce this boundary.
+
 The low-level Windows ACL parser and `icacls` command builders live in `@openclaw/fs-safe/advanced`:
 
 ```ts

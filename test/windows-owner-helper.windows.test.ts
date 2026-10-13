@@ -99,7 +99,7 @@ describe.runIf(process.platform === "win32")("prebuilt owner query compatibility
         const expected = oracle(target);
         const actual = JSON.parse(execFileSync(helper, ["owner", target], commandOptions));
         expect(actual, target).toEqual(expected);
-        expect(Object.keys(actual).sort()).toEqual(["aces", "complete", "currentUserSid", "daclPresent", "ownerSid", "remote"]);
+        expect(Object.keys(actual).sort()).toEqual(["aces", "complete", "currentAppContainerSid", "currentUserSid", "daclPresent", "ownerSid", "remote"]);
         expect(actual.remote).toBe(target === namespace);
         if (target === zero) expect(actual.aces.every((ace: { mask: number }) => ace.mask !== 0)).toBe(true);
         if (target === explicit) expect(actual.aces.filter((ace: { sid: string }) => ace.sid === "S-1-1-0").map((ace: { mask: number }) => ace.mask)).toEqual([3]);

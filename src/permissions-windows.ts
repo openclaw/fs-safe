@@ -281,7 +281,13 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
       canWrite: (ace.mask & 0x500d_0156) !== 0,
     };
   });
-  return { ok: true, entries, ...summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid }) };
+  const summary = summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid });
+  if (owner.currentAppContainerSid && owner.currentUserSid === owner.sid) {
+    const own = summary.untrustedGroup.filter(entry => entry.sid === owner.currentAppContainerSid);
+    summary.trusted.push(...own);
+    summary.untrustedGroup = summary.untrustedGroup.filter(entry => entry.sid !== owner.currentAppContainerSid);
+  }
+  return { ok: true, entries, ...summary };
 }
 
 export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
@@ -308,6 +314,8 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
       owner = {
         daclPresent: facts.daclPresent,
         currentUserSid: facts.currentUserSid,
+        currentAppContainerSid: facts.currentAppContainerSid ?? undefined,
+        sid: facts.ownerSid,
         aces: facts.aces.map(ace => ({
           sid: ace.sid,
           mask: ace.mask,

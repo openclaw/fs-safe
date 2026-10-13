@@ -2,6 +2,7 @@ import { FsSafeError } from "./errors.js";
 import type { NativeWindowsAccessControlEntry, NativeWindowsSecurityFacts } from "./native-binding.js";
 
 const SID_RE = /^s-\d+-\d+(?:-\d+)+$/;
+export const APP_CONTAINER_SID_RE = /^s-1-15-2(?:-\d+){7,}$/;
 const SYSTEM_SID = "s-1-5-18";
 const ADMINISTRATORS_SID = "s-1-5-32-544";
 const WORLD_SIDS = new Set([
@@ -10,7 +11,7 @@ const WORLD_SIDS = new Set([
 ]);
 
 export type DescriptorFacts = Pick<NativeWindowsSecurityFacts,
-  "ownerSid" | "currentUserSid" | "daclPresent" | "isLocal" |
+  "ownerSid" | "currentUserSid" | "currentAppContainerSid" | "daclPresent" | "isLocal" |
   "aceListComplete" | "unsupportedAceTypes" | "aces">;
 
 export function unverified(message: string, cause?: unknown): never {
@@ -44,6 +45,7 @@ function validateAce(value: unknown, allowUnknownFlags: boolean): value is Nativ
 function validateDescriptor(value: unknown, allowUnknownFlags: boolean): DescriptorFacts {
   if (!record(value) || typeof value.ownerSid !== "string" || !SID_RE.test(value.ownerSid) ||
       typeof value.currentUserSid !== "string" || !SID_RE.test(value.currentUserSid) ||
+      (value.currentAppContainerSid != null && (typeof value.currentAppContainerSid !== "string" || !APP_CONTAINER_SID_RE.test(value.currentAppContainerSid))) ||
       typeof value.daclPresent !== "boolean" || typeof value.isLocal !== "boolean" ||
       typeof value.aceListComplete !== "boolean" || !Array.isArray(value.unsupportedAceTypes) ||
       !value.unsupportedAceTypes.every(uint32) || !Array.isArray(value.aces) ||
@@ -71,6 +73,7 @@ function summarize(facts: DescriptorFacts) {
   let groupReadable = false;
   let groupWritable = false;
   const trusted = new Set([facts.currentUserSid, SYSTEM_SID, ADMINISTRATORS_SID]);
+  if (facts.currentAppContainerSid) trusted.add(facts.currentAppContainerSid);
   for (const ace of facts.aces) {
     if (ace.aceType !== "allow" || ace.flags.inheritOnly || trusted.has(ace.sid)) continue;
     // Generic and file-specific read/write, delete, and security-control rights.

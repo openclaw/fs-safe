@@ -107,6 +107,7 @@ export interface NativeWindowsAccessControlEntry {
 export interface NativeWindowsSecurityFacts {
   ownerSid: string;
   currentUserSid: string;
+  currentAppContainerSid?: string | null;
   ownerClass: string;
   worldWritable: boolean;
   groupWritable: boolean;

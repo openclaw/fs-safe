@@ -1455,6 +1455,10 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/secure-file-windows-descriptor.test.ts test/secure-file-windows-native.test.ts test/owner-dacl-batch.windows.test.ts
 
+      - name: Prove AppContainer private ACL isolation
+        if: runner.os == 'Windows'
+        run: node scripts/windows-appcontainer-proof.mjs
+
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'
         env:
@@ -1707,6 +1711,9 @@ jobs:
         env:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test native
+
+      - name: Prove AppContainer private ACL isolation
+        run: node scripts/windows-appcontainer-proof.mjs
 
       - name: Prove Windows long paths and unchanged historical reproduction
         env:
