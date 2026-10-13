@@ -1,4 +1,6 @@
-// Run after pnpm build and pnpm native:build on real Windows x64/ARM64.
+// Run after pnpm build and pnpm native:build on an elevated Windows x64/ARM64
+// runner. Elevation grants/restores ancestor metadata access for Node startup;
+// the proof children themselves run with restricted AppContainer tokens.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';

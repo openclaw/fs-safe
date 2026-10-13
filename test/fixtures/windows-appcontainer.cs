@@ -2,6 +2,7 @@
 // explicitly named profiles on the shared fixture root.
 using System;
 using System.ComponentModel;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -83,11 +84,27 @@ public static class AppContainerFixture {
     }
   }
   public static void Run(string root) {
+    // Only fixture setup is elevated; CreateProcessW below creates restricted
+    // AppContainer children. Refuse clearly before modifying any ancestor ACL.
+    using(var identity=WindowsIdentity.GetCurrent()) {
+      if(!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+        throw new InvalidOperationException("AppContainer fixture setup requires an elevated Windows runner to grant and restore ancestor metadata access");
+    }
     string a="fs-safe-a-"+Guid.NewGuid().ToString("N"), b="fs-safe-b-"+Guid.NewGuid().ToString("N");
     IntPtr sidA=IntPtr.Zero,sidB=IntPtr.Zero;
+    var ancestors=new Dictionary<string,byte[]>();
     try {
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(a,a,a,IntPtr.Zero,0,out sidA));
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(b,b,b,IntPtr.Zero,0,out sidB));
+      // Node realpath lstats every ancestor, including the volume root. These
+      // non-inheriting grants admit metadata/traversal, never descendant data.
+      for(var ancestor=Directory.GetParent(root);ancestor!=null;ancestor=ancestor.Parent) {
+        var original=Directory.GetAccessControl(ancestor.FullName,AccessControlSections.Access);
+        ancestors.Add(ancestor.FullName,original.GetSecurityDescriptorBinaryForm());
+        foreach(var sid in new[]{sidA,sidB}) original.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
+          FileSystemRights.ReadAttributes|FileSystemRights.Traverse,InheritanceFlags.None,PropagationFlags.None,AccessControlType.Allow));
+        Directory.SetAccessControl(ancestor.FullName,original);
+      }
       var security=Directory.GetAccessControl(root);
       foreach(var sid in new[]{sidA,sidB}) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
       Directory.SetAccessControl(root,security);
@@ -107,8 +124,14 @@ public static class AppContainerFixture {
         Launch(root,sidB,"deny",mode);
       }
     } finally {
-      if(sidA!=IntPtr.Zero) { FreeSid(sidA); Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(a)); }
-      if(sidB!=IntPtr.Zero) { FreeSid(sidB); Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(b)); }
+      var failures=new List<Exception>();
+      foreach(var ancestor in ancestors) try {
+        var original=new DirectorySecurity(); original.SetSecurityDescriptorBinaryForm(ancestor.Value,AccessControlSections.Access);
+        Directory.SetAccessControl(ancestor.Key,original);
+      } catch(Exception error) { failures.Add(error); }
+      if(sidA!=IntPtr.Zero) { FreeSid(sidA); try { Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(a)); } catch(Exception error) { failures.Add(error); } }
+      if(sidB!=IntPtr.Zero) { FreeSid(sidB); try { Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(b)); } catch(Exception error) { failures.Add(error); } }
+      if(failures.Count!=0) throw new AggregateException("AppContainer fixture cleanup failed",failures);
     }
   }
   static void Launch(string root,IntPtr sid,string operation,string mode) {
@@ -128,7 +151,8 @@ public static class AppContainerFixture {
       uint wait=WaitForSingleObject(process.Process,60000);
       if(wait!=0) { TerminateProcess(process.Process,1); throw new Exception("AppContainer child did not finish: "+wait); }
       uint code; Check(GetExitCodeProcess(process.Process,out code));
-      if(code!=0) throw new Exception("AppContainer "+operation+"/"+mode+" exit "+code+": "+File.ReadAllText(Path.Combine(root,operation+"-"+mode+".json")));
+      string receipt=Path.Combine(root,operation+"-"+mode+".json");
+      if(code!=0) throw new Exception("AppContainer "+operation+"/"+mode+" exit "+code+": "+(File.Exists(receipt) ? File.ReadAllText(receipt) : "child failed before writing its receipt"));
     } finally {
       if(process.Thread!=IntPtr.Zero) CloseHandle(process.Thread);
       if(process.Process!=IntPtr.Zero) CloseHandle(process.Process);
