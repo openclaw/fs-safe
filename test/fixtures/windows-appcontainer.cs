@@ -39,8 +39,7 @@ public static class AppContainerFixture {
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFileW(string path,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFinalPathNameByHandleW(IntPtr handle,StringBuilder path,uint size,uint flags);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl,uint revision,out IntPtr descriptor,out uint size);
-  [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(IntPtr handle,int kind,uint information,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
-  [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor,out bool present,out IntPtr dacl,out bool defaulted);
+  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool SetFileSecurityW(string path,uint information,byte[] descriptor);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint SetNamedSecurityInfoW(string path,int kind,uint information,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
   [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorSacl(IntPtr descriptor,out bool present,out IntPtr sacl,out bool defaulted);
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
@@ -52,18 +51,10 @@ public static class AppContainerFixture {
     Console.WriteLine(row);
   }
   static void SetAncestorDacl(string path,byte[] descriptor) {
-    // SetSecurityInfo suppresses child propagation for MAXIMUM_ALLOWED handles.
-    // The caller rejects auto-inherited drive-root DACLs before changing them.
-    IntPtr handle=CreateFileW(path,0x02000000,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
-    if(handle==new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(),"CreateFileW(MAXIMUM_ALLOWED) for ancestor DACL");
-    var pinned=GCHandle.Alloc(descriptor,GCHandleType.Pinned);
-    try {
-      bool present,defaulted; IntPtr dacl;
-      Check(GetSecurityDescriptorDacl(pinned.AddrOfPinnedObject(),out present,out dacl,out defaulted));
-      if(!present) throw new InvalidOperationException("Fixture ancestor must have a DACL");
-      uint error=SetSecurityInfo(handle,1,4,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
-      if(error!=0) throw new Win32Exception((int)error,"SetSecurityInfo(DACL_SECURITY_INFORMATION) for ancestor DACL");
-    } finally { pinned.Free(); CloseHandle(handle); }
+    // Only our disposable volume root is admitted. Its deliberately non-inherited
+    // protected baseline matches this setter; SetSecurityInfo would add AUTO_INHERITED.
+    if(!SetFileSecurityW(path,0x80000004u,descriptor))
+      throw new Win32Exception(Marshal.GetLastWin32Error(),"SetFileSecurityW for owned fixture volume DACL");
   }
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
   static string Quote(string text) { return "\""+text+"\""; }
@@ -183,8 +174,9 @@ public static class AppContainerFixture {
         Mark(root,"ancestor-"+ancestorIndex+":read:before");
         var original=Directory.GetAccessControl(ancestor.FullName,AccessControlSections.Access);
         byte[] saved=original.GetSecurityDescriptorBinaryForm();
-        if((new RawSecurityDescriptor(saved,0).ControlFlags&ControlFlags.DiscretionaryAclAutoInherited)!=0)
-          throw new InvalidOperationException("Fixture drive root must not have an auto-inherited DACL");
+        var flags=new RawSecurityDescriptor(saved,0).ControlFlags;
+        if((flags&ControlFlags.DiscretionaryAclAutoInherited)!=0 || (flags&ControlFlags.DiscretionaryAclProtected)==0)
+          throw new InvalidOperationException("Fixture drive root must have a protected, non-auto-inherited DACL");
         ancestors.Add(ancestor.FullName,saved);
         Mark(root,"ancestor-"+ancestorIndex+":read:after");
         foreach(var sid in new[]{sidA,sidB}) original.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
