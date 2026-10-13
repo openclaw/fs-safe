@@ -18,11 +18,11 @@ if (operation !== 'ordinary') {
 }
 mark('imports:before');
 process.env.FS_SAFE_NATIVE_MODE = mode;
-const { createDirectorySync, createFileSync, inspectWindowsAcl } = await import('./pkg/dist/advanced.js');
+const { createDirectorySync, createFileSync, inspectWindowsAcl, createIcaclsResetCommand, formatIcaclsResetCommand } = await import('./pkg/dist/advanced.js');
 const { readOwnerAndDacl } = await import('./pkg/dist/permissions-public.js');
 const { readSecureFile } = await import('./pkg/dist/secure-file.js');
 const { tempWorkspaceSync } = await import('./pkg/dist/temp.js');
-const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.js');
+const { inspectPathPermissions, formatPermissionRemediation } = await import('./pkg/dist/permissions-public.js');
 const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
 const { realpathSync } = await import('./pkg/dist/realpath.js');
 const { FsSafeError } = await import('./pkg/dist/errors.js');
@@ -76,6 +76,17 @@ async function prove(thread) {
   }
   if (!ordinary) {
     const unavailable = error => error instanceof FsSafeError && error.code === 'helper-unavailable';
+    const inherited = path.join(dir, 'inherited');
+    fs.mkdirSync(inherited);
+    try {
+      assert(readOwnerAndDacl(inherited).aces.some(ace => ace.sid === principals[0] && ace.flags.inherited));
+      const env = { USERNAME: 'fixture' };
+      assert.throws(() => formatIcaclsResetCommand(inherited, { isDir: true, env }), unavailable);
+      assert.throws(() => createIcaclsResetCommand(inherited, { isDir: true, env }), unavailable);
+      assert.throws(() => formatPermissionRemediation({ targetPath: inherited, env,
+        perms: { source: 'windows-acl' }, isDir: true, posixMode: 0o700 }), unavailable);
+    } finally { fs.rmdirSync(inherited); }
+    mark('remediation-refused:after');
     assert.throws(() => commands.readWindowsSecurityFactsCommand(dir), unavailable);
     assert.throws(() => commands.createPrivateWindowsDirectoryCommandSync(path.join(dir, 'refused')), unavailable);
     assert.throws(() => commands.inspectWindowsDirectoryCommandSync(dir, true), unavailable);

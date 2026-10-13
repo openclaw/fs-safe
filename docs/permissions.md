@@ -364,6 +364,9 @@ pathname, establish that the earlier operation stopped and verify any existing
 directory's security. The library does not attempt pathname-based cleanup.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
+These builders and `formatPermissionRemediation()` throw `helper-unavailable` in
+a known AppContainer: removing inherited grants could revoke the container's
+own access. Ordinary-process commands remain unchanged.
 
 ## Types
 

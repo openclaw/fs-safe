@@ -7,6 +7,7 @@ import { safeStat, type PermissionCheck, type PermissionCheckOptions } from "./p
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
+import { assertWindowsAclRemediationAllowed } from "./windows-appcontainer.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PermissionExec = (
@@ -375,6 +376,8 @@ export function formatWindowsAclSummary(summary: WindowsAclSummary): string {
 }
 
 export function formatIcaclsResetCommand(targetPath: string, opts: IcaclsResetCommandOptions): string {
+  // Removing inherited ACEs can revoke the container's own access.
+  assertWindowsAclRemediationAllowed();
   const command = resolveWindowsSystemCommand("icacls.exe", opts.env);
   const user = resolveWindowsUserPrincipal(opts.env, opts.userInfo) ?? "%USERNAME%";
   const grant = opts.isDir ? "(OI)(CI)F" : "F";

@@ -21,3 +21,13 @@ export function assertWindowsHelperAllowed(): void {
     throw new FsSafeError("helper-unavailable", "External Windows security helpers are unavailable inside an AppContainer");
   }
 }
+
+export function assertWindowsAclRemediationAllowed(): void {
+  if (process.platform !== "win32") return;
+  let binding: NativeBinding | undefined;
+  try { binding = getNativeBinding(); }
+  catch { return; } // Command formatting remains available without an addon.
+  if (binding && isWindowsAppContainer(binding)) {
+    throw new FsSafeError("helper-unavailable", "Windows ACL reset commands are unavailable inside an AppContainer");
+  }
+}
