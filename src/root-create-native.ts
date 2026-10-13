@@ -325,7 +325,7 @@ function mkdirNativeExistingParent(root: RootContext, relativePath: string): boo
   return true;
 }
 
-function verifyMkdirDirectory(binding: NativeBinding, fd: number, pathname: string): void {
+export function verifyMkdirDirectory(binding: NativeBinding, fd: number, pathname: string): void {
   const observe = nativePolicyDirectoryObserver(binding, fd, pathname);
   try {
     // The native observation compares this retained descriptor before and

@@ -78,6 +78,13 @@ validated Root handle
 The TypeScript layer validates and decides. The native layer never decides
 whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
 
+Ordinary recursive `Root.mkdir()` calls retain the exact existing parent and
+every opened missing component for the duration of one synchronous native walk.
+Each creation is descriptor-relative, followed by fresh Root, retained-parent,
+child identity and canonical-name checks before the next component. Explicit
+mutation policies, callbacks, private permissions, aliases and bindings without
+the required child-open capability retain their existing admission paths.
+
 - Linux uses `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, fd-relative
   `mkdirat`/`linkat`/`renameat`/`renameat2`, `FICLONE`, and `copy_file_range`.
   Without `openat2`, beneath opens use the [guarded fallback](#linux-without-openat2).
