@@ -109,7 +109,7 @@ async function runMode() {
     assert(cases.length > 0, "Filter selected no operations");
     const results = [];
     async function once(row, role, observe = false) {
-      const implementation = role === "rawControl" ? "raw" : role;
+      const implementation = role === "rawControl" ? "raw" : role === "safeControl" ? "safe" : role;
       const input = await row.before?.(implementation);
       let output;
       let elapsed;
@@ -120,7 +120,11 @@ async function runMode() {
         if (args["trace-only"]) fs.writeSync(2, `TRACE_START ${row.operation} ${implementation}\n`);
         hook?.enable();
         const start = process.hrtime.bigint();
-        try { output = row.sync ? row[implementation](input) : await row[implementation](input); }
+        try {
+          // Separate call sites keep one build's function feedback out of the other.
+          if (implementation === "raw") output = row.sync ? row.raw(input) : await row.raw(input);
+          else output = row.sync ? row.safe(input) : await row.safe(input);
+        }
         finally { elapsed = Number(process.hrtime.bigint() - start); hook?.disable(); }
         if (args["trace-only"]) fs.writeSync(2, `TRACE_END ${row.operation} ${implementation}\n`);
         row.verify?.(output, implementation, input);
@@ -140,12 +144,13 @@ async function runMode() {
         for (const role of ["raw", "safe"]) await once(row, role);
         continue;
       }
-      for (const role of ["raw", "safe", "rawControl"]) {
+      const roles = baselineApi ? ["raw", "safe", "rawControl", "safeControl"] : ["raw", "safe", "rawControl"];
+      for (const role of roles) {
         for (let i = 0; i < Math.max(1, args.warmup); i++) await once(row, role);
       }
-      const samples = { raw: [], safe: [], rawControl: [] };
+      const samples = Object.fromEntries(roles.map(role => [role, []]));
       for (let block = 0; block < args.samples; block++) {
-        for (const role of block % 2 ? ["rawControl", "safe", "raw"] : ["raw", "safe", "rawControl"]) {
+        for (const role of block % 2 ? [...roles].reverse() : roles) {
           let elapsed = 0;
           for (let i = 0; i < iterations; i++) elapsed += (await once(row, role)).elapsed;
           samples[role].push(elapsed / iterations);
@@ -159,6 +164,9 @@ async function runMode() {
         pairedRatio: median(samples.safe.map((ns, i) => ns / samples.raw[i])),
         aa: { rawNs, controlNs: median(samples.rawControl), ratio: median(samples.rawControl) / rawNs,
           pairedRatio: median(samples.rawControl.map((ns, i) => ns / samples.raw[i])) },
+        ...(baselineApi ? { candidateAa: { rawNs: safeNs, controlNs: median(samples.safeControl),
+          ratio: median(samples.safeControl) / safeNs,
+          pairedRatio: median(samples.safeControl.map((ns, i) => ns / samples.safe[i])) } } : {}),
         caveat: row.caveat, resources });
     }
     if (!args["trace-only"]) {
@@ -173,7 +181,7 @@ async function runMode() {
         filesystem: `0x${fs.statfsSync(workspace).type.toString(16)}`, cpu: os.cpus()[0]?.model, cpuCount: os.availableParallelism(),
         date: new Date().toISOString(), samples: args.samples, iterations: args.iterations, warmup: Math.max(1, args.warmup),
         payloadBytes: 23, treeEntries: [1000, 50000], loadStart, loadEnd: os.loadavg(),
-        method: "Median sample means in ns/op; alternating raw/safe/rawControl and reverse blocks; setup, verification, cleanup excluded. Resources observed separately. Without --compare-dist, raw is NOT security-equivalent; with it, raw/rawControl are the baseline fs-safe implementation." }, results };
+        method: "Median sample means in ns/op; alternating raw/safe/rawControl and reverse blocks, with an additional safeControl in build comparisons so both builds receive equal calls. Separate timing call sites per build. Setup, verification, cleanup excluded. Resources observed separately. Without --compare-dist, raw is NOT security-equivalent; with it, raw/rawControl are baseline and safe/safeControl are candidate." }, results };
     }
   } catch (error) { failures.push(error); }
   await finalizeBenchmarkRun({ initialFailures: failures, workspace });

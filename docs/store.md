@@ -95,6 +95,10 @@ failure too. The queue does not fall back to copying or overwriting rename:
 those operations cannot preserve its shared-inode recovery and create-only
 collision evidence. Enqueue alone does not prove that an entry can be claimed.
 
+The [link-free queue design](queue-link-free-design.md) describes an unimplemented
+v2 candidate and its mixed-version barriers. It does not change these helpers or
+provide Android/Termux queue support.
+
 Migrations stay bound to the exact processing file opened for that load. The
 read descriptor remains pinned while the callback runs outside the transfer
 lock; after the callback returns, migration reacquires the lock and rechecks the

@@ -688,6 +688,75 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    fn assert_ficlone_recovery(errno: i32) {
+        crate::test_support::deny_ficlone_with_errno(errno);
+        for mode in [CloneMode::Auto, CloneMode::Always] {
+            let fixture = Fixture::new();
+            let result = fixture.task(mode, u64::MAX).copy();
+            if mode == CloneMode::Auto {
+                let created = result.expect("automatic copy must recover a failed clone");
+                assert!(created.error.is_none());
+                assert_ne!(created.method, "clone");
+                assert_eq!(fs::read(fixture.path.join("stage")).unwrap(), b"copy source");
+                assert_eq!(fs::metadata(fixture.path.join("stage")).unwrap().permissions().mode() & 0o777, 0o600);
+                assert_eq!(fixture.task(mode, u64::MAX).copy().err().unwrap().status, "EEXIST");
+                drop(created);
+            } else {
+                assert_eq!(result.err().unwrap().status, "ENOTSUP");
+            }
+            assert!(!fixture.path.join("stage").exists());
+            assert_eq!(fs::read(fixture.path.join("source")).unwrap(), b"copy source");
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ficlone_eio_recovers_before_publication() {
+        isolated_admission_test("file_copy::tests::ficlone_eio_recovers_before_publication", || {
+            assert_ficlone_recovery(libc::EIO);
+        });
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ficlone_eagain_recovers_before_publication() {
+        isolated_admission_test("file_copy::tests::ficlone_eagain_recovers_before_publication", || {
+            assert_ficlone_recovery(libc::EAGAIN);
+        });
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn ficlone_eio_preserves_byte_copy_failure() {
+        isolated_admission_test("file_copy::tests::ficlone_eio_preserves_byte_copy_failure", || {
+            use crate::test_support::{deny_ficlone_with_errno, deny_syscall_with_errno};
+            deny_ficlone_with_errno(libc::EIO);
+            deny_syscall_with_errno(libc::SYS_copy_file_range, libc::EOPNOTSUPP);
+            deny_syscall_with_errno(libc::SYS_pread64, libc::EIO);
+            let fixture = Fixture::new();
+            let created = fixture.task(CloneMode::Auto, u64::MAX).copy()
+                .expect("clone refusal must reach the guarded byte copy");
+            let failure = created.error.as_ref().expect("read failure must be reported");
+            assert_eq!(failure.status, "EIO");
+            assert!(failure.reason.contains("read copy source"));
+            assert_eq!(fs::metadata(fixture.path.join("stage")).unwrap().len(), 0);
+            drop(created);
+            assert!(!fixture.path.join("stage").exists());
+            assert_eq!(fs::read(fixture.path.join("source")).unwrap(), b"copy source");
+        });
+    }
+
+    #[test]
+    fn unrelated_clone_eio_remains_terminal() {
+        let fixture = Fixture::new();
+        let error = fixture.task(CloneMode::Auto, u64::MAX)
+            .copy_with_clone(|_, _, _, _| Err(native_error("EIO", "clone cleanup failed")))
+            .err().unwrap();
+        assert_eq!(error.status, "EIO");
+        assert!(!fixture.path.join("stage").exists());
+    }
+
     #[test]
     fn rejects_retired_clone_mode_before_starting_work() {
         let error = copy_file_exclusive(

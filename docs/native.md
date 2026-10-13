@@ -78,9 +78,23 @@ validated Root handle
 The TypeScript layer validates and decides. The native layer never decides
 whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
 
+Ordinary recursive `Root.mkdir()` calls retain the exact existing parent and
+every opened missing component for the duration of one synchronous native walk.
+Each creation is descriptor-relative, followed by fresh Root, retained-parent,
+child identity and canonical-name checks before the next component. Explicit
+mutation policies, callbacks, private permissions, aliases and bindings without
+the required child-open capability retain their existing admission paths.
+
 - Linux uses `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, fd-relative
   `mkdirat`/`linkat`/`renameat`/`renameat2`, `FICLONE`, and `copy_file_range`.
   Without `openat2`, beneath opens use the [guarded fallback](#linux-without-openat2).
+  Regular-file copies with `clone: "auto"` also recover when `FICLONE` returns
+  `EAGAIN` or `EIO`, as can happen for dirty extents on ZFS. Recovery requires
+  successful identity-checked removal of the unpublished exclusive clone target
+  before the native ordinary-copy path creates a new stage. `clone: "always"`
+  still fails when cloning fails. Ordinary-copy I/O errors, clone normalization
+  errors, and cleanup failures remain terminal; generic `EIO` is never a retry
+  signal.
 - macOS 15.4 and newer first use `openat(O_RESOLVE_BENEATH)`; older kernels walk
   components with `openat(O_NOFOLLOW)` and restart in-root symlinks from the
   pinned root. Both routes apply an `F_GETPATH` post-open containment detector,
@@ -340,8 +354,10 @@ remains asynchronous. Root and child pathname/canonical identities are checked
 before success. Ordinary portable paths with existing canonical parents retain the admitted
 parent directly. A fresh exact parent snapshot must match its beneath-opened
 descriptor; parent, child and Root name/identity checks still surround creation.
-Aliases, missing parents, private creation, mutation policies and callbacks
-retain their existing admission paths. Policy-free `ensureRoot()` verifies the
+Ordinary missing parents use the retained descriptor walk described above when
+the binding can create and open a child together. Aliases, private creation,
+mutation policies, callbacks and older bindings retain their existing admission
+paths. Policy-free `ensureRoot()` verifies the
 retained native Root directly. In `off` and `auto`, ordinary `Root.mkdir()` keeps
 its metadata-only creation syscall in the synchronous guard sequence; supplied
 mutation callbacks, mutation policies, and private creation retain their existing
