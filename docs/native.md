@@ -81,6 +81,13 @@ whether a path, archive entry, mode, owner, or cleanup policy is acceptable.
 - Linux uses `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`, fd-relative
   `mkdirat`/`linkat`/`renameat`/`renameat2`, `FICLONE`, and `copy_file_range`.
   Without `openat2`, beneath opens use the [guarded fallback](#linux-without-openat2).
+  Regular-file copies with `clone: "auto"` also recover when `FICLONE` returns
+  `EAGAIN` or `EIO`, as can happen for dirty extents on ZFS. Recovery requires
+  successful identity-checked removal of the unpublished exclusive clone target
+  before the native ordinary-copy path creates a new stage. `clone: "always"`
+  still fails when cloning fails. Ordinary-copy I/O errors, clone normalization
+  errors, and cleanup failures remain terminal; generic `EIO` is never a retry
+  signal.
 - macOS 15.4 and newer first use `openat(O_RESOLVE_BENEATH)`; older kernels walk
   components with `openat(O_NOFOLLOW)` and restart in-root symlinks from the
   pinned root. Both routes apply an `F_GETPATH` post-open containment detector,

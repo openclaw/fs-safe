@@ -54,8 +54,12 @@ pub(crate) fn isolated_admission_test(name: &str, check: impl FnOnce()) {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn deny_ficlone_with_eperm() {
-    // Mirror container seccomp profiles: ioctl(FICLONE) fails with EPERM
-    // before any filesystem sees it; every other syscall is allowed.
+    deny_ficlone_with_errno(libc::EPERM);
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn deny_ficlone_with_errno(errno: i32) {
+    // Fail only ioctl(FICLONE); every other syscall is allowed.
     let request = std::mem::offset_of!(libc::seccomp_data, args) + 8;
     let request = if cfg!(target_endian = "little") {
         request
@@ -82,7 +86,7 @@ pub(crate) fn deny_ficlone_with_eperm() {
         jump(libc::FICLONE as u32, 0, 1),
         statement(
             libc::BPF_RET | libc::BPF_K,
-            libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
+            libc::SECCOMP_RET_ERRNO | errno as u32,
         ),
         statement(libc::BPF_RET | libc::BPF_K, libc::SECCOMP_RET_ALLOW),
     ];
@@ -96,5 +100,24 @@ pub(crate) fn deny_ficlone_with_eperm() {
             libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program),
             0
         );
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn deny_syscall_with_errno(syscall: libc::c_long, errno: i32) {
+    let mut filter = [
+        libc::sock_filter { code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+            jt: 0, jf: 0, k: std::mem::offset_of!(libc::seccomp_data, nr) as u32 },
+        libc::sock_filter { code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: 0, jf: 1, k: syscall as u32 },
+        libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0, jf: 0, k: libc::SECCOMP_RET_ERRNO | errno as u32 },
+        libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0, jf: 0, k: libc::SECCOMP_RET_ALLOW },
+    ];
+    let program = libc::sock_fprog { len: filter.len() as u16, filter: filter.as_mut_ptr() };
+    unsafe {
+        assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+        assert_eq!(libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program), 0);
     }
 }
