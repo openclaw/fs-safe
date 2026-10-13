@@ -226,6 +226,7 @@ public static partial class FsSafeWindowsBridge {
     } finally { if(unicodeBuffer!=IntPtr.Zero) Marshal.FreeHGlobal(unicodeBuffer); Marshal.FreeHGlobal(nameBuffer); pin.Free(); }
   }
   static void RequirePrivate(Dictionary<string,object> facts, bool requireProtected=true, bool requirePrivateChildren=false, bool allowAdministratorsOwner=false) {
+    var identity=new PrivateIdentity();
     string current=(string)facts["currentUserSid"], owner=(string)facts["ownerSid"];
     Require((bool)facts["isLocal"] && (bool)facts["daclPresent"] && (!requireProtected || (bool)facts["daclProtected"]) &&
       (bool)facts["aceListComplete"] && (owner==current || (allowAdministratorsOwner && owner=="s-1-5-32-544")),
@@ -233,7 +234,7 @@ public static partial class FsSafeWindowsBridge {
     foreach(Dictionary<string,object> ace in (object[])facts["aces"]) {
       var flags=(Dictionary<string,object>)ace["flags"];
       string sid=(string)ace["sid"];
-      if((string)ace["aceType"]=="deny" || sid==current || sid==(string)facts["currentAppContainerSid"] || sid=="s-1-5-18" || sid=="s-1-5-32-544") continue;
+      if((string)ace["aceType"]=="deny" || identity.Trusts(sid)) continue;
       if((bool)flags["inheritOnly"] && (!requirePrivateChildren || (!(bool)flags["objectInherit"] && !(bool)flags["containerInherit"]))) continue;
       uint mask=(uint)ace["mask"];
       Require((mask&0xd00d01dfu)==0,"EACCES","private object permits untrusted access");

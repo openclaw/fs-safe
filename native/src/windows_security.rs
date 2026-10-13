@@ -282,14 +282,19 @@ mod windows {
         _buffer: Vec<u8>,
         sid: PSID,
         app_container: Option<(Vec<u8>, PSID)>,
+        system: Vec<u8>,
+        administrators: Vec<u8>,
     }
 
     impl TokenSid {
+        fn private_sids(&self) -> impl Iterator<Item = PSID> + '_ {
+            [self.sid, self.system.as_ptr().cast_mut().cast(),
+                self.administrators.as_ptr().cast_mut().cast()].into_iter()
+                .chain(self.app_container.iter().map(|(_, sid)| *sid))
+        }
+
         fn trusts(&self, sid: PSID) -> bool {
-            (unsafe { EqualSid(sid, self.sid) }) != 0
-                || self.app_container.as_ref().is_some_and(|(_, own)| unsafe { EqualSid(sid, *own) } != 0)
-                || unsafe { IsWellKnownSid(sid, WinLocalSystemSid) } != 0
-                || unsafe { IsWellKnownSid(sid, WinBuiltinAdministratorsSid) } != 0
+            self.private_sids().any(|own| unsafe { EqualSid(sid, own) } != 0)
         }
     }
 
@@ -384,6 +389,8 @@ mod windows {
             _buffer: buffer,
             sid,
             app_container,
+            system: well_known_sid(WinLocalSystemSid)?,
+            administrators: well_known_sid(WinBuiltinAdministratorsSid)?,
         })
     }
 
@@ -1323,14 +1330,7 @@ mod windows {
     }
 
     fn private_acl(current: &TokenSid, inherit: bool) -> NativeResult<PrivateAcl> {
-        let system = well_known_sid(WinLocalSystemSid)?;
-        let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
-        let mut sids: Vec<PSID> = vec![
-            current.sid,
-            system.as_ptr().cast_mut().cast(),
-            administrators.as_ptr().cast_mut().cast(),
-        ];
-        if let Some((_, sid)) = &current.app_container { sids.push(*sid); }
+        let sids: Vec<PSID> = current.private_sids().collect();
         let mut entries: Vec<EXPLICIT_ACCESS_W> = (0..sids.len()).map(|_| unsafe { zeroed() }).collect();
         for (entry, sid) in entries.iter_mut().zip(sids) {
             entry.grfAccessPermissions = FILE_ALL_ACCESS;
