@@ -44,17 +44,30 @@ async function fixture(assertBeforeMutation: () => void) {
     parentFd = args[0];
     return linkFd = open(...args);
   });
+  // Record successful real closes; even an immediate fstat can observe fd reuse.
+  const closed = new Set<"link" | "parent">();
+  const nativeClose = binding!.closeOwnedFd!;
   // Admission captures this close function, so observe it before retaining.
-  const closeLink = vi.spyOn(binding!, "closeOwnedFd");
+  const closeLink = vi.spyOn(binding!, "closeOwnedFd").mockImplementation(fd => {
+    nativeClose(fd);
+    if (fd === linkFd) {
+      closed.add("link");
+    }
+  });
   const owner = await retainSymlinkInDirectory({
     directory, basename: "stage", expected, assertBeforeMutation,
   });
-  const closeParent = vi.spyOn(fs, "closeSync");
+  const nodeClose = fs.closeSync;
+  const closeParent = vi.spyOn(fs, "closeSync").mockImplementation(fd => {
+    nodeClose(fd);
+    if (fd === parentFd) {
+      closed.add("parent");
+    }
+  });
   function assertClosedOnce() {
     expect(closeLink.mock.calls.filter(([fd]) => fd === linkFd)).toHaveLength(1);
     expect(closeParent.mock.calls.filter(([fd]) => fd === parentFd)).toHaveLength(1);
-    expect(() => fs.fstatSync(linkFd)).toThrow();
-    expect(() => fs.fstatSync(parentFd)).toThrow();
+    expect(closed).toEqual(new Set(["link", "parent"]));
   }
   return { directory, expected, owner, assertClosedOnce };
 }
