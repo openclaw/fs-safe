@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-### Fixes
-
-- **High-bit filesystem identities:** preserve Node's signed bigint stat identities across native directory checks, allowing guarded writes and build locks on filesystems with high-bit inode numbers.
-
 ## 0.26.3 - 2026-10-13
 
 ### Highlights
@@ -21,6 +17,7 @@
 
 ### Fixes
 
+- **High-bit filesystem identities:** preserve Node's signed bigint stat identities across native directory checks, allowing guarded writes and build locks on filesystems with high-bit inode numbers. ([#979](https://github.com/openclaw/fs-safe/pull/979))
 - **Linux reflink fallback:** fall back to a guarded byte copy when FICLONE refuses I/O with `EIO` or `EAGAIN`, including ZFS block cloning; real copy and cleanup errors remain fatal. Reported in [openclaw/openclaw#169071](https://github.com/openclaw/openclaw/issues/169071). ([#972](https://github.com/openclaw/fs-safe/pull/972))
 - **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks. ([#961](https://github.com/openclaw/fs-safe/pull/961))
 
