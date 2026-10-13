@@ -39,6 +39,8 @@ public static class AppContainerFixture {
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFileW(string path,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFinalPathNameByHandleW(IntPtr handle,StringBuilder path,uint size,uint flags);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl,uint revision,out IntPtr descriptor,out uint size);
+  [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(IntPtr handle,int kind,uint information,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
+  [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor,out bool present,out IntPtr dacl,out bool defaulted);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint SetNamedSecurityInfoW(string path,int kind,uint information,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
   [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorSacl(IntPtr descriptor,out bool present,out IntPtr sacl,out bool defaulted);
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
@@ -48,6 +50,20 @@ public static class AppContainerFixture {
     string row="{\"phase\":"+Json(phase)+",\"time\":"+Json(DateTime.UtcNow.ToString("o"))+"}";
     File.AppendAllText(Path.Combine(root,"progress-outer-native.jsonl"),row+Environment.NewLine);
     Console.WriteLine(row);
+  }
+  static void SetAncestorDacl(string path,byte[] descriptor) {
+    // SetSecurityInfo suppresses child propagation for MAXIMUM_ALLOWED handles.
+    // Keep the modern setter so existing inheritance control flags survive.
+    IntPtr handle=CreateFileW(path,0x02000000,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
+    if(handle==new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    var pinned=GCHandle.Alloc(descriptor,GCHandleType.Pinned);
+    try {
+      bool present,defaulted; IntPtr dacl;
+      Check(GetSecurityDescriptorDacl(pinned.AddrOfPinnedObject(),out present,out dacl,out defaulted));
+      if(!present) throw new InvalidOperationException("Fixture ancestor must have a DACL");
+      uint error=SetSecurityInfo(handle,1,4,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
+      if(error!=0) throw new Win32Exception((int)error);
+    } finally { pinned.Free(); CloseHandle(handle); }
   }
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
   static string Quote(string text) { return "\""+text+"\""; }
@@ -149,6 +165,7 @@ public static class AppContainerFixture {
     }
     string a="fs-safe-a-"+Guid.NewGuid().ToString("N"), b="fs-safe-b-"+Guid.NewGuid().ToString("N");
     IntPtr sidA=IntPtr.Zero,sidB=IntPtr.Zero;
+    var ancestors=new Dictionary<string,byte[]>();
     try {
       Mark(root,"profile-a:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(a,a,a,IntPtr.Zero,0,out sidA));
@@ -156,9 +173,20 @@ public static class AppContainerFixture {
       Mark(root,"profile-b:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(b,b,b,IntPtr.Zero,0,out sidB));
       Mark(root,"profile-b:create:after");
-      // Restrict grants to the owned fixture tree. Updating a drive-root DACL
-      // propagates existing inheritable ACEs across the volume on Server 2022.
-      // Native canonicalization does not need metadata access to ancestors.
+      // Node's loader needs metadata on every ancestor. Keep these grants
+      // non-inheriting and avoid recursive DACL propagation during setup/cleanup.
+      int ancestorIndex=0;
+      for(var ancestor=Directory.GetParent(root);ancestor!=null;ancestor=ancestor.Parent,ancestorIndex++) {
+        Mark(root,"ancestor-"+ancestorIndex+":read:before");
+        var original=Directory.GetAccessControl(ancestor.FullName,AccessControlSections.Access);
+        ancestors.Add(ancestor.FullName,original.GetSecurityDescriptorBinaryForm());
+        Mark(root,"ancestor-"+ancestorIndex+":read:after");
+        foreach(var sid in new[]{sidA,sidB}) original.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
+          FileSystemRights.ReadAttributes|FileSystemRights.Traverse,InheritanceFlags.None,PropagationFlags.None,AccessControlType.Allow));
+        Mark(root,"ancestor-"+ancestorIndex+":grant:before");
+        SetAncestorDacl(ancestor.FullName,original.GetSecurityDescriptorBinaryForm());
+        Mark(root,"ancestor-"+ancestorIndex+":grant:after");
+      }
       Mark(root,"test-root:read:before");
       var security=Directory.GetAccessControl(root);
       Mark(root,"test-root:read:after");
@@ -197,6 +225,19 @@ public static class AppContainerFixture {
       Launch(root,sidA,"native-off","off");
     } finally {
       var failures=new List<Exception>();
+      int revokeIndex=0;
+      foreach(var ancestor in ancestors) {
+        string phase="ancestor-"+revokeIndex++;
+        try {
+          Mark(root,phase+":revoke:before");
+          SetAncestorDacl(ancestor.Key,ancestor.Value);
+          var actual=Directory.GetAccessControl(ancestor.Key,AccessControlSections.Access);
+          var expected=new RawSecurityDescriptor(ancestor.Value,0);
+          if(actual.GetSecurityDescriptorSddlForm(AccessControlSections.Access)!=expected.GetSddlForm(AccessControlSections.Access))
+            throw new Exception("Ancestor DACL was not restored exactly");
+          Mark(root,phase+":revoke:after");
+        } catch(Exception error) { failures.Add(error); }
+      }
       if(sidA!=IntPtr.Zero) { FreeSid(sidA); try {
         Mark(root,"profile-a:delete:before");
         Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(a));
