@@ -133,13 +133,15 @@ fn invalid_path(message: impl ToString) -> NativeError {
 }
 
 fn exact_identity_component(value: &BigInt, label: &str) -> NativeResult<u64> {
-    let (negative, value, lossless) = value.get_u64();
-    if negative || !lossless {
+    let (negative, magnitude, _) = value.get_u64();
+    if value.words.len() != 1 || (negative && magnitude > (1_u64 << 63)) {
         return Err(invalid_path(format!(
-            "expected source {label} must be an unsigned 64-bit bigint",
+            "expected source {label} must be an exact 64-bit stat bigint",
         )));
     }
-    Ok(value)
+    // Node's BigIntStats uses BigInt64Array even for unsigned OS identities.
+    // Recover those exact bits; reject values outside either 64-bit form.
+    Ok(if negative { 0_u64.wrapping_sub(magnitude) } else { magnitude })
 }
 
 fn exact_file_identity(dev: &BigInt, ino: &BigInt) -> NativeResult<ExactFileIdentity> {
@@ -473,7 +475,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_identity_inputs_require_lossless_unsigned_components() {
+    fn exact_identity_inputs_require_lossless_stat_components() {
         assert_eq!(
             exact_file_identity(&BigInt::from(u64::MAX), &BigInt::from(0_u64)).unwrap(),
             ExactFileIdentity {
@@ -481,7 +483,11 @@ mod tests {
                 ino: 0,
             },
         );
-        assert!(exact_file_identity(&BigInt::from(-1_i64), &BigInt::from(1_u64)).is_err());
+        assert_eq!(
+            exact_file_identity(&BigInt::from(-1_i64), &BigInt::from(i64::MIN)).unwrap(),
+            ExactFileIdentity { dev: u64::MAX, ino: 1_u64 << 63 },
+        );
+        assert!(exact_file_identity(&BigInt::from(-((1_i128 << 63) + 1)), &BigInt::from(1_u64)).is_err());
         assert!(
             exact_file_identity(
                 &BigInt {

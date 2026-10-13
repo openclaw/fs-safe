@@ -3,6 +3,7 @@ import { FsSafeError } from "./errors.js";
 import type { NativeBinding } from "./native-binding.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import type { MutationDirectoryObserver } from "./pinned-mutation-observation.js";
+import { isNativeStatIdentity, statIdentityFromNative } from "./native-stat-identity.js";
 
 export class NativePolicyDirectoryMismatch extends FsSafeError {
   constructor(cause?: Error) {
@@ -42,8 +43,8 @@ export function nativePolicyDirectoryObserver(
       throw error;
     }
     if (getFsSafeNativeConfig().mode !== mode) return undefined;
-    if (!observed || typeof observed.dev !== "bigint" || observed.dev < 0n || observed.dev > 0xffff_ffff_ffff_ffffn ||
-      typeof observed.ino !== "bigint" || observed.ino < 0n || observed.ino > 0xffff_ffff_ffff_ffffn ||
+    if (!observed || !isNativeStatIdentity(observed.dev) ||
+      !isNativeStatIdentity(observed.ino) ||
       typeof observed.mode !== "bigint" || observed.mode < 0n || observed.mode > 0xffff_ffffn ||
       typeof observed.nlink !== "bigint" || observed.nlink < 0n || observed.nlink > 0xffff_ffff_ffff_ffffn ||
       typeof observed.realPath !== "string" || observed.realPath.includes("\0") ||
@@ -55,7 +56,7 @@ export function nativePolicyDirectoryObserver(
     return Object.freeze({
       canonicalPath: observed.realPath,
       identity: Object.freeze({
-        dev: observed.dev, ino: observed.ino, mode: observed.mode, nlink: observed.nlink,
+        dev: statIdentityFromNative(observed.dev), ino: statIdentityFromNative(observed.ino), mode: observed.mode, nlink: observed.nlink,
       }),
     });
   };

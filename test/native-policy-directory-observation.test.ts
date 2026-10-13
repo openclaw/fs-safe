@@ -30,6 +30,28 @@ function openDirectory(pathname: string): number {
 }
 
 describe.runIf(process.platform !== "win32" && !process.versions.bun)("optional pinned directory observation", () => {
+  it("retains high-bit inode identity through native and Node directory observations", async () => {
+    const directory = await tempRoot("fs-safe-native-high-bit-directory-");
+    const fd = openDirectory(directory);
+    const fstat = fs.fstatSync.bind(fs);
+    const unsigned = (1n << 63n) + 17n;
+    const signed = BigInt.asIntN(64, unsigned);
+    const raw = fstat(fd, { bigint: true });
+    const candidate: NativeBinding = {
+      observeDirectoryFd: () => ({ dev: raw.dev, ino: unsigned, mode: raw.mode, nlink: raw.nlink, realPath: directory }),
+    };
+    vi.spyOn(fs, "fstatSync").mockImplementation((...args) => {
+      const stat = fstat(...args);
+      return args[0] === fd && typeof stat.ino === "bigint" ? Object.assign(stat, { ino: signed }) : stat;
+    });
+    try {
+      const captured = describePolicyStagedDirectory(fd, directory, candidate);
+      expect(captured.stat.ino).toBe(signed);
+      expect(captured.observation.identity.ino).toBe(signed);
+      expect(captured.observeCurrent?.()?.identity.ino).toBe(signed);
+    } finally { fs.closeSync(fd); }
+  });
+
   it.each(["absent", "malformed", "unavailable"] as const)(
     "retains full pathname observation when the helper is %s",
     async (kind) => {

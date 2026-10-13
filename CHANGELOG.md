@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **High-bit filesystem identities:** preserve Node's signed bigint stat identities across native directory checks, allowing guarded writes and build locks on filesystems with high-bit inode numbers.
+
 ## 0.26.3 - 2026-10-13
 
 ### Highlights
