@@ -16,6 +16,8 @@ public static class AppContainerFixture {
   }
   [StructLayout(LayoutKind.Sequential)] struct StartupEx { public Startup Startup; public IntPtr Attributes; }
   [StructLayout(LayoutKind.Sequential)] struct ProcessInfo { public IntPtr Process, Thread; public uint Pid, Tid; }
+  [StructLayout(LayoutKind.Sequential)] struct Trustee { public IntPtr Multiple; public int Operation, Form, Type; public IntPtr Name; }
+  [StructLayout(LayoutKind.Sequential)] struct ExplicitAccess { public uint Permissions, Mode, Inheritance; public Trustee Trustee; }
   [DllImport("userenv.dll", CharSet=CharSet.Unicode)] static extern int CreateAppContainerProfile(string name,string display,string description,IntPtr caps,uint count,out IntPtr sid);
   [DllImport("userenv.dll", CharSet=CharSet.Unicode)] static extern int DeleteAppContainerProfile(string name);
   [DllImport("advapi32.dll")] static extern IntPtr FreeSid(IntPtr sid);
@@ -31,8 +33,32 @@ public static class AppContainerFixture {
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint SetNamedSecurityInfoW(string path,int kind,uint information,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
   [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorSacl(IntPtr descriptor,out bool present,out IntPtr sacl,out bool defaulted);
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
+  [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint SetEntriesInAclW(uint count,[In] ExplicitAccess[] entries,IntPtr old,out IntPtr acl);
+  [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint GetNamedSecurityInfoW(string path,int kind,uint information,out IntPtr owner,out IntPtr group,out IntPtr dacl,out IntPtr sacl,out IntPtr descriptor);
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
   static string Quote(string text) { return "\""+text+"\""; }
+  static byte[] AclBytes(IntPtr acl) {
+    if(acl==IntPtr.Zero) throw new Exception("DACL is absent");
+    var bytes=new byte[(ushort)Marshal.ReadInt16(acl,2)]; Marshal.Copy(acl,bytes,0,bytes.Length); return bytes;
+  }
+  // This is the pre-change native constructor, kept separate from the helper's
+  // RawAcl baseline: SetEntriesInAclW owns native ACE ordering and encoding.
+  static byte[] OriginalNativeAcl(string user,bool inherit) {
+    var pins=new GCHandle[3]; IntPtr acl=IntPtr.Zero;
+    try {
+      var sids=new[]{user,"S-1-5-18","S-1-5-32-544"};
+      var entries=new ExplicitAccess[3];
+      for(int i=0;i<sids.Length;i++) {
+        var sid=new SecurityIdentifier(sids[i]); var bytes=new byte[sid.BinaryLength]; sid.GetBinaryForm(bytes,0);
+        pins[i]=GCHandle.Alloc(bytes,GCHandleType.Pinned);
+        entries[i]=new ExplicitAccess{Permissions=0x1f01ff,Mode=1,Inheritance=inherit ? 3u : 0u,
+          Trustee=new Trustee{Form=0,Type=0,Name=pins[i].AddrOfPinnedObject()}};
+      }
+      uint error=SetEntriesInAclW(3,entries,IntPtr.Zero,out acl);
+      if(error!=0) throw new Win32Exception((int)error);
+      return AclBytes(acl);
+    } finally { if(acl!=IntPtr.Zero) LocalFree(acl); foreach(var pin in pins) if(pin.IsAllocated) pin.Free(); }
+  }
   public static void AssertBaseline(string root) {
     string user;
     using(var identity=WindowsIdentity.GetCurrent()) user=identity.User.Value;
@@ -44,10 +70,15 @@ public static class AppContainerFixture {
         var actual=new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(),0);
         string flags=directory ? "OICI" : "";
         var expected=new RawSecurityDescriptor("O:"+user+"D:P(A;"+flags+";FA;;;"+user+")(A;"+flags+";FA;;;SY)(A;"+flags+";FA;;;BA)");
-        var left=new byte[actual.DiscretionaryAcl.BinaryLength]; actual.DiscretionaryAcl.GetBinaryForm(left,0);
+        IntPtr owner,group,dacl,sacl,descriptor;
+        uint error=GetNamedSecurityInfoW(path,1,5,out owner,out group,out dacl,out sacl,out descriptor);
+        if(error!=0) throw new Win32Exception((int)error);
+        byte[] left;
+        try { left=AclBytes(dacl); } finally { if(descriptor!=IntPtr.Zero) LocalFree(descriptor); }
         var right=new byte[expected.DiscretionaryAcl.BinaryLength]; expected.DiscretionaryAcl.GetBinaryForm(right,0);
+        if(mode=="require") right=OriginalNativeAcl(user,directory);
         if(Convert.ToBase64String(left)!=Convert.ToBase64String(right) || !actual.Owner.Equals(expected.Owner) ||
-          (actual.ControlFlags&ControlFlags.DiscretionaryAclProtected)==0) throw new Exception("Ordinary private DACL bytes changed");
+          (actual.ControlFlags&ControlFlags.DiscretionaryAclProtected)==0) throw new Exception("Ordinary private DACL bytes changed ("+mode+", directory="+directory+"): actual="+Convert.ToBase64String(left)+" expected="+Convert.ToBase64String(right));
       }
     }
   }
