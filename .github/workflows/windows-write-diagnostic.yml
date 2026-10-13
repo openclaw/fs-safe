@@ -1,0 +1,36 @@
+name: windows-write-diagnostic
+on:
+  push:
+    branches: [perf/c4-winwrite-attribution]
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    runs-on: fs-safe-windows-16core
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/verify-windows-ci-runner
+      - uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 24
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - uses: ./.github/actions/setup-archive-llvm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm native:build
+      - name: Uninstrumented raw and A-A controls
+        run: pnpm benchmark:node --filter write --mode both --samples 21 --iterations 100 --warmup 25 --json write-timing.json
+      - name: Per-call attribution
+        run: |
+          node benchmarks/windows-write-attribution.mjs off dist write-attribution-off.json
+          node benchmarks/windows-write-attribution.mjs require dist write-attribution-require.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: windows-write-diagnostic
+          path: write-*.json
