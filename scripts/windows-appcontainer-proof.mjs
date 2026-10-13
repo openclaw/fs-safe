@@ -55,12 +55,15 @@ try {
     console.log(JSON.stringify({ appcontainer: 'passed', arch: process.arch, scenarios: rows.length, threads: 2 }));
   }
 } catch (error) {
+  for (const name of fs.readdirSync(root).filter(name => name.startsWith('progress-'))) {
+    console.error(name, fs.readFileSync(path.join(root, name), 'utf8'));
+  }
   for (const name of fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny|diagnostic)-.*\.json$/.test(name))) {
     console.error(name, fs.readFileSync(path.join(root, name), 'utf8'));
   }
   throw error;
 } finally {
-  for (const name of fs.readdirSync(root).filter(name => /\.json$/.test(name))) {
+  for (const name of fs.readdirSync(root).filter(name => /\.jsonl?$/.test(name))) {
     if (name !== 'profiles.json') fs.copyFileSync(path.join(root, name), path.join(output, `${process.arch}-${name}`));
   }
   fs.rmSync(root, { recursive: true, force: true });

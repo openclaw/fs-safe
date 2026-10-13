@@ -217,7 +217,7 @@ public static class AppContainerFixture {
       var command=new StringBuilder(Quote(exe)+" "+arguments);
       Check(CreateProcessW(exe,command,IntPtr.Zero,IntPtr.Zero,false,0x80000,IntPtr.Zero,root,ref startup,out process));
       uint wait=WaitForSingleObject(process.Process,60000);
-      if(wait!=0) { TerminateProcess(process.Process,1); throw new Exception("AppContainer child did not finish: "+wait); }
+      if(wait!=0) { TerminateProcess(process.Process,1); throw new Exception("AppContainer "+operation+"/"+mode+" child did not finish: "+wait); }
       uint code; Check(GetExitCodeProcess(process.Process,out code));
       string receipt=Path.Combine(root,operation+(diagnostic ? "" : "-"+mode)+".json");
       if(code!=0) throw new Exception("AppContainer "+operation+"/"+mode+" exit "+code+": "+(File.Exists(receipt) ? File.ReadAllText(receipt) : "child failed before writing its receipt"));

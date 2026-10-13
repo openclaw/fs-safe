@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const operation = workerData?.operation ?? process.argv[2];
 const mode = workerData?.mode ?? process.argv[3];
+const thread = isMainThread ? 'main' : 'worker';
+const mark = phase => fs.appendFileSync(path.join(here, `progress-${operation}-${mode}-${thread}.jsonl`), JSON.stringify({ phase, time: new Date().toISOString() }) + '\n');
+mark('imports:before');
 process.env.FS_SAFE_NATIVE_MODE = mode;
 const { createDirectorySync, createFileSync, inspectWindowsAcl } = await import('./pkg/dist/advanced.js');
 const { readOwnerAndDacl } = await import('./pkg/dist/permissions-public.js');
@@ -15,6 +18,8 @@ const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.j
 const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
 const { realpathSync } = await import('./pkg/dist/realpath.js');
 const { FsSafeError } = await import('./pkg/dist/errors.js');
+const { getNativeBinding } = await import('./pkg/dist/native.js');
+mark('imports:after');
 
 async function prove(thread) {
   const ordinary = operation === 'ordinary';
@@ -37,32 +42,49 @@ async function prove(thread) {
     return [];
   }
   if (operation === 'create' || ordinary) {
+    if (mode === 'require') {
+      mark('binding-load:before');
+      assert.equal(typeof getNativeBinding()?.resolveWindowsCanonicalPath, 'function');
+      mark('binding-load:after');
+    }
+    mark('canonical-root:before');
+    realpathSync.native(here);
+    mark('canonical-root:after');
+    mark('create-directory:before');
     createDirectorySync(dir, { private: true });
+    mark('create-directory:after');
     const owned = createFileSync(file, { private: true });
+    mark('create-file:after');
     try { fs.writeSync(owned.fd, 'private'); } finally { owned.close(); }
     const workspace = tempWorkspaceSync({ rootDir: dir, prefix: 'workspace' });
+    mark('workspace:created');
     workspace.writeText('payload', 'workspace');
     assert.equal(workspace.read('payload').toString(), 'workspace');
     workspace.cleanup();
+    mark('workspace:cleaned');
   }
   assert.deepEqual(fs.readdirSync(dir), ['file']);
   assert.equal(fs.readFileSync(file, 'utf8'), 'private');
   const secure = await readSecureFile({ filePath: file });
+  mark('secure-read:after');
   assert.equal(secure.buffer.toString(), 'private');
   assert.equal(secure.permissions.ownerTrusted, true);
   for (const target of [dir, file]) {
     const facts = readOwnerAndDacl(target);
+    mark('owner-query:after');
     assert.equal(facts.status, 'supported');
     assert.equal(facts.aces.length, ordinary ? 3 : 4);
     assert.deepEqual(new Set(facts.aces.map(x => x.sid)), new Set([facts.currentUserSid, 's-1-5-18', 's-1-5-32-544', ...(ordinary ? [] : [principals[0]])]));
     assert(facts.aces.every(x => x.mask === 0x1f01ff && x.aceType === 'allow'));
     assert(facts.aces.every(x => x.flags.objectInherit === (target === dir) && x.flags.containerInherit === (target === dir)));
     const acl = await inspectWindowsAcl(target);
+    mark('acl-inspection:after');
     assert.equal(acl.ok, true, JSON.stringify(acl));
     assert.equal(acl.untrustedGroup.length, 0);
     assert.equal(acl.untrustedWorld.length, 0);
   }
   const permissions = await inspectPathPermissions(dir);
+  mark('permissions-inspection:after');
   assert.equal(permissions.groupReadable, false, JSON.stringify(permissions));
   assert.equal(permissions.groupWritable, false, JSON.stringify(permissions));
   const canonicalPaths = [dir, file].map(value => ({ path: value, canonical: realpathSync.native(value) }));
@@ -72,11 +94,13 @@ async function prove(thread) {
       .map(line => line.split('\t')).filter(([label]) => label.startsWith('shared'));
     for (const [, value] of variants) assert.equal(realpathSync.native(value), expected);
   }
+  mark('proof:complete');
   return canonicalPaths;
 }
 if (isMainThread) {
   try {
     const canonicalPaths = await prove('main');
+    mark('worker:before');
     const workerPaths = await new Promise((resolve, reject) => {
       const worker = new Worker(new URL(import.meta.url), { workerData: { operation, mode } });
       let paths;
@@ -84,6 +108,7 @@ if (isMainThread) {
       worker.once('error', reject);
       worker.once('exit', code => code === 0 && paths ? resolve(paths) : reject(new Error(`Worker exit ${code}`)));
     });
+    mark('worker:exited');
     fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ operation, mode, arch: process.arch, threads: ['main', 'worker'], canonicalPaths: [...canonicalPaths, ...workerPaths], ok: true }));
   } catch (error) {
     fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ error: error.stack, code: error.code }));
