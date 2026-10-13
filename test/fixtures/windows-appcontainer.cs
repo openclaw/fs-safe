@@ -61,8 +61,17 @@ public static class AppContainerFixture {
       bool present,defaulted; IntPtr dacl;
       Check(GetSecurityDescriptorDacl(pinned.AddrOfPinnedObject(),out present,out dacl,out defaulted));
       if(!present) throw new InvalidOperationException("Fixture ancestor must have a DACL");
-      uint error=SetSecurityInfo(handle,1,4,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
+      var raw=new RawSecurityDescriptor(descriptor,0);
+      bool inherited=(raw.ControlFlags&ControlFlags.DiscretionaryAclAutoInherited)!=0;
+      bool protect=(raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0;
+      // Recompute this object's auto-inherited state without propagating to children.
+      uint information=4u|(inherited ? 0x20000000u : protect ? 0x80000000u : 0u);
+      uint error=SetSecurityInfo(handle,1,information,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
       if(error!=0) throw new Win32Exception((int)error);
+      if(inherited && protect) {
+        error=SetSecurityInfo(handle,1,0x80000004u,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
+        if(error!=0) throw new Win32Exception((int)error);
+      }
     } finally { pinned.Free(); CloseHandle(handle); }
   }
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
@@ -234,7 +243,7 @@ public static class AppContainerFixture {
           var actual=Directory.GetAccessControl(ancestor.Key,AccessControlSections.Access);
           var expected=new RawSecurityDescriptor(ancestor.Value,0);
           if(actual.GetSecurityDescriptorSddlForm(AccessControlSections.Access)!=expected.GetSddlForm(AccessControlSections.Access))
-            throw new Exception("Ancestor DACL was not restored exactly");
+            throw new Exception("Ancestor DACL was not restored exactly: expected control="+(int)expected.ControlFlags+", actual control="+(int)new RawSecurityDescriptor(actual.GetSecurityDescriptorBinaryForm(),0).ControlFlags);
           Mark(root,phase+":revoke:after");
         } catch(Exception error) { failures.Add(error); }
       }
