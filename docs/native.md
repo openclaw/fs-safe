@@ -443,6 +443,49 @@ read metadata behavior are unchanged. Missing Windows pathname identity still
 requires a guarded path reopen and comparison with the original retained file;
 that fallback does not apply to POSIX no-read modes.
 
+### Windows buffered-write cost
+
+`Root.write(..., { durable: false })` skips durability synchronization, but still
+stages and atomically replaces the file, admits the existing destination, and
+checks the root, parent, published pathname and retained descriptor identities.
+Raw Node writes truncate the destination in place and are not equivalent work.
+
+A [Windows x64 measurement](https://github.com/openclaw/fs-safe/actions/runs/38335844371)
+of source revision `fe216e22` used Node 24.21.0, a 16-logical-processor hosted
+runner, and 23-byte replacements. Across 21 samples of 100 writes, uninstrumented
+median sample means were 1.912 ms in `off` and 1.233 ms in `require`; their raw
+Node controls were 0.246 ms and 0.255 ms. Paired raw/raw A/A ratios were 1.011
+and 1.009. These are observations on that runner, not latency guarantees or a
+same-process comparison between native modes.
+
+Separate instrumentation recorded every Node filesystem and native binding call
+over 101 warmed 22-byte replacements. The following times are median cumulative
+microseconds per write for each call family; instrumentation adds overhead and
+these rows must not be substituted for the uninstrumented timings above.
+
+| Call family | `off` calls / µs | `require` calls / µs |
+|---|---:|---:|
+| Canonicalize pathname (`realpathSync.native`) | 14 / 797 | 4 / 265 |
+| Exact file and directory metadata (`lstat`, `stat`, `fstat`) | 41 / 365 | 22 / 166 |
+| Node asynchronous open | 2 / 272 | 1 / 74 |
+| Native beneath open: parent, stage, published file | 0 / 0 | 3 / 174 |
+| Native parent observation | 0 / 0 | 1 / 45 |
+| Write payload | 1 / 95 | 1 / 50 |
+| Replace by rename | 1 / 199 | 1 / 173 |
+
+The native stage creation accounted for about 141 µs of its beneath-open total;
+the published-file reopen accounted for about 22 µs. Native rename uses
+handle-relative `NtSetInformationFile`, not `MoveFileEx`. Neither mode invoked
+the security helper, queried ACLs, changed mode, or flushed a file in these
+non-private, non-durable writes. Path and identity observations explain much of
+the remaining cost; a hidden helper process or durability flush does not.
+
+These measurements did not isolate antivirus/indexer time inside filesystem
+calls and do not establish a universal NTFS lower bound. Storage, pathname depth,
+Windows version and security software can change the result. Repeated identity
+observations fence different admission and publication boundaries; their count
+alone does not establish that an observation can safely be removed.
+
 ## What needs the native binding
 
 In `off` and missing-binding `auto`, these capabilities are unavailable. Other
