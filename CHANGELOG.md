@@ -2,13 +2,35 @@
 
 ## Unreleased
 
-- **macOS file watching:** avoid JavaScript reconciliation for unrelated sibling writes and child-only changes to directory entry scopes while preserving missing-entry discovery and replacement notifications.
+## 0.26.3 - 2026-10-13
 
-- **Windows signing:** native addons and the security helper are Authenticode-signed by OpenClaw Foundation with timestamped signatures.
+### Highlights
 
-- Add async `getFsSafeNativeStatus()` for runtime health checks with optional probing, path-free load reasons, and actionable guidance.
+- **Native health and signed Windows binaries:** inspect runtime native support with `getFsSafeNativeStatus()`; Windows addons and the security helper now carry timestamped OpenClaw Foundation signatures. ([#965](https://github.com/openclaw/fs-safe/pull/965), [#960](https://github.com/openclaw/fs-safe/pull/960))
+- **Linux copy compatibility:** recover from refused reflink I/O, including ZFS block cloning, through a guarded byte copy. ([#972](https://github.com/openclaw/fs-safe/pull/972))
+- **Less native filesystem overhead:** retain directory parents, reuse writable-file admission, batch Root verification, and avoid unrelated macOS watch wakeups. ([#971](https://github.com/openclaw/fs-safe/pull/971), [#959](https://github.com/openclaw/fs-safe/pull/959), [#966](https://github.com/openclaw/fs-safe/pull/966), [#955](https://github.com/openclaw/fs-safe/pull/955), [#968](https://github.com/openclaw/fs-safe/pull/968))
 
-- **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks.
+### Features
+
+- **Native runtime health:** add async `getFsSafeNativeStatus()` with optional probing, path-free load reasons, and actionable guidance, exported from the root and `config` entry points. ([#965](https://github.com/openclaw/fs-safe/pull/965))
+- **Signed Windows binaries:** Authenticode-sign both Windows native addons and the security helper with timestamped OpenClaw Foundation signatures, and verify the signed bytes before publication. ([#960](https://github.com/openclaw/fs-safe/pull/960))
+
+### Fixes
+
+- **Linux reflink fallback:** fall back to a guarded byte copy when FICLONE refuses I/O with `EIO` or `EAGAIN`, including ZFS block cloning; real copy and cleanup errors remain fatal. Reported in [openclaw/openclaw#169071](https://github.com/openclaw/openclaw/issues/169071). ([#972](https://github.com/openclaw/fs-safe/pull/972))
+- **Native fallback warnings:** explain why native support is unavailable, name the expected package version, and give cause-specific recovery guidance for Windows security and private-creation fallbacks. ([#961](https://github.com/openclaw/fs-safe/pull/961))
+
+### Performance
+
+- **Native directory creation:** retain parent handles during recursive mkdir, reducing the measured case from 160 to 5 promises and 381 to 74 Linux syscalls; nested mkdir also reuses existing parents. ([#971](https://github.com/openclaw/fs-safe/pull/971), [#959](https://github.com/openclaw/fs-safe/pull/959))
+- **Native writable-file creation:** reuse parent admission, reducing measured direct-root append syscalls from 117 to 36 and `openWritable` syscalls from 115 to 34 while retaining identity and cleanup checks. ([#966](https://github.com/openclaw/fs-safe/pull/966))
+- **Native Root verification:** batch verification and checked close to reduce dispatch overhead while retaining identity checks and close-error handling. ([#955](https://github.com/openclaw/fs-safe/pull/955))
+- **macOS file watching:** avoid JavaScript reconciliation for unrelated sibling writes and child-only changes to directory entry scopes while preserving missing-entry discovery and replacement notifications. ([#968](https://github.com/openclaw/fs-safe/pull/968))
+
+### Docs and Tooling
+
+- **Durable queue design:** document a link-free ownership protocol and mixed-version boundaries. ([#969](https://github.com/openclaw/fs-safe/pull/969))
+- **Benchmark comparisons:** balance independent build comparisons and restore benchmark setup in relocated checkouts. ([#976](https://github.com/openclaw/fs-safe/pull/976), [#970](https://github.com/openclaw/fs-safe/pull/970))
 
 ## 0.26.2 - 2026-10-11
 
