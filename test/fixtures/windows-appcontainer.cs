@@ -142,14 +142,13 @@ public static class AppContainerFixture {
   }
   public static void Run(string root,bool diagnosticsOnly) {
     // Only fixture setup is elevated; CreateProcessW below creates restricted
-    // AppContainer children. Refuse clearly before modifying any ancestor ACL.
+    // AppContainer children. Refuse clearly before setting fixture integrity.
     using(var identity=WindowsIdentity.GetCurrent()) {
       if(!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
-        throw new InvalidOperationException("AppContainer fixture setup requires an elevated Windows runner to grant and restore ancestor metadata access");
+        throw new InvalidOperationException("AppContainer fixture setup requires an elevated Windows runner to set fixture integrity and container access");
     }
     string a="fs-safe-a-"+Guid.NewGuid().ToString("N"), b="fs-safe-b-"+Guid.NewGuid().ToString("N");
     IntPtr sidA=IntPtr.Zero,sidB=IntPtr.Zero;
-    var ancestors=new Dictionary<string,byte[]>();
     try {
       Mark(root,"profile-a:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(a,a,a,IntPtr.Zero,0,out sidA));
@@ -157,20 +156,9 @@ public static class AppContainerFixture {
       Mark(root,"profile-b:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(b,b,b,IntPtr.Zero,0,out sidB));
       Mark(root,"profile-b:create:after");
-      // Node realpath lstats every ancestor, including the volume root. These
-      // non-inheriting grants admit metadata/traversal, never descendant data.
-      int ancestorIndex=0;
-      for(var ancestor=Directory.GetParent(root);ancestor!=null;ancestor=ancestor.Parent,ancestorIndex++) {
-        Mark(root,"ancestor-"+ancestorIndex+":read:before");
-        var original=Directory.GetAccessControl(ancestor.FullName,AccessControlSections.Access);
-        ancestors.Add(ancestor.FullName,original.GetSecurityDescriptorBinaryForm());
-        Mark(root,"ancestor-"+ancestorIndex+":read:after");
-        foreach(var sid in new[]{sidA,sidB}) original.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
-          FileSystemRights.ReadAttributes|FileSystemRights.Traverse,InheritanceFlags.None,PropagationFlags.None,AccessControlType.Allow));
-        Mark(root,"ancestor-"+ancestorIndex+":grant:before");
-        Directory.SetAccessControl(ancestor.FullName,original);
-        Mark(root,"ancestor-"+ancestorIndex+":grant:after");
-      }
+      // Restrict grants to the owned fixture tree. Updating a drive-root DACL
+      // propagates existing inheritable ACEs across the volume on Server 2022.
+      // Native canonicalization does not need metadata access to ancestors.
       Mark(root,"test-root:read:before");
       var security=Directory.GetAccessControl(root);
       Mark(root,"test-root:read:after");
@@ -209,14 +197,6 @@ public static class AppContainerFixture {
       Launch(root,sidA,"native-off","off");
     } finally {
       var failures=new List<Exception>();
-      int revokeIndex=0;
-      foreach(var ancestor in ancestors) try {
-        Mark(root,"ancestor-"+revokeIndex+":revoke:before");
-        var original=new DirectorySecurity(); original.SetSecurityDescriptorBinaryForm(ancestor.Value,AccessControlSections.Access);
-        Directory.SetAccessControl(ancestor.Key,original);
-        Mark(root,"ancestor-"+revokeIndex+":revoke:after");
-        revokeIndex++;
-      } catch(Exception error) { failures.Add(error); }
       if(sidA!=IntPtr.Zero) { FreeSid(sidA); try {
         Mark(root,"profile-a:delete:before");
         Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(a));
