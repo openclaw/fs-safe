@@ -1,3 +1,4 @@
+import { assertWindowsHelperAllowed } from "./windows-appcontainer.js";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify, types as utilTypes } from "node:util";
@@ -230,6 +231,7 @@ export async function executePermissionCommand(
   args: string[],
   timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS,
 ): Promise<{ stdout: string; stderr: string }> {
+  assertWindowsHelperAllowed();
   const startedAt = performance.now();
   try {
     return (await execFileAsync(command, args, {

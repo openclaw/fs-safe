@@ -184,7 +184,7 @@ public static class AppContainerFixture {
       Launch(root,sidA,"create","require");
       Launch(root,sidA,"reopen","require");
       Launch(root,sidB,"deny","require");
-      Launch(root,sidA,"unsupported","off");
+      Launch(root,sidA,"native-off","off");
     } finally {
       var failures=new List<Exception>();
       foreach(var ancestor in ancestors) try {

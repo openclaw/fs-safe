@@ -85,7 +85,7 @@ function inspectWindowsPermissionsNative(
   const facts = native.readOwnerAndDacl(targetPath);
   if (facts.fallbackRequired) {
     if (facts.currentAppContainerSid) {
-      throw new FsSafeError("permission-unverified", "AppContainer ACL facts are incomplete or unsupported");
+      throw new FsSafeError("helper-unavailable", "AppContainer ACL facts require an unavailable external helper");
     }
     return undefined;
   }
@@ -358,7 +358,7 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
         })),
       };
     } else if (facts?.currentAppContainerSid) {
-      throw new FsSafeError("permission-unverified", "AppContainer ACL normalization requires unsupported helper process access");
+      throw new FsSafeError("helper-unavailable", "AppContainer ACL normalization requires an unavailable external helper");
     }
   }
   owner ??= await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });

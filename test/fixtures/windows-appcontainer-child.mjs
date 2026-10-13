@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -8,6 +10,12 @@ const operation = workerData?.operation ?? process.argv[2];
 const mode = workerData?.mode ?? process.argv[3];
 const thread = isMainThread ? 'main' : 'worker';
 const mark = phase => fs.appendFileSync(path.join(here, `progress-${operation}-${mode}-${thread}.jsonl`), JSON.stringify({ phase, time: new Date().toISOString() }) + '\n');
+if (operation !== 'ordinary') {
+  for (const method of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
+    childProcess[method] = () => { throw new Error(`Forbidden child process: ${method}`); };
+  }
+  syncBuiltinESMExports();
+}
 mark('imports:before');
 process.env.FS_SAFE_NATIVE_MODE = mode;
 const { createDirectorySync, createFileSync, inspectWindowsAcl } = await import('./pkg/dist/advanced.js');
@@ -18,22 +26,29 @@ const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.j
 const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
 const { realpathSync } = await import('./pkg/dist/realpath.js');
 const { FsSafeError } = await import('./pkg/dist/errors.js');
-const { readWindowsAppContainerCommand } = await import('./pkg/dist/windows-security-command.js');
+const commands = await import('./pkg/dist/windows-security-command.js');
+const { readOwnerAndDaclBatch } = await import('./pkg/dist/permissions-public.js');
+const { executePermissionCommand } = await import('./pkg/dist/permission-exec.js');
 const { getNativeBinding } = await import('./pkg/dist/native.js');
 mark('imports:after');
 
 async function prove(thread) {
   const ordinary = operation === 'ordinary';
-  assert.equal(readWindowsAppContainerCommand(), !ordinary);
   if (mode === 'require') assert.equal(getNativeBinding().isWindowsAppContainer(), !ordinary);
   const dir = path.join(here, `${ordinary ? 'ordinary-' : ''}${mode}-${thread}`), file = path.join(dir, 'file');
-  if (operation === 'unsupported') {
-    const unavailable = error => error instanceof FsSafeError && error.code === 'helper-unavailable';
-    assert.throws(() => realpathSync.native(here), unavailable);
-    assert.throws(() => createDirectorySync(dir, { private: true }), unavailable);
-    assert.throws(() => createFileSync(path.join(here, `unsupported-${thread}`), { private: true }), unavailable);
-    await assert.rejects(inspectWindowsAcl(path.join(here, 'require-main')), unavailable);
-    await assert.rejects(inspectPathPermissions(path.join(here, 'require-main')), unavailable);
+  if (operation === 'native-off') {
+    assert.equal(getNativeBinding(), undefined);
+    const native = fs.realpathSync.native;
+    let original;
+    fs.realpathSync.native = (...args) => {
+      try { return native(...args); } catch (error) { original = error; throw error; }
+    };
+    const started = performance.now();
+    try {
+      assert.throws(() => realpathSync.native(here), error =>
+        error === original && error.code === 'EPERM' && error.errno === -4048 && error.syscall === 'realpath');
+    } finally { fs.realpathSync.native = native; }
+    assert(performance.now() - started < 1_000, 'native-off realpath must fail promptly');
     return [];
   }
   if (operation === 'deny') {
@@ -58,6 +73,25 @@ async function prove(thread) {
     assert.equal(workspace.read('payload').toString(), 'workspace');
     workspace.cleanup();
     mark('workspace:cleaned');
+  }
+  if (!ordinary) {
+    const unavailable = error => error instanceof FsSafeError && error.code === 'helper-unavailable';
+    assert.throws(() => commands.readWindowsSecurityFactsCommand(dir), unavailable);
+    assert.throws(() => commands.createPrivateWindowsDirectoryCommandSync(path.join(dir, 'refused')), unavailable);
+    assert.throws(() => commands.inspectWindowsDirectoryCommandSync(dir, true), unavailable);
+    await assert.rejects(commands.createPrivateWindowsDirectoryCommand(path.join(dir, 'refused')), unavailable);
+    await assert.rejects(commands.inspectWindowsDirectoryCommand(dir, true), unavailable);
+    const fd = fs.openSync(file, 'r+');
+    const identity = '0'.repeat(16) + ':' + '0'.repeat(32);
+    try {
+      await assert.rejects(commands.inspectWindowsDescriptorCommand(fd), unavailable);
+      assert.throws(() => commands.protectPrivateWindowsFileCommandSync(fd, file, identity), unavailable);
+      assert.throws(() => commands.verifyPrivateWindowsFileCommandSync(fd, file, identity, identity), unavailable);
+      await assert.rejects(commands.protectPrivateWindowsFileCommand(fd, file, identity), unavailable);
+      await assert.rejects(commands.verifyPrivateWindowsFileCommand(fd, file, identity, identity), unavailable);
+    } finally { fs.closeSync(fd); }
+    await assert.rejects(readOwnerAndDaclBatch([dir]), unavailable);
+    await assert.rejects(executePermissionCommand('windows-security-helper.exe', ['owner', dir]), unavailable);
   }
   assert.deepEqual(fs.readdirSync(dir), ['file']);
   assert.equal(fs.readFileSync(file, 'utf8'), 'private');

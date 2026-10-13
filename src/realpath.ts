@@ -4,25 +4,10 @@ import { getSystemErrorName } from "node:util";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
-import { readWindowsAppContainerCommand } from "./windows-security-command.js";
+import { isWindowsAppContainer } from "./windows-appcontainer.js";
 
 const runtimePlatform = process.versions.bun ? platform() : undefined;
 const bunPosix = runtimePlatform === "darwin" || runtimePlatform === "linux" ? runtimePlatform : undefined;
-let appContainer: boolean | undefined;
-
-function isAppContainer(binding: ReturnType<typeof getNativeBinding>): boolean {
-  if (appContainer !== undefined) return appContainer;
-  try {
-    const membership = binding?.isWindowsAppContainer
-      ? binding.isWindowsAppContainer() : readWindowsAppContainerCommand();
-    if (typeof membership !== "boolean") throw new Error("Invalid AppContainer membership");
-    appContainer = membership;
-    return membership;
-  } catch (cause) {
-    throw new FsSafeError("permission-unverified", "Windows process token membership could not be verified", { cause });
-  }
-}
-
 function resolve(input: string, native: boolean): string {
   if (native && process.platform === "win32") {
     try { return fs.realpathSync.native(input); }
@@ -31,7 +16,7 @@ function resolve(input: string, native: boolean): string {
       let binding: ReturnType<typeof getNativeBinding>;
       try { binding = getNativeBinding(); }
       catch { binding = undefined; }
-      if (!isAppContainer(binding)) throw error;
+      if (!binding || !isWindowsAppContainer(binding)) throw error;
       if (!binding?.resolveWindowsCanonicalPath) {
         throw new FsSafeError("helper-unavailable", "Windows canonicalization after a denied DOS-name query requires the native binding", { cause: error });
       }

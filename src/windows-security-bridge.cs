@@ -145,11 +145,6 @@ public static partial class FsSafeWindowsBridge {
       return value!=0;
     } finally { Marshal.FreeHGlobal(information); }
   }
-  static bool CurrentProcessIsAppContainer() {
-    IntPtr token;
-    if(!OpenProcessToken(GetCurrentProcess(),8,out token)) throw OsFailure((uint)Marshal.GetLastWin32Error(),"open process token");
-    try { return IsAppContainer(token); } finally { CloseHandle(token); }
-  }
   // The primary process token owns both creation grants and private admission.
   internal sealed class PrivateIdentity {
     internal readonly SecurityIdentifier User, AppContainer;
@@ -370,8 +365,7 @@ public static partial class FsSafeWindowsBridge {
   public static object Execute(string operation,string path) {
     try {
       object result;
-      if(operation=="appcontainer") result=CurrentProcessIsAppContainer();
-      else if(operation=="create") result=CreatePrivate(path);
+      if(operation=="create") result=CreatePrivate(path);
       else if(operation=="directory") result=InspectDirectory(path);
       else if(operation=="protect-file" || operation=="verify-file") result=PrivateFile(path,operation=="protect-file");
       else if(operation=="descriptor") {

@@ -4,6 +4,7 @@ import {
   type PermissionFailureFields,
   executePermissionCommand,
 } from "./permission-exec.js";
+import { assertWindowsHelperAllowed } from "./windows-appcontainer.js";
 import { FsSafeError } from "./errors.js";
 import { realpathSync } from "./realpath.js";
 import { windowsSecurityHelperPath } from "./windows-security-helper.js";
@@ -66,6 +67,7 @@ export async function inspectWindowsOwner(params: {
     return { error: String(error), errorCause: error };
   }
   if (process.platform === "win32" && params.exec === executePermissionCommand) {
+    assertWindowsHelperAllowed();
     // Refuse a missing sandbox canonicalizer before starting a helper process.
     // Other pathname failures retain the named-query reporting contract below.
     try { realpathSync.native(params.targetPath); }

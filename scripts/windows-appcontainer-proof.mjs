@@ -47,7 +47,7 @@ try {
       assert.equal(acl.ok, true);
       assert.equal(acl.untrustedGroup.length, 1);
     }
-    const rows = fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny|unsupported)-.*\.json$/.test(name)).map(name => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8')));
+    const rows = fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny|native-off)-.*\.json$/.test(name)).map(name => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8')));
     assert.equal(rows.length, 6);
     assert(rows.every(row => row.ok));
     for (const row of rows) for (const entry of row.canonicalPaths ?? []) {
@@ -65,7 +65,7 @@ try {
   for (const name of fs.readdirSync(root).filter(name => name.startsWith('progress-'))) {
     console.error(name, fs.readFileSync(path.join(root, name), 'utf8'));
   }
-  for (const name of fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny|diagnostic)-.*\.json$/.test(name))) {
+  for (const name of fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny|native-off|diagnostic)-.*\.json$/.test(name))) {
     console.error(name, fs.readFileSync(path.join(root, name), 'utf8'));
   }
   throw error;
