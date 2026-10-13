@@ -118,7 +118,10 @@ describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspe
 
   it.each(["s-1-5-18", "s-1-5-21-99"])("trusts the current container independently of owner %s", async ownerSid => {
     const container = "s-1-15-2-1-2-3-4-5-6-7";
-    const value = facts({ ownerSid, currentAppContainerSid: container, aces: [ace(container, 0x001f01ff)] });
+    const value = facts({
+      ownerSid, ownerClass: ownerSid === "s-1-5-18" ? "system" : "foreign",
+      currentAppContainerSid: container, aces: [ace(container, 0x001f01ff)],
+    });
     install(value);
     const native = await inspectWindowsAcl(target);
     const fallback = await inspectWindowsAcl(target, { exec });
@@ -136,6 +139,7 @@ describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspe
       expect(fallbackPermissions[key]).toBe(nativePermissions[key]);
       expect(fallbackPermissions[key]).toBe(false);
     }
+    expect(fallbackPermissions.ownerTrusted).toBe(nativePermissions.ownerTrusted);
   });
 
   it.each([

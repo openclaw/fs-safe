@@ -124,8 +124,9 @@ async function prove(thread) {
     const facts = readOwnerAndDacl(foreignPath);
     assert.equal(facts.ownerSid, 's-1-5-32-544');
     assert.notEqual(facts.ownerSid, facts.currentUserSid);
-    assert.equal(facts.groupReadable, false);
-    assert.equal(facts.groupWritable, false);
+    const nativePermissions = await inspectPathPermissions(foreignPath);
+    assert.equal(nativePermissions.groupReadable, false);
+    assert.equal(nativePermissions.groupWritable, false);
     const nativeAcl = await inspectWindowsAcl(foreignPath);
     const stdout = fs.readFileSync(path.join(here, 'foreign-owner-command.json'), 'utf8');
     const commandAcl = await inspectWindowsAcl(foreignPath, { exec: async () => ({ stdout, stderr: '' }) });
