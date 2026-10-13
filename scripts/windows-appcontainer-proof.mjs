@@ -39,6 +39,11 @@ try {
   assert(rows.every(row => row.ok));
   fs.writeFileSync(path.join(output, `windows-${process.arch}.json`), JSON.stringify({ platform: process.platform, arch: process.arch, version: process.version, rows }, null, 2));
   console.log(JSON.stringify({ appcontainer: 'passed', arch: process.arch, scenarios: rows.length, threads: 2 }));
+} catch (error) {
+  for (const name of fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny)-.*\.json$/.test(name))) {
+    console.error(name, fs.readFileSync(path.join(root, name), 'utf8'));
+  }
+  throw error;
 } finally {
   for (const name of fs.readdirSync(root).filter(name => /\.json$/.test(name))) {
     if (name !== 'profiles.json') fs.copyFileSync(path.join(root, name), path.join(output, `${process.arch}-${name}`));

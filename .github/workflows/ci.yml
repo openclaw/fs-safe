@@ -1457,7 +1457,16 @@ jobs:
 
       - name: Prove AppContainer private ACL isolation
         if: runner.os == 'Windows'
+        id: appcontainer
         run: node scripts/windows-appcontainer-proof.mjs
+
+      - name: Upload AppContainer proof
+        if: ${{ always() && runner.os == 'Windows' && steps.appcontainer.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appcontainer-${{ matrix.os }}
+          path: artifacts-appcontainer
+          if-no-files-found: error
 
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'
@@ -1736,6 +1745,7 @@ jobs:
           path: |
             artifacts-windows-long-path
             artifacts-platform-imports
+            artifacts-appcontainer
           if-no-files-found: error
 
       - name: Verify root-only npm and pnpm consumer installs

@@ -35,7 +35,8 @@ async function prove(thread) {
   assert.deepEqual(fs.readdirSync(dir), ['file']);
   assert.equal(fs.readFileSync(file, 'utf8'), 'private');
   const secure = await readSecureFile({ filePath: file });
-  assert.equal(secure.ok, true, JSON.stringify(secure));
+  assert.equal(secure.buffer.toString(), 'private');
+  assert.equal(secure.permissions.ownerTrusted, true);
   for (const target of [dir, file]) {
     const facts = readOwnerAndDacl(target);
     assert.equal(facts.status, 'supported');
