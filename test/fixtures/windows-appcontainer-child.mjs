@@ -144,7 +144,8 @@ async function prove(thread) {
     const relative = path.relative(process.cwd(), file);
     const canonical = realpathSync.native(relative);
     assert.equal(canonical, realpathSync.native(file));
-    assert.equal((await readSecureFile({ filePath: relative })).buffer.toString(), 'private');
+    await assert.rejects(readSecureFile({ filePath: relative }), error =>
+      error instanceof FsSafeError && error.code === 'invalid-path');
     canonicalPaths.push({ ...aclEntries[1], input: relative, canonical });
     assert.equal(realpathSync.native('.'), expected);
     mark('relative-path:after');

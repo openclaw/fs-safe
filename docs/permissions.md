@@ -60,8 +60,9 @@ name, then verifies its drive-root prefix before returning the DOS spelling.
 UNC names are translated from the NT network namespace. This preserves long-name
 canonicalization and the existing identity and containment checks without
 granting access to other containers. Drive mappings are queried on each operation.
-Relative inputs resolve against the process working directory before opening,
-and UNC inputs accept either Windows path separator spelling. The current
+Canonicalization resolves relative inputs against the process working directory
+before opening, and UNC inputs accept either Windows path separator spelling.
+APIs that require absolute paths, including `readSecureFile()`, retain that requirement. The current
 container SID is trusted during ACL inspection independently of the object's owner.
 Folder-mounted volumes, volume-GUID inputs, and unmatched drive prefixes fail
 closed with `FsSafeError("path-mismatch")` when DOS resolution is denied.
