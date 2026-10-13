@@ -14,7 +14,14 @@ const target = `win32-${process.arch}-msvc`;
 const output = path.join(repo, 'artifacts-appcontainer');
 const diagnosticsOnly = process.argv.includes('--diagnostics-only');
 fs.mkdirSync(output, { recursive: true });
+const mark = phase => {
+  const row = JSON.stringify({ phase, time: new Date().toISOString() });
+  fs.appendFileSync(path.join(output, `outer-${process.arch}.jsonl`), row + '\n');
+  console.log(row);
+};
+mark('temp-root:created');
 try {
+  mark('fixture-copy:before');
   if (!diagnosticsOnly) {
     fs.cpSync(path.join(repo, 'dist'), path.join(root, 'pkg/dist'), { recursive: true });
     fs.copyFileSync(path.join(repo, 'package.json'), path.join(root, 'pkg/package.json'));
@@ -25,13 +32,19 @@ try {
   fs.copyFileSync(path.join(repo, 'test/fixtures/windows-appcontainer-canonicalization.mjs'), path.join(root, 'canonicalization.mjs'));
   fs.writeFileSync(path.join(root, 'profiles.json'), '[]');
   fs.writeFileSync(path.join(root, 'canonical-expected.json'), JSON.stringify(fs.realpathSync.native(root)));
+  mark('fixture-copy:after');
   for (const mode of diagnosticsOnly ? [] : ['require', 'off']) {
+    mark(`ordinary-${mode}:before`);
     execFileSync(path.join(root, 'node.exe'), [path.join(root, 'child.mjs'), 'ordinary', mode], { stdio: 'inherit', timeout: 120_000 });
+    mark(`ordinary-${mode}:after`);
   }
   const ps = value => `'${value.replaceAll("'", "''")}'`;
+  mark('outer-powershell:before');
+  const shellTrace = `$ErrorActionPreference='Stop'; $trace=${ps(path.join(root, 'progress-outer-shell.jsonl'))}; function MarkPhase($phase) { $row=@{phase=$phase;time=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress; [IO.File]::AppendAllText($trace,$row+[Environment]::NewLine); [Console]::WriteLine($row) };`;
   execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-    `$ErrorActionPreference='Stop'; & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') /nologo /target:exe ${ps(`/out:${path.join(root, 'canonicalization.exe')}`)} ${ps(path.join(repo, 'test/fixtures/windows-appcontainer.cs'))}; if ($LASTEXITCODE -ne 0) { throw 'Diagnostic fixture compilation failed' }; [System.Reflection.Assembly]::LoadFrom(${ps(path.join(root, 'canonicalization.exe'))}) | Out-Null; ${diagnosticsOnly ? '' : `[AppContainerFixture]::AssertBaseline(${ps(root)}); `}[AppContainerFixture]::Run(${ps(root)}, $${diagnosticsOnly})`],
+    `${shellTrace} MarkPhase 'compile:before'; & (Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe') /nologo /target:exe ${ps(`/out:${path.join(root, 'canonicalization.exe')}`)} ${ps(path.join(repo, 'test/fixtures/windows-appcontainer.cs'))}; if ($LASTEXITCODE -ne 0) { throw 'Diagnostic fixture compilation failed' }; MarkPhase 'compile:after'; [System.Reflection.Assembly]::LoadFrom(${ps(path.join(root, 'canonicalization.exe'))}) | Out-Null; MarkPhase 'assembly-load:after'; ${diagnosticsOnly ? '' : `MarkPhase 'baseline:before'; [AppContainerFixture]::AssertBaseline(${ps(root)}); MarkPhase 'baseline:after'; `}[AppContainerFixture]::Run(${ps(root)}, $${diagnosticsOnly}); MarkPhase 'run:after'`],
   { stdio: 'inherit', timeout: 480_000 });
+  mark('outer-powershell:after');
   for (const name of ['diagnostic-node.json', 'diagnostic-native.json']) {
     console.log(name, fs.readFileSync(path.join(root, name), 'utf8'));
   }
@@ -70,8 +83,12 @@ try {
   }
   throw error;
 } finally {
+  mark('receipts-copy:before');
   for (const name of fs.readdirSync(root).filter(name => /\.jsonl?$/.test(name))) {
     if (name !== 'profiles.json') fs.copyFileSync(path.join(root, name), path.join(output, `${process.arch}-${name}`));
   }
+  mark('receipts-copy:after');
+  mark('temp-cleanup:before');
   fs.rmSync(root, { recursive: true, force: true });
+  mark('temp-cleanup:after');
 }

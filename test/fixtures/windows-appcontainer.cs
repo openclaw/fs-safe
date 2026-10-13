@@ -44,6 +44,11 @@ public static class AppContainerFixture {
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint SetEntriesInAclW(uint count,[In] ExplicitAccess[] entries,IntPtr old,out IntPtr acl);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint GetNamedSecurityInfoW(string path,int kind,uint information,out IntPtr owner,out IntPtr group,out IntPtr dacl,out IntPtr sacl,out IntPtr descriptor);
+  static void Mark(string root,string phase) {
+    string row="{\"phase\":"+Json(phase)+",\"time\":"+Json(DateTime.UtcNow.ToString("o"))+"}";
+    File.AppendAllText(Path.Combine(root,"progress-outer-native.jsonl"),row+Environment.NewLine);
+    Console.WriteLine(row);
+  }
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
   static string Quote(string text) { return "\""+text+"\""; }
   static string Json(string text) { return "\""+text.Replace("\\","\\\\").Replace("\"","\\\"").Replace("\r","\\r").Replace("\n","\\n").Replace("\t","\\t")+"\""; }
@@ -146,32 +151,49 @@ public static class AppContainerFixture {
     IntPtr sidA=IntPtr.Zero,sidB=IntPtr.Zero;
     var ancestors=new Dictionary<string,byte[]>();
     try {
+      Mark(root,"profile-a:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(a,a,a,IntPtr.Zero,0,out sidA));
+      Mark(root,"profile-a:create:after");
+      Mark(root,"profile-b:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(b,b,b,IntPtr.Zero,0,out sidB));
+      Mark(root,"profile-b:create:after");
       // Node realpath lstats every ancestor, including the volume root. These
       // non-inheriting grants admit metadata/traversal, never descendant data.
-      for(var ancestor=Directory.GetParent(root);ancestor!=null;ancestor=ancestor.Parent) {
+      int ancestorIndex=0;
+      for(var ancestor=Directory.GetParent(root);ancestor!=null;ancestor=ancestor.Parent,ancestorIndex++) {
+        Mark(root,"ancestor-"+ancestorIndex+":read:before");
         var original=Directory.GetAccessControl(ancestor.FullName,AccessControlSections.Access);
         ancestors.Add(ancestor.FullName,original.GetSecurityDescriptorBinaryForm());
+        Mark(root,"ancestor-"+ancestorIndex+":read:after");
         foreach(var sid in new[]{sidA,sidB}) original.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
           FileSystemRights.ReadAttributes|FileSystemRights.Traverse,InheritanceFlags.None,PropagationFlags.None,AccessControlType.Allow));
+        Mark(root,"ancestor-"+ancestorIndex+":grant:before");
         Directory.SetAccessControl(ancestor.FullName,original);
+        Mark(root,"ancestor-"+ancestorIndex+":grant:after");
       }
+      Mark(root,"test-root:read:before");
       var security=Directory.GetAccessControl(root);
+      Mark(root,"test-root:read:after");
       foreach(var sid in new[]{sidA,sidB}) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
+      Mark(root,"test-root:grant:before");
       Directory.SetAccessControl(root,security);
+      Mark(root,"test-root:grant:after");
       // Lowbox tokens must also pass Mandatory Integrity Control on the fixture.
       IntPtr label; uint size;
       Check(ConvertStringSecurityDescriptorToSecurityDescriptorW("S:(ML;OICI;NW;;;LW)",1,out label,out size));
       try {
         bool present,defaulted; IntPtr sacl;
         Check(GetSecurityDescriptorSacl(label,out present,out sacl,out defaulted));
+        Mark(root,"test-root:integrity:before");
         uint error=SetNamedSecurityInfoW(root,1,0x10,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,sacl);
+        Mark(root,"test-root:integrity:after");
         if(error!=0) throw new Win32Exception((int)error);
       } finally { LocalFree(label); }
       File.WriteAllText(Path.Combine(root,"profiles.json"),"[\""+new SecurityIdentifier(sidA).Value.ToLowerInvariant()+"\",\""+new SecurityIdentifier(sidB).Value.ToLowerInvariant()+"\"]");
       IntPtr profile;
+      Mark(root,"profile-folder:before");
       Marshal.ThrowExceptionForHR(GetAppContainerFolderPath(new SecurityIdentifier(sidA).Value,out profile));
+      Mark(root,"profile-folder:after");
       string profilePath;
       try { profilePath=Marshal.PtrToStringUni(profile); } finally { Marshal.FreeCoTaskMem(profile); }
       File.WriteAllLines(Path.Combine(root,"canonicalization-paths.txt"),new[]{
@@ -187,12 +209,24 @@ public static class AppContainerFixture {
       Launch(root,sidA,"native-off","off");
     } finally {
       var failures=new List<Exception>();
+      int revokeIndex=0;
       foreach(var ancestor in ancestors) try {
+        Mark(root,"ancestor-"+revokeIndex+":revoke:before");
         var original=new DirectorySecurity(); original.SetSecurityDescriptorBinaryForm(ancestor.Value,AccessControlSections.Access);
         Directory.SetAccessControl(ancestor.Key,original);
+        Mark(root,"ancestor-"+revokeIndex+":revoke:after");
+        revokeIndex++;
       } catch(Exception error) { failures.Add(error); }
-      if(sidA!=IntPtr.Zero) { FreeSid(sidA); try { Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(a)); } catch(Exception error) { failures.Add(error); } }
-      if(sidB!=IntPtr.Zero) { FreeSid(sidB); try { Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(b)); } catch(Exception error) { failures.Add(error); } }
+      if(sidA!=IntPtr.Zero) { FreeSid(sidA); try {
+        Mark(root,"profile-a:delete:before");
+        Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(a));
+        Mark(root,"profile-a:delete:after");
+      } catch(Exception error) { failures.Add(error); } }
+      if(sidB!=IntPtr.Zero) { FreeSid(sidB); try {
+        Mark(root,"profile-b:delete:before");
+        Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(b));
+        Mark(root,"profile-b:delete:after");
+      } catch(Exception error) { failures.Add(error); } }
       if(failures.Count!=0) throw new AggregateException("AppContainer fixture cleanup failed",failures);
     }
   }
@@ -215,18 +249,24 @@ public static class AppContainerFixture {
         else exe=Path.Combine(root,"canonicalization.exe");
       }
       var command=new StringBuilder(Quote(exe)+" "+arguments);
+      Mark(root,operation+":launch:before");
       Check(CreateProcessW(exe,command,IntPtr.Zero,IntPtr.Zero,false,0x80000,IntPtr.Zero,root,ref startup,out process));
+      Mark(root,operation+":launch:after");
+      Mark(root,operation+":wait:before");
       uint wait=WaitForSingleObject(process.Process,60000);
+      Mark(root,operation+":wait:after:"+wait);
       if(wait!=0) { TerminateProcess(process.Process,1); throw new Exception("AppContainer "+operation+"/"+mode+" child did not finish: "+wait); }
       uint code; Check(GetExitCodeProcess(process.Process,out code));
       string receipt=Path.Combine(root,operation+(diagnostic ? "" : "-"+mode)+".json");
       if(code!=0) throw new Exception("AppContainer "+operation+"/"+mode+" exit "+code+": "+(File.Exists(receipt) ? File.ReadAllText(receipt) : "child failed before writing its receipt"));
     } finally {
+      Mark(root,operation+":handles-close:before");
       if(process.Thread!=IntPtr.Zero) CloseHandle(process.Thread);
       if(process.Process!=IntPtr.Zero) CloseHandle(process.Process);
       if(initialized) DeleteProcThreadAttributeList(list);
       if(list!=IntPtr.Zero) Marshal.FreeHGlobal(list);
       if(caps!=IntPtr.Zero) Marshal.FreeHGlobal(caps);
+      Mark(root,operation+":handles-close:after");
     }
   }
 }
