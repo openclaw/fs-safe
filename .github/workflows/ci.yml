@@ -1050,6 +1050,19 @@ jobs:
         with:
           node-version: 24
 
+      - name: Diagnose AppContainer canonicalization
+        if: runner.os == 'Windows'
+        id: appcontainer-diagnostic
+        run: node scripts/windows-appcontainer-proof.mjs --diagnostics-only
+
+      - name: Upload AppContainer canonicalization diagnostic
+        if: ${{ always() && runner.os == 'Windows' && steps.appcontainer-diagnostic.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appcontainer-canonicalization-${{ matrix.os }}
+          path: artifacts-appcontainer
+          if-no-files-found: error
+
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
 
@@ -1694,6 +1707,17 @@ jobs:
 
       - name: Verify native or emulated Node architecture
         run: node -e "if (process.platform !== 'win32' || process.arch !== '${{ matrix.arch }}') throw Error('Unexpected Node architecture'); console.log(process.version, process.platform, process.arch)"
+
+      - name: Diagnose AppContainer canonicalization
+        run: node scripts/windows-appcontainer-proof.mjs --diagnostics-only
+
+      - name: Upload AppContainer canonicalization diagnostic
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appcontainer-canonicalization-arm64-host-node-${{ matrix.arch }}
+          path: artifacts-appcontainer
+          if-no-files-found: error
 
       - name: Select matching Rust host and portable target
         run: |

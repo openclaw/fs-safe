@@ -30,6 +30,14 @@ public static class AppContainerFixture {
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);
   [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process,uint code);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
+  [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetTokenInformation(IntPtr token,int kind,out uint value,uint size,out uint returned);
+  [DllImport("userenv.dll",CharSet=CharSet.Unicode)] static extern int GetAppContainerFolderPath(string sid,out IntPtr path);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetLongPathNameW(string path,StringBuilder result,uint size);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetShortPathNameW(string path,StringBuilder result,uint size);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFileW(string path,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern uint GetFinalPathNameByHandleW(IntPtr handle,StringBuilder path,uint size,uint flags);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl,uint revision,out IntPtr descriptor,out uint size);
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint SetNamedSecurityInfoW(string path,int kind,uint information,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
   [DllImport("advapi32.dll",SetLastError=true)] static extern bool GetSecurityDescriptorSacl(IntPtr descriptor,out bool present,out IntPtr sacl,out bool defaulted);
@@ -38,6 +46,50 @@ public static class AppContainerFixture {
   [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] static extern uint GetNamedSecurityInfoW(string path,int kind,uint information,out IntPtr owner,out IntPtr group,out IntPtr dacl,out IntPtr sacl,out IntPtr descriptor);
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
   static string Quote(string text) { return "\""+text+"\""; }
+  static string Json(string text) { return "\""+text.Replace("\\","\\\\").Replace("\"","\\\"").Replace("\r","\\r").Replace("\n","\\n").Replace("\t","\\t")+"\""; }
+  static string Failure(int error) { return "\"ok\":false,\"win32Error\":"+error+",\"message\":"+Json(new Win32Exception(error).Message); }
+  // This executable runs in the same fresh AppContainer as the Node diagnostic,
+  // separating handle-open failures from normalized volume-name query failures.
+  public static int Main(string[] args) {
+    if(args.Length!=2) throw new ArgumentException("Expected paths and receipt filenames");
+    IntPtr token; Check(OpenProcessToken(GetCurrentProcess(),8,out token));
+    uint contained,returned;
+    try { Check(GetTokenInformation(token,29,out contained,4,out returned)); }
+    finally { CloseHandle(token); }
+    if(contained!=1) throw new Exception("Native diagnostic is not in an AppContainer");
+    var rows=new List<string>();
+    foreach(string line in File.ReadAllLines(args[0])) {
+      var pair=line.Split(new[]{'\t'},2);
+      foreach(uint access in new uint[]{0,0x80}) {
+        string prefix="\"label\":"+Json(pair[0])+",\"path\":"+Json(pair[1])+",\"access\":"+access;
+        IntPtr handle=CreateFileW(pair[1],access,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
+        if(handle==new IntPtr(-1)) {
+          int error=Marshal.GetLastWin32Error();
+          rows.Add("{"+prefix+",\"syscall\":\"CreateFileW\","+Failure(error)+"}"); continue;
+        }
+        rows.Add("{"+prefix+",\"syscall\":\"CreateFileW\",\"ok\":true}");
+        try {
+          foreach(uint flags in new uint[]{0,1,2}) {
+            string volume=flags==0 ? "DOS" : flags==1 ? "GUID" : "NT";
+            var result=new StringBuilder(32768);
+            uint length=GetFinalPathNameByHandleW(handle,result,(uint)result.Capacity,flags);
+            int error=length==0 ? Marshal.GetLastWin32Error() : 0;
+            string value=length==0 ? Failure(error) : "\"ok\":"+(length<result.Capacity ? "true" : "false")+",\"length\":"+length+",\"result\":"+Json(result.ToString());
+            rows.Add("{"+prefix+",\"syscall\":\"GetFinalPathNameByHandleW\",\"volume\":"+Json(volume)+","+value+"}");
+          }
+        } finally { CloseHandle(handle); }
+      }
+    }
+    File.WriteAllText(args[1],"{\"appContainer\":true,\"pointerSize\":"+IntPtr.Size+",\"rows\":["+String.Join(",",rows.ToArray())+"]}");
+    return 0;
+  }
+  static string PathSpelling(string path,bool shortName) {
+    var result=new StringBuilder(32768);
+    uint length=shortName ? GetShortPathNameW(path,result,(uint)result.Capacity) : GetLongPathNameW(path,result,(uint)result.Capacity);
+    Check(length!=0);
+    if(length>=result.Capacity) throw new Exception("Path spelling exceeded diagnostic buffer");
+    return result.ToString();
+  }
   static byte[] AclBytes(IntPtr acl) {
     if(acl==IntPtr.Zero) throw new Exception("DACL is absent");
     var bytes=new byte[(ushort)Marshal.ReadInt16(acl,2)]; Marshal.Copy(acl,bytes,0,bytes.Length); return bytes;
@@ -83,7 +135,7 @@ public static class AppContainerFixture {
       }
     }
   }
-  public static void Run(string root) {
+  public static void Run(string root,bool diagnosticsOnly) {
     // Only fixture setup is elevated; CreateProcessW below creates restricted
     // AppContainer children. Refuse clearly before modifying any ancestor ACL.
     using(var identity=WindowsIdentity.GetCurrent()) {
@@ -118,6 +170,16 @@ public static class AppContainerFixture {
         if(error!=0) throw new Win32Exception((int)error);
       } finally { LocalFree(label); }
       File.WriteAllText(Path.Combine(root,"profiles.json"),"[\""+new SecurityIdentifier(sidA).Value.ToLowerInvariant()+"\",\""+new SecurityIdentifier(sidB).Value.ToLowerInvariant()+"\"]");
+      IntPtr profile;
+      Marshal.ThrowExceptionForHR(GetAppContainerFolderPath(new SecurityIdentifier(sidA).Value,out profile));
+      string profilePath;
+      try { profilePath=Marshal.PtrToStringUni(profile); } finally { Marshal.FreeCoTaskMem(profile); }
+      File.WriteAllLines(Path.Combine(root,"canonicalization-paths.txt"),new[]{
+        "shared\t"+root,"profile\t"+profilePath,
+        "shared-long\t"+PathSpelling(root,false),"shared-short\t"+PathSpelling(root,true)});
+      Launch(root,sidA,"diagnostic-node","",true);
+      Launch(root,sidA,"diagnostic-native","",true);
+      if(diagnosticsOnly) return;
       foreach(string mode in new[]{"require","off"}) {
         Launch(root,sidA,"create",mode);
         Launch(root,sidA,"reopen",mode);
@@ -134,7 +196,7 @@ public static class AppContainerFixture {
       if(failures.Count!=0) throw new AggregateException("AppContainer fixture cleanup failed",failures);
     }
   }
-  static void Launch(string root,IntPtr sid,string operation,string mode) {
+  static void Launch(string root,IntPtr sid,string operation,string mode,bool diagnostic=false) {
     IntPtr size=IntPtr.Zero,list=IntPtr.Zero,caps=IntPtr.Zero;
     ProcessInfo process=new ProcessInfo();
     bool initialized=false;
@@ -146,12 +208,18 @@ public static class AppContainerFixture {
       Check(UpdateProcThreadAttribute(list,0,new IntPtr(0x20009),caps,new IntPtr(Marshal.SizeOf(typeof(Capabilities))),IntPtr.Zero,IntPtr.Zero));
       var startup=new StartupEx(); startup.Startup.Size=(uint)Marshal.SizeOf(typeof(StartupEx)); startup.Attributes=list;
       string exe=Path.Combine(root,"node.exe");
-      var command=new StringBuilder(Quote(exe)+" "+Quote(Path.Combine(root,"child.mjs"))+" "+operation+" "+mode);
+      string arguments=Quote(Path.Combine(root,"child.mjs"))+" "+operation+" "+mode;
+      if(diagnostic) {
+        arguments=Quote(Path.Combine(root,"canonicalization-paths.txt"))+" "+Quote(Path.Combine(root,operation+".json"));
+        if(operation=="diagnostic-node") arguments=Quote(Path.Combine(root,"canonicalization.mjs"))+" "+arguments;
+        else exe=Path.Combine(root,"canonicalization.exe");
+      }
+      var command=new StringBuilder(Quote(exe)+" "+arguments);
       Check(CreateProcessW(exe,command,IntPtr.Zero,IntPtr.Zero,false,0x80000,IntPtr.Zero,root,ref startup,out process));
       uint wait=WaitForSingleObject(process.Process,60000);
       if(wait!=0) { TerminateProcess(process.Process,1); throw new Exception("AppContainer child did not finish: "+wait); }
       uint code; Check(GetExitCodeProcess(process.Process,out code));
-      string receipt=Path.Combine(root,operation+"-"+mode+".json");
+      string receipt=Path.Combine(root,operation+(diagnostic ? "" : "-"+mode)+".json");
       if(code!=0) throw new Exception("AppContainer "+operation+"/"+mode+" exit "+code+": "+(File.Exists(receipt) ? File.ReadAllText(receipt) : "child failed before writing its receipt"));
     } finally {
       if(process.Thread!=IntPtr.Zero) CloseHandle(process.Thread);
