@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-- Fix private Windows files and directories inside AppContainers by granting only the creating container access and resolving denied DOS names through verified NT names. Relative, drive-letter and UNC paths are supported with the native addon, including mixed separators; folder-mounted volumes and ambiguous mappings fail closed as documented in the permissions guide. ACL inspection trusts the current container independently of object ownership, and unsafe inherited-ACL reset commands are refused in known containers. Permissions outside a container remain unchanged. Thanks @jonathanlindsay ([openclaw/openclaw#160287](https://github.com/openclaw/openclaw/issues/160287)).
+## 0.26.4 - 2026-10-13
+
+### Fixes
+
+- **Windows AppContainers:** private files and directories created inside an AppContainer now grant that container (and only that container) access, so the creating process can reopen them. When Windows denies DOS and GUID final-path names inside a container, canonicalization translates the verified NT name through the input's drive root or UNC prefix; relative, drive-letter and UNC inputs are supported with the native addon, while folder-mounted volumes and ambiguous mappings fail closed. ACL inspection trusts the current container independently of object ownership, contained processes never spawn the external security helper, and unsafe inherited-ACL reset commands are refused in known containers. Behavior outside a container is unchanged. Thanks @jonathanlindsay. Reported in [openclaw/openclaw#160287](https://github.com/openclaw/openclaw/issues/160287). ([#980](https://github.com/openclaw/fs-safe/pull/980))
+
+### Docs and Tooling
+
+- **Windows durability costs:** explain what non-durable writes cost and save on Windows. ([#973](https://github.com/openclaw/fs-safe/pull/973))
 
 ## 0.26.3 - 2026-10-13
 
