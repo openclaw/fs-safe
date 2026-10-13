@@ -2,9 +2,14 @@ import {
   formatCaughtPermissionFailure,
   getPermissionCommandFailure,
   type PermissionFailureFields,
+  executePermissionCommand,
 } from "./permission-exec.js";
+import { assertWindowsHelperAllowed } from "./windows-appcontainer.js";
+import { FsSafeError } from "./errors.js";
+import { realpathSync } from "./realpath.js";
 import { windowsSecurityHelperPath } from "./windows-security-helper.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
+import { APP_CONTAINER_SID_RE } from "./windows-security-facts.js";
 
 export type WindowsOwnerExec = (
   command: string,
@@ -14,6 +19,7 @@ export type WindowsOwnerExec = (
 export type WindowsOwnerSummary = Omit<PermissionFailureFields & {
   sid?: string;
   currentUserSid?: string;
+  currentAppContainerSid?: string;
   daclPresent?: boolean;
   aces?: WindowsOwnerAce[];
   aclError?: string;
@@ -60,6 +66,15 @@ export async function inspectWindowsOwner(params: {
     const error = new Error("Path uses a Windows filesystem namespace alias");
     return { error: String(error), errorCause: error };
   }
+  if (process.platform === "win32" && params.exec === executePermissionCommand) {
+    assertWindowsHelperAllowed();
+    // Refuse a missing sandbox canonicalizer before starting a helper process.
+    // Other pathname failures retain the named-query reporting contract below.
+    try { realpathSync.native(params.targetPath); }
+    catch (error) {
+      if (error instanceof FsSafeError && error.code === "helper-unavailable") throw error;
+    }
+  }
   let command = "";
   let startedAt = performance.now();
   try {
@@ -82,6 +97,10 @@ export async function inspectWindowsOwner(params: {
     if (!ownerSid || !currentUserSid) {
       return { error: "Windows owner query returned invalid SID data" };
     }
+    if (parsed.currentAppContainerSid != null &&
+        (typeof parsed.currentAppContainerSid !== "string" || !APP_CONTAINER_SID_RE.test(parsed.currentAppContainerSid.toLowerCase()))) {
+      return { error: "Windows owner query returned invalid AppContainer SID data" };
+    }
     const remote = parsed.remote;
     if (typeof remote !== "boolean") {
       return { error: "Windows owner query returned invalid locality data" };
@@ -89,6 +108,7 @@ export async function inspectWindowsOwner(params: {
     return {
       sid: ownerSid,
       currentUserSid,
+      ...(typeof parsed.currentAppContainerSid === "string" ? { currentAppContainerSid: normalizeSid(parsed.currentAppContainerSid) } : {}),
       ...parseWindowsAclFacts(parsed),
       trusted: !remote && (ownerSid === currentUserSid || TRUSTED_OWNER_SIDS.has(ownerSid)),
     };

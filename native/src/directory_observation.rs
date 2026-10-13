@@ -236,10 +236,9 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_READ_ATTRIBUTES, GetFinalPathNameByHandleW,
+        FILE_READ_ATTRIBUTES,
     };
 
     use super::ExactDirectoryObservation;
@@ -248,84 +247,38 @@ mod platform {
         windows::{observe_directory_identity, open_existing_handle, wide_absolute_path, win_error},
     };
 
-    const INITIAL_PATH_WCHARS: usize = 512;
-
-    fn unavailable_path() -> crate::NativeError {
-        native_error("OBSERVATION_UNAVAILABLE", "observed directory path changed or could not be resolved")
-    }
-
-    fn canonical_path_with_query(
-        handle: windows_sys::Win32::Foundation::HANDLE,
-        mut query: impl FnMut(windows_sys::Win32::Foundation::HANDLE, &mut [u16]) -> NativeResult<usize>,
-    ) -> NativeResult<String> {
-        let mut stack = [0_u16; INITIAL_PATH_WCHARS];
-        let written = query(handle, &mut stack)?;
-        if written == 0 {
-            return Err(unavailable_path());
-        }
-        let mut heap = Vec::new();
-        let encoded = if written < stack.len() {
-            &stack[..written]
-        } else {
-            // A too-small query reports the required capacity including NUL.
-            // Retry once on the same handle, retaining the previous fail-closed
-            // behavior if the normalized name grows beyond the new buffer.
-            let capacity = written.checked_add(1)
-                .filter(|capacity| *capacity <= u32::MAX as usize)
-                .ok_or_else(unavailable_path)?;
-            heap.try_reserve_exact(capacity).map_err(|_| unavailable_path())?;
-            heap.resize(capacity, 0_u16);
-            let confirmed = query(handle, &mut heap)?;
-            if confirmed == 0 || confirmed >= heap.len() {
-                return Err(unavailable_path());
-            }
-            &heap[..confirmed]
-        };
-        let path = String::from_utf16(encoded).map_err(|_| {
-            native_error(
-                "OBSERVATION_UNAVAILABLE",
-                "observed directory path is not valid UTF-16",
-            )
-        })?;
-        if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
-            return Ok(format!(r"\\{path}"));
-        }
-        Ok(path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned())
-    }
-
-    pub(super) fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
-        canonical_path_with_query(handle, |handle, buffer| {
-            // Keep normalized names (flags 0): the opened spelling cannot prove
-            // physical containment through a renamed or redirected ancestor.
-            let written = unsafe {
-                GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0)
-            };
-            if written == 0 {
-                return Err(native_error(
-                    "OBSERVATION_UNAVAILABLE",
-                    format!(
-                        "resolve observed directory path: Windows error {}",
-                        unsafe { GetLastError() },
-                    ),
-                ));
-            }
-            Ok(written as usize)
+    pub(super) fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE, input: &str) -> NativeResult<String> {
+        crate::windows_canonical_path::canonical_path(handle, input, |error| {
+            if let Some(code) = error.errno {
+                native_error("OBSERVATION_UNAVAILABLE",
+                    format!("resolve observed directory path: Windows error {code}"))
+            } else if error.status == "ENOTSUP" {
+                native_error("OBSERVATION_UNAVAILABLE", "observed directory path is not valid UTF-16")
+            } else { error }
         })
+    }
+
+    #[test]
+    fn invalid_handle_preserves_observation_error() {
+        let error = canonical_path(windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE, r"C:\").unwrap_err();
+        assert_eq!(error.status, "OBSERVATION_UNAVAILABLE");
+        assert_eq!(error.reason, "resolve observed directory path: Windows error 6");
+        assert_eq!(error.errno, None);
     }
 
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
         if path.contains('\0') {
             return Err(native_error("EINVAL", "directory path contains a NUL byte"));
         }
-        let path = wide_absolute_path(path);
+        let wide = wide_absolute_path(path);
         let handle = open_existing_handle(
-            &path,
+            &wide,
             FILE_READ_ATTRIBUTES,
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
             |code| win_error(code, "open directory observation"),
         )?;
         let (dev, ino) = observe_directory_identity(handle.0)?;
-        let real_path = canonical_path(handle.0)?;
+        let real_path = canonical_path(handle.0, path)?;
         Ok(ExactDirectoryObservation {
             dev: u64::from(dev),
             ino,
@@ -333,10 +286,6 @@ mod platform {
         })
     }
 
-    #[cfg(test)]
-    mod tests {
-        include!("directory_observation_windows_tests.rs");
-    }
 }
 
 pub(crate) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {
@@ -349,8 +298,8 @@ pub(crate) fn canonical_unix_directory(fd: i32, nlink: u64) -> NativeResult<Stri
 }
 
 #[cfg(windows)]
-pub(crate) fn canonical_windows_directory(handle: windows_sys::Win32::Foundation::HANDLE) -> NativeResult<String> {
-    platform::canonical_path(handle)
+pub(crate) fn canonical_windows_directory(handle: windows_sys::Win32::Foundation::HANDLE, input: &str) -> NativeResult<String> {
+    platform::canonical_path(handle, input)
 }
 
 #[cfg(unix)]

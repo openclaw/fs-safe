@@ -14,7 +14,10 @@ export function runWindowsSecurityScript(
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-win-test-script-"));
   try {
     fs.writeFileSync(path.join(directory, "windows-security-bridge.cs"), source, "utf8");
-    if (helperSource) fs.copyFileSync(new URL("../../src/windows-owner-query.cs", import.meta.url), path.join(directory, "windows-owner-query.cs"));
+    // Transport fixtures replace the security bridge and never query owners.
+    // Keep the unused dispatch arm fail-fast without importing real ACL code.
+    if (helperSource) fs.writeFileSync(path.join(directory, "windows-owner-query.cs"),
+      'public static class FsSafeWindowsOwnerQuery { public static object Execute(string path) { throw new System.InvalidOperationException("owner query is outside the transport fixture"); } }');
     if (helperSource) fs.writeFileSync(path.join(directory, "windows-security-helper.cs"), helperSource, "utf8");
     const script = path.join(directory, "windows-security-test.ps1");
     fs.writeFileSync(script, "\ufeff" + [

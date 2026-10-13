@@ -4,11 +4,31 @@ import { getSystemErrorName } from "node:util";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
+import { isWindowsAppContainer } from "./windows-appcontainer.js";
 
 const runtimePlatform = process.versions.bun ? platform() : undefined;
 const bunPosix = runtimePlatform === "darwin" || runtimePlatform === "linux" ? runtimePlatform : undefined;
-
 function resolve(input: string, native: boolean): string {
+  if (native && process.platform === "win32") {
+    try { return fs.realpathSync.native(input); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM" || (error as NodeJS.ErrnoException).syscall !== "realpath") throw error;
+      let binding: ReturnType<typeof getNativeBinding>;
+      try { binding = getNativeBinding(); }
+      catch { binding = undefined; }
+      if (!binding || !isWindowsAppContainer(binding)) throw error;
+      if (!binding?.resolveWindowsCanonicalPath) {
+        throw new FsSafeError("helper-unavailable", "Windows canonicalization after a denied DOS-name query requires the native binding", { cause: error });
+      }
+      let resolved: string | null;
+      try { resolved = binding.resolveWindowsCanonicalPath(input); }
+      catch (cause) {
+        throw new FsSafeError("path-mismatch", "Windows canonical path cannot be verified safely", { cause });
+      }
+      if (resolved === null) throw error;
+      return resolved;
+    }
+  }
   if (bunPosix) {
     // Bun 1.4.2 normalizes native path components and opens the leaf for reads.
     // The Rust OS resolver preserves permissions, locks and physical spelling.

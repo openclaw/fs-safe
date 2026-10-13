@@ -6,6 +6,7 @@ import { getFsSafeNativeConfig } from "./native-config.js";
 import { warnNativeFallback } from "./native-fallback-warning.js";
 import type { PermissionCheck } from "./permissions.js";
 import { inspectWindowsDescriptorCommand } from "./windows-security-command.js";
+import { assertWindowsHelperAllowed } from "./windows-appcontainer.js";
 import { unverified as permissionUnverified, validateSecureWindowsSecurityFacts } from "./windows-security-facts.js";
 
 const IDENTITY_RE = /^([0-9a-f]{8}):([0-9a-f]{16})$/;
@@ -73,6 +74,7 @@ export async function inspectSecureWindowsFile(params: {
     permissionUnverified("Windows descriptor ACL verification requires an up-to-date native helper");
   }
   if (!nativeAvailable) {
+    assertWindowsHelperAllowed();
     warnNativeFallback("windows-secure-file", "Windows descriptor ACL inspection launches the packaged .NET helper for each check.", "inspectWindowsSecureFileHandle");
   }
   let result: unknown;

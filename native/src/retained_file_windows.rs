@@ -82,14 +82,22 @@ pub(super) fn check_ntfs(handle: HANDLE) -> NativeResult<()> {
 }
 
 pub(super) fn canonical(handle: HANDLE, expected: &str) -> NativeResult<()> {
-    let mut buf = vec![0u16; 32768];
-    let n = unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), buf.len() as u32, 0) } as usize;
-    if n == 0 || n >= buf.len() { return Err(native_error("path-mismatch", "retained directory path is unavailable")); }
-    let observed = String::from_utf16(&buf[..n]).map_err(|_| native_error("ENOTSUP", "invalid directory spelling"))?;
+    let observed = crate::windows_canonical_path::canonical_path(handle, expected, |error| {
+        if error.errno.is_none() && error.status == "ENOTSUP" { native_error("ENOTSUP", "invalid directory spelling") }
+        else { native_error("path-mismatch", "retained directory path is unavailable") }
+    })?;
     if !observed.strip_prefix(r"\\?\").unwrap_or(&observed).eq_ignore_ascii_case(expected) {
         return Err(native_error("path-mismatch", "retained directory has another canonical path"));
     }
     Ok(())
+}
+
+#[test]
+fn invalid_handle_preserves_retained_path_error() {
+    let error = canonical(INVALID_HANDLE_VALUE, r"C:\").unwrap_err();
+    assert_eq!(error.status, "path-mismatch");
+    assert_eq!(error.reason, "retained directory path is unavailable");
+    assert_eq!(error.errno, None);
 }
 
 pub(super) fn exact(handle: HANDLE, dev: u64, ino: u64, directory: bool) -> NativeResult<String> {

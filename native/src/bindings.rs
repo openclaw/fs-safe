@@ -50,6 +50,10 @@ mod root_remove;
 mod root_remove_windows;
 #[cfg(unix)]
 mod realpath;
+#[cfg(any(windows, test))]
+mod windows_canonical_path;
+#[cfg(windows)]
+mod windows_appcontainer;
 #[cfg(target_os = "macos")]
 mod darwin_security;
 #[cfg(unix)]

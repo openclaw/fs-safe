@@ -46,6 +46,47 @@ without letting the inspected pathname add shell syntax.
 
 ## Advanced Windows ACL helpers
 
+Private Windows DACLs grant full access to the process user, SYSTEM, and
+Administrators. Inside an AppContainer they additionally grant that process
+token's own container SID, with inheritance on directories. Other containers
+and ALL APPLICATION PACKAGES receive no grant. Creation and security inspection
+use the same token identity; a token-query failure rejects the operation.
+Outside an AppContainer the existing descriptors are unchanged. The native
+addon and packaged .NET security helper both enforce this boundary.
+
+When an AppContainer cannot obtain DOS volume names, guarded path operations
+require the native addon. fs-safe resolves the same open handle's normalized NT
+name, then verifies its drive-root prefix before returning the DOS spelling.
+UNC names are translated from the NT network namespace. This preserves long-name
+canonicalization and the existing identity and containment checks without
+granting access to other containers. Drive mappings are queried on each operation.
+Canonicalization resolves relative inputs against the process working directory
+before opening, and UNC inputs accept either Windows path separator spelling.
+APIs that require absolute paths, including `readSecureFile()`, retain that requirement. The current
+container SID is trusted during ACL inspection independently of the object's owner.
+Folder-mounted volumes, volume-GUID inputs, and unmatched drive prefixes fail
+closed with `FsSafeError("path-mismatch")` when DOS resolution is denied.
+AppContainer support requires the native addon. In native mode `off`, or without
+native membership support, a denied DOS-name query retains Node's original
+`EPERM` error unchanged. The JavaScript realpath resolver is not a fallback.
+Outside a sandbox, successful DOS resolution and ordinary errors retain their
+existing behavior, including in native mode `off`.
+
+Only a denied DOS-name query triggers the canonicalizer's in-process token probe.
+The addon caches immutable AppContainer membership across Workers. Canonicalization
+never starts a helper process. In a container, failure to open the path or query
+its normalized NT name also preserves the original error, so existing contention
+handling remains effective. Token-probe failures are typed.
+
+Inside an AppContainer, advanced ACL inspection uses native facts for inherited
+entries and unique full-control allow entries with uniform inheritance flags,
+including fs-safe's private DACL. Operations that require an external helper
+instead fail with `helper-unavailable` when native membership identifies the
+container. Current Node/libuv child-process pipe creation can fail or hang inside
+AppContainers ([nodejs/node#66374](https://github.com/nodejs/node/issues/66374),
+[libuv/libuv#5178](https://github.com/libuv/libuv/issues/5178)); fs-safe must not
+start the .NET helper or a Node helper child there.
+
 The low-level Windows ACL parser and `icacls` command builders live in `@openclaw/fs-safe/advanced`:
 
 ```ts
@@ -323,6 +364,9 @@ pathname, establish that the earlier operation stopped and verify any existing
 directory's security. The library does not attempt pathname-based cleanup.
 
 Use `createIcaclsResetCommand()` when you need a structured command and argv pair. Use `formatIcaclsResetCommand()` when you only need a remediation string for a user-facing message.
+These builders and `formatPermissionRemediation()` throw `helper-unavailable` in
+a known AppContainer: removing inherited grants could revoke the container's
+own access. Ordinary-process commands remain unchanged.
 
 ## Types
 

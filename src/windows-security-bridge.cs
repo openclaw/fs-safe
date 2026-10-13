@@ -35,6 +35,10 @@ public static partial class FsSafeWindowsBridge {
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, out bool present, out IntPtr dacl, out bool defaulted);
   [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetSecurityDescriptorOwner(IntPtr descriptor, out IntPtr owner, out bool defaulted);
   [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(SafeFileHandle handle, int kind, uint sections, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr token, int kind, IntPtr information, uint length, out uint required);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   [DllImport("ntdll.dll")] static extern int NtQueryInformationFile(SafeFileHandle handle, out IoStatus io, [Out] byte[] information, uint length, int kind);
   [DllImport("ntdll.dll")] static extern int NtCreateFile(out SafeFileHandle handle, uint access, ref ObjectAttributes attributes, out IoStatus io, IntPtr allocation, uint flags, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
   [DllImport("ntdll.dll")] static extern uint RtlNtStatusToDosError(int status);
@@ -131,6 +135,46 @@ public static partial class FsSafeWindowsBridge {
     Require(sid!=null,"EIO","security descriptor SID is missing");
     return sid.Value.ToLowerInvariant();
   }
+  static bool IsAppContainer(IntPtr token) {
+    IntPtr information=Marshal.AllocHGlobal(4);
+    try {
+      uint required;
+      if(!GetTokenInformation(token,29,information,4,out required)) throw OsFailure((uint)Marshal.GetLastWin32Error(),"read token AppContainer status");
+      int value=Marshal.ReadInt32(information);
+      Require(required==4 && (value==0 || value==1),"EIO","process AppContainer status is invalid");
+      return value!=0;
+    } finally { Marshal.FreeHGlobal(information); }
+  }
+  // The primary process token owns both creation grants and private admission.
+  internal sealed class PrivateIdentity {
+    internal readonly SecurityIdentifier User, AppContainer;
+    internal readonly SecurityIdentifier[] Principals;
+    internal PrivateIdentity() {
+      IntPtr token;
+      if(!OpenProcessToken(GetCurrentProcess(),8,out token)) throw OsFailure((uint)Marshal.GetLastWin32Error(),"open process token");
+      try {
+        using(var identity=new WindowsIdentity(token)) User=identity.User;
+        IntPtr information=Marshal.AllocHGlobal(4);
+        try {
+          uint required;
+          if(IsAppContainer(token)) {
+            GetTokenInformation(token,31,IntPtr.Zero,0,out required);
+            Require(Marshal.GetLastWin32Error()==122 && required>=IntPtr.Size,"EIO","size token AppContainer SID failed");
+            Marshal.FreeHGlobal(information); information=IntPtr.Zero;
+            information=Marshal.AllocHGlobal(checked((int)required));
+            if(!GetTokenInformation(token,31,information,required,out required)) throw OsFailure((uint)Marshal.GetLastWin32Error(),"read token AppContainer SID");
+            IntPtr sid=Marshal.ReadIntPtr(information);
+            Require(sid!=IntPtr.Zero,"EIO","token AppContainer SID is missing");
+            AppContainer=new SecurityIdentifier(sid);
+          }
+        } finally { if(information!=IntPtr.Zero) Marshal.FreeHGlobal(information); }
+      } finally { CloseHandle(token); }
+      var principals=new List<SecurityIdentifier>{User,new SecurityIdentifier("S-1-5-18"),new SecurityIdentifier("S-1-5-32-544")};
+      if(AppContainer!=null) principals.Add(AppContainer);
+      Principals=principals.ToArray();
+    }
+    internal bool Trusts(string sid) { return Array.Exists(Principals, principal=>Sid(principal)==sid); }
+  }
   static Dictionary<string,object> Security(SafeFileHandle handle, bool requireLocality=true) {
     IntPtr owner,group,dacl,sacl,descriptor;
     uint error=GetSecurityInfo(handle,1,5,out owner,out group,out dacl,out sacl,out descriptor);
@@ -141,8 +185,8 @@ public static partial class FsSafeWindowsBridge {
       Require(length>=20 && length<=1024*1024,"EIO","security descriptor exceeds the inspection budget");
       var bytes=new byte[length]; Marshal.Copy(descriptor,bytes,0,(int)length);
       var raw=new RawSecurityDescriptor(bytes,0);
-      string ownerSid=Sid(raw.Owner), currentSid;
-      using(var current=WindowsIdentity.GetCurrent()) currentSid=Sid(current.User);
+      var current=new PrivateIdentity();
+      string ownerSid=Sid(raw.Owner), currentSid=Sid(current.User);
       var aces=new List<object>(); var unsupported=new List<int>();
       if(raw.DiscretionaryAcl!=null) foreach(GenericAce ace in raw.DiscretionaryAcl) {
         var basic=ace as CommonAce;
@@ -160,18 +204,17 @@ public static partial class FsSafeWindowsBridge {
       try { isLocal=IsLocal(handle); }
       catch(Failure) { if(requireLocality) throw; isLocal=false; }
       return Row("ownerSid",ownerSid,"currentUserSid",currentSid,"daclPresent",raw.DiscretionaryAcl!=null,
+        "currentAppContainerSid",current.AppContainer==null ? null : Sid(current.AppContainer),
         "daclProtected",(raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0,
         "isLocal",isLocal,"aceListComplete",unsupported.Count==0,"unsupportedAceTypes",unsupported.ToArray(),"aces",aces.ToArray());
     } finally { if(descriptor!=IntPtr.Zero) LocalFree(descriptor); }
   }
   static byte[] PrivateSecurity(bool inherit=true) {
-    SecurityIdentifier current;
-    using(var identity=WindowsIdentity.GetCurrent()) current=identity.User;
-    var acl=new RawAcl(2,3);
-    var principals=new[]{current,new SecurityIdentifier("S-1-5-18"),new SecurityIdentifier("S-1-5-32-544")};
+    var current=new PrivateIdentity();
+    var acl=new RawAcl(2,current.Principals.Length);
     var flags=inherit ? AceFlags.ObjectInherit|AceFlags.ContainerInherit : AceFlags.None;
-    foreach(var principal in principals) acl.InsertAce(acl.Count,new CommonAce(flags,AceQualifier.AccessAllowed,0x1f01ff,principal,false,null));
-    var descriptor=new RawSecurityDescriptor(ControlFlags.DiscretionaryAclPresent|ControlFlags.DiscretionaryAclProtected|ControlFlags.SelfRelative,current,null,null,acl);
+    foreach(var principal in current.Principals) acl.InsertAce(acl.Count,new CommonAce(flags,AceQualifier.AccessAllowed,0x1f01ff,principal,false,null));
+    var descriptor=new RawSecurityDescriptor(ControlFlags.DiscretionaryAclPresent|ControlFlags.DiscretionaryAclProtected|ControlFlags.SelfRelative,current.User,null,null,acl);
     var bytes=new byte[descriptor.BinaryLength]; descriptor.GetBinaryForm(bytes,0); return bytes;
   }
   static SafeFileHandle CreateRelative(SafeFileHandle parent,string name) {
@@ -192,6 +235,7 @@ public static partial class FsSafeWindowsBridge {
     } finally { if(unicodeBuffer!=IntPtr.Zero) Marshal.FreeHGlobal(unicodeBuffer); Marshal.FreeHGlobal(nameBuffer); pin.Free(); }
   }
   static void RequirePrivate(Dictionary<string,object> facts, bool requireProtected=true, bool requirePrivateChildren=false, bool allowAdministratorsOwner=false) {
+    var identity=new PrivateIdentity();
     string current=(string)facts["currentUserSid"], owner=(string)facts["ownerSid"];
     Require((bool)facts["isLocal"] && (bool)facts["daclPresent"] && (!requireProtected || (bool)facts["daclProtected"]) &&
       (bool)facts["aceListComplete"] && (owner==current || (allowAdministratorsOwner && owner=="s-1-5-32-544")),
@@ -199,7 +243,7 @@ public static partial class FsSafeWindowsBridge {
     foreach(Dictionary<string,object> ace in (object[])facts["aces"]) {
       var flags=(Dictionary<string,object>)ace["flags"];
       string sid=(string)ace["sid"];
-      if((string)ace["aceType"]=="deny" || sid==current || sid=="s-1-5-18" || sid=="s-1-5-32-544") continue;
+      if((string)ace["aceType"]=="deny" || identity.Trusts(sid)) continue;
       if((bool)flags["inheritOnly"] && (!requirePrivateChildren || (!(bool)flags["objectInherit"] && !(bool)flags["containerInherit"]))) continue;
       uint mask=(uint)ace["mask"];
       Require((mask&0xd00d01dfu)==0,"EACCES","private object permits untrusted access");

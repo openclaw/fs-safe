@@ -137,7 +137,7 @@ mod platform {
             for _ in 0..2 {
                 let named = open_named()?;
                 if facts(named.0, self.expected)? != before
-                    || crate::directory_observation::canonical_windows_directory(named.0)? != self.path {
+                    || crate::directory_observation::canonical_windows_directory(named.0, &self.path)? != self.path {
                     return Err(native_error("path-mismatch", "named root changed during verification"));
                 }
             }

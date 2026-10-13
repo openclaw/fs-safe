@@ -10,7 +10,7 @@ import { __setNativeLoaderForTest, __resetNativeLoaderForTest, type NativeBindin
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
 import { createPrivateDirectory } from "../src/private-directory.js";
 import { inspectSecureWindowsFile } from "../src/secure-file-windows.js";
-import { DEFAULT_PERMISSION_EXEC_TIMEOUT_MS } from "../src/permission-exec.js";
+import { executePermissionCommand, DEFAULT_PERMISSION_EXEC_TIMEOUT_MS } from "../src/permission-exec.js";
 import { createPrivateWindowsDirectoryCommand, inspectWindowsDescriptorCommand, readWindowsSecurityFactsCommand } from "../src/windows-security-command.js";
 
 vi.mock("node:child_process", async importOriginal => ({
@@ -386,5 +386,25 @@ describe("Windows helper synchronous launch failure", () => {
     expect(() => readWindowsSecurityFactsCommand("C:\\private")).toThrow(
       expect.objectContaining({ message: expect.stringContaining("rebuild with pnpm build:windows-helper or reinstall") }),
     );
+  });
+});
+
+
+describe("AppContainer helper refusal", () => {
+  it("refuses sync, async, batch and permission helpers before spawning", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    configureFsSafeNative({ mode: "auto" });
+    __setNativeLoaderForTest(() => ({
+      closeOwnedFd() {}, isWindowsAppContainer: () => true,
+    }) as unknown as NativeBinding);
+    const { readWindowsSecurityFactsBatch } = await import("../src/windows-security-command.js");
+    expect(() => readWindowsSecurityFactsCommand("C:\\private")).toThrow(expect.objectContaining({ code: "helper-unavailable" }));
+    await expect(createPrivateWindowsDirectoryCommand("C:\\private")).rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(inspectWindowsDescriptorCommand(0)).rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(readWindowsSecurityFactsBatch(["C:\\private"], { timeoutMs: 100, native: true, mode: "auto" }))
+      .rejects.toMatchObject({ code: "helper-unavailable" });
+    await expect(executePermissionCommand("unused", [])).rejects.toMatchObject({ code: "helper-unavailable" });
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
   });
 });

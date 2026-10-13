@@ -33,6 +33,7 @@ pub struct WindowsAccessControlEntry {
 pub struct WindowsSecurityFacts {
     pub owner_sid: String,
     pub current_user_sid: String,
+    pub current_app_container_sid: Option<String>,
     pub owner_class: String,
     pub world_writable: bool,
     pub group_writable: bool,
@@ -205,6 +206,7 @@ mod windows {
         PROTECTED_DACL_SECURITY_INFORMATION, PSID, SE_DACL_PRESENT, SE_DACL_PROTECTED,
         SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl,
         SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        TOKEN_APPCONTAINER_INFORMATION, TokenAppContainerSid,
         WinAnonymousSid, WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinGuestsSid,
         WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
@@ -279,6 +281,21 @@ mod windows {
     struct TokenSid {
         _buffer: Vec<u8>,
         sid: PSID,
+        app_container: Option<(Vec<u8>, PSID)>,
+        system: Vec<u8>,
+        administrators: Vec<u8>,
+    }
+
+    impl TokenSid {
+        fn private_sids(&self) -> impl Iterator<Item = PSID> + '_ {
+            [self.sid, self.system.as_ptr().cast_mut().cast(),
+                self.administrators.as_ptr().cast_mut().cast()].into_iter()
+                .chain(self.app_container.iter().map(|(_, sid)| *sid))
+        }
+
+        fn trusts(&self, sid: PSID) -> bool {
+            self.private_sids().any(|own| unsafe { EqualSid(sid, own) } != 0)
+        }
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -345,9 +362,30 @@ mod windows {
             return Err(win_error(unsafe { GetLastError() }, "read token user"));
         }
         let sid = unsafe { (*(buffer.as_ptr().cast::<TOKEN_USER>())).User.Sid };
+        let app_container = if crate::windows_appcontainer::is_app_container()? {
+            needed = 0;
+            unsafe { GetTokenInformation(token.0, TokenAppContainerSid, null_mut(), 0, &mut needed) };
+            if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER
+                || (needed as usize) < size_of::<TOKEN_APPCONTAINER_INFORMATION>() {
+                return Err(win_error(unsafe { GetLastError() }, "size token AppContainer SID"));
+            }
+            let mut information = vec![0_u8; needed as usize];
+            if unsafe { GetTokenInformation(token.0, TokenAppContainerSid,
+                information.as_mut_ptr().cast(), needed, &mut needed) } == 0 {
+                return Err(win_error(unsafe { GetLastError() }, "read token AppContainer SID"));
+            }
+            let app_sid = unsafe { (*(information.as_ptr().cast::<TOKEN_APPCONTAINER_INFORMATION>())).TokenAppContainer };
+            if app_sid.is_null() || unsafe { IsValidSid(app_sid) } == 0 {
+                return Err(native_error("EIO", "token AppContainer SID is missing or invalid"));
+            }
+            Some((information, app_sid))
+        } else { None };
         Ok(TokenSid {
             _buffer: buffer,
             sid,
+            app_container,
+            system: well_known_sid(WinLocalSystemSid)?,
+            administrators: well_known_sid(WinBuiltinAdministratorsSid)?,
         })
     }
 
@@ -838,6 +876,7 @@ mod windows {
                 Some(WindowsSecurityFacts {
                     owner_sid: sid_string(owner)?,
                     current_user_sid: sid_string(current.sid)?,
+                    current_app_container_sid: current.app_container.as_ref().map(|(_, sid)| sid_string(*sid)).transpose()?,
                     owner_class: owner_class.as_str().to_owned(),
                     world_writable: dacl.is_null(),
                     group_writable: false,
@@ -882,9 +921,7 @@ mod windows {
                     if entry.ace_type == ACCESS_DENIED_ACE_TYPE {
                         continue;
                     }
-                    let trusted = unsafe { EqualSid(entry.sid, current.sid) } != 0
-                        || unsafe { IsWellKnownSid(entry.sid, WinLocalSystemSid) } != 0
-                        || unsafe { IsWellKnownSid(entry.sid, WinBuiltinAdministratorsSid) } != 0;
+                    let trusted = current.trusts(entry.sid);
                     if trusted {
                         continue;
                     }
@@ -1288,14 +1325,8 @@ mod windows {
     }
 
     fn private_acl(current: &TokenSid, inherit: bool) -> NativeResult<PrivateAcl> {
-        let system = well_known_sid(WinLocalSystemSid)?;
-        let administrators = well_known_sid(WinBuiltinAdministratorsSid)?;
-        let sids: [PSID; 3] = [
-            current.sid,
-            system.as_ptr().cast_mut().cast(),
-            administrators.as_ptr().cast_mut().cast(),
-        ];
-        let mut entries: [EXPLICIT_ACCESS_W; 3] = unsafe { zeroed() };
+        let sids: Vec<PSID> = current.private_sids().collect();
+        let mut entries: Vec<EXPLICIT_ACCESS_W> = (0..sids.len()).map(|_| unsafe { zeroed() }).collect();
         for (entry, sid) in entries.iter_mut().zip(sids) {
             entry.grfAccessPermissions = FILE_ALL_ACCESS;
             entry.grfAccessMode = GRANT_ACCESS;

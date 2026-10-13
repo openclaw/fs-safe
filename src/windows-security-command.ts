@@ -1,3 +1,4 @@
+import { assertWindowsHelperAllowed } from "./windows-appcontainer.js";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { FsSafeError } from "./errors.js";
@@ -121,6 +122,7 @@ function explainHelperFailure(error: Error, file: string): void {
 }
 
 function executeSync(operation: CommandOperation, params: CommandParams): unknown {
+  assertWindowsHelperAllowed();
   const { file, args, env } = command(operation, params);
   const startedAt = performance.now();
   const result = spawnSync(file, args, {
@@ -208,6 +210,7 @@ type AsyncCommandRequest = {
 };
 
 async function execute(operation: CommandOperation, params: CommandParams, request?: AsyncCommandRequest): Promise<unknown> {
+  assertWindowsHelperAllowed();
   const selected: AsyncCommandRequest = request ?? command(operation, params);
   const { file, args, env, input, timeoutMs = DEFAULT_PERMISSION_EXEC_TIMEOUT_MS, maxOutputBytes = MAX_OUTPUT_BYTES } = selected;
   const startedAt = performance.now();

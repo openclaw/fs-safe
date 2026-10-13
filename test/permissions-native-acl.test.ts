@@ -7,7 +7,7 @@ import type { NativeWindowsSecurityFacts } from "../src/native-binding.js";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { executePermissionCommand } from "../src/permission-exec.js";
-import { inspectWindowsAcl } from "../src/permissions-windows.js";
+import { inspectWindowsAcl, inspectWindowsPermissions } from "../src/permissions-windows.js";
 
 vi.mock("../src/permission-exec.js", async importOriginal => ({
   ...await importOriginal<typeof import("../src/permission-exec.js")>(),
@@ -37,6 +37,7 @@ function facts(override: Partial<NativeWindowsSecurityFacts> = {}): NativeWindow
 function queryOutput(value: NativeWindowsSecurityFacts) {
   return { stdout: JSON.stringify({
     ownerSid: value.ownerSid, currentUserSid: value.currentUserSid,
+    currentAppContainerSid: value.currentAppContainerSid ?? null,
     remote: !value.isLocal, complete: true, daclPresent: value.daclPresent,
     aces: value.aces.map(entry => ({
       sid: entry.sid, mask: entry.mask, deny: entry.aceType === "deny",
@@ -113,6 +114,32 @@ describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspe
     expect(result.trusted).toMatchObject([{ sid: "s-1-5-21-99", canRead: true }]);
     expect(result.untrustedGroup).toEqual([]);
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it.each(["s-1-5-18", "s-1-5-21-99"])("trusts the current container independently of owner %s", async ownerSid => {
+    const container = "s-1-15-2-1-2-3-4-5-6-7";
+    const value = facts({
+      ownerSid, ownerClass: ownerSid === "s-1-5-18" ? "system" : "foreign",
+      currentAppContainerSid: container, aces: [ace(container, 0x001f01ff)],
+    });
+    install(value);
+    const native = await inspectWindowsAcl(target);
+    const fallback = await inspectWindowsAcl(target, { exec });
+    expect(fallback).toEqual(native);
+    expect(fallback.trusted).toMatchObject([{ sid: container }]);
+    expect(fallback.untrustedGroup).toEqual([]);
+    const unverified = {
+      ok: true, isSymlink: false, isDir: false, mode: null, bits: null, source: "unknown",
+      worldWritable: false, groupWritable: false, worldReadable: false, groupReadable: false,
+    } as const;
+    const nativePermissions = await inspectWindowsPermissions(target, unverified);
+    configureFsSafeNative({ mode: "off" });
+    const fallbackPermissions = await inspectWindowsPermissions(target, unverified, { exec });
+    for (const key of ["groupReadable", "groupWritable", "worldReadable", "worldWritable"] as const) {
+      expect(fallbackPermissions[key]).toBe(nativePermissions[key]);
+      expect(fallbackPermissions[key]).toBe(false);
+    }
+    expect(fallbackPermissions.ownerTrusted).toBe(nativePermissions.ownerTrusted);
   });
 
   it.each([

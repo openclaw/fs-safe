@@ -1,10 +1,13 @@
 import os from "node:os";
+import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
+import type { NativeWindowsSecurityFacts } from "./native-binding.js";
 import { executePermissionCommand, type PermissionFailureFields } from "./permission-exec.js";
 import { safeStat, type PermissionCheck, type PermissionCheckOptions } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
 import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
+import { assertWindowsAclRemediationAllowed } from "./windows-appcontainer.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
 export type PermissionExec = (
@@ -81,7 +84,12 @@ function inspectWindowsPermissionsNative(
   const native = getNativeBinding("readOwnerAndDacl");
   if (!native) return undefined;
   const facts = native.readOwnerAndDacl(targetPath);
-  if (facts.fallbackRequired) return undefined;
+  if (facts.fallbackRequired) {
+    if (facts.currentAppContainerSid) {
+      throw new FsSafeError("helper-unavailable", "AppContainer ACL facts require an unavailable external helper");
+    }
+    return undefined;
+  }
   return {
     ...unverified,
     source: "windows-acl",
@@ -281,7 +289,37 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
       canWrite: (ace.mask & 0x500d_0156) !== 0,
     };
   });
-  return { ok: true, entries, ...summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid }) };
+  const summary = summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid });
+  if (owner.currentAppContainerSid) {
+    const own = summary.untrustedGroup.filter(entry => entry.sid === owner.currentAppContainerSid);
+    summary.trusted.push(...own);
+    summary.untrustedGroup = summary.untrustedGroup.filter(entry => entry.sid !== owner.currentAppContainerSid);
+  }
+  return { ok: true, entries, ...summary };
+}
+
+function hasUnmergedAppContainerAces(facts: NativeWindowsSecurityFacts): boolean {
+  // These unique full-control allow entries cannot be merged or have their masks
+  // rewritten by .NET's ACL normalization. SID trust stays with the summary owner.
+  const inheritance = facts.aces[0]?.flags.raw;
+  return !!facts.currentAppContainerSid && (inheritance === 0 || inheritance === 3) &&
+    new Set(facts.aces.map(ace => ace.sid)).size === facts.aces.length &&
+    facts.aces.every(ace => ace.aceType === "allow" && ace.mask === 0x001f01ff &&
+      ace.flags.raw === inheritance);
+}
+
+function compareWindowsSids(left: string, right: string): number {
+  const a = left.split("-").slice(2).map(Number);
+  const b = right.split("-").slice(2).map(Number);
+  // Match .NET Framework SecurityIdentifier.CompareTo: authority, subauthority
+  // count, then signed 32-bit subtraction for each subauthority.
+  if (a[0] !== b[0]) return a[0]! < b[0]! ? -1 : 1;
+  if (a.length !== b.length) return a.length - b.length;
+  for (let index = 1; index < a.length; index++) {
+    const difference = ((a[index]! | 0) - (b[index]! | 0)) | 0;
+    if (difference !== 0) return difference;
+  }
+  return 0;
 }
 
 export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
@@ -299,22 +337,29 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
     const stat = native && await safeStat(targetPath);
     // Keep the named-query behavior for leaf links; the native reader follows them.
     const facts = stat?.ok && !stat.isSymlink ? native?.readOwnerAndDacl(targetPath) : undefined;
+    const explicitAppContainer = facts && hasUnmergedAppContainerAces(facts);
     if (facts && !facts.fallbackRequired && facts.isLocal && facts.aceListComplete && facts.unsupportedAceTypes.length === 0 &&
-        facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0)) {
+        (facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0) || explicitAppContainer)) {
       // .NET normalizes explicit ACEs, but retains nonzero inherited ACEs in
       // their original order without merging them. Other forms keep its query.
       // Adapt descriptor facts only: the public summary owns its SID and rights
       // classification, which differs from the native secure-read policy.
+      const aces = explicitAppContainer
+        ? [...facts.aces].sort((a, b) => compareWindowsSids(a.sid, b.sid)) : facts.aces;
       owner = {
         daclPresent: facts.daclPresent,
         currentUserSid: facts.currentUserSid,
-        aces: facts.aces.map(ace => ({
+        currentAppContainerSid: facts.currentAppContainerSid ?? undefined,
+        sid: facts.ownerSid,
+        aces: aces.map(ace => ({
           sid: ace.sid,
           mask: ace.mask,
           deny: ace.aceType === "deny",
           inheritOnly: ace.flags.inheritOnly,
         })),
       };
+    } else if (facts?.currentAppContainerSid) {
+      throw new FsSafeError("helper-unavailable", "AppContainer ACL normalization requires an unavailable external helper");
     }
   }
   owner ??= await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });
@@ -331,6 +376,8 @@ export function formatWindowsAclSummary(summary: WindowsAclSummary): string {
 }
 
 export function formatIcaclsResetCommand(targetPath: string, opts: IcaclsResetCommandOptions): string {
+  // Removing inherited ACEs can revoke the container's own access.
+  assertWindowsAclRemediationAllowed();
   const command = resolveWindowsSystemCommand("icacls.exe", opts.env);
   const user = resolveWindowsUserPrincipal(opts.env, opts.userInfo) ?? "%USERNAME%";
   const grant = opts.isDir ? "(OI)(CI)F" : "F";

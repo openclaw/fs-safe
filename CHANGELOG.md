@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix private Windows files and directories inside AppContainers by granting only the creating container access and resolving denied DOS names through verified NT names. Relative, drive-letter and UNC paths are supported with the native addon, including mixed separators; folder-mounted volumes and ambiguous mappings fail closed as documented in the permissions guide. ACL inspection trusts the current container independently of object ownership, and unsafe inherited-ACL reset commands are refused in known containers. Permissions outside a container remain unchanged. Thanks @jonathanlindsay ([openclaw/openclaw#160287](https://github.com/openclaw/openclaw/issues/160287)).
+
 ## 0.26.3 - 2026-10-13
 
 ### Highlights
