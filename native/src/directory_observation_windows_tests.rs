@@ -68,7 +68,7 @@ fn zero_and_malformed_utf16_are_not_accepted_as_paths() {
     assert_eq!(canonical_path_with_query(handle, |_, buffer| {
         buffer[0] = 0xd800;
         Ok(1)
-    }).unwrap_err().status, "OBSERVATION_UNAVAILABLE");
+    }).unwrap_err().status, "ENOTSUP");
 }
 
 #[test]

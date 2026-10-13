@@ -43,11 +43,22 @@ fn child(parent: HANDLE, name: &str, access: u32, options: u32) -> NativeResult<
     open_retained_child(parent, name, access, options | FILE_SYNCHRONOUS_IO_NONALERT, SHARING)
 }
 fn canonical(handle: HANDLE, expected: &str) -> NativeResult<()> {
-    let actual = crate::windows_canonical_path::canonical_path(handle, expected)?;
+    let actual = crate::windows_canonical_path::canonical_path(handle, expected, |error| {
+        if error.errno.is_none() && error.status == "ENOTSUP" { native_error("ENOTSUP", "unrepresentable physical parent path") }
+        else { native_error("path-mismatch", "publication path unavailable") }
+    })?;
     if actual.strip_prefix(r"\\?\").unwrap_or(&actual) != expected {
         return Err(native_error("path-mismatch", "publication object has another physical spelling"));
     }
     Ok(())
+}
+
+#[test]
+fn invalid_handle_preserves_publication_path_error() {
+    let error = canonical(INVALID_HANDLE_VALUE, r"C:\").unwrap_err();
+    assert_eq!(error.status, "path-mismatch");
+    assert_eq!(error.reason, "publication path unavailable");
+    assert_eq!(error.errno, None);
 }
 fn ntfs(handle: HANDLE) -> NativeResult<()> {
     let mut name = [0u16; 32];

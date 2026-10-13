@@ -248,7 +248,22 @@ mod platform {
     };
 
     pub(super) fn canonical_path(handle: windows_sys::Win32::Foundation::HANDLE, input: &str) -> NativeResult<String> {
-        crate::windows_canonical_path::canonical_path(handle, input)
+        crate::windows_canonical_path::canonical_path(handle, input, |error| {
+            if let Some(code) = error.errno {
+                native_error("OBSERVATION_UNAVAILABLE",
+                    format!("resolve observed directory path: Windows error {code}"))
+            } else if error.status == "ENOTSUP" {
+                native_error("OBSERVATION_UNAVAILABLE", "observed directory path is not valid UTF-16")
+            } else { error }
+        })
+    }
+
+    #[test]
+    fn invalid_handle_preserves_observation_error() {
+        let error = canonical_path(windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE, r"C:\").unwrap_err();
+        assert_eq!(error.status, "OBSERVATION_UNAVAILABLE");
+        assert_eq!(error.reason, "resolve observed directory path: Windows error 6");
+        assert_eq!(error.errno, None);
     }
 
     pub(super) fn observe_directory(path: &str) -> NativeResult<ExactDirectoryObservation> {

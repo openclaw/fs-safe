@@ -104,7 +104,8 @@ mod platform {
         } else {
             return Err(unavailable_query());
         };
-        let path = String::from_utf16(encoded).map_err(|_| unavailable_query())?;
+        let path = String::from_utf16(encoded)
+            .map_err(|_| native_error("ENOTSUP", "canonical path is not valid UTF-16"))?;
         if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
             return Ok(format!(r"\\{unc}"));
         }
@@ -182,10 +183,14 @@ mod platform {
         translate_nt_path(&input, &nt, Some(&prefix), equal_ordinal).map(Resolution::Translated)
     }
 
-    pub(crate) fn canonical_path(handle: HANDLE, input: &str) -> NativeResult<String> {
+    pub(crate) fn canonical_path(
+        handle: HANDLE,
+        input: &str,
+        original_error: impl FnOnce(crate::NativeError) -> crate::NativeError,
+    ) -> NativeResult<String> {
         match resolve_handle(handle, input)? {
             Resolution::Path(path) | Resolution::Translated(path) => Ok(path),
-            Resolution::OriginalError(error) => Err(error),
+            Resolution::OriginalError(error) => Err(original_error(error)),
         }
     }
 
