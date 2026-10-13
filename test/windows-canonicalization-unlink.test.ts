@@ -6,6 +6,18 @@ import { configureFsSafeNative } from "../src/native-config.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
+import { runWindowsSecurityScript } from "./helpers/windows-security-script.js";
+
+const deletePendingSource = `
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class FsSafePendingDeleteTest {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool DeleteFileW(string path);
+  public static void Remove(string path) {
+    if (!DeleteFileW(path)) throw new Win32Exception(Marshal.GetLastWin32Error());
+  }
+}`;
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => {
@@ -29,12 +41,14 @@ describe.runIf(process.platform === "win32")("Windows canonicalization during un
         if (candidate === target) armed = true;
       },
     });
-    // Schedule a real unlink after the final pathname identity observation and
-    // before the real OS canonicalization, while Root still owns the descriptor.
+    // Legacy deletion keeps the name delete-pending until Root closes its handle.
+    // Node's POSIX-style unlink removes the name immediately and yields ENOENT.
     vi.spyOn(fs.realpathSync, "native").mockImplementation((...args) => {
       if (armed && !unlinked && String(args[0]) === target) {
         unlinked = true;
-        fs.unlinkSync(target);
+        runWindowsSecurityScript(deletePendingSource, [
+          "[FsSafePendingDeleteTest]::Remove($env:FS_SAFE_UNLINK_TEST_PATH)",
+        ], { FS_SAFE_UNLINK_TEST_PATH: target });
         try { return nativeRealpath(...args); }
         catch (error) { nativeDenial = error as NodeJS.ErrnoException; throw error; }
       }
