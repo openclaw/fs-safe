@@ -137,6 +137,7 @@ mod platform {
 
     enum Resolution {
         Path(String),
+        Translated(String),
         OriginalError(crate::NativeError),
     }
 
@@ -161,7 +162,7 @@ mod platform {
             .get(..12)
             .is_some_and(|s| s.eq_ignore_ascii_case(r"\Device\Mup\"))
         {
-            return translate_nt_path(input, &nt, None, equal_ordinal).map(Resolution::Path);
+            return translate_nt_path(input, &nt, None, equal_ordinal).map(Resolution::Translated);
         }
         let root = drive_root(input).ok_or_else(unavailable)?;
         // No cache: drive mappings and volume mount points can change in a live process.
@@ -172,12 +173,12 @@ mod platform {
             |code| win_error(code, "open canonicalization drive root"),
         )?;
         let prefix = query_name(root_handle.0, VOLUME_NAME_NT)?;
-        translate_nt_path(input, &nt, Some(&prefix), equal_ordinal).map(Resolution::Path)
+        translate_nt_path(input, &nt, Some(&prefix), equal_ordinal).map(Resolution::Translated)
     }
 
     pub(crate) fn canonical_path(handle: HANDLE, input: &str) -> NativeResult<String> {
         match resolve_handle(handle, input)? {
-            Resolution::Path(path) => Ok(path),
+            Resolution::Path(path) | Resolution::Translated(path) => Ok(path),
             Resolution::OriginalError(error) => Err(error),
         }
     }
@@ -208,8 +209,8 @@ mod platform {
                     Err(_) => return Ok(None),
                 };
                 match resolve_handle(handle.0, &path)? {
-                    Resolution::Path(path) => Ok(Some(path)),
-                    Resolution::OriginalError(_) => Ok(None),
+                    Resolution::Translated(path) => Ok(Some(path)),
+                    Resolution::Path(_) | Resolution::OriginalError(_) => Ok(None),
                 }
             })(),
         )
