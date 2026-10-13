@@ -124,6 +124,7 @@ async function nativeFixture(fault?: Fault, cause?: unknown) {
   configureFsSafeNative({ mode: "require" });
   const directory = await tempRoot("fs-safe-stage-hostile-error-");
   const calls = { remove: 0, fileClose: 0, parentClose: 0, rename: 0 };
+  const closed = new Set<"file" | "parent">();
   let parentFd = -1, fileFd = -1;
   let armed = true;
   const closeParent = fsSync.closeSync;
@@ -141,6 +142,7 @@ async function nativeFixture(fault?: Fault, cause?: unknown) {
     closeOwnedFd(fd) {
       if (fd === fileFd) calls.fileClose += 1;
       native!.closeOwnedFd(fd);
+      if (fd === fileFd) closed.add("file");
       if (armed && fault === "file-close" && fd === fileFd) throw cause;
     },
   };
@@ -149,6 +151,7 @@ async function nativeFixture(fault?: Fault, cause?: unknown) {
   fsSync.closeSync = (fd) => {
     if (fd === parentFd) calls.parentClose += 1;
     closeParent(fd);
+    if (fd === parentFd) closed.add("parent");
     if (armed && fault === "parent-close" && fd === parentFd) throw cause;
   };
   let owner: StagedFile;
@@ -160,8 +163,8 @@ async function nativeFixture(fault?: Fault, cause?: unknown) {
     assertClosedOnce() {
       expect(calls.fileClose).toBe(1);
       expect(calls.parentClose).toBe(1);
-      expect(() => fsSync.fstatSync(fileFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
-      expect(() => fsSync.fstatSync(parentFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      // A later fstat can observe an unrelated open that reused either number.
+      expect(closed).toEqual(new Set(["file", "parent"]));
     },
     async finish() {
       armed = false;
