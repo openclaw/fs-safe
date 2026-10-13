@@ -5,6 +5,11 @@ description: "The platform-specific native bindings, fd-relative beneath model, 
 
 # Native architecture
 
+Windows native realpath calls and handle-bound canonical-name checks share one
+native resolver. It keeps DOS-name resolution first and uses normalized NT names
+on the same handle only after `ERROR_ACCESS_DENIED`. Drive-root translation is
+uncached and fail-closed; see the [AppContainer limits](permissions.md#advanced-windows-acl-helpers).
+
 See [platform filesystem capabilities](platform-capabilities.md) for Linux
 write leases, public Darwin ACL facts, and Windows test fixtures.
 

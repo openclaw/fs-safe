@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Worker, isMainThread, workerData } from 'node:worker_threads';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const operation = workerData?.operation ?? process.argv[2];
@@ -13,15 +13,28 @@ const { readSecureFile } = await import('./pkg/dist/secure-file.js');
 const { tempWorkspaceSync } = await import('./pkg/dist/temp.js');
 const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.js');
 const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
+const { realpathSync } = await import('./pkg/dist/realpath.js');
+const { FsSafeError } = await import('./pkg/dist/errors.js');
 
 async function prove(thread) {
   const ordinary = operation === 'ordinary';
   const dir = path.join(here, `${ordinary ? 'ordinary-' : ''}${mode}-${thread}`), file = path.join(dir, 'file');
+  if (operation === 'unsupported') {
+    const unavailable = error => error instanceof FsSafeError && error.code === 'helper-unavailable';
+    assert.throws(() => realpathSync.native(here), unavailable);
+    assert.throws(() => createDirectorySync(dir, { private: true }), unavailable);
+    assert.throws(() => createFileSync(path.join(here, `unsupported-${thread}`), { private: true }), unavailable);
+    // The helper still recognizes the creator's container SID on existing paths.
+    const acl = await inspectWindowsAcl(path.join(here, 'require-main'));
+    assert.equal(acl.ok, true);
+    assert.equal(acl.untrustedGroup.length, 0);
+    return [];
+  }
   if (operation === 'deny') {
     for (const read of [() => fs.readdirSync(dir), () => fs.readFileSync(file), () => fs.writeFileSync(file, 'attack'), () => readOwnerAndDacl(dir)]) {
       assert.throws(read, e => ['EACCES', 'EPERM', 'permission-unverified', 'insecure-permissions'].includes(e.code), 'different container must be denied');
     }
-    return;
+    return [];
   }
   if (operation === 'create' || ordinary) {
     createDirectorySync(dir, { private: true });
@@ -52,18 +65,28 @@ async function prove(thread) {
   const permissions = await inspectPathPermissions(dir);
   assert.equal(permissions.groupReadable, false, JSON.stringify(permissions));
   assert.equal(permissions.groupWritable, false, JSON.stringify(permissions));
+  const canonicalPaths = [dir, file].map(value => ({ path: value, canonical: realpathSync.native(value) }));
+  if (!ordinary) {
+    const expected = JSON.parse(fs.readFileSync(path.join(here, 'canonical-expected.json'), 'utf8'));
+    const variants = fs.readFileSync(path.join(here, 'canonicalization-paths.txt'), 'utf8').trim().split(/\r?\n/)
+      .map(line => line.split('\t')).filter(([label]) => label.startsWith('shared'));
+    for (const [, value] of variants) assert.equal(realpathSync.native(value), expected);
+  }
+  return canonicalPaths;
 }
 if (isMainThread) {
   try {
-    await prove('main');
-    await new Promise((resolve, reject) => {
+    const canonicalPaths = await prove('main');
+    const workerPaths = await new Promise((resolve, reject) => {
       const worker = new Worker(new URL(import.meta.url), { workerData: { operation, mode } });
+      let paths;
+      worker.once('message', value => { paths = value; });
       worker.once('error', reject);
-      worker.once('exit', code => code === 0 ? resolve() : reject(new Error(`Worker exit ${code}`)));
+      worker.once('exit', code => code === 0 && paths ? resolve(paths) : reject(new Error(`Worker exit ${code}`)));
     });
-    fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ operation, mode, arch: process.arch, threads: ['main', 'worker'], ok: true }));
+    fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ operation, mode, arch: process.arch, threads: ['main', 'worker'], canonicalPaths: [...canonicalPaths, ...workerPaths], ok: true }));
   } catch (error) {
     fs.writeFileSync(path.join(here, `${operation}-${mode}.json`), JSON.stringify({ error: error.stack, code: error.code }));
     process.exitCode = 1;
   }
-} else { await prove('worker'); }
+} else { parentPort.postMessage(await prove('worker')); }

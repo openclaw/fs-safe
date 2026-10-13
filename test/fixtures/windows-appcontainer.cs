@@ -176,15 +176,15 @@ public static class AppContainerFixture {
       try { profilePath=Marshal.PtrToStringUni(profile); } finally { Marshal.FreeCoTaskMem(profile); }
       File.WriteAllLines(Path.Combine(root,"canonicalization-paths.txt"),new[]{
         "shared\t"+root,"profile\t"+profilePath,
-        "shared-long\t"+PathSpelling(root,false),"shared-short\t"+PathSpelling(root,true)});
+        "shared-long\t"+PathSpelling(root,false),"shared-short\t"+PathSpelling(root,true),
+        "drive-root\t"+Path.GetPathRoot(root)});
       Launch(root,sidA,"diagnostic-node","",true);
       Launch(root,sidA,"diagnostic-native","",true);
       if(diagnosticsOnly) return;
-      foreach(string mode in new[]{"require","off"}) {
-        Launch(root,sidA,"create",mode);
-        Launch(root,sidA,"reopen",mode);
-        Launch(root,sidB,"deny",mode);
-      }
+      Launch(root,sidA,"create","require");
+      Launch(root,sidA,"reopen","require");
+      Launch(root,sidB,"deny","require");
+      Launch(root,sidA,"unsupported","off");
     } finally {
       var failures=new List<Exception>();
       foreach(var ancestor in ancestors) try {

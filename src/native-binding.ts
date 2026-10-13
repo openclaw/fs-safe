@@ -187,6 +187,8 @@ export interface NativeBinding {
   inspectDarwinAcl?(fd: number, inheritanceTarget?: "file" | "directory"): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
+  /** Internal Windows normalized name resolution after a denied DOS-name query. */
+  resolveWindowsCanonicalPath?(path: string): string;
   /** Internal: exact directory identity and canonical path from one no-follow handle. */
   observeDirectory?(path: string): NativeDirectoryObservation;
   /** Internal POSIX-only exact name/descriptor observation; the caller retains its fd. */

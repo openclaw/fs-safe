@@ -54,6 +54,19 @@ use the same token identity; a token-query failure rejects the operation.
 Outside an AppContainer the existing descriptors are unchanged. The native
 addon and packaged .NET security helper both enforce this boundary.
 
+When an AppContainer cannot obtain DOS volume names, guarded path operations
+require the native addon. fs-safe resolves the same open handle's normalized NT
+name, then verifies its drive-root prefix before returning the DOS spelling.
+UNC names are translated from the NT network namespace. This preserves long-name
+canonicalization and the existing identity and containment checks without
+granting access to other containers. Drive mappings are queried on each operation.
+Folder-mounted volumes, volume-GUID inputs, and unmatched drive prefixes fail
+closed with `FsSafeError("path-mismatch")` when DOS resolution is denied.
+In native mode `off`, or without this native capability, a denied DOS-name query
+instead fails with `FsSafeError("helper-unavailable")`; the JavaScript realpath
+resolver is not a fallback. Outside a sandbox, successful DOS resolution retains
+its existing behavior, including in native mode `off`.
+
 The low-level Windows ACL parser and `icacls` command builders live in `@openclaw/fs-safe/advanced`:
 
 ```ts

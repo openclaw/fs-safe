@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fix private Windows files and directories inside AppContainers by granting only the creating container access, while retaining isolation from other containers and unchanged permissions outside a container. Thanks @jonathanlindsay ([openclaw/openclaw#160287](https://github.com/openclaw/openclaw/issues/160287)).
+- Fix private Windows files and directories inside AppContainers by granting only the creating container access and resolving denied DOS names through verified NT names. Drive-letter and UNC paths are supported with the native addon; folder-mounted volumes and ambiguous mappings fail closed as documented in the permissions guide. Permissions outside a container remain unchanged. Thanks @jonathanlindsay ([openclaw/openclaw#160287](https://github.com/openclaw/openclaw/issues/160287)).
 
 ## 0.26.3 - 2026-10-13
 

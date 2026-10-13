@@ -9,6 +9,18 @@ const runtimePlatform = process.versions.bun ? platform() : undefined;
 const bunPosix = runtimePlatform === "darwin" || runtimePlatform === "linux" ? runtimePlatform : undefined;
 
 function resolve(input: string, native: boolean): string {
+  if (native && process.platform === "win32") {
+    try { return fs.realpathSync.native(input); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM" || (error as NodeJS.ErrnoException).syscall !== "realpath") throw error;
+      const binding = getNativeBinding();
+      if (!binding?.resolveWindowsCanonicalPath) {
+        throw new FsSafeError("helper-unavailable", "Windows canonicalization after a denied DOS-name query requires the native binding", { cause: error });
+      }
+      try { return binding.resolveWindowsCanonicalPath(input); }
+      catch (cause) { throw new FsSafeError("path-mismatch", "Windows canonical path cannot be verified safely", { cause }); }
+    }
+  }
   if (bunPosix) {
     // Bun 1.4.2 normalizes native path components and opens the leaf for reads.
     // The Rust OS resolver preserves permissions, locks and physical spelling.

@@ -24,6 +24,7 @@ try {
   fs.copyFileSync(path.join(repo, 'test/fixtures/windows-appcontainer-child.mjs'), path.join(root, 'child.mjs'));
   fs.copyFileSync(path.join(repo, 'test/fixtures/windows-appcontainer-canonicalization.mjs'), path.join(root, 'canonicalization.mjs'));
   fs.writeFileSync(path.join(root, 'profiles.json'), '[]');
+  fs.writeFileSync(path.join(root, 'canonical-expected.json'), JSON.stringify(fs.realpathSync.native(root)));
   for (const mode of diagnosticsOnly ? [] : ['require', 'off']) {
     execFileSync(path.join(root, 'node.exe'), [path.join(root, 'child.mjs'), 'ordinary', mode], { stdio: 'inherit', timeout: 120_000 });
   }
@@ -40,13 +41,16 @@ try {
     // The same Windows user outside either container must see its ACE as foreign.
     for (const mode of ['require', 'off']) {
       configureFsSafeNative({ mode });
-      const acl = await inspectWindowsAcl(path.join(root, `${mode}-main`));
+      const acl = await inspectWindowsAcl(path.join(root, 'require-main'));
       assert.equal(acl.ok, true);
       assert.equal(acl.untrustedGroup.length, 1);
     }
-    const rows = fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny)-.*\.json$/.test(name)).map(name => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8')));
-    assert.equal(rows.length, 8);
+    const rows = fs.readdirSync(root).filter(name => /^(ordinary|create|reopen|deny|unsupported)-.*\.json$/.test(name)).map(name => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8')));
+    assert.equal(rows.length, 6);
     assert(rows.every(row => row.ok));
+    for (const row of rows) for (const entry of row.canonicalPaths ?? []) {
+      assert.equal(entry.canonical, fs.realpathSync.native(entry.path));
+    }
     fs.writeFileSync(path.join(output, `windows-${process.arch}.json`), JSON.stringify({ platform: process.platform, arch: process.arch, version: process.version, rows }, null, 2));
     console.log(JSON.stringify({ appcontainer: 'passed', arch: process.arch, scenarios: rows.length, threads: 2 }));
   }
