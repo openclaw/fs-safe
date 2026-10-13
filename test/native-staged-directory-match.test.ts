@@ -10,6 +10,23 @@ try { native = __loadBundledNativeForTest(); } catch { /* Optional outside nativ
 const { tempRoot } = useRealTempDirs();
 
 describe.runIf(native?.stagedDirectoryMatches)("native staged directory matching", () => {
+  it("accepts signed stat identities without admitting a different directory", async () => {
+    const directory = await tempRoot("fs-safe-native-signed-identity-");
+    const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+    try {
+      const { dev, ino } = fs.fstatSync(fd, { bigint: true });
+      expect(native!.stagedDirectoryMatches!(fd, directory, dev, ino)).toBe(true);
+      for (const mismatched of [-1n, -(1n << 63n)]) {
+        expect(native!.stagedDirectoryMatches!(fd, directory, dev, mismatched)).toBe(false);
+      }
+      for (const invalid of [-(1n << 63n) - 1n, 1n << 64n]) {
+        expect(() => native!.stagedDirectoryMatches!(fd, directory, dev, invalid))
+          .toThrow(expect.objectContaining({ code: "EINVAL" }));
+      }
+      expect(fs.fstatSync(fd, { bigint: true }).ino).toBe(ino);
+    } finally { fs.closeSync(fd); }
+  });
+
   it("rejects a replacement and a symlink while preserving the borrowed descriptor", async () => {
     const directory = await tempRoot("fs-safe-native-directory-match-");
     const target = path.join(directory, "parent");

@@ -5,6 +5,7 @@ import path from "node:path";
 import { assertAsyncDirectoryGuard, assertSyncDirectoryGuard, createAsyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import type { NativeBinding } from "./native-binding.js";
+import { statIdentityFromNative } from "./native-stat-identity.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
@@ -100,7 +101,7 @@ export async function copyLinkAtParent(
         const created = native.binding.createCopySymlink(native.fd, temporaryName, input.target!, params.mode,
           input.preserveMetadata ? input.identity.atimeNs : undefined,
           input.preserveMetadata ? input.identity.mtimeNs : undefined);
-        identity = created;
+        identity = { dev: statIdentityFromNative(created.dev), ino: statIdentityFromNative(created.ino) };
         if (created.errorCode) throw Object.assign(new Error(created.errorMessage), { code: created.errorCode });
       } else {
         fs.symlinkSync(input.target!, temporaryPath);

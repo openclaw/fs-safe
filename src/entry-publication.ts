@@ -29,7 +29,7 @@ function basename(name: string): string {
 }
 function identity(value: PublicationIdentity): PublicationIdentity {
   const { dev, ino } = value;
-  if (typeof dev !== "bigint" || typeof ino !== "bigint" || dev < 0n || ino <= 0n ||
+  if (typeof dev !== "bigint" || typeof ino !== "bigint" || dev < -(1n << 63n) || ino < -(1n << 63n) || ino === 0n ||
       dev > 0xffffffffffffffffn || ino > 0xffffffffffffffffn) {
     throw new FsSafeError("path-mismatch", "publication requires an exact known identity");
   }

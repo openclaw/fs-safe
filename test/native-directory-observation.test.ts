@@ -39,6 +39,21 @@ it("preserves the two-observation Windows unknown-identity rule", () => {
   expect(observeDirectory).toHaveBeenCalledTimes(2);
 });
 
+it("compares high-bit native identities to the runtime's exact stat representation", () => {
+  const unsigned = (1n << 63n) + 17n;
+  const expected = process.versions.bun ? unsigned : BigInt.asIntN(64, unsigned);
+  const observeDirectory = vi.fn(() => ({ dev: 41n, ino: unsigned, realPath: "/root/dir" }));
+  expect(inspectNativeDirectoryObservation(backend(observeDirectory), "/root/dir", { dev: 41n, ino: expected }, "linux"))
+    .toEqual({ dev: 41n, ino: expected, realPath: "/root/dir" });
+  expect(() => inspectNativeDirectoryObservation(backend(observeDirectory), "/root/dir", { dev: 41n, ino: expected + 1n }, "linux"))
+    .toThrow(expect.objectContaining({ code: "path-mismatch" }));
+});
+
+it.each([-1n, 1n << 64n])("rejects out-of-range native identities (%s)", ino => {
+  expect(() => inspectNativeDirectoryObservation(backend(() => ({ dev: 41n, ino, realPath: "/root/dir" })), "/root/dir", undefined, "linux"))
+    .toThrow(expect.objectContaining({ code: "path-mismatch" }));
+});
+
 it("rejects persistent unknown and changing Windows identities", () => {
   for (const observations of [
     [
