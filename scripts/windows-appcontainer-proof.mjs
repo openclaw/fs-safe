@@ -3,26 +3,24 @@
 // the proof children themselves run with restricted AppContainer tokens.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 assert.equal(process.platform, 'win32');
 const repo = fileURLToPath(new URL('../', import.meta.url));
-const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-safe-appcontainer-'));
-// Protect the empty tree before moving it out of the runner's private profile.
-const ps = value => `'${value.replaceAll("'", "''")}'`;
-const root = path.join(path.parse(staging).root, path.basename(staging));
-try {
-  execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-    `$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $acl=New-Object Security.AccessControl.DirectorySecurity; $acl.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$sid)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"); [IO.Directory]::SetAccessControl(${ps(staging)},$acl)`],
-  { stdio: 'inherit', timeout: 120_000 });
-  // Direct-drive staging avoids changing auto-inherited user-profile DACLs.
-  fs.renameSync(staging, root);
-} catch (error) {
-  fs.rmSync(staging, { recursive: true, force: true });
-  throw error;
+const rootArgument = process.argv.indexOf('--volume-root');
+if (rootArgument === -1) {
+  // Include disposable-volume setup and teardown in the existing outer budget.
+  execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+    path.join(repo, 'scripts/windows-appcontainer-volume.ps1'), '-Node', process.execPath,
+    ...(process.argv.includes('--diagnostics-only') ? ['-DiagnosticsOnly'] : [])],
+  { stdio: 'inherit', timeout: 480_000 });
+  process.exit(0);
 }
+const root = process.argv[rootArgument + 1];
+assert(root && path.isAbsolute(root));
+fs.mkdirSync(root);
+const ps = value => `'${value.replaceAll("'", "''")}'`;
 const target = `win32-${process.arch}-msvc`;
 const output = path.join(repo, 'artifacts-appcontainer');
 const diagnosticsOnly = process.argv.includes('--diagnostics-only');
