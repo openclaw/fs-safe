@@ -53,25 +53,16 @@ public static class AppContainerFixture {
   }
   static void SetAncestorDacl(string path,byte[] descriptor) {
     // SetSecurityInfo suppresses child propagation for MAXIMUM_ALLOWED handles.
-    // Keep the modern setter so existing inheritance control flags survive.
+    // The caller rejects auto-inherited drive-root DACLs before changing them.
     IntPtr handle=CreateFileW(path,0x02000000,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
-    if(handle==new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    if(handle==new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(),"CreateFileW(MAXIMUM_ALLOWED) for ancestor DACL");
     var pinned=GCHandle.Alloc(descriptor,GCHandleType.Pinned);
     try {
       bool present,defaulted; IntPtr dacl;
       Check(GetSecurityDescriptorDacl(pinned.AddrOfPinnedObject(),out present,out dacl,out defaulted));
       if(!present) throw new InvalidOperationException("Fixture ancestor must have a DACL");
-      var raw=new RawSecurityDescriptor(descriptor,0);
-      bool inherited=(raw.ControlFlags&ControlFlags.DiscretionaryAclAutoInherited)!=0;
-      bool protect=(raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0;
-      // Recompute this object's auto-inherited state without propagating to children.
-      uint information=4u|(inherited ? 0x20000000u : protect ? 0x80000000u : 0u);
-      uint error=SetSecurityInfo(handle,1,information,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
-      if(error!=0) throw new Win32Exception((int)error);
-      if(inherited && protect) {
-        error=SetSecurityInfo(handle,1,0x80000004u,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
-        if(error!=0) throw new Win32Exception((int)error);
-      }
+      uint error=SetSecurityInfo(handle,1,4,IntPtr.Zero,IntPtr.Zero,dacl,IntPtr.Zero);
+      if(error!=0) throw new Win32Exception((int)error,"SetSecurityInfo(DACL_SECURITY_INFORMATION) for ancestor DACL");
     } finally { pinned.Free(); CloseHandle(handle); }
   }
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
@@ -182,13 +173,19 @@ public static class AppContainerFixture {
       Mark(root,"profile-b:create:before");
       Marshal.ThrowExceptionForHR(CreateAppContainerProfile(b,b,b,IntPtr.Zero,0,out sidB));
       Mark(root,"profile-b:create:after");
-      // Node's loader needs metadata on every ancestor. Keep these grants
-      // non-inheriting and avoid recursive DACL propagation during setup/cleanup.
+      // Staging directly below the drive root avoids touching auto-inherited
+      // user-profile DACLs. Node's loader still needs metadata on the drive root.
+      var rootParent=Directory.GetParent(root);
+      if(rootParent==null || rootParent.Parent!=null)
+        throw new InvalidOperationException("AppContainer fixture must be staged directly below a drive root");
       int ancestorIndex=0;
       for(var ancestor=Directory.GetParent(root);ancestor!=null;ancestor=ancestor.Parent,ancestorIndex++) {
         Mark(root,"ancestor-"+ancestorIndex+":read:before");
         var original=Directory.GetAccessControl(ancestor.FullName,AccessControlSections.Access);
-        ancestors.Add(ancestor.FullName,original.GetSecurityDescriptorBinaryForm());
+        byte[] saved=original.GetSecurityDescriptorBinaryForm();
+        if((new RawSecurityDescriptor(saved,0).ControlFlags&ControlFlags.DiscretionaryAclAutoInherited)!=0)
+          throw new InvalidOperationException("Fixture drive root must not have an auto-inherited DACL");
+        ancestors.Add(ancestor.FullName,saved);
         Mark(root,"ancestor-"+ancestorIndex+":read:after");
         foreach(var sid in new[]{sidA,sidB}) original.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
           FileSystemRights.ReadAttributes|FileSystemRights.Traverse,InheritanceFlags.None,PropagationFlags.None,AccessControlType.Allow));
@@ -232,6 +229,9 @@ public static class AppContainerFixture {
       Launch(root,sidA,"reopen","require");
       Launch(root,sidB,"deny","require");
       Launch(root,sidA,"native-off","off");
+    } catch(Exception error) {
+      Console.Error.WriteLine(error);
+      throw;
     } finally {
       var failures=new List<Exception>();
       int revokeIndex=0;
@@ -257,7 +257,10 @@ public static class AppContainerFixture {
         Marshal.ThrowExceptionForHR(DeleteAppContainerProfile(b));
         Mark(root,"profile-b:delete:after");
       } catch(Exception error) { failures.Add(error); } }
-      if(failures.Count!=0) throw new AggregateException("AppContainer fixture cleanup failed",failures);
+      if(failures.Count!=0) {
+        foreach(var error in failures) Console.Error.WriteLine(error);
+        throw new AggregateException("AppContainer fixture cleanup failed",failures);
+      }
     }
   }
   static void Launch(string root,IntPtr sid,string operation,string mode,bool diagnostic=false) {

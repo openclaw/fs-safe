@@ -9,7 +9,20 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 assert.equal(process.platform, 'win32');
 const repo = fileURLToPath(new URL('../', import.meta.url));
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-safe-appcontainer-'));
+const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-safe-appcontainer-'));
+// Protect the empty tree before moving it out of the runner's private profile.
+const ps = value => `'${value.replaceAll("'", "''")}'`;
+const root = path.join(path.parse(staging).root, path.basename(staging));
+try {
+  execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    `$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $acl=New-Object Security.AccessControl.DirectorySecurity; $acl.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$sid)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"); [IO.Directory]::SetAccessControl(${ps(staging)},$acl)`],
+  { stdio: 'inherit', timeout: 120_000 });
+  // Direct-drive staging avoids changing auto-inherited user-profile DACLs.
+  fs.renameSync(staging, root);
+} catch (error) {
+  fs.rmSync(staging, { recursive: true, force: true });
+  throw error;
+}
 const target = `win32-${process.arch}-msvc`;
 const output = path.join(repo, 'artifacts-appcontainer');
 const diagnosticsOnly = process.argv.includes('--diagnostics-only');
@@ -38,7 +51,6 @@ try {
     execFileSync(path.join(root, 'node.exe'), [path.join(root, 'child.mjs'), 'ordinary', mode], { stdio: 'inherit', timeout: 120_000 });
     mark(`ordinary-${mode}:after`);
   }
-  const ps = value => `'${value.replaceAll("'", "''")}'`;
   mark('outer-powershell:before');
   const shellTrace = `$ErrorActionPreference='Stop'; $trace=${ps(path.join(root, 'progress-outer-shell.jsonl'))}; function MarkPhase($phase) { $row=@{phase=$phase;time=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress; [IO.File]::AppendAllText($trace,$row+[Environment]::NewLine); [Console]::WriteLine($row) };`;
   execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
