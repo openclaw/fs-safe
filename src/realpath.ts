@@ -2,12 +2,26 @@ import fs from "node:fs";
 import { platform } from "node:os";
 import { getSystemErrorName } from "node:util";
 import { FsSafeError } from "./errors.js";
-import { recordFileObservationFailure } from "./file-observation.js";
 import { getNativeBinding } from "./native.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
+import { readWindowsAppContainerCommand } from "./windows-security-command.js";
 
 const runtimePlatform = process.versions.bun ? platform() : undefined;
 const bunPosix = runtimePlatform === "darwin" || runtimePlatform === "linux" ? runtimePlatform : undefined;
+let appContainer: boolean | undefined;
+
+function isAppContainer(binding: ReturnType<typeof getNativeBinding>): boolean {
+  if (appContainer !== undefined) return appContainer;
+  try {
+    const membership = binding?.isWindowsAppContainer
+      ? binding.isWindowsAppContainer() : readWindowsAppContainerCommand();
+    if (typeof membership !== "boolean") throw new Error("Invalid AppContainer membership");
+    appContainer = membership;
+    return membership;
+  } catch (cause) {
+    throw new FsSafeError("permission-unverified", "Windows process token membership could not be verified", { cause });
+  }
+}
 
 function resolve(input: string, native: boolean): string {
   if (native && process.platform === "win32") {
@@ -15,19 +29,17 @@ function resolve(input: string, native: boolean): string {
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EPERM" || (error as NodeJS.ErrnoException).syscall !== "realpath") throw error;
       const binding = getNativeBinding();
+      if (!isAppContainer(binding)) throw error;
       if (!binding?.resolveWindowsCanonicalPath) {
-        const failure = new FsSafeError("helper-unavailable", "Windows canonicalization after a denied DOS-name query requires the native binding", { cause: error });
-        recordFileObservationFailure(failure, "resolution");
-        throw failure;
+        throw new FsSafeError("helper-unavailable", "Windows canonicalization after a denied DOS-name query requires the native binding", { cause: error });
       }
-      try { return binding.resolveWindowsCanonicalPath(input); }
+      let resolved: string | null;
+      try { resolved = binding.resolveWindowsCanonicalPath(input); }
       catch (cause) {
-        const failure = new FsSafeError("path-mismatch", "Windows canonical path cannot be verified safely", { cause });
-        // EPERM also covers delete-pending files. Preserve the resolution receipt;
-        // only a fresh same-descriptor nlink=0 proof may discard that observation.
-        recordFileObservationFailure(failure, "resolution");
-        throw failure;
+        throw new FsSafeError("path-mismatch", "Windows canonical path cannot be verified safely", { cause });
       }
+      if (resolved === null) throw error;
+      return resolved;
     }
   }
   if (bunPosix) {

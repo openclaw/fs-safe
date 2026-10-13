@@ -18,10 +18,14 @@ const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.j
 const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
 const { realpathSync } = await import('./pkg/dist/realpath.js');
 const { FsSafeError } = await import('./pkg/dist/errors.js');
+const { readWindowsAppContainerCommand } = await import('./pkg/dist/windows-security-command.js');
+const { getNativeBinding } = await import('./pkg/dist/native.js');
 mark('imports:after');
 
 async function prove(thread) {
   const ordinary = operation === 'ordinary';
+  assert.equal(readWindowsAppContainerCommand(), !ordinary);
+  if (mode === 'require') assert.equal(getNativeBinding().isWindowsAppContainer(), !ordinary);
   const dir = path.join(here, `${ordinary ? 'ordinary-' : ''}${mode}-${thread}`), file = path.join(dir, 'file');
   if (operation === 'unsupported') {
     const unavailable = error => error instanceof FsSafeError && error.code === 'helper-unavailable';

@@ -135,24 +135,33 @@ mod platform {
             }
     }
 
-    pub(crate) fn canonical_path(handle: HANDLE, input: &str) -> NativeResult<String> {
-        match query_name(handle, 0) {
+    enum Resolution {
+        Path(String),
+        OriginalError(crate::NativeError),
+    }
+
+    fn resolve_handle(handle: HANDLE, input: &str) -> NativeResult<Resolution> {
+        let denied = match query_name(handle, 0) {
             Ok(path) => {
-                if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
-                    return Ok(format!(r"\\{unc}"));
-                }
-                return Ok(path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned());
+                return Ok(Resolution::Path(path));
             }
-            Err(error) if error.errno == Some(ERROR_ACCESS_DENIED) => {}
-            Err(error) => return Err(error),
+            Err(error) if error.errno == Some(ERROR_ACCESS_DENIED) => error,
+            Err(error) => return Ok(Resolution::OriginalError(error)),
+        };
+        if !crate::windows_appcontainer::is_app_container()? {
+            return Ok(Resolution::OriginalError(denied));
         }
         // The denied DOS query and successful NT query share the exact same handle.
-        let nt = query_name(handle, VOLUME_NAME_NT)?;
+        let nt = match query_name(handle, VOLUME_NAME_NT) {
+            Ok(path) => path,
+            // A disappearing file is still the original denial, not a translation error.
+            Err(_) => return Ok(Resolution::OriginalError(denied)),
+        };
         if nt
             .get(..12)
             .is_some_and(|s| s.eq_ignore_ascii_case(r"\Device\Mup\"))
         {
-            return translate_nt_path(input, &nt, None, equal_ordinal);
+            return translate_nt_path(input, &nt, None, equal_ordinal).map(Resolution::Path);
         }
         let root = drive_root(input).ok_or_else(unavailable)?;
         // No cache: drive mappings and volume mount points can change in a live process.
@@ -163,7 +172,14 @@ mod platform {
             |code| win_error(code, "open canonicalization drive root"),
         )?;
         let prefix = query_name(root_handle.0, VOLUME_NAME_NT)?;
-        translate_nt_path(input, &nt, Some(&prefix), equal_ordinal)
+        translate_nt_path(input, &nt, Some(&prefix), equal_ordinal).map(Resolution::Path)
+    }
+
+    pub(crate) fn canonical_path(handle: HANDLE, input: &str) -> NativeResult<String> {
+        match resolve_handle(handle, input)? {
+            Resolution::Path(path) => Ok(path),
+            Resolution::OriginalError(error) => Err(error),
+        }
     }
 
     #[cfg(test)]
@@ -172,20 +188,29 @@ mod platform {
     }
 
     #[napi_derive::napi(js_name = "resolveWindowsCanonicalPath")]
-    pub fn resolve_windows_canonical_path(env: napi::Env, path: String) -> napi::Result<String> {
+    pub fn resolve_windows_canonical_path(env: napi::Env, path: String) -> napi::Result<Option<String>> {
         crate::into_napi(
             env,
             (|| {
                 if path.contains('\0') {
                     return Err(unavailable());
                 }
-                let handle = open_existing_handle(
+                if !crate::windows_appcontainer::is_app_container()? {
+                    return Ok(None);
+                }
+                let handle = match open_existing_handle(
                     &wide_absolute_path(&path),
                     0,
                     FILE_FLAG_BACKUP_SEMANTICS,
                     |code| win_error(code, "open canonicalization path"),
-                )?;
-                canonical_path(handle.0, &path)
+                ) {
+                    Ok(handle) => handle,
+                    Err(_) => return Ok(None),
+                };
+                match resolve_handle(handle.0, &path)? {
+                    Resolution::Path(path) => Ok(Some(path)),
+                    Resolution::OriginalError(_) => Ok(None),
+                }
             })(),
         )
     }

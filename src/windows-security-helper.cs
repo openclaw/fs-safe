@@ -16,7 +16,7 @@ public static class FsSafeWindowsHelper {
     try {
       Console.OutputEncoding = new UTF8Encoding(false);
       bool owner=args.Length>0 && string.Equals(args[0],"owner",StringComparison.OrdinalIgnoreCase);
-      if(args.Length!=(owner ? 2 : 1) || !Array.Exists(new[]{"owner","path","paths","descriptor","create","directory","protect-file","verify-file"},
+      if(args.Length!=(owner ? 2 : 1) || !Array.Exists(new[]{"owner","path","paths","descriptor","create","directory","protect-file","verify-file","appcontainer"},
         operation => string.Equals(operation,args[0],StringComparison.OrdinalIgnoreCase)))
         throw new ArgumentException("Invalid Windows security operation");
       string json=owner ? Json(FsSafeWindowsOwnerQuery.Execute(args[1])) :

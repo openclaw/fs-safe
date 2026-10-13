@@ -206,7 +206,7 @@ mod windows {
         PROTECTED_DACL_SECURITY_INFORMATION, PSID, SE_DACL_PRESENT, SE_DACL_PROTECTED,
         SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl,
         SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
-        TOKEN_APPCONTAINER_INFORMATION, TokenIsAppContainer, TokenAppContainerSid,
+        TOKEN_APPCONTAINER_INFORMATION, TokenAppContainerSid,
         WinAnonymousSid, WinAuthenticatedUserSid, WinBuiltinAdministratorsSid, WinBuiltinGuestsSid,
         WinBuiltinUsersSid, WinInteractiveSid, WinLocalSystemSid, WinNetworkSid, WinWorldSid,
     };
@@ -362,12 +362,7 @@ mod windows {
             return Err(win_error(unsafe { GetLastError() }, "read token user"));
         }
         let sid = unsafe { (*(buffer.as_ptr().cast::<TOKEN_USER>())).User.Sid };
-        let mut is_app_container = 0_u32;
-        if unsafe { GetTokenInformation(token.0, TokenIsAppContainer,
-            (&mut is_app_container as *mut u32).cast(), size_of::<u32>() as u32, &mut needed) } == 0 {
-            return Err(win_error(unsafe { GetLastError() }, "read token AppContainer status"));
-        }
-        let app_container = if is_app_container != 0 {
+        let app_container = if crate::windows_appcontainer::is_app_container()? {
             needed = 0;
             unsafe { GetTokenInformation(token.0, TokenAppContainerSid, null_mut(), 0, &mut needed) };
             if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER

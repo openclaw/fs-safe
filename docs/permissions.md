@@ -67,6 +67,13 @@ instead fails with `FsSafeError("helper-unavailable")`; the JavaScript realpath
 resolver is not a fallback. Outside a sandbox, successful DOS resolution retains
 its existing behavior, including in native mode `off`.
 
+Only a denied DOS-name query triggers the process-token probe. The addon caches
+immutable AppContainer membership across Workers; with native loading disabled
+or unavailable, the packaged helper probes the token once per JavaScript isolate.
+Ordinary-process errors are rethrown unchanged. In a container, failure to open
+the path or query its normalized NT name also preserves the original error, so
+existing contention handling remains effective. Token-probe failures are typed.
+
 Inside an AppContainer, advanced ACL inspection uses native facts for inherited
 entries and unique full-control allow entries with uniform inheritance flags,
 including fs-safe's private DACL.

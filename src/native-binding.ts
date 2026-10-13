@@ -188,7 +188,9 @@ export interface NativeBinding {
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
   /** Internal Windows normalized name resolution after a denied DOS-name query. */
-  resolveWindowsCanonicalPath?(path: string): string;
+  resolveWindowsCanonicalPath?(path: string): string | null;
+  /** Internal immutable primary-token membership, cached across Workers. */
+  isWindowsAppContainer?(): boolean;
   /** Internal: exact directory identity and canonical path from one no-follow handle. */
   observeDirectory?(path: string): NativeDirectoryObservation;
   /** Internal POSIX-only exact name/descriptor observation; the caller retains its fd. */

@@ -12,7 +12,7 @@ const TERMINATION_GRACE_MS = 1_000;
 const FULL_IDENTITY = /^[0-9a-f]{16}:[0-9a-f]{32}$/;
 export const WINDOWS_SECURITY_BATCH_MAX_BYTES = 16 * 1024 * 1024;
 
-type CommandOperation = "path" | "paths" | "descriptor" | "create" | "directory" | "protect-file" | "verify-file";
+type CommandOperation = "path" | "paths" | "descriptor" | "create" | "directory" | "protect-file" | "verify-file" | "appcontainer";
 type CommandParams = {
   targetPath?: string;
   fd?: number;
@@ -140,6 +140,13 @@ function executeSync(operation: CommandOperation, params: CommandParams): unknow
     throw error;
   }
   return parseReply(result.stdout, operation);
+}
+
+/** Internal token probe; no path admission or canonicalization may precede it. */
+export function readWindowsAppContainerCommand(): boolean {
+  const value = executeSync("appcontainer", {});
+  if (typeof value !== "boolean") unverified("Windows token probe returned invalid membership");
+  return value;
 }
 
 type CommandFailureReceipt = {
