@@ -38,14 +38,14 @@ export function renderNodeBaseline(reports) {
   assert(reports.every(report => Boolean(report.metadata.comparison) === comparing));
   const lines = [comparing ? "# fs-safe baseline / candidate" : "# Node / fs-safe baseline", "",
     comparing
-      ? "Ratios are candidate/baseline median ns/op; lower is faster. A/A repeats the baseline implementation. Both arms retain equivalent fixtures and their own verification."
+      ? "Ratios are candidate/baseline median ns/op; lower is faster. A/A repeats each implementation separately. Both builds receive equal calls and retain equivalent fixtures and their own verification."
       : "Raw Node baselines are NOT security-equivalent. Ratios are fs-safe/raw median ns/op; lower is faster. A/A compares identical raw calls, and exposes noise, not a correction factor.", ""];
   for (const report of reports) {
     const m = report.metadata;
     lines.push(`${m.platform}/${m.arch}, Node ${m.node}, package ${m.packageVersion}, mode ${m.mode}, filesystem ${m.filesystem}, ${m.samples} alternating blocks (median sample means).`, "");
   }
-  lines.push((comparing ? "| Operation | Baseline off ns/op | Candidate off ns/op | candidate/base off | A/A off | Baseline require ns/op | Candidate require ns/op | candidate/base require | A/A require |" : "| Operation | Raw off ns/op | Safe off ns/op | off/raw | A/A off | Raw require ns/op | Safe require ns/op | require/raw | A/A require |"),
-    "|---|---:|---:|---:|---:|---:|---:|---:|---:|");
+  lines.push((comparing ? "| Operation | Baseline off ns/op | Candidate off ns/op | candidate/base off | A/A off | Candidate A/A off | Baseline require ns/op | Candidate require ns/op | candidate/base require | A/A require | Candidate A/A require |" : "| Operation | Raw off ns/op | Safe off ns/op | off/raw | A/A off | Raw require ns/op | Safe require ns/op | require/raw | A/A require |"),
+    comparing ? "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|" : "|---|---:|---:|---:|---:|---:|---:|---:|---:|");
   const names = [...new Set(reports.flatMap((r) => r.results.map((row) => row.operation)))];
   const format = (value, ratio = false) => value === undefined ? "—" : ratio ? `${value.toFixed(2)}×` : Math.round(value).toLocaleString("en-US");
   for (const name of names) {
@@ -53,6 +53,7 @@ export function renderNodeBaseline(reports) {
     for (const mode of ["off", "require"]) {
       const row = reports.find((r) => r.metadata.mode === mode)?.results.find((r) => r.operation === name);
       cells.push(format(row?.rawNs), format(row?.safeNs), format(row?.ratio, true), format(row?.aa.ratio, true));
+      if (comparing) cells.push(format(row?.candidateAa?.ratio, true));
     }
     lines.push(`| ${cells.join(" | ")} |`);
   }

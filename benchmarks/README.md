@@ -660,8 +660,17 @@ a filter matching nothing fails. File output is emitted only after successful
 verification and workspace cleanup. A combined `results.json` also produces
 `results-off.json` and `results-require.json`.
 
-Samples alternate raw/safe/identical-raw-control and the reverse order. The
-median of sample means in ns/op and every sample are retained. Each synchronous
+Samples alternate raw/safe/identical-raw-control and the reverse order.
+The `--compare-dist` mode adds an identical-candidate control and alternates all
+four arms in forward/reverse order, giving both builds equal calls. The builds
+use separate timing call sites so their function feedback does not mix. JSON
+retains `samples.safeControl` and `candidateAa` alongside the existing baseline
+control; Markdown shows both controls. When qualifying small changes, compare
+independently loaded copies of the same build as well as the same-path control,
+and reverse the baseline/candidate direction. Same-path imports share function
+instances and can conceal comparison-harness bias.
+
+The median of sample means in ns/op and every sample are retained. Each synchronous
 call is timed without awaiting it. Fixture resets, output checks and handle
 cleanup happen outside timing. Copy-in replaces an existing destination;
 exclusive synchronous copy starts absent; writes and moves replace existing
