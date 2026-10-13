@@ -307,6 +307,20 @@ function hasUnmergedAppContainerAces(facts: NativeWindowsSecurityFacts): boolean
       ace.flags.raw === inheritance);
 }
 
+function compareWindowsSids(left: string, right: string): number {
+  const a = left.split("-").slice(2).map(Number);
+  const b = right.split("-").slice(2).map(Number);
+  // Match .NET Framework SecurityIdentifier.CompareTo: authority, subauthority
+  // count, then signed 32-bit subtraction for each subauthority.
+  if (a[0] !== b[0]) return a[0]! < b[0]! ? -1 : 1;
+  if (a.length !== b.length) return a.length - b.length;
+  for (let index = 1; index < a.length; index++) {
+    const difference = ((a[index]! | 0) - (b[index]! | 0)) | 0;
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
 export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
   if (opts?.principalTranslationFailed) {
     const error = new Error("Windows ACL principal SID translation failed");
@@ -322,18 +336,21 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
     const stat = native && await safeStat(targetPath);
     // Keep the named-query behavior for leaf links; the native reader follows them.
     const facts = stat?.ok && !stat.isSymlink ? native?.readOwnerAndDacl(targetPath) : undefined;
+    const explicitAppContainer = facts && hasUnmergedAppContainerAces(facts);
     if (facts && !facts.fallbackRequired && facts.isLocal && facts.aceListComplete && facts.unsupportedAceTypes.length === 0 &&
-        (facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0) || hasUnmergedAppContainerAces(facts))) {
+        (facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0) || explicitAppContainer)) {
       // .NET normalizes explicit ACEs, but retains nonzero inherited ACEs in
       // their original order without merging them. Other forms keep its query.
       // Adapt descriptor facts only: the public summary owns its SID and rights
       // classification, which differs from the native secure-read policy.
+      const aces = explicitAppContainer
+        ? [...facts.aces].sort((a, b) => compareWindowsSids(a.sid, b.sid)) : facts.aces;
       owner = {
         daclPresent: facts.daclPresent,
         currentUserSid: facts.currentUserSid,
         currentAppContainerSid: facts.currentAppContainerSid ?? undefined,
         sid: facts.ownerSid,
-        aces: facts.aces.map(ace => ({
+        aces: aces.map(ace => ({
           sid: ace.sid,
           mask: ace.mask,
           deny: ace.aceType === "deny",

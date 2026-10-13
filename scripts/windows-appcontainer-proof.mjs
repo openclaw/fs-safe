@@ -36,8 +36,10 @@ try {
     console.log(name, fs.readFileSync(path.join(root, name), 'utf8'));
   }
   if (!diagnosticsOnly) {
-    const { configureFsSafeNative } = await import(pathToFileURL(path.join(root, 'pkg/dist/native-config.js')));
-    const { inspectWindowsAcl } = await import(pathToFileURL(path.join(root, 'pkg/dist/advanced.js')));
+    // Loading the fixture's addon here would pin its DLL until this parent exits,
+    // preventing cleanup on Windows. Children use the isolated identical copy.
+    const { configureFsSafeNative } = await import(pathToFileURL(path.join(repo, 'dist/native-config.js')));
+    const { inspectWindowsAcl } = await import(pathToFileURL(path.join(repo, 'dist/advanced.js')));
     // The same Windows user outside either container must see its ACE as foreign.
     for (const mode of ['require', 'off']) {
       configureFsSafeNative({ mode });
@@ -59,6 +61,7 @@ try {
     console.log(JSON.stringify({ appcontainer: 'passed', arch: process.arch, scenarios: rows.length, threads: 2 }));
   }
 } catch (error) {
+  console.error(error);
   for (const name of fs.readdirSync(root).filter(name => name.startsWith('progress-'))) {
     console.error(name, fs.readFileSync(path.join(root, name), 'utf8'));
   }
