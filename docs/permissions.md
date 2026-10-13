@@ -67,6 +67,13 @@ instead fails with `FsSafeError("helper-unavailable")`; the JavaScript realpath
 resolver is not a fallback. Outside a sandbox, successful DOS resolution retains
 its existing behavior, including in native mode `off`.
 
+Inside an AppContainer, advanced ACL inspection uses native facts for inherited
+entries and unique full-control allow entries with uniform inheritance flags,
+including fs-safe's private DACL.
+Other forms fail with `permission-unverified` when helper normalization would be
+required. With the native canonicalizer unavailable, inspection rejects with
+`helper-unavailable` before starting a helper process.
+
 The low-level Windows ACL parser and `icacls` command builders live in `@openclaw/fs-safe/advanced`:
 
 ```ts

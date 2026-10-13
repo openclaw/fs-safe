@@ -1,5 +1,7 @@
 import os from "node:os";
+import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
+import type { NativeWindowsSecurityFacts } from "./native-binding.js";
 import { executePermissionCommand, type PermissionFailureFields } from "./permission-exec.js";
 import { safeStat, type PermissionCheck, type PermissionCheckOptions } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
@@ -81,7 +83,12 @@ function inspectWindowsPermissionsNative(
   const native = getNativeBinding("readOwnerAndDacl");
   if (!native) return undefined;
   const facts = native.readOwnerAndDacl(targetPath);
-  if (facts.fallbackRequired) return undefined;
+  if (facts.fallbackRequired) {
+    if (facts.currentAppContainerSid) {
+      throw new FsSafeError("permission-unverified", "AppContainer ACL facts are incomplete or unsupported");
+    }
+    return undefined;
+  }
   return {
     ...unverified,
     source: "windows-acl",
@@ -290,6 +297,16 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
   return { ok: true, entries, ...summary };
 }
 
+function hasUnmergedAppContainerAces(facts: NativeWindowsSecurityFacts): boolean {
+  // These unique full-control allow entries cannot be merged or have their masks
+  // rewritten by .NET's ACL normalization. SID trust stays with the summary owner.
+  const inheritance = facts.aces[0]?.flags.raw;
+  return !!facts.currentAppContainerSid && (inheritance === 0 || inheritance === 3) &&
+    new Set(facts.aces.map(ace => ace.sid)).size === facts.aces.length &&
+    facts.aces.every(ace => ace.aceType === "allow" && ace.mask === 0x001f01ff &&
+      ace.flags.raw === inheritance);
+}
+
 export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJS.ProcessEnv; exec?: PermissionExec; currentUserSid?: string; principalTranslationFailed?: boolean }): Promise<WindowsAclSummary> {
   if (opts?.principalTranslationFailed) {
     const error = new Error("Windows ACL principal SID translation failed");
@@ -306,7 +323,7 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
     // Keep the named-query behavior for leaf links; the native reader follows them.
     const facts = stat?.ok && !stat.isSymlink ? native?.readOwnerAndDacl(targetPath) : undefined;
     if (facts && !facts.fallbackRequired && facts.isLocal && facts.aceListComplete && facts.unsupportedAceTypes.length === 0 &&
-        facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0)) {
+        (facts.aces.every(ace => ace.flags.inherited && ace.mask !== 0) || hasUnmergedAppContainerAces(facts))) {
       // .NET normalizes explicit ACEs, but retains nonzero inherited ACEs in
       // their original order without merging them. Other forms keep its query.
       // Adapt descriptor facts only: the public summary owns its SID and rights
@@ -323,6 +340,8 @@ export async function inspectWindowsAcl(targetPath: string, opts?: { env?: NodeJ
           inheritOnly: ace.flags.inheritOnly,
         })),
       };
+    } else if (facts?.currentAppContainerSid) {
+      throw new FsSafeError("permission-unverified", "AppContainer ACL normalization requires unsupported helper process access");
     }
   }
   owner ??= await inspectWindowsOwner({ targetPath, env: opts?.env, exec: opts?.exec ?? defaultPermissionExec });

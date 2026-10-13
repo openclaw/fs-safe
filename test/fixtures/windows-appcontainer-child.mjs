@@ -18,7 +18,6 @@ const { inspectPathPermissions } = await import('./pkg/dist/permissions-public.j
 const principals = JSON.parse(fs.readFileSync(path.join(here, 'profiles.json'), 'utf8'));
 const { realpathSync } = await import('./pkg/dist/realpath.js');
 const { FsSafeError } = await import('./pkg/dist/errors.js');
-const { getNativeBinding } = await import('./pkg/dist/native.js');
 mark('imports:after');
 
 async function prove(thread) {
@@ -29,10 +28,8 @@ async function prove(thread) {
     assert.throws(() => realpathSync.native(here), unavailable);
     assert.throws(() => createDirectorySync(dir, { private: true }), unavailable);
     assert.throws(() => createFileSync(path.join(here, `unsupported-${thread}`), { private: true }), unavailable);
-    // The helper still recognizes the creator's container SID on existing paths.
-    const acl = await inspectWindowsAcl(path.join(here, 'require-main'));
-    assert.equal(acl.ok, true);
-    assert.equal(acl.untrustedGroup.length, 0);
+    await assert.rejects(inspectWindowsAcl(path.join(here, 'require-main')), unavailable);
+    await assert.rejects(inspectPathPermissions(path.join(here, 'require-main')), unavailable);
     return [];
   }
   if (operation === 'deny') {
@@ -42,11 +39,6 @@ async function prove(thread) {
     return [];
   }
   if (operation === 'create' || ordinary) {
-    if (mode === 'require') {
-      mark('binding-load:before');
-      assert.equal(typeof getNativeBinding()?.resolveWindowsCanonicalPath, 'function');
-      mark('binding-load:after');
-    }
     mark('canonical-root:before');
     realpathSync.native(here);
     mark('canonical-root:after');
@@ -69,6 +61,7 @@ async function prove(thread) {
   mark('secure-read:after');
   assert.equal(secure.buffer.toString(), 'private');
   assert.equal(secure.permissions.ownerTrusted, true);
+  const aclEntries = [];
   for (const target of [dir, file]) {
     const facts = readOwnerAndDacl(target);
     mark('owner-query:after');
@@ -82,12 +75,13 @@ async function prove(thread) {
     assert.equal(acl.ok, true, JSON.stringify(acl));
     assert.equal(acl.untrustedGroup.length, 0);
     assert.equal(acl.untrustedWorld.length, 0);
+    aclEntries.push({ path: target, entries: acl.entries });
   }
   const permissions = await inspectPathPermissions(dir);
   mark('permissions-inspection:after');
   assert.equal(permissions.groupReadable, false, JSON.stringify(permissions));
   assert.equal(permissions.groupWritable, false, JSON.stringify(permissions));
-  const canonicalPaths = [dir, file].map(value => ({ path: value, canonical: realpathSync.native(value) }));
+  const canonicalPaths = aclEntries.map(value => ({ ...value, canonical: realpathSync.native(value.path) }));
   if (!ordinary) {
     const expected = JSON.parse(fs.readFileSync(path.join(here, 'canonical-expected.json'), 'utf8'));
     const variants = fs.readFileSync(path.join(here, 'canonicalization-paths.txt'), 'utf8').trim().split(/\r?\n/)

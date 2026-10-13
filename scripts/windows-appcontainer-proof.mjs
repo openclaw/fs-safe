@@ -50,6 +50,10 @@ try {
     assert(rows.every(row => row.ok));
     for (const row of rows) for (const entry of row.canonicalPaths ?? []) {
       assert.equal(entry.canonical, fs.realpathSync.native(entry.path));
+      configureFsSafeNative({ mode: 'off' });
+      const compatibility = await inspectWindowsAcl(entry.path);
+      assert.equal(compatibility.ok, true);
+      assert.deepEqual(entry.entries, compatibility.entries);
     }
     fs.writeFileSync(path.join(output, `windows-${process.arch}.json`), JSON.stringify({ platform: process.platform, arch: process.arch, version: process.version, rows }, null, 2));
     console.log(JSON.stringify({ appcontainer: 'passed', arch: process.arch, scenarios: rows.length, threads: 2 }));

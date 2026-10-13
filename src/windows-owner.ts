@@ -2,7 +2,10 @@ import {
   formatCaughtPermissionFailure,
   getPermissionCommandFailure,
   type PermissionFailureFields,
+  executePermissionCommand,
 } from "./permission-exec.js";
+import { FsSafeError } from "./errors.js";
+import { realpathSync } from "./realpath.js";
 import { windowsSecurityHelperPath } from "./windows-security-helper.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
 import { APP_CONTAINER_SID_RE } from "./windows-security-facts.js";
@@ -61,6 +64,14 @@ export async function inspectWindowsOwner(params: {
   if (hasWindowsPathAlias(params.targetPath, "filesystem", "win32")) {
     const error = new Error("Path uses a Windows filesystem namespace alias");
     return { error: String(error), errorCause: error };
+  }
+  if (process.platform === "win32" && params.exec === executePermissionCommand) {
+    // Refuse a missing sandbox canonicalizer before starting a helper process.
+    // Other pathname failures retain the named-query reporting contract below.
+    try { realpathSync.native(params.targetPath); }
+    catch (error) {
+      if (error instanceof FsSafeError && error.code === "helper-unavailable") throw error;
+    }
   }
   let command = "";
   let startedAt = performance.now();
