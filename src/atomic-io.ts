@@ -1,6 +1,6 @@
 import syncFs, { type BigIntStats, type Stats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
-import { readBoundedSync } from "./bounded-read.js";
+import { readBoundedSync, readFileHandleBounded } from "./bounded-read.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { sleep, sleepSync } from "./timing.js";
@@ -213,7 +213,7 @@ export class AtomicFile {
   }
 
   *readFile(sizeHint?: number): Procedure<Buffer> {
-    if (typeof this.resource !== "number") return yield* wait(this.resource.readFile());
+    if (typeof this.resource !== "number") return yield* wait(readFileHandleBounded(this.resource, Infinity));
     if (sizeHint === undefined) return this.io.syncFs!.readFileSync!(this.resource);
     const fd = this.resource;
     let position = 0;

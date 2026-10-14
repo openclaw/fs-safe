@@ -66,7 +66,7 @@ describe("secure-read policy snapshots", () => {
     let read: ReturnType<typeof vi.spyOn>;
     let close: ReturnType<typeof vi.spyOn>;
     onNextOpen((handle) => {
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
       close = vi.spyOn(handle, "close");
       process.chdir(directories.after);
     });
@@ -124,7 +124,7 @@ describe("secure-read policy snapshots", () => {
     let read: ReturnType<typeof vi.spyOn>;
     let close: ReturnType<typeof vi.spyOn>;
     onNextOpen((handle) => {
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
       close = vi.spyOn(handle, "close");
       if (mutation === "entry") dirs[0] = base;
       else if (mutation === "array") trust.trustedDirs = [];
@@ -231,7 +231,7 @@ describe("secure-read policy snapshots", () => {
     let close: ReturnType<typeof vi.spyOn>;
     onNextOpen((handle) => {
       permissions[field] = true;
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
       close = vi.spyOn(handle, "close");
     });
     await expect(readSecureFile({ filePath, permissions }))
@@ -249,7 +249,7 @@ describe("secure-read policy snapshots", () => {
     let read: ReturnType<typeof vi.spyOn>;
     onNextOpen(async (handle) => {
       trust.allowSymlink = true;
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
       await fs.rename(filePath, original);
       await fs.symlink(original, filePath);
     });

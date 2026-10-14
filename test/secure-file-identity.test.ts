@@ -32,7 +32,7 @@ describe("secure file exact identity", () => {
     let read: ReturnType<typeof vi.spyOn>;
     const open = onNextOpen(async (handle) => {
       close = vi.spyOn(handle, "close");
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
       await fs.rename(filePath, path.join(root, "original"));
       await fs.writeFile(filePath, "replacement", { mode: 0o600 });
     });
@@ -175,7 +175,7 @@ describe("secure file exact identity", () => {
     let read: ReturnType<typeof vi.spyOn>;
     const open = onNextOpen((handle) => {
       close = vi.spyOn(handle, "close");
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
       const stat = fsSync.fstatSync.bind(fsSync);
       vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
         const result = stat(fd, options);

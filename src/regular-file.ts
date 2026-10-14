@@ -101,14 +101,10 @@ export async function readRegularFile(params: {
   }
   try {
     const { stat, exactIdentity } = inspectOpenedRegularRead(handle.fd, filePath, before, maxBytes);
-    // With a byte cap, avoid readFile(): a raced file growth would allocate
-    // the oversized content before the post-read check could reject it.
+    // readFile() can stop at a short nonblocking read before EOF (for example, 9p).
     let buffer: Buffer;
     try {
-      buffer =
-        maxBytes === undefined
-          ? await handle.readFile()
-          : await readFileHandleBounded(handle, maxBytes);
+      buffer = await readFileHandleBounded(handle, maxBytes ?? Infinity);
     } catch (error) {
       if (maxBytes !== undefined) {
         translateBoundedReadOverflow(error, filePath, maxBytes);
