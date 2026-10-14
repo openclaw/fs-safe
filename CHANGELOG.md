@@ -2,14 +2,21 @@
 
 ## Unreleased
 
+## 0.26.5 - 2026-10-14
+
+### Highlights
+
+- **Android/Termux and WSL compatibility:** create temporary workspaces under Android system-owned ancestors and complete short nonblocking reads on WSL/9p filesystems. ([#982](https://github.com/openclaw/fs-safe/pull/982), [#983](https://github.com/openclaw/fs-safe/pull/983))
+- **Windows synchronous read batches:** add `createRootFileOpenBatchSync()` to reuse native root handles while retaining per-file safety checks. ([#984](https://github.com/openclaw/fs-safe/pull/984))
+
 ### Features
 
-- **Windows synchronous read batches:** reuse native root handles with `createRootFileOpenBatchSync()` while retaining fresh file identity, reparse, hardlink, byte-limit, and confinement checks.
+- **Windows synchronous read batches:** reuse native root handles with `createRootFileOpenBatchSync()` while retaining fresh file identity, reparse, hardlink, byte-limit, and confinement checks. ([#984](https://github.com/openclaw/fs-safe/pull/984))
 
 ### Fixes
 
-- **WSL/9p reads:** finish short nonblocking reads instead of truncating uncapped files, atomic copy fallbacks, or content verification. Thanks @Hawk5150 for [openclaw/openclaw#145589](https://github.com/openclaw/openclaw/issues/145589).
-- **Android/Termux temp workspaces:** admit system-owned ancestors and Android-private writable groups while preserving private roots and full ancestry checks. Thanks @kukirin-ui for [openclaw/openclaw#171406](https://github.com/openclaw/openclaw/issues/171406).
+- **WSL/9p reads:** finish short nonblocking reads instead of truncating uncapped files, atomic copy fallbacks, or content verification. Thanks @Hawk5150 for [openclaw/openclaw#145589](https://github.com/openclaw/openclaw/issues/145589). ([#983](https://github.com/openclaw/fs-safe/pull/983))
+- **Android/Termux temp workspaces:** admit system-owned ancestors and Android-private writable groups while preserving private roots and full ancestry checks. Thanks @kukirin-ui for [openclaw/openclaw#171406](https://github.com/openclaw/openclaw/issues/171406). ([#982](https://github.com/openclaw/fs-safe/pull/982))
 
 ## 0.26.4 - 2026-10-13
 
