@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 type DirectoryOwner = { uid: number | bigint; gid: number | bigint };
-export type TempWorkspaceOwnership = "user" | "root" | "unmapped" | "foreign";
+export type TempWorkspaceOwnership = "user" | "root" | "android-system" | "unmapped" | "foreign";
 
 let warned = false;
 
@@ -30,6 +30,7 @@ function unmappedId(kind: "uid" | "gid"): number | null {
 export function classifyTempWorkspaceOwner(stat: DirectoryOwner, uid: number): TempWorkspaceOwnership {
   if (stat.uid === uid || stat.uid === BigInt(uid)) return "user";
   if (stat.uid === 0 || stat.uid === 0n) return "root";
+  if (process.platform === "android" && (stat.uid === 1000 || stat.uid === 1000n)) return "android-system";
   if (process.platform !== "linux") return "foreign";
   try {
     const overflowUid = unmappedId("uid");
@@ -42,6 +43,28 @@ export function classifyTempWorkspaceOwner(stat: DirectoryOwner, uid: number): T
   } catch {
     // Unavailable mapping evidence cannot authorize the namespace exception.
     return "foreign";
+  }
+}
+
+// Android reserves the system group and each app's matching UID/GID. This
+// exception is for ancestor group-write only; private leaves still reject it.
+export function hasTrustedAndroidTempAncestorGroup(
+  stat: DirectoryOwner,
+  uid: number,
+  ownership: TempWorkspaceOwnership,
+): boolean {
+  if (process.platform !== "android") return false;
+  if (ownership === "user" && uid % 100000 >= 10000 && uid % 100000 <= 19999) {
+    return stat.gid === uid || stat.gid === BigInt(uid);
+  }
+  if (ownership !== "android-system" || (stat.gid !== 1000 && stat.gid !== 1000n)) return false;
+  try {
+    const gid = process.getegid?.();
+    const groups = process.getgroups?.();
+    return gid !== undefined && Number.isSafeInteger(gid) && gid >= 0 && gid !== 1000 && Array.isArray(groups) &&
+      groups.every((group) => Number.isSafeInteger(group) && group >= 0 && group !== 1000);
+  } catch {
+    return false;
   }
 }
 

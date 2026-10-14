@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Android/Termux temp workspaces:** admit system-owned ancestors and Android-private writable groups while preserving private roots and full ancestry checks. Thanks @kukirin-ui for [openclaw/openclaw#171406](https://github.com/openclaw/openclaw/issues/171406).
+
 ## 0.26.4 - 2026-10-13
 
 ### Fixes

@@ -4,7 +4,7 @@ import { pinNodeDirectoryForMode, pinNodeDirectoryForModeSync } from "./director
 import { FsSafeError } from "./errors.js";
 import { fileIdentityMismatchError, inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { TempWorkspaceRootAdmission } from "./temp-workspace-admission.js";
-import { classifyTempWorkspaceOwner, warnUnmappedTempWorkspaceAncestor } from "./temp-workspace-ownership.js";
+import { classifyTempWorkspaceOwner, hasTrustedAndroidTempAncestorGroup, warnUnmappedTempWorkspaceAncestor } from "./temp-workspace-ownership.js";
 import { privateTempDirectoryFix, tempDirectoryMode } from "./temp-directory-diagnostics.js";
 
 export type TempWorkspaceIdentity = Readonly<{ dev: bigint; ino: bigint }>;
@@ -91,9 +91,11 @@ export function assertTrustedTempWorkspaceDirectory(
   // Unmapped host owners are unverifiable; trust the host directory hierarchy.
   // Admit sticky ancestors so PrivateUsers keeps host /tmp and PrivateTmp usable.
   // Leaf roots stay euid-owned/private; non-sticky writable ancestors are rejected.
+  const writeMask = !privateDirectory && hasTrustedAndroidTempAncestorGroup(stat, uid, ownership)
+    ? 0o002 : 0o022;
   const writable = typeof stat.mode === "bigint"
-    ? (stat.mode & 0o022n) !== 0n
-    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o022) !== 0;
+    ? (stat.mode & BigInt(writeMask)) !== 0n
+    : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & writeMask) !== 0;
   const sticky = typeof stat.mode === "bigint"
     ? (stat.mode & 0o1000n) !== 0n
     : Number.isSafeInteger(stat.mode) && stat.mode >= 0 && (stat.mode & 0o1000) !== 0;

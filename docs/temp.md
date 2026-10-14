@@ -47,6 +47,26 @@ under trusted ancestry. Do not make shared `/tmp` private or take ownership of
 another user's directory. A caller's preferred root takes precedence over
 `TMPDIR`; changing `TMPDIR` only changes the resolver's fallback location.
 
+On Android only (`process.platform === "android"`), ancestors may also be owned
+by Android's OS system identity, AID_SYSTEM (UID 1000). The system is trusted like
+root; this does not trust arbitrary foreign UIDs or stop the walk at `HOME` or
+`PREFIX`. Mode/sticky checks still apply, with one Android group-write exception:
+an ancestor's group may write when both owner and group are AID_SYSTEM and the
+caller belongs to neither that effective nor supplementary group, or when both
+are the calling app's private Android UID/GID (app ID 10000–19999, including
+multi-user UID offsets). Android reserves those groups for the system or the
+same app identity. Unknown group membership fails closed for system-owned
+group-writable ancestors. World-write still needs sticky protection.
+
+This admits Termux's system-owned `/data` and `/data/data` at `0771` and its
+app-owned `files` ancestor at `0771`, without allowing another app or an
+untrusted writable group to replace the next child. Canonical ancestors are
+rechecked through `/`; symlink/type and identity checks remain in force. The
+supplied temp root and created workspace must still be owned by the effective
+user and reject **all** group/world write, including these Android groups and
+sticky directories. No Android native-addon or Linux user-namespace assumption
+is made by this policy.
+
 On Linux, non-identity `/proc/self/uid_map` and `/proc/self/gid_map` evidence
 permits ancestors whose UID and GID equal unmapped kernel overflow IDs,
 provided the same ancestor mode checks pass.
