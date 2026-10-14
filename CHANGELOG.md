@@ -8,6 +8,7 @@
 
 ### Fixes
 
+- **WSL/9p reads:** finish short nonblocking reads instead of truncating uncapped files, atomic copy fallbacks, or content verification. Thanks @Hawk5150 for [openclaw/openclaw#145589](https://github.com/openclaw/openclaw/issues/145589).
 - **Android/Termux temp workspaces:** admit system-owned ancestors and Android-private writable groups while preserving private roots and full ancestry checks. Thanks @kukirin-ui for [openclaw/openclaw#171406](https://github.com/openclaw/openclaw/issues/171406).
 
 ## 0.26.4 - 2026-10-13

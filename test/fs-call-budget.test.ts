@@ -190,7 +190,8 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           expect.soft(asyncTotal, breakdown).toBe(3); // open, read, close
         }
         if (name === "readLocalFileSafely") {
-          expect.soft(total, breakdown).toBe(8);
+          // Incremental reads expose the fresh EOF fstat that readFile hid internally.
+          expect.soft(total, breakdown).toBe(9);
           expect.soft(counts.get("s.statSync"), breakdown).toBe(1);
           expect.soft(counts.get(process.platform === "linux" ? "s.readlinkSync" : "s.realpathSync.native"), breakdown).toBe(1);
           if (process.platform === "linux") expect.soft(counts.get("s.realpathSync.native"), breakdown).toBeUndefined();

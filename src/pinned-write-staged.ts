@@ -3,6 +3,7 @@ import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { readFileHandleBounded } from "./bounded-read.js";
 import { createFileHandle } from "./create.js";
 import { hasPreservedCreationArtifacts, creationAdmissionFromParent } from "./creation-boundary.js";
 import type { AsyncDirectoryGuard } from "./directory-guard.js";
@@ -134,7 +135,7 @@ export async function runPinnedStagedWrite(
         const expectedHash = sha256Hex(params.input.data, params.input.encoding);
         readHandle = await fs.open(targetPath, resolveReadOpenFlags());
         const readHandleStat = fsSync.fstatSync(readHandle.fd, { bigint: true });
-        const actualHash = sha256Hex(await readHandle.readFile());
+        const actualHash = sha256Hex(await readFileHandleBounded(readHandle, Infinity));
         if (actualHash !== expectedHash) {
           throw new FsSafeError("path-mismatch", "fallback target changed during write");
         }

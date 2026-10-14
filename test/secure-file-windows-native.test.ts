@@ -93,7 +93,7 @@ function watchNextRead(): {
   let close: ReturnType<typeof vi.spyOn> | undefined;
   vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
     const handle = await open(...args);
-    read = vi.spyOn(handle, "readFile");
+    read = vi.spyOn(handle, "read");
     close = vi.spyOn(handle, "close");
     return handle;
   });

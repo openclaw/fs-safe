@@ -92,7 +92,7 @@ it.each(["rename", "refusal", "copy-fallback"] as const)(
 type DescriptorFile = {
   fd: number;
   stat(options?: fs.StatOptions): Promise<fs.Stats | fs.BigIntStats>;
-  readFile(): Promise<Buffer>;
+  read(buffer: Buffer, offset: number, length: number, position: number | null): Promise<{ buffer: Buffer; bytesRead: number }>;
   writeFile(data: string | Uint8Array): undefined;
   chmod(mode: number): undefined;
   close(): undefined;
@@ -139,10 +139,10 @@ it.each(["rename", "copy-fallback"] as const)(
           expect(this).toBe(handle);
           return Promise.resolve(fs.fstatSync(fd, options));
         },
-        readFile() {
+        read(buffer, offset, length, position) {
           ready(`${label}:read`);
           expect(this).toBe(handle);
-          return Promise.resolve(fs.readFileSync(fd));
+          return Promise.resolve({ buffer, bytesRead: fs.readSync(fd, buffer, offset, length, position) });
         },
         writeFile(data) {
           ready(`${label}:write`);

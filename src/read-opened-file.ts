@@ -29,10 +29,9 @@ export async function readOpenedFileSafely(params: {
       `file exceeds limit of ${maxBytes} bytes (got ${params.opened.stat.size})`,
     );
   }
-  const buffer =
-    maxBytes === undefined
-      ? await params.opened.handle.readFile()
-      : await readFileHandleBoundedWithSize(params.opened.handle, maxBytes, params.opened.stat.size);
+  const buffer = await readFileHandleBoundedWithSize(
+    params.opened.handle, maxBytes ?? Infinity, params.opened.stat.size,
+  );
   return {
     buffer,
     containment: params.opened.containment,

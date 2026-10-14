@@ -111,7 +111,7 @@ type RootReadOptions = {
 
 For the byte-consuming read methods, `maxBytes` is enforced eagerly: the library reads up to `maxBytes + 1` and throws `too-large` if there is more, so a hostile target cannot silently exhaust memory. Values must be non-negative safe integers or positive `Infinity`; zero is an active cap, while `Infinity` disables it. Explicitly forwarding `undefined` preserves the Root default.
 
-Safe reads always add the platform's nonblocking open flag where available so a raced FIFO cannot pin a worker indefinitely; regular-file descriptor reads retain normal Node behavior.
+Safe reads always add the platform's nonblocking open flag where available so a raced FIFO cannot pin a worker indefinitely. Whole-file reads continue after short chunks, including on WSL 9p mounts; a short read alone is not treated as EOF. This also applies when the byte cap is disabled.
 
 ## `readAbsolute()` and `reader()`
 
