@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Windows synchronous read batches:** reuse native root handles with `createRootFileOpenBatchSync()` while retaining fresh file identity, reparse, hardlink, byte-limit, and confinement checks.
+
 ### Fixes
 
 - **Android/Termux temp workspaces:** admit system-owned ancestors and Android-private writable groups while preserving private roots and full ancestry checks. Thanks @kukirin-ui for [openclaw/openclaw#171406](https://github.com/openclaw/openclaw/issues/171406).

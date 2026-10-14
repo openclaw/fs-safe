@@ -74,7 +74,11 @@ type AsyncResolutionSnapshot = Pick<OpenRootFileParams,
 };
 
 type RootFileOpenSettings = Pick<OpenRootFileSyncParams,
-  "maxBytes" | "rejectHardlinks" | "allowedType"> & { ioFs: BoundaryReadFs };
+  "maxBytes" | "rejectHardlinks" | "allowedType"> & {
+  ioFs: BoundaryReadFs;
+  admittedFd?: number;
+  rejectLeafSymlinks?: boolean;
+};
 
 export function canUseRootFileOpen(ioFs: typeof fs): boolean {
   return (
@@ -173,6 +177,8 @@ function finalizeRootFileOpen(params: RootFileOpenSettings & {
     maxBytes: params.maxBytes,
     allowedType: params.allowedType,
     ioFs: params.ioFs,
+    admittedFd: params.admittedFd,
+    rejectLeafSymlinks: params.rejectLeafSymlinks,
     finalAdmission: createRootFileFinalAdmission(
       params.ioFs,
       resolved.rootObservation,
@@ -191,6 +197,22 @@ function finalizeRootFileOpen(params: RootFileOpenSettings & {
     exactIdentity: exactFileIdentity(opened.identity),
     rootRealPath: resolved.rootRealPath,
   };
+}
+
+/** Internal retained-root adapter; the native opener owns component admission. */
+export function openRootFileWithRetainedRootSync(
+  params: OpenRootFileSyncParams,
+  root: Extract<CanonicalRootObservation, { ok: true }>,
+  admittedFd: number,
+): RootFileOpenResult {
+  return finalizeRootFileOpen({
+    resolved: {
+      absolutePath: params.absolutePath, resolvedPath: params.absolutePath,
+      rootRealPath: root.path, rootObservation: root, boundaryLabel: params.boundaryLabel,
+    },
+    maxBytes: params.maxBytes, rejectHardlinks: params.rejectHardlinks,
+    allowedType: params.allowedType, ioFs: fs, admittedFd, rejectLeafSymlinks: true,
+  });
 }
 
 export async function openRootFile(

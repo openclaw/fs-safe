@@ -1844,6 +1844,12 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/pipe.test.ts test/native-worker-fd-ownership.test.ts test/windows-native-fd-bridge.test.ts
 
+      - name: Test native Windows root read batching
+        if: runner.os == 'Windows'
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: pnpm test test/root-file-open-batch-sync.test.ts
+
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'
         env:
