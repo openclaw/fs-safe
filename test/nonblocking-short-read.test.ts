@@ -43,7 +43,6 @@ const readers = [
     read: (filePath: string) => readSecureFile({
       filePath,
       permissions: { allowInsecure: true },
-      io: { timeoutMs: 5_000 },
     }),
   },
   {
