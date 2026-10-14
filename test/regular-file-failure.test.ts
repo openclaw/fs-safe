@@ -385,7 +385,7 @@ describe("regular file refusal and race handling", () => {
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      vi.spyOn(handle, "readFile").mockRejectedValueOnce(failure);
+      vi.spyOn(handle, "read").mockRejectedValueOnce(failure);
       return handle;
     });
     await expect(readRegularFile({ filePath })).rejects.toBe(failure);

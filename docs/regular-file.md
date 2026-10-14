@@ -72,6 +72,8 @@ re-inspection without reopening; persistent unknowns or replacements throw
 
 Throws `FsSafeError` with code `too-large` if the file exceeds `maxBytes`. Other I/O errors propagate as `NodeJS.ErrnoException`.
 
+Reads continue after short filesystem chunks even when `maxBytes` is omitted. Nonblocking opens remain enabled to reject raced FIFOs without hanging.
+
 ### `readRegularFileSync(params)`
 
 Synchronous variant. Same shape; the only required field is `filePath`. `maxBytes` is optional.

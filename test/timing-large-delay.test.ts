@@ -83,12 +83,17 @@ it("keeps a secure read open through an oversized timeout", async () => {
   const filePath = path.join(dir, "secret");
   await fs.writeFile(filePath, "secret bytes", { mode: 0o600 });
   const handle = await fs.open(filePath, "r");
-  let finish!: (value: Buffer) => void;
+  let finish!: () => void;
   let reading!: () => void;
   const entered = new Promise<void>((resolve) => { reading = resolve; });
-  const content = new Promise<Buffer>((resolve) => { finish = resolve; });
+  const released = new Promise<void>((resolve) => { finish = resolve; });
   vi.spyOn(fs, "open").mockResolvedValue(handle);
-  vi.spyOn(handle, "readFile").mockImplementation(() => { reading(); return content; });
+  const read = handle.read.bind(handle);
+  vi.spyOn(handle, "read").mockImplementation(async (...args) => {
+    reading();
+    await released;
+    return await read(...args);
+  });
   const close = vi.spyOn(handle, "close");
   fakeTimers();
   const result = readSecureFile({ filePath, permissions: { allowInsecure: true }, io: { timeoutMs: MAX_DELAY + 20 } });
@@ -98,12 +103,12 @@ it("keeps a secure read open through an oversized timeout", async () => {
     await entered;
     await vi.advanceTimersByTimeAsync(MAX_DELAY + 19);
     expect(close).not.toHaveBeenCalled();
-    finish(Buffer.from("secret bytes"));
+    finish();
     await success;
     expect(close).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   } finally {
-    finish(Buffer.from("secret bytes"));
+    finish();
     await result.catch(() => undefined);
     await handle.close().catch(() => undefined);
   }

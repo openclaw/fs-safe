@@ -350,8 +350,7 @@ async function readHandleWithTimeout(
   timeoutMs: number | undefined,
   maxBytes: number | undefined,
 ): Promise<Buffer> {
-  const read = () =>
-    maxBytes === undefined ? handle.readFile() : readFileHandleBounded(handle, maxBytes);
+  const read = () => readFileHandleBounded(handle, maxBytes ?? Infinity);
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return await read();
   }

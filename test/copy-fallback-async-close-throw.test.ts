@@ -52,7 +52,7 @@ async function runPublicAdapter(params: {
         const fail = () => { throw params.primary!.value; };
         return bindHandle(handle, {
           ...(params.primary ? params.phase === "source-read"
-            ? { readFile: fail as FileHandle["readFile"] }
+            ? { read: fail as FileHandle["read"] }
             : { stat: fail as FileHandle["stat"] }
             : {}),
           close() {

@@ -160,7 +160,7 @@ describe("secure file inspection failures", () => {
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
-      vi.spyOn(handle, "readFile").mockImplementation(() => new Promise(() => undefined));
+      vi.spyOn(handle, "read").mockImplementation(() => new Promise(() => undefined));
       return handle;
     });
     await expect(

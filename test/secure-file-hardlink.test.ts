@@ -30,7 +30,7 @@ describe("secure file hardlink rejection", () => {
     await fs.link(outsidePath, aliasPath);
     let read: ReturnType<typeof vi.spyOn>;
     onNextOpen((handle) => {
-      read = vi.spyOn(handle, "readFile");
+      read = vi.spyOn(handle, "read");
     });
 
     await expect(readSecureFile({
@@ -52,11 +52,11 @@ describe("secure file hardlink rejection", () => {
     let read: ReturnType<typeof vi.spyOn>;
     onNextOpen((handle) => {
       close = vi.spyOn(handle, "close");
-      const readFile = handle.readFile.bind(handle);
-      read = vi.spyOn(handle, "readFile").mockImplementationOnce(async () => {
-        const buffer = await readFile();
+      const readChunk = handle.read.bind(handle);
+      read = vi.spyOn(handle, "read").mockImplementationOnce(async (...args) => {
+        const result = await readChunk(...args);
         await fs.link(filePath, outsideAlias);
-        return buffer;
+        return result;
       });
     });
 
