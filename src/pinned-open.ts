@@ -35,10 +35,12 @@ export function openPinnedFileSync(params: {
   filePath: string;
   resolvedPath?: string;
   rejectPathSymlink?: boolean;
+  rejectLeafSymlinks?: boolean;
   rejectHardlinks?: boolean;
   maxBytes?: number;
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs?: PinnedOpenSyncFs;
+  admittedFd?: number;
   finalAdmission?: PinnedOpenSyncFinalAdmission;
 }): PinnedOpenSyncResult {
   const filePath = params.filePath;
@@ -48,10 +50,11 @@ export function openPinnedFileSync(params: {
   const rejectPathSymlink = params.rejectPathSymlink === true;
   const statPolicy = {
     rejectHardlinks: params.rejectHardlinks,
+    rejectLeafSymlinks: params.rejectLeafSymlinks,
     maxBytes: params.maxBytes,
   };
   const openReadFlags = resolveReadOpenFlags({ constants: ioFs.constants });
-  let fd: number | null = null;
+  let fd: number | null = params.admittedFd ?? null;
   try {
     assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
     if (resolvedPath !== undefined) {
@@ -78,7 +81,7 @@ export function openPinnedFileSync(params: {
       assertAllowedStat(stat, allowedType, statPolicy);
       return stat;
     });
-    fd = ioFs.openSync(realPath, openReadFlags);
+    fd ??= ioFs.openSync(realPath, openReadFlags);
     const identity = inspectFileIdentitySync(() => {
       const stat = ioFs.fstatSync(fd!, { bigint: true });
       assertAllowedStat(stat, allowedType, statPolicy);
@@ -119,8 +122,11 @@ export function openPinnedFileSync(params: {
 function assertAllowedStat(
   stat: fs.BigIntStats,
   allowedType: PinnedOpenSyncAllowedType,
-  params: { rejectHardlinks?: boolean; maxBytes?: number },
+  params: { rejectHardlinks?: boolean; rejectLeafSymlinks?: boolean; maxBytes?: number },
 ): void {
+  if (stat.isSymbolicLink() && params.rejectLeafSymlinks) {
+    throw new FsSafeError("symlink", "symlink not allowed");
+  }
   if (stat.isSymbolicLink() || !(allowedType === "directory" ? stat.isDirectory() : stat.isFile())) {
     throw new FsSafeError("not-file", "path does not have the required file type");
   }

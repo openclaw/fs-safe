@@ -111,6 +111,7 @@ export {
   type RootFileOpenFailureReason,
   type RootFileOpenResult,
 } from "./root-file.js";
+export { createRootFileOpenBatchSync, type RootFileOpenBatchSync } from "./root-file-open-batch-sync.js";
 export {
   ROOT_PATH_ALIAS_POLICIES,
   resolvePathViaExistingAncestorSync,

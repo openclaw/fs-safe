@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Windows synchronous read batches:** reuse native root handles with `createRootFileOpenBatchSync()` while retaining fresh file identity, reparse, hardlink, byte-limit, and confinement checks.
+
 ### Fixes
 
 - **WSL/9p reads:** finish short nonblocking reads instead of truncating uncapped files, atomic copy fallbacks, or content verification. Thanks @Hawk5150 for [openclaw/openclaw#145589](https://github.com/openclaw/openclaw/issues/145589).

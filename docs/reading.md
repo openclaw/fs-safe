@@ -181,6 +181,44 @@ try {
 }
 ```
 
+## Synchronous open batches
+
+`createRootFileOpenBatchSync()` from `@openclaw/fs-safe/advanced` returns an
+explicitly scoped batch for repeated `openRootFileSync` calls:
+
+```ts
+import fs from "node:fs";
+import { createRootFileOpenBatchSync } from "@openclaw/fs-safe/advanced";
+
+using batch = createRootFileOpenBatchSync();
+for (const absolutePath of sourceFiles) {
+  const opened = batch.openFile({ rootPath: sourceRoot, absolutePath, boundaryLabel: "source" });
+  if (!opened.ok) throw opened.error;
+  try {
+    consume(fs.readFileSync(opened.fd));
+  } finally {
+    fs.closeSync(opened.fd);
+  }
+}
+```
+
+`openFile()` accepts `OpenRootFileSyncParams` and returns the same
+`RootFileOpenResult` as `openRootFileSync()`. On Windows, canonical drive paths
+with the default symlink rejection reuse a native root descriptor within the
+batch. Native opens reject every reparse component beneath that root. Each open
+still checks the root and current leaf identities, applies its hardlink and
+byte-limit policy, and runs the final root/file/root confinement fence. Replacing
+an admitted root rejects later native opens; file contents and file identities
+are never cached. Other platforms, unavailable native support, other path
+spellings, explicit canonical-root hints, custom filesystem adapters, and
+symlink-following policies retain the ordinary per-open admission path.
+
+Successful opens transfer descriptor ownership to the caller. `close()` and
+`Symbol.dispose` release retained root descriptors, are idempotent, and do not close
+previously returned descriptors. Opening after close returns a validation
+failure with code `invalid-path`. Keep batches scoped to one operation rather
+than retaining them as a process-wide filesystem cache.
+
 ## Common errors
 
 - **`outside-workspace`** — relative path escaped the root, or `readAbsolute` got an absolute path outside.

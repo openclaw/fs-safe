@@ -6,6 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { secureFileBenchmarkCase } from "./secure-file-contract.mjs";
 import { applyBenchmarkPrivateWindowsAcl } from "./windows-private-directory.mjs";
+import { registerRootFileOpenBatch } from "./root-file-open-batch.mjs";
 
 export async function registerCore({ api: a, workspace: w, binding, measuredFeatures, args, register: add, contract, onCleanup }) {
   const data = Buffer.from(' {"ok":true,"label":"synthetic benchmark"}\n');
@@ -31,6 +32,7 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       rootReadCases.push({ name: `depth=${depth}/${size}`, relative, payload, divisor });
     }
   }
+  registerRootFileOpenBatch({ api: a, workspace: w, register: add, contract, onCleanup }, rootReadCases);
   if (typeof a.createRootFileCopyBatchSync === "function") {
     add("createRootFileCopyBatchSync", () => a.createRootFileCopyBatchSync(), { sync: true, after: batch => batch.close() });
     const batch = a.createRootFileCopyBatchSync();
