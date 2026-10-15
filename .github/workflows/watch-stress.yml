@@ -121,3 +121,37 @@ jobs:
           path: watch-stress-results/*.json
           if-no-files-found: error
           retention-days: 14
+
+  historical-fold:
+    name: Published watch-fold baseline (${{ matrix.os }})
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+          - windows-latest
+          - windows-2022
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # This always installs the fixed 0.22.0 reference. Candidate fold proof
+      # remains in native-check's guarded-observation tests on every change.
+      - name: Measure published missing TREE overflow baseline
+        run: node scripts/watch-fold-proof.mjs baseline
