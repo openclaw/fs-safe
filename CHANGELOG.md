@@ -2,11 +2,16 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Root containment:** resolve nested and dangling symlink chains with kernel parent semantics, and reject redirected sibling-output parents before invoking external writers. Thanks @yetval for [#987](https://github.com/openclaw/fs-safe/issues/987) and [#986](https://github.com/openclaw/fs-safe/issues/986).
+- **Watch invalidations:** refresh the admitted parent after transient create/delete activity so consumer caches cannot retain a file absent from both watcher scans.
+
 ## 0.26.6 - 2026-10-15
 
 ### Fixes
 
-- **Btrfs file cloning:** explicit `clone: "auto"` and `"always"` copies match NOCOW on their new empty destination so different source and destination-directory policies do not force a full byte copy. Sources and unrelated destination flags are preserved; automatic fallback recreates the destination with its ordinary inherited policy.
+- **Btrfs file cloning:** explicit `clone: "auto"` and `"always" copies match NOCOW on their new empty destination so different source and destination-directory policies do not force a full byte copy. Sources and unrelated destination flags are preserved; automatic fallback recreates the destination with its ordinary inherited policy.
 
 ## 0.26.5 - 2026-10-14
 

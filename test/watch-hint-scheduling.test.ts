@@ -99,7 +99,10 @@ it.each(["entry", "subtree", "root-tree"])("reconciles a hard-link write after t
   await fs.unlink(alias);
   // Even a modification-only batch may outlive the leaf it named.
   await scanned(hint("", "alias"));
-  expect(values).toEqual([{ reason: "event", changes: [{ path: selected, type: "content" }] }]);
+  expect(values).toEqual([{ reason: "event", changes: [
+    { path: selected, type: "content" },
+    ...(selection === "root-tree" ? [{ path: "", type: "structural" }] : []),
+  ] }]);
 });
 
 it("reconciles namespace activity after a hard-link alias becomes an unrelated single-link file", async () => {
@@ -146,7 +149,9 @@ it("does not let excluded hints hide a selected hard-link write in a mixed batch
   });
   await fs.writeFile(path.join(directory, "excluded"), "selected data changed through excluded alias");
   await scanned({ hints: [...hint("", "excluded").hints, ...hint("", "vanished-unrelated").hints], overflow: false });
-  expect(values).toEqual([{ reason: "event", changes: [{ path: selected, type: "content" }] }]);
+  expect(values).toEqual([{ reason: "event", changes: [
+    { path: selected, type: "content" }, { path: "", type: "structural" },
+  ] }]);
 });
 
 it("reconciles queued hints that become excluded during an in-flight full pass", async () => {
@@ -164,7 +169,7 @@ it("reconciles queued hints that become excluded during an in-flight full pass",
   writeDuringScan = true;
   await owner!.reconcile();
   await expect.poll(() => values.flatMap(value => value.changes ?? [])).toContainEqual({ path: selected, type: "content" });
-  expect(values.flatMap(value => value.changes ?? []).every(change => change.path === selected)).toBe(true);
+  expect(values.flatMap(value => value.changes ?? []).every(change => change.path === selected || change.path === "")).toBe(true);
 });
 
 it.each(["overflow", "no details", "mixed no details"])("fully reconciles %s batches", async scenario => {

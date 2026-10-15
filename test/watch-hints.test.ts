@@ -60,14 +60,25 @@ it("retains admitted namespace activity despite equal before/after fingerprints"
 describe("unobserved transient hints", () => {
   const identity = { dev: 1n, ino: 2n };
   const hint = { path: path.join("skills", "save.tmp"), type: "structural" as const };
-  it.each(["", "skills"])("drops a name under the same parent identity at %j without spending detail budget", parent => {
+  it("invalidates the admitted parent when a consumer observed a transient child between scans", () => {
+    const before = snapshot([]), after = snapshot([]);
+    before.directories.set("", identity);
+    after.directories.set("", identity);
+    const cache = new Set(["same-name"]);
+    const changes = guardedHintChanges(watchScopes([{ path: "", kind: "tree" }]), before, after,
+      [{ path: "same-name", type: "structural" }], [], 256);
+    for (const change of changes ?? []) if (change.path === "") cache.clear();
+    expect(cache.size).toBe(0);
+  });
+  it.each(["", "skills"])("invalidates the stable parent at %j without publishing a transient name", parent => {
     const before = snapshot([]), after = snapshot([]);
     before.directories.set(parent, identity);
     after.directories.set(parent, { ...identity });
     const transient = { ...hint, path: parent ? path.join(parent, "save.tmp") : "save.tmp" };
     const observed = [{ path: "config.json", type: "content" as const }];
-    expect(guardedHintChanges(watchScopes([{ path: "", kind: "tree" }]), before, after, [transient], [], 1)).toEqual([]);
-    expect(guardedHintChanges(scopes, before, after, [transient], observed, 1)).toEqual(observed);
+    expect(guardedHintChanges(watchScopes([{ path: "", kind: "tree" }]), before, after, [transient], [], 1))
+      .toEqual([{ path: parent, type: "structural" }]);
+    expect(guardedHintChanges(scopes, before, after, [transient], observed, 1)).toBeUndefined();
   });
   it.each([{ dev: 2n, ino: 2n }, { dev: 1n, ino: 3n }])("erases detail when the parent identity changes ($dev, $ino)", changed => {
     const before = snapshot([]), after = snapshot([]);
@@ -112,7 +123,7 @@ describe("nameless child scope admission", () => {
     const before = snapshot([]), after = snapshot([]);
     before.directories.set("skills", identity); after.directories.set("skills", identity);
     const hints = nativeChanges(scopes, before, children(path.join("skills", "unobserved")));
-    expect(guardedHintChanges(scopes, before, after, hints, [], 256)).toEqual([]);
+    expect(guardedHintChanges(scopes, before, after, hints, [], 256)).toEqual([{ path: "skills", type: "structural" }]);
   });
 });
 
