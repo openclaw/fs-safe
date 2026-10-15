@@ -88,7 +88,7 @@ describe("root denyMutations policies", () => {
 
       vi.restoreAllMocks();
       vi.spyOn(fsSync, "existsSync").mockReturnValue(true);
-      vi.spyOn(fsSync, "realpathSync").mockReturnValue("C:\\safe:payload");
+      vi.spyOn(fsSync.realpathSync, "native").mockReturnValue("C:\\safe:payload");
 
       expect(() => resolvePathViaExistingAncestorSync("C:\\safe")).toThrow(
         expect.objectContaining({
