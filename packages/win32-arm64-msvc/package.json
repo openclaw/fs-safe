@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-win32-arm64-msvc",
-  "version": "0.26.5",
+  "version": "0.26.6",
   "description": "Windows ARM64 MSVC native binding for @openclaw/fs-safe.",
   "license": "MIT",
   "author": "OpenClaw Team <dev@openclaw.ai>",

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.26.6 - 2026-10-15
+
 ### Fixes
 
 - **Btrfs file cloning:** explicit `clone: "auto"` and `"always"` copies match NOCOW on their new empty destination so different source and destination-directory policies do not force a full byte copy. Sources and unrelated destination flags are preserved; automatic fallback recreates the destination with its ordinary inherited policy.
