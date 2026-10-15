@@ -964,15 +964,16 @@ pub(crate) fn clone_file_exclusive_with_sync(
     match_nocow: bool,
 ) -> NativeResult<i32> {
     let target = create_exclusive_target(target_root_fd, target_rel_path)?;
-    if match_nocow && source_fd >= 0 {
-        if let Err(error) = crate::file_clone_linux::prepare_nocow(
+    if match_nocow
+        && source_fd >= 0
+        && let Err(error) = crate::file_clone_linux::prepare_nocow(
             borrowed(source_fd), &target, target_root_fd, target_rel_path,
-        ) {
-            return Err(with_cleanup_error(
-                error,
-                remove_created_target_checked(target_root_fd, target_rel_path, &target),
-            ));
-        }
+        )
+    {
+        return Err(with_cleanup_error(
+            error,
+            remove_created_target_checked(target_root_fd, target_rel_path, &target),
+        ));
     }
     let cloned = if source_fd < 0 {
         Err(rustix::io::Errno::BADF)
@@ -1717,7 +1718,13 @@ mod tests {
     fn clone_cleanup_preserves_replacement_and_refuses_copy_fallback() {
         let root = temp_root("clone-cleanup");
         let parent = fs::File::open(&root).unwrap();
-        let target = create_exclusive_target(parent.as_raw_fd(), "stage").unwrap();
+        let target: OwnedFd = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(root.join("stage"))
+            .unwrap()
+            .into();
         fs::rename(root.join("stage"), root.join("owned")).unwrap();
         fs::write(root.join("stage"), b"replacement").unwrap();
         let failure = with_cleanup_error(
