@@ -20,6 +20,7 @@ import {
 } from "./private-producer-handoff.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { rootFromDirectoryGuard } from "./root-impl.js";
+import { admitPathInsideRoot } from "./root-boundary.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { createOwnedTempFile } from "./temp-target.js";
@@ -183,6 +184,7 @@ async function writeIsolatedProducer<T>(params: {
 export async function writeCallbackSibling<T>(params: {
   tempDir: string;
   tempName: string;
+  rootBoundary?: AsyncDirectoryGuard<BigIntStats>;
   write: (tempPath: string) => Promise<T>;
   producerIsolation?: "private-directory";
   resolveFinalPath: (result: T) => string;
@@ -203,10 +205,21 @@ export async function writeCallbackSibling<T>(params: {
   const maxBytes = params.maxBytes;
   const syncTempFile = params.syncTempFile;
   const syncParentDir = params.syncParentDir;
+  const rootBoundary = params.rootBoundary;
   const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
-  const assertParent = () => assertDirectoryIdentitySync(parent, {
-    dev: guard.stat.dev, ino: guard.stat.ino, realPath: guard.realPath,
-  });
+  const assertParent = () => {
+    assertDirectoryIdentitySync(parent, {
+      dev: guard.stat.dev, ino: guard.stat.ino, realPath: guard.realPath,
+    });
+    if (rootBoundary) {
+      assertDirectoryIdentitySync(rootBoundary.dir, {
+        dev: rootBoundary.stat.dev, ino: rootBoundary.stat.ino, realPath: rootBoundary.realPath,
+      });
+      if (!admitPathInsideRoot({
+        rootPath: rootBoundary.realPath, candidatePath: guard.realPath, rootIdentity: rootBoundary.stat,
+      })) throw new FsSafeError("outside-workspace", "sibling parent resolves outside the root");
+    }
+  };
   let handle: FileHandle | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
@@ -228,6 +241,7 @@ export async function writeCallbackSibling<T>(params: {
   };
 
   try {
+    if (rootBoundary) assertParent();
     let result: T;
     if (producerIsolation === "private-directory") {
       const isolated = await writeIsolatedProducer({

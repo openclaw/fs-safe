@@ -242,7 +242,9 @@ observe a selected sentinel edit and drain its trailing events.
 Each later pass compares with the previous snapshot, publishes bounded differences,
 and adopts its result as the next snapshot. Vanishing entries, kind changes, and
 transient descendant scan errors produce structural invalidations, preserving the
-Root identity checks. Events during a pass coalesce into one pending pass and
+Root identity checks. A hinted child absent from both scans invalidates its
+admitted parent, since a consumer may have observed that child between scans.
+The unobserved child spelling is not published. Events during a pass coalesce into one pending pass and
 retain bounded detail regardless of how long the scan takes. The 25 ms hint
 coalescing window does not impose a scan deadline. A full native callback queue
 retains its bounded pending batch for retry. Pending native and JavaScript hint queues degrade to coarse subtree hints when

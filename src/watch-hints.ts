@@ -106,13 +106,18 @@ export function guardedHintChanges(
   if (!hints || !observed) return undefined;
   const result = new Map(observed.map(change => [change.path, change]));
   for (const hint of hints) {
-    // Drop unobserved non-target names only under a parent with the same guarded
-    // identity in both passes; otherwise a stale/misdirected watch erases detail.
+    // A consumer can observe a transient child between our scans. Invalidate
+    // its admitted parent without publishing an unobserved backend spelling.
     if (!before?.entries.has(hint.path) && !after.entries.has(hint.path) && !scopes.some(scope => scope.path === hint.path)) {
       const parent = path.dirname(hint.path);
       const directory = parent === "." ? "" : parent;
       const left = before?.directories.get(directory), right = after.directories.get(directory);
-      if (left && right && left.dev === right.dev && left.ino === right.ino) continue;
+      if (left && right && left.dev === right.dev && left.ino === right.ino) {
+        for (const change of scopedChanges(scopes, { path: directory, type: "structural" })) {
+          if (!addChange(result, change, limit)) return undefined;
+        }
+        continue;
+      }
       return undefined;
     }
     // Equal snapshots cannot exclude an intermediate change and restoration (ABA).

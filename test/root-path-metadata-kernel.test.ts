@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import * as canonical from "../src/realpath.js";
+import { resolveLocalPathFromRootsSync } from "../src/local-roots.js";
 import {
   resolveRootPath,
   resolveRootPathSync,
@@ -14,7 +15,7 @@ import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 
-itPosix("preserves native and ordinary expansion of raw parent segments inside symlink targets", async () => {
+itPosix("preserves kernel expansion of raw parent segments inside symlink targets", async () => {
   const rootPath = await tempRoot("fs-safe-root-metadata-parent-");
   const target = path.join(rootPath, "target");
   fs.mkdirSync(path.join(target, "child"), { recursive: true });
@@ -23,11 +24,62 @@ itPosix("preserves native and ordinary expansion of raw parent segments inside s
   fs.symlinkSync("link/..", absolutePath, "dir");
   const params = { rootPath, absolutePath, boundaryLabel: "fixture" };
   await expect(resolveRootPath(params)).resolves.toMatchObject({ canonicalPath: target, exists: true, kind: "directory" });
-  expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: rootPath, exists: true, kind: "directory" });
+  expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: target, exists: true, kind: "directory" });
+});
+
+itPosix.each([true, false])("rejects a symlink whose parent segment escapes through another symlink (existing=%s)", async exists => {
+  const base = await tempRoot("fs-safe-root-metadata-escape-");
+  const rootPath = path.join(base, "root");
+  const outside = path.join(base, "outside", "a");
+  fs.mkdirSync(rootPath);
+  fs.mkdirSync(path.join(outside, "b"), { recursive: true });
+  if (exists) fs.writeFileSync(path.join(outside, "x"), "outside");
+  fs.writeFileSync(path.join(rootPath, "x"), "decoy");
+  fs.symlinkSync(path.join(outside, "b"), path.join(rootPath, "s"), "dir");
+  const absolutePath = path.join(rootPath, "link");
+  fs.symlinkSync("s/../x", absolutePath);
+  if (exists) expect(fs.readFileSync(absolutePath, "utf8")).toBe("outside");
+  else expect(fs.existsSync(absolutePath)).toBe(false);
+  const params = { rootPath, absolutePath, boundaryLabel: "fixture" };
+  await expect(resolveRootPath(params)).rejects.toThrow(/Symlink escapes/);
+  expect(() => resolveRootPathSync(params)).toThrow();
+  expect(resolveLocalPathFromRootsSync({ roots: [rootPath], filePath: absolutePath })).toBeNull();
+});
+
+itPosix.each(["async", "sync"] as const)("%s keeps a missing target below its physical symlink parent", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-missing-");
+  const target = path.join(rootPath, "target");
+  fs.mkdirSync(path.join(target, "child"), { recursive: true });
+  fs.symlinkSync("target/child", path.join(rootPath, "first"), "dir");
+  const absolutePath = path.join(rootPath, "indirect");
+  fs.symlinkSync("first/../missing", absolutePath);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  await expect(Promise.resolve(resolve({ rootPath, absolutePath, boundaryLabel: "fixture" })))
+    .resolves.toMatchObject({ canonicalPath: path.join(target, "missing"), exists: false });
+});
+
+itPosix.each(["async", "sync"] as const)("%s rejects a parent step after an unresolved symlink target component", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-unresolved-");
+  fs.writeFileSync(path.join(rootPath, "decoy"), "decoy");
+  const absolutePath = path.join(rootPath, "link");
+  fs.symlinkSync("missing/../decoy", absolutePath);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  await expect(Promise.resolve().then(() => resolve({ rootPath, absolutePath, boundaryLabel: "fixture" })))
+    .rejects.toMatchObject({ code: "symlink" });
+});
+
+itPosix.each(["async", "sync"] as const)("%s resolves a chain of dangling symlinks", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-dangling-chain-");
+  fs.symlinkSync("missing", path.join(rootPath, "middle"));
+  const absolutePath = path.join(rootPath, "outer");
+  fs.symlinkSync("middle", absolutePath);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  await expect(Promise.resolve().then(() => resolve({ rootPath, absolutePath, boundaryLabel: "fixture" })))
+    .resolves.toMatchObject({ canonicalPath: path.join(rootPath, "missing"), exists: false, kind: "missing" });
 });
 
 it.each(["async", "sync"] as const)(
-  "%s retains its canonicalizer for roots, symlinks, and missing symlink targets",
+  "%s uses kernel canonicalization for roots, symlinks, and missing symlink targets",
   async mode => {
     const rootPath = await tempRoot("fs-safe-root-metadata-route-");
     const target = path.join(rootPath, "target");
@@ -38,10 +90,8 @@ it.each(["async", "sync"] as const)(
     const linkType = process.platform === "win32" ? "junction" : "dir";
     fs.symlinkSync(target, link, linkType);
     fs.symlinkSync(missing, dangling, linkType);
-    const actual = mode === "async" ? canonical.realpathSync.native : canonical.realpathSync;
-    const canonicalize = mode === "async"
-      ? vi.spyOn(canonical.realpathSync, "native")
-      : vi.spyOn(canonical, "realpathSync");
+    const actual = canonical.realpathSync.native;
+    const canonicalize = vi.spyOn(canonical.realpathSync, "native");
     const calls: string[] = [];
     canonicalize.mockImplementation(candidate => {
       calls.push(candidate);

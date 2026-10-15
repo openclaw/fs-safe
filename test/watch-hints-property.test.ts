@@ -52,7 +52,7 @@ it("reduces random native hint streams without inventing selected paths", () => 
     }), { seed: 783, numRuns: 1500 });
 });
 
-it("admits only observed names or explicit targets and preserves structural dominance", () => {
+it("admits observed names, stable parents or explicit targets and preserves structural dominance", () => {
   const item = fc.record({ change, before: fc.boolean(), after: fc.boolean(), stable: fc.boolean() });
   fc.assert(fc.property(fc.array(scope, { maxLength: 4 }), fc.array(item, { maxLength: 25 }), fc.integer({ min: 1, max: 8 }),
     (scopes, items, limit) => {
@@ -67,13 +67,19 @@ it("admits only observed names or explicit targets and preserves structural domi
       const reference = new Map<string, WatchChange>();
       let uncertain = false;
       for (const { change } of items) {
+        let changes = [change];
         if (!before.entries.has(change.path) && !after.entries.has(change.path) && !scopes.some(scope => scope.path === change.path)) {
           const parent = path.dirname(change.path) === "." ? "" : path.dirname(change.path);
           if (before.directories.get(parent)!.ino !== after.directories.get(parent)!.ino) { uncertain = true; break; }
-          continue;
+          changes = scopes.flatMap(scope => selected([scope], parent)
+            ? [{ path: parent, type: "structural" as const }]
+            : distance(parent, scope.path) > 0 ? [{ path: scope.path, type: "structural" as const }] : []);
         }
-        if (!reference.has(change.path) && reference.size === limit) { uncertain = true; break; }
-        reference.set(change.path, { ...change, type: reference.get(change.path)?.type === "structural" ? "structural" : change.type });
+        for (const candidate of changes) {
+          if (!reference.has(candidate.path) && reference.size === limit) { uncertain = true; break; }
+          reference.set(candidate.path, { ...candidate, type: reference.get(candidate.path)?.type === "structural" ? "structural" : candidate.type });
+        }
+        if (uncertain) break;
       }
       expect(sorted(guardedHintChanges(scopes, before, after, items.map(item => item.change), [], limit)))
         .toEqual(uncertain ? undefined : sorted([...reference.values()]));

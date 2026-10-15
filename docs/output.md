@@ -99,8 +99,10 @@ boundary and same-filesystem atomic replacement is required. After the callback
 returns, fs-safe pins and validates the staged regular file, rejects hardlinks
 and size-limit violations, applies `mode`, fsyncs it, and atomically renames it
 over the target. Existing files and symlink entries are replaced without
-following their contents or referents. The parent identity is guarded across
-the operation and the parent directory is synchronized best-effort after
+following their contents or referents. The canonical root identity and the
+parent's containment are checked before invoking the producer and throughout
+publication, including redirects before the parent guard is captured. The
+parent identity is guarded across the operation and the parent directory is synchronized best-effort after
 rename. If an error leaves the sibling temp in place and immediate cleanup
 fails, its verified identity remains registered for a best-effort process-exit
 cleanup retry.

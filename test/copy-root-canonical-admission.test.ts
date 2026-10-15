@@ -25,7 +25,7 @@ async function fixture() {
 }
 
 describe.skipIf(process.platform === "win32")("canonical POSIX copy admission", () => {
-  it("reuses the checked source root without the ordinary resolver rediscovering it", async () => {
+  it("does not use textual canonicalization for the checked source root", async () => {
     const f = await fixture();
     const ordinary = fs.realpathSync;
     const calls: fs.PathLike[] = [];
@@ -36,7 +36,7 @@ describe.skipIf(process.platform === "win32")("canonical POSIX copy admission", 
     probe.native = ordinary.native;
     using copied = copyRootFileSync(f.options);
     expect(fs.readFileSync(copied.fd, "utf8")).toBe("captured");
-    expect(calls.filter(name => name === f.sourceRoot)).toHaveLength(1);
+    expect(calls).toEqual([]);
   });
 
   it.each(["source", "destination"] as const)("rejects a %s root replaced during its initial identity observation", async side => {
@@ -78,7 +78,7 @@ describe.skipIf(process.platform === "win32")("canonical POSIX copy admission", 
     expect(fs.readFileSync(f.source, "utf8")).toBe("captured");
   });
 
-  it.each(["source", "hop/../source"])("retains ordinary root-alias resolution for %s", async linkTarget => {
+  it.each(["source", "hop/../source"])("retains kernel root-alias resolution for %s", async linkTarget => {
     const f = await fixture();
     fs.mkdirSync(path.join(f.directory, "elsewhere", "deep"), { recursive: true });
     fs.mkdirSync(path.join(f.directory, "elsewhere", "source"));
@@ -91,8 +91,9 @@ describe.skipIf(process.platform === "win32")("canonical POSIX copy admission", 
       ...f.options,
       source: { rootPath: alias, absolutePath: path.join(alias, "input") },
     });
-    expect(fs.readFileSync(copied.fd, "utf8")).toBe("captured");
-    expect(copied.sourceIdentity).toEqual(expect.objectContaining({ ino: fs.statSync(f.source, { bigint: true }).ino }));
+    const source = linkTarget === "source" ? f.source : path.join(f.directory, "elsewhere", "source", "input");
+    expect(fs.readFileSync(copied.fd, "utf8")).toBe(fs.readFileSync(source, "utf8"));
+    expect(copied.sourceIdentity).toEqual(expect.objectContaining({ ino: fs.statSync(source, { bigint: true }).ino }));
   });
 
   it("rejects a root alias retargeted after its fallback root capture", async () => {
@@ -102,19 +103,18 @@ describe.skipIf(process.platform === "win32")("canonical POSIX copy admission", 
     fs.mkdirSync(replacement);
     fs.writeFileSync(path.join(replacement, "input"), "replacement");
     fs.symlinkSync(f.sourceRoot, alias, "dir");
-    const ordinary = fs.realpathSync;
+    const canonicalize = fs.realpathSync.native;
     let resolutions = 0;
-    const probe = vi.spyOn(fs, "realpathSync").mockImplementation((...args: Parameters<typeof ordinary>) => {
-      const result = Reflect.apply(ordinary, fs, args);
+    vi.spyOn(fs.realpathSync, "native").mockImplementation((...args: Parameters<typeof canonicalize>) => {
+      const result = Reflect.apply(canonicalize, fs, args);
       // The first observation declines the canonical fast path; the second
-      // captures the ordinary resolver's root before lexical admission.
+      // captures the kernel resolver's root before lexical admission.
       if (args[0] === alias && ++resolutions === 2) {
         fs.unlinkSync(alias);
         fs.symlinkSync(replacement, alias, "dir");
       }
       return result;
     });
-    probe.native = ordinary.native;
     expect(() => copyRootFileSync({
       ...f.options,
       source: { rootPath: alias, absolutePath: path.join(alias, "input") },

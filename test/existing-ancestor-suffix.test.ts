@@ -42,7 +42,7 @@ it.each(["native", "ordinary"] as const)(
     vi.spyOn(fs, "lstatSync").mockImplementation(((candidate: fs.PathLike) =>
       String(candidate) === sourceRoot ? {} : undefined) as typeof fs.lstatSync);
     vi.spyOn(fs, "existsSync").mockImplementation(candidate => String(candidate) === sourceRoot);
-    const realpath = mode === "native" ? vi.spyOn(canonical.realpathSync, "native") : vi.spyOn(canonical, "realpathSync");
+    const realpath = vi.spyOn(canonical.realpathSync, "native");
     realpath.mockReturnValue(canonicalRoot);
     const resolve = mode === "native" ? resolvePathViaExistingAncestor : resolvePathViaExistingAncestorSync;
 
@@ -65,7 +65,7 @@ it.runIf(process.platform === "win32").each(["native", "ordinary"] as const)(
       vi.spyOn(fs, "lstatSync").mockImplementation(((candidate: fs.PathLike) =>
         String(candidate) === ancestor ? {} : undefined) as typeof fs.lstatSync);
       vi.spyOn(fs, "existsSync").mockImplementation(candidate => String(candidate) === ancestor);
-      const realpath = mode === "native" ? vi.spyOn(canonical.realpathSync, "native") : vi.spyOn(canonical, "realpathSync");
+      const realpath = vi.spyOn(canonical.realpathSync, "native");
       realpath.mockReturnValue("D:\\canonical");
 
       await expect(Promise.resolve(resolve(target))).resolves.toBe(expected);

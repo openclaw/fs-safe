@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Root containment:** resolve nested and dangling symlink chains with kernel parent semantics, and reject redirected sibling-output parents before invoking external writers. Thanks @yetval for [#987](https://github.com/openclaw/fs-safe/issues/987) and [#986](https://github.com/openclaw/fs-safe/issues/986).
+- **Watch invalidations:** refresh the admitted parent after transient create/delete activity so consumer caches cannot retain a file absent from both watcher scans.
+
 ## 0.26.6 - 2026-10-15
 
 ### Fixes

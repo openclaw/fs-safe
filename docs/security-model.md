@@ -17,6 +17,15 @@ path components.
 case since `5ddca80`. Exposure is limited to consumers that call
 `resolveRootPath()` or `resolveRootPathSync()` directly.
 
+Releases through 0.26.5 also mishandle symlink targets containing another
+symlink followed by `..`. Synchronous resolvers can admit an existing outside
+target as an unrelated in-root path; both synchronous and asynchronous resolvers
+can misresolve a missing target. The pending fix uses kernel canonicalization
+for symlink hops and existing ancestors before interpreting a missing suffix.
+Parent steps after unresolved components fail closed.
+Acyclic chains of dangling symlinks still resolve to a missing-path result.
+`resolveLocalPathFromRootsSync()` shares the synchronous fix.
+
 ## Threat model
 
 You hand a `root()` boundary to a piece of code that takes caller-controlled relative paths. The library defends against a caller that:
