@@ -331,9 +331,9 @@ describe("synchronous Root-backed file-lock authority", () => {
     fs.mkdirSync(actualA);
     fs.mkdirSync(actualB);
     fs.symlinkSync("actual-a", alias, "dir");
-    const actualRealpath = canonicalPath.realpathSync;
+    const actualRealpath = canonicalPath.realpathSync.native;
     let aliasResolutions = 0;
-    vi.spyOn(canonicalPath, "realpathSync").mockImplementation((input) => {
+    vi.spyOn(canonicalPath.realpathSync, "native").mockImplementation((input) => {
       if (input === alias) {
         aliasResolutions += 1;
         return aliasResolutions === 1 ? actualA : actualB;

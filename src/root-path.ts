@@ -456,8 +456,8 @@ type LexicalResolutionParams = {
   observationEligible: boolean;
 };
 
-// Both public APIs use synchronous metadata; only canonicalization and ancestor
-// existence differ. Promise wrappers preserve the asynchronous rejection API.
+// Both public APIs use kernel canonicalization and synchronous metadata; only
+// ancestor existence differs. Promise wrappers preserve asynchronous rejection.
 function traverseRootPath(
   params: ResolveRootPathParams,
   { mode = "native", observation: observationOutput, observeRoot, removalReceipts }: RootPathTraversalOptions,

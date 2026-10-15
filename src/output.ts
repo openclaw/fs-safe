@@ -8,6 +8,8 @@ import { isPathInside } from "./path.js";
 import { root } from "./root.js";
 import { tempFile } from "./temp-target.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { createAsyncDirectoryGuard, type AsyncDirectoryGuard } from "./directory-guard.js";
+import type { BigIntStats } from "node:fs";
 
 export type ExternalFileWriteOptions<T = void> = {
   rootDir: string;
@@ -99,6 +101,9 @@ export async function writeExternalFileWithinRoot<T = void>(
   const staging = options.staging;
   const fallbackFileName = options.fallbackFileName;
   const targetRoot = await root(rootDir);
+  const rootBoundary = staging === "sibling"
+    ? await createAsyncDirectoryGuard(targetRoot.rootReal, { bigint: true })
+    : undefined;
   if (requestedTargetPath.length === 0) {
     throw new FsSafeError("invalid-path", "target path is required");
   }
@@ -121,6 +126,7 @@ export async function writeExternalFileWithinRoot<T = void>(
     const siblingFinalPath = await targetRoot.resolve(targetPath);
     const result = await writeExternalFileViaSibling({
       finalPath: siblingFinalPath,
+      rootBoundary,
       write,
       producerIsolation,
       fallbackFileName,
@@ -160,13 +166,17 @@ function buildSiblingTempName(targetPath: string, fallbackFileName?: string): st
 }
 
 async function writeExternalFileViaSibling<T>(
-  params: Omit<ExternalFileWriteOptions<T>, "rootDir" | "path" | "staging"> & { finalPath: string },
+  params: Omit<ExternalFileWriteOptions<T>, "rootDir" | "path" | "staging"> & {
+    finalPath: string;
+    rootBoundary?: AsyncDirectoryGuard<BigIntStats>;
+  },
 ): Promise<T> {
   assertNoWindowsPathAlias(params.finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const finalPath = path.resolve(params.finalPath);
   assertNoWindowsPathAlias(finalPath, "filesystem", "output target uses a Windows filesystem namespace alias");
   const { result } = await writeCallbackSibling({
     tempDir: path.dirname(finalPath),
+    rootBoundary: params.rootBoundary,
     tempName: buildSiblingTempName(finalPath, params.fallbackFileName),
     write: params.write,
     producerIsolation: params.producerIsolation,

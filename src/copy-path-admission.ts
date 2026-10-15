@@ -13,7 +13,7 @@ function admitUncachedCopyPath(input: CopyPath, create = false, admittedRoot?: A
   if (!path.isAbsolute(input.rootPath) || !path.isAbsolute(input.absolutePath)) {
     throw new FsSafeError("invalid-path", "copy roots and paths must be absolute");
   }
-  const root = admittedRoot ?? captureDirectoryGuard(realpathSync(input.rootPath), "native", { bigint: true });
+  const root = admittedRoot ?? captureDirectoryGuard(realpathSync.native(input.rootPath), "native", { bigint: true });
   // Canonical POSIX callers already own a freshly checked root. Keep the
   // resolver's lexical/symlink walk, but do not rediscover that root each time.
   const rootCanonicalPath = admittedRoot?.realPath;
@@ -85,7 +85,7 @@ export function createCopyPathAdmissionCache() {
     }
     let root = roots.get(input.rootPath);
     if (!root) {
-      const canonical = realpathSync(input.rootPath);
+      const canonical = realpathSync.native(input.rootPath);
       if (canonical !== input.rootPath) return admitUncachedCopyPath(input, create);
       root = captureDirectoryGuard(canonical, "native", { bigint: true });
       roots.set(input.rootPath, root);

@@ -123,7 +123,7 @@ export function resolveExistingAncestor(
   mode: RootPathMetadataMode,
 ): string {
   const exists = mode === "native" ? pathExists : pathExistsSync;
-  const canonicalize = mode === "native" ? realpathSync.native : realpathSync;
+  const canonicalize = realpathSync.native;
   assertNoWindowsPathAlias(targetPath);
   const normalized = resolvePathPreservingWindowsRoot(targetPath);
   assertNoWindowsPathAlias(normalized);
@@ -164,7 +164,7 @@ export function resolveSymlinkHopPath(
   rejectUnresolved?: boolean,
 ): string {
   try {
-    const canonicalize = mode === "native" ? realpathSync.native : realpathSync;
+    const canonicalize = realpathSync.native;
     const rawRealPath = canonicalize(symlinkPath);
     assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
