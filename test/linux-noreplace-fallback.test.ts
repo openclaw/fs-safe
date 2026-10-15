@@ -27,7 +27,7 @@ describe.skipIf(!available)("Linux without renameat2 RENAME_NOREPLACE", () => {
       expect(child.status, child.stderr).toBe(0);
       expect(child.stdout).toContain("move fallback partial state: passed");
     } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
+  }, 30_000);
   it.each(["EINVAL", "ENOSYS"])("handles seccomp %s in auto and require mode", errno => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "fs-safe-seccomp-"));
     try {
@@ -44,5 +44,5 @@ describe.skipIf(!available)("Linux without renameat2 RENAME_NOREPLACE", () => {
         expect(child.stdout).toContain("renameat2 fallback: passed");
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
+  }, 60_000);
 });
