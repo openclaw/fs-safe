@@ -945,7 +945,10 @@ fn ficlone_copy_unavailable(error: rustix::io::Errno) -> bool {
 pub(crate) fn terminal_clone_error(error: crate::NativeError) -> crate::NativeError {
     // Copy callers retry these capability codes. After mutation or failed
     // identity/readback checks, successful cleanup must not authorize a retry.
-    if matches!(error.status.as_str(), "ENOTSUP" | "ENOSYS" | "EXDEV" | "EINVAL") {
+    if matches!(
+        error.status.as_str(),
+        "ENOTSUP" | "EOPNOTSUPP" | "ENOSYS" | "EXDEV" | "EINVAL" | "EPERM"
+    ) {
         native_error("EIO", format!("clone failed ({}): {}", error.status, error.reason))
     } else {
         error

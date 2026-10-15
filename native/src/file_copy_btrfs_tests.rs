@@ -307,3 +307,37 @@ fn post_clone_mode_failure_is_not_an_automatic_copy_fallback() {
         },
     );
 }
+
+fn assert_publication_normalization_denial_is_terminal(syscall: libc::c_long) {
+    let fixture = Fixture::new(false, false);
+    crate::test_support::deny_syscall_with_errno(syscall, libc::EPERM);
+    let error = crate::unix::clone_file_exclusive(
+        fixture.source.as_raw_fd(),
+        fixture.parent.as_raw_fd(),
+        "stage",
+    )
+    .unwrap_err();
+    assert_eq!(error.status, "EIO");
+    assert!(error.reason.contains("EPERM"));
+    assert!(error.reason.contains("normalize cloned file"));
+    assert!(!fixture.stage().exists());
+    fixture.assert_source_and_parent();
+}
+
+#[test]
+#[ignore = "requires a private Btrfs TMPDIR"]
+fn publication_clone_chmod_denial_is_not_retryable() {
+    isolated_admission_test(
+        "file_copy::btrfs_tests::publication_clone_chmod_denial_is_not_retryable",
+        || assert_publication_normalization_denial_is_terminal(libc::SYS_fchmod),
+    );
+}
+
+#[test]
+#[ignore = "requires a private Btrfs TMPDIR"]
+fn publication_clone_fsync_denial_is_not_retryable() {
+    isolated_admission_test(
+        "file_copy::btrfs_tests::publication_clone_fsync_denial_is_not_retryable",
+        || assert_publication_normalization_denial_is_terminal(libc::SYS_fsync),
+    );
+}
