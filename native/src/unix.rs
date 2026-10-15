@@ -911,7 +911,7 @@ pub fn clone_file_exclusive(
     target_root_fd: i32,
     target_rel_path: &str,
 ) -> NativeResult<i32> {
-    clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true)
+    clone_file_exclusive_with_sync(source_fd, target_root_fd, target_rel_path, true, false)
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -942,13 +942,39 @@ fn ficlone_copy_unavailable(error: rustix::io::Errno) -> bool {
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) fn terminal_clone_error(error: crate::NativeError) -> crate::NativeError {
+    // Copy callers retry these capability codes. After mutation or failed
+    // identity/readback checks, successful cleanup must not authorize a retry.
+    if matches!(
+        error.status.as_str(),
+        "ENOTSUP" | "EOPNOTSUPP" | "ENOSYS" | "EXDEV" | "EINVAL" | "EPERM"
+    ) {
+        native_error("EIO", format!("clone failed ({}): {}", error.status, error.reason))
+    } else {
+        error
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn clone_file_exclusive_with_sync(
     source_fd: i32,
     target_root_fd: i32,
     target_rel_path: &str,
     sync: bool,
+    match_nocow: bool,
 ) -> NativeResult<i32> {
     let target = create_exclusive_target(target_root_fd, target_rel_path)?;
+    if match_nocow
+        && source_fd >= 0
+        && let Err(error) = crate::file_clone_linux::prepare_nocow(
+            borrowed(source_fd), &target, target_root_fd, target_rel_path,
+        )
+    {
+        return Err(with_cleanup_error(
+            error,
+            remove_created_target_checked(target_root_fd, target_rel_path, &target),
+        ));
+    }
     let cloned = if source_fd < 0 {
         Err(rustix::io::Errno::BADF)
     } else {
@@ -975,7 +1001,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
         })
     {
         return Err(with_cleanup_error(
-            os_error(error, "normalize cloned file"),
+            terminal_clone_error(os_error(error, "normalize cloned file")),
             remove_created_target_checked(target_root_fd, target_rel_path, &target),
         ));
     }
@@ -1068,6 +1094,7 @@ pub(crate) fn clone_file_exclusive_with_sync(
     target_root_fd: i32,
     target_rel_path: &str,
     sync: bool,
+    _match_nocow: bool,
 ) -> NativeResult<i32> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1685,6 +1712,30 @@ mod tests {
         let path = temp_path(&format!("native-{label}"));
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn clone_cleanup_preserves_replacement_and_refuses_copy_fallback() {
+        let root = temp_root("clone-cleanup");
+        let parent = fs::File::open(&root).unwrap();
+        let target: OwnedFd = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(root.join("stage"))
+            .unwrap()
+            .into();
+        fs::rename(root.join("stage"), root.join("owned")).unwrap();
+        fs::write(root.join("stage"), b"replacement").unwrap();
+        let failure = with_cleanup_error(
+            native_error("ENOTSUP", "clone preparation unavailable"),
+            remove_created_target_checked(parent.as_raw_fd(), "stage", &target),
+        );
+        assert_eq!(failure.status, "EIO");
+        assert!(failure.reason.contains("cleanup preserved a substituted target"));
+        assert_eq!(fs::read(root.join("stage")).unwrap(), b"replacement");
+        assert!(root.join("owned").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

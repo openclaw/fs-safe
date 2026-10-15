@@ -138,6 +138,36 @@ describe.runIf(Boolean(native))("native publication primitives", () => {
     await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("clone-fenced-payload");
   });
 
+  it("does not retry a terminal native clone normalization failure", async () => {
+    const root = await tempRoot();
+    const sourcePath = path.join(root, "source");
+    const targetPath = path.join(root, "target");
+    await fs.writeFile(sourcePath, "preserved-source");
+    const copyFileRangeExclusive = vi.fn(native!.copyFileRangeExclusive);
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      linkBeneath() {
+        throw Object.assign(new Error("force clone"), { code: "EXDEV" });
+      },
+      cloneFileExclusive() {
+        // The native Btrfs tests inject real post-clone chmod/fsync EPERM.
+        // Native cleanup reports EIO so publication cannot retry those failures.
+        throw Object.assign(new Error("clone failed (EPERM): normalize cloned file"), {
+          code: "EIO",
+        });
+      },
+      copyFileRangeExclusive,
+    }));
+    configureFsSafeNative({ mode: "require" });
+
+    await expect(
+      publishFileExclusive({ sourcePath, targetPath, strategy: "link-or-copy" }),
+    ).rejects.toMatchObject({ code: "EIO" });
+    expect(copyFileRangeExclusive).not.toHaveBeenCalled();
+    await expect(fs.access(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(sourcePath, "utf8")).resolves.toBe("preserved-source");
+  });
+
   it("removes a native clone when post-copy hash fencing fails", async () => {
     const root = await tempRoot();
     const sourcePath = path.join(root, "source-mismatch");

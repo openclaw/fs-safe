@@ -271,6 +271,16 @@ creates the guarded destination name from the admitted source descriptor. Linux
 uses FICLONE and copy_file_range. Windows and native-disabled operation copy
 bytes; they cannot satisfy `"always"`.
 
+On Btrfs, explicit `"auto"` and `"always"` file copies match the source's NOCOW
+flag on the newly created empty destination before cloning. This can override
+NOCOW inherited from the destination directory, in either direction. Other
+destination flags, including compression policy, are preserved; incompatible
+policy can still prevent cloning. A successful NOCOW clone has no data checksums
+or compression, and shared extents use copy-on-write until they become unshared.
+The source and destination remain independent files. If `"auto"` falls back,
+the clone target is removed and a fresh copy inherits the destination directory's
+ordinary policy. The default `"never"` mode does not change NOCOW flags.
+
 The source descriptor remains open through before/after source identity checks.
 Symlink components are rejected; source hardlinks are rejected unless
 `sourceHardlinks: "allow"` is selected. The byte limit is an EOF bound, not a

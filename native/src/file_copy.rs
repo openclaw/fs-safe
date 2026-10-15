@@ -30,6 +30,10 @@ enum CloneMode {
     Always,
 }
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "file_copy_btrfs_tests.rs"]
+mod btrfs_tests;
+
 // The result retains both cleanup identity and the parent until the JS thread
 // accepts its descriptor. This also handles an abort after compute completes.
 pub struct CreatedCopy {
@@ -116,7 +120,11 @@ impl FileCopyTask {
     }
 
     fn copy(&self) -> NativeResult<CreatedCopy> {
-        self.copy_with_clone(clone_file_exclusive_with_sync)
+        // Explicit clone modes may match Btrfs NOCOW policy. Other native
+        // publication callers keep the destination's inherited policy.
+        self.copy_with_clone(|source, parent, name, sync| {
+            clone_file_exclusive_with_sync(source, parent, name, sync, true)
+        })
     }
 
     fn copy_with_clone(
@@ -755,6 +763,35 @@ mod tests {
             .err().unwrap();
         assert_eq!(error.status, "EIO");
         assert!(!fixture.path.join("stage").exists());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn filesystem_inspection_failure_is_terminal_before_clone() {
+        isolated_admission_test("file_copy::tests::filesystem_inspection_failure_is_terminal_before_clone", || {
+            let fixture = Fixture::new();
+            crate::test_support::deny_syscall_with_errno(libc::SYS_fstatfs, libc::EIO);
+            let error = fixture.task(CloneMode::Auto, u64::MAX).copy().err().unwrap();
+            assert_eq!(error.status, "EIO");
+            assert!(error.reason.contains("inspect clone filesystem"));
+            assert!(!fixture.path.join("stage").exists());
+        });
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn denied_filesystem_inspection_recreates_an_ordinary_copy() {
+        isolated_admission_test("file_copy::tests::denied_filesystem_inspection_recreates_an_ordinary_copy", || {
+            let fixture = Fixture::new();
+            crate::test_support::deny_syscall_with_errno(libc::SYS_fstatfs, libc::EPERM);
+            let created = fixture.task(CloneMode::Auto, u64::MAX).copy().unwrap();
+            assert!(created.error.is_none());
+            assert_ne!(created.method, "clone");
+            assert_eq!(fs::read(fixture.path.join("stage")).unwrap(), b"copy source");
+            drop(created);
+            assert_eq!(fixture.task(CloneMode::Always, u64::MAX).copy().err().unwrap().status, "ENOTSUP");
+            assert!(!fixture.path.join("stage").exists());
+        });
     }
 
     #[test]

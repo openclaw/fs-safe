@@ -35,6 +35,8 @@ mod copy_contents;
 mod copy_windows;
 #[cfg(target_os = "linux")]
 mod copy_linux;
+#[cfg(target_os = "linux")]
+mod file_clone_linux;
 #[cfg(unix)]
 mod file_copy;
 #[cfg(windows)]

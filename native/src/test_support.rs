@@ -40,7 +40,7 @@ pub(crate) fn isolated_admission_test(name: &str, check: impl FnOnce()) {
         return;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([name, "--exact", "--test-threads=1"])
+        .args([name, "--exact", "--include-ignored", "--test-threads=1"])
         .env(CHILD_TEST, name)
         .output()
         .unwrap();
@@ -59,7 +59,12 @@ pub(crate) fn deny_ficlone_with_eperm() {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn deny_ficlone_with_errno(errno: i32) {
-    // Fail only ioctl(FICLONE); every other syscall is allowed.
+    deny_ioctl_with_errno(libc::FICLONE as u32, errno);
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn deny_ioctl_with_errno(opcode: u32, errno: i32) {
+    // Fail only the selected ioctl; every other syscall is allowed.
     let request = std::mem::offset_of!(libc::seccomp_data, args) + 8;
     let request = if cfg!(target_endian = "little") {
         request
@@ -83,7 +88,7 @@ pub(crate) fn deny_ficlone_with_errno(errno: i32) {
         statement(load, std::mem::offset_of!(libc::seccomp_data, nr) as u32),
         jump(libc::SYS_ioctl as u32, 0, 3),
         statement(load, request as u32),
-        jump(libc::FICLONE as u32, 0, 1),
+        jump(opcode, 0, 1),
         statement(
             libc::BPF_RET | libc::BPF_K,
             libc::SECCOMP_RET_ERRNO | errno as u32,
