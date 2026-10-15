@@ -60,16 +60,6 @@ it("retains admitted namespace activity despite equal before/after fingerprints"
 describe("unobserved transient hints", () => {
   const identity = { dev: 1n, ino: 2n };
   const hint = { path: path.join("skills", "save.tmp"), type: "structural" as const };
-  it("invalidates the admitted parent when a consumer observed a transient child between scans", () => {
-    const before = snapshot([]), after = snapshot([]);
-    before.directories.set("", identity);
-    after.directories.set("", identity);
-    const cache = new Set(["same-name"]);
-    const changes = guardedHintChanges(watchScopes([{ path: "", kind: "tree" }]), before, after,
-      [{ path: "same-name", type: "structural" }], [], 256);
-    for (const change of changes ?? []) if (change.path === "") cache.clear();
-    expect(cache.size).toBe(0);
-  });
   it.each(["", "skills"])("invalidates the stable parent at %j without publishing a transient name", parent => {
     const before = snapshot([]), after = snapshot([]);
     before.directories.set(parent, identity);

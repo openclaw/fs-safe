@@ -122,6 +122,7 @@ export function resolveExistingAncestor(
   targetPath: string,
   mode: RootPathMetadataMode,
   preserveRawSegments = false,
+  remainingHops = 64,
 ): string {
   const exists = mode === "native" || preserveRawSegments ? pathExists : pathExistsSync;
   const canonicalize = realpathSync.native;
@@ -147,8 +148,9 @@ export function resolveExistingAncestor(
   try {
     rawResolvedAncestor = canonicalize(pathForWindowsFilesystem(cursor));
   } catch (error) {
-    if (preserveRawSegments) throw error;
-    return normalized;
+    if (!preserveRawSegments) return normalized;
+    if (!isNotFoundPathError(error)) throw error;
+    rawResolvedAncestor = resolveSymlinkHopPath(cursor, mode, false, remainingHops);
   }
   assertNoWindowsPathAlias(rawResolvedAncestor);
   const resolvedAncestor = resolvePathPreservingWindowsRoot(rawResolvedAncestor);
@@ -169,6 +171,7 @@ export function resolveSymlinkHopPath(
   symlinkPath: string,
   mode: RootPathMetadataMode,
   rejectUnresolved?: boolean,
+  remainingHops = 64,
 ): string {
   try {
     const canonicalize = realpathSync.native;
@@ -182,6 +185,7 @@ export function resolveSymlinkHopPath(
       throw new FsSafeError("symlink", "symlink path could not be resolved", errorCauseOptions(error));
     }
     if (!isNotFoundPathError(error)) throw error;
+    if (remainingHops <= 0) throw new FsSafeError("symlink", "too many unresolved symlink hops");
     const linkTarget = fs.readlinkSync(symlinkPath);
     assertNoWindowsPathAlias(linkTarget, "filesystem", "symlink target uses a Windows filesystem namespace alias");
     const linkDir = resolvePathPreservingWindowsRoot(path.dirname(symlinkPath));
@@ -189,7 +193,7 @@ export function resolveSymlinkHopPath(
     const targetPath = path.isAbsolute(linkTarget) ? linkTarget
       : path.parse(linkTarget).root ? resolvePathFromBasePreservingWindowsRoot(linkDir, linkTarget)
       : `${linkDir}${path.sep}${linkTarget}`;
-    const resolved = resolveExistingAncestor(targetPath, mode, true);
+    const resolved = resolveExistingAncestor(targetPath, mode, true, remainingHops - 1);
     assertNoWindowsPathAlias(resolved, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     return resolved;
   }

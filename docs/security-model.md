@@ -23,6 +23,7 @@ target as an unrelated in-root path; both synchronous and asynchronous resolvers
 can misresolve a missing target. The pending fix uses kernel canonicalization
 for symlink hops and existing ancestors before interpreting a missing suffix.
 Parent steps after unresolved components fail closed.
+Acyclic chains of dangling symlinks still resolve to a missing-path result.
 `resolveLocalPathFromRootsSync()` shares the synchronous fix.
 
 ## Threat model

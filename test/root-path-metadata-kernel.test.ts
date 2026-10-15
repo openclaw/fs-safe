@@ -68,6 +68,16 @@ itPosix.each(["async", "sync"] as const)("%s rejects a parent step after an unre
     .rejects.toMatchObject({ code: "symlink" });
 });
 
+itPosix.each(["async", "sync"] as const)("%s resolves a chain of dangling symlinks", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-dangling-chain-");
+  fs.symlinkSync("missing", path.join(rootPath, "middle"));
+  const absolutePath = path.join(rootPath, "outer");
+  fs.symlinkSync("middle", absolutePath);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  await expect(Promise.resolve().then(() => resolve({ rootPath, absolutePath, boundaryLabel: "fixture" })))
+    .resolves.toMatchObject({ canonicalPath: path.join(rootPath, "missing"), exists: false, kind: "missing" });
+});
+
 it.each(["async", "sync"] as const)(
   "%s uses kernel canonicalization for roots, symlinks, and missing symlink targets",
   async mode => {
