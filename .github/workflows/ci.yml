@@ -1345,7 +1345,7 @@ jobs:
           pnpm test test/darwin-acl-native.test.ts
           bun node_modules/vitest/vitest.mjs run --config scripts/bun-native-vitest.config.ts test/darwin-acl-native.test.ts
 
-      - name: Test native Btrfs snapshots
+      - name: Test native Btrfs snapshots and file clones
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -1359,7 +1359,8 @@ jobs:
           sudo mount -o loop "$fixture/volume.img" "$fixture/mount"
           trap 'sudo umount "$fixture/mount"' EXIT
           sudo chown "$(id -u):$(id -g)" "$fixture/mount"
-          FS_SAFE_CLONE_TEST_ROOT="$fixture/mount" pnpm test test/clone.test.ts
+          TMPDIR="$fixture/mount" cargo test --workspace --locked file_copy::btrfs_tests -- --ignored --test-threads=1
+          FS_SAFE_CLONE_TEST_ROOT="$fixture/mount" pnpm test test/clone.test.ts test/btrfs-file-copy.test.ts
 
       - name: Pin native mutation syscall budgets
         if: runner.os == 'Linux'
