@@ -17,11 +17,13 @@ path components.
 case since `5ddca80`. Exposure is limited to consumers that call
 `resolveRootPath()` or `resolveRootPathSync()` directly.
 
-Releases through 0.26.5 also have a synchronous-resolver variant: a symlink
-target containing another symlink followed by `..` can be normalized textually
-and admitted as an unrelated in-root path. The pending fix uses kernel
-canonicalization for synchronous symlink hops and existing ancestors, matching
-the asynchronous resolver. `resolveLocalPathFromRootsSync()` shares this fix.
+Releases through 0.26.5 also mishandle symlink targets containing another
+symlink followed by `..`. Synchronous resolvers can admit an existing outside
+target as an unrelated in-root path; both synchronous and asynchronous resolvers
+can misresolve a missing target. The pending fix uses kernel canonicalization
+for symlink hops and existing ancestors before interpreting a missing suffix.
+Parent steps after unresolved components fail closed.
+`resolveLocalPathFromRootsSync()` shares the synchronous fix.
 
 ## Threat model
 

@@ -27,22 +27,45 @@ itPosix("preserves kernel expansion of raw parent segments inside symlink target
   expect(resolveRootPathSync(params)).toMatchObject({ canonicalPath: target, exists: true, kind: "directory" });
 });
 
-itPosix("rejects a symlink whose parent segment escapes through another symlink", async () => {
+itPosix.each([true, false])("rejects a symlink whose parent segment escapes through another symlink (existing=%s)", async exists => {
   const base = await tempRoot("fs-safe-root-metadata-escape-");
   const rootPath = path.join(base, "root");
   const outside = path.join(base, "outside", "a");
   fs.mkdirSync(rootPath);
   fs.mkdirSync(path.join(outside, "b"), { recursive: true });
-  fs.writeFileSync(path.join(outside, "x"), "outside");
+  if (exists) fs.writeFileSync(path.join(outside, "x"), "outside");
   fs.writeFileSync(path.join(rootPath, "x"), "decoy");
   fs.symlinkSync(path.join(outside, "b"), path.join(rootPath, "s"), "dir");
   const absolutePath = path.join(rootPath, "link");
   fs.symlinkSync("s/../x", absolutePath);
-  expect(fs.readFileSync(absolutePath, "utf8")).toBe("outside");
+  if (exists) expect(fs.readFileSync(absolutePath, "utf8")).toBe("outside");
+  else expect(fs.existsSync(absolutePath)).toBe(false);
   const params = { rootPath, absolutePath, boundaryLabel: "fixture" };
   await expect(resolveRootPath(params)).rejects.toThrow(/Symlink escapes/);
   expect(() => resolveRootPathSync(params)).toThrow();
   expect(resolveLocalPathFromRootsSync({ roots: [rootPath], filePath: absolutePath })).toBeNull();
+});
+
+itPosix.each(["async", "sync"] as const)("%s keeps a missing target below its physical symlink parent", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-missing-");
+  const target = path.join(rootPath, "target");
+  fs.mkdirSync(path.join(target, "child"), { recursive: true });
+  fs.symlinkSync("target/child", path.join(rootPath, "first"), "dir");
+  const absolutePath = path.join(rootPath, "indirect");
+  fs.symlinkSync("first/../missing", absolutePath);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  await expect(Promise.resolve(resolve({ rootPath, absolutePath, boundaryLabel: "fixture" })))
+    .resolves.toMatchObject({ canonicalPath: path.join(target, "missing"), exists: false });
+});
+
+itPosix.each(["async", "sync"] as const)("%s rejects a parent step after an unresolved symlink target component", async mode => {
+  const rootPath = await tempRoot("fs-safe-root-metadata-unresolved-");
+  fs.writeFileSync(path.join(rootPath, "decoy"), "decoy");
+  const absolutePath = path.join(rootPath, "link");
+  fs.symlinkSync("missing/../decoy", absolutePath);
+  const resolve = mode === "async" ? resolveRootPath : resolveRootPathSync;
+  await expect(Promise.resolve().then(() => resolve({ rootPath, absolutePath, boundaryLabel: "fixture" })))
+    .rejects.toMatchObject({ code: "symlink" });
 });
 
 it.each(["async", "sync"] as const)(
