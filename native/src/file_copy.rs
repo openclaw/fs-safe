@@ -771,7 +771,7 @@ mod tests {
         isolated_admission_test("file_copy::tests::filesystem_inspection_failure_is_terminal_before_clone", || {
             let fixture = Fixture::new();
             crate::test_support::deny_syscall_with_errno(libc::SYS_fstatfs, libc::EIO);
-            let error = fixture.task(CloneMode::Auto).copy().err().unwrap();
+            let error = fixture.task(CloneMode::Auto, u64::MAX).copy().err().unwrap();
             assert_eq!(error.status, "EIO");
             assert!(error.reason.contains("inspect clone filesystem"));
             assert!(!fixture.path.join("stage").exists());
@@ -784,12 +784,12 @@ mod tests {
         isolated_admission_test("file_copy::tests::denied_filesystem_inspection_recreates_an_ordinary_copy", || {
             let fixture = Fixture::new();
             crate::test_support::deny_syscall_with_errno(libc::SYS_fstatfs, libc::EPERM);
-            let created = fixture.task(CloneMode::Auto).copy().unwrap();
+            let created = fixture.task(CloneMode::Auto, u64::MAX).copy().unwrap();
             assert!(created.error.is_none());
             assert_ne!(created.method, "clone");
             assert_eq!(fs::read(fixture.path.join("stage")).unwrap(), b"copy source");
             drop(created);
-            assert_eq!(fixture.task(CloneMode::Always).copy().err().unwrap().status, "ENOTSUP");
+            assert_eq!(fixture.task(CloneMode::Always, u64::MAX).copy().err().unwrap().status, "ENOTSUP");
             assert!(!fixture.path.join("stage").exists());
         });
     }
