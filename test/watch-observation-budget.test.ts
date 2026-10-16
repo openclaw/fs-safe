@@ -1,4 +1,5 @@
-import fs, { Dir } from "node:fs";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -18,7 +19,7 @@ afterEach(async () => {
   __resetFsSafeNativeConfigForTest();
 });
 
-it.skipIf(!binding?.observeDirectory)("bounds full path walks during repeated polling scans", async () => {
+it.skipIf(process.platform !== "win32" || !binding?.observeDirectory)("bounds full path walks during repeated Windows polling scans", async () => {
   configureFsSafeNative({ mode: "require" });
   const directory = await tempRoot("watch-observation-budget-");
   let directories = 1, files = 0;
@@ -54,7 +55,7 @@ it.skipIf(!binding?.observeDirectory)("bounds full path walks during repeated po
   }
 });
 
-it.skipIf(process.platform === "win32" || !nodeRuntime || !binding?.observeDirectory)
+it.skipIf(!nodeRuntime || !binding?.observeDirectory)
   .each(["directory", "symlink", "ancestor", "root"] as const)("rejects a deep %s swap before inspecting its leaf", async swap => {
   configureFsSafeNative({ mode: "require" });
   const directory = await tempRoot("watch-observation-redirect-");
@@ -63,22 +64,21 @@ it.skipIf(process.platform === "win32" || !nodeRuntime || !binding?.observeDirec
   const child = path.join(ancestor, "two", "three");
   fs.mkdirSync(child, { recursive: true });
   fs.writeFileSync(path.join(child, "sentinel"), "fixture");
-  const read = Dir.prototype.readSync;
+  const open = fsPromises.opendir;
   let swapped = false;
-  vi.spyOn(Dir.prototype, "readSync").mockImplementation(function (this: Dir) {
-    const entry = read.call(this);
-    if (!swapped && this.path === child && entry !== null) {
+  vi.spyOn(fsPromises, "opendir").mockImplementation(async (...args) => {
+    if (!swapped && String(args[0]) === child) {
       swapped = true;
       const moved = swap === "root" ? directory : swap === "ancestor" ? ancestor : child;
       fs.renameSync(moved, path.join(outside, "moved"));
       if (swap === "directory" || swap === "root") fs.mkdirSync(moved);
-      else fs.symlinkSync(path.join(outside, "moved"), moved, "dir");
+      else fs.symlinkSync(path.join(outside, "moved"), moved, process.platform === "win32" ? "junction" : "dir");
     }
-    return entry;
+    return open(...args);
   });
   const metadata = vi.spyOn(fs, "lstatSync");
   owner = watch(await root(directory), {
-    mode: "poll", scopes: [{ path: "one", kind: "tree" }], onInvalidate() {},
+    mode: "poll", scopes: [{ path: path.join("one", "two", "three"), kind: "tree" }], onInvalidate() {},
   });
   if (swap === "root") await expect(owner.ready).rejects.toMatchObject({ code: "path-mismatch" });
   else await owner.ready;

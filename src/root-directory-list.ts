@@ -326,9 +326,9 @@ export async function openRootDirectoryListing(
       identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
     }, admitted.dir, admitted.realPath);
   }
-  // Watch listings keep every entry fence, but obtain identity and physical
-  // pathname from one native handle instead of walking the path again.
-  const backend = getNativeDirectoryObservationBackend(options.exactIdentity === true);
+  // Windows watch listings keep every fence while sharing one handle for its
+  // identity/path queries. POSIX pathname checks are cheaper than this helper.
+  const backend = getNativeDirectoryObservationBackend(options.exactIdentity === true && process.platform === "win32");
   const assertCurrent = async () => {
     options.signal?.throwIfAborted();
     if (receipt) assertRootPathObservationReceiptCurrent(root, receipt);
