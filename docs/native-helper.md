@@ -180,10 +180,12 @@ is authoritative for operation and platform guarantees.
 
 ## Migration from the Python helper
 
-The Python configuration bridge has been removed. Old Python environment
-settings are ignored without a warning, so an old `require` or `off` setting
-does not select the corresponding native policy. Configure
-`FS_SAFE_NATIVE_MODE` or `configureFsSafeNative()` explicitly. Follow the
+The Python configuration bridge was intentionally removed in 0.23.0. A remaining
+`FS_SAFE_PYTHON_MODE` or `OPENCLAW_FS_SAFE_PYTHON_MODE` now raises a migration
+error when no explicit native policy is selected; it never silently selects `auto`.
+Replace either variable with its corresponding `NATIVE_MODE` name and preserve
+the value (`require` → `require`, `off` → `off`, `auto` → `auto`), or call
+`configureFsSafeNative()` explicitly before using fs-safe. Follow the
 [0.5 migration checklist](migrating-to-0.5.md#2-replace-python-helper-configuration)
 for the removed settings and current precedence.
 

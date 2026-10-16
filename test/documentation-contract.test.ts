@@ -65,7 +65,9 @@ describe("documentation contract", () => {
     const migration = nativeHelperDoc.split("## Migration from the Python helper")[1]
       ?.split("## Related pages")[0];
     expect(migration).toContain("removed");
-    expect(migration).toContain("ignored");
+    expect(migration).toContain("migration");
+    expect(migration).toContain("error when no explicit native policy is selected");
+    expect(migration).not.toContain("ignored without a warning");
     expect(migration).not.toContain("warns once");
   });
 

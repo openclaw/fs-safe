@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build, sign, verify and load-test without publishing or creating a release
+        description: Build, verify and load-test unsigned binaries without signing or publishing
         required: true
         type: boolean
         default: true
@@ -257,6 +257,7 @@ jobs:
 
   sign-windows:
     name: Sign Windows release binaries
+    if: github.event_name == 'push' && github.ref_protected
     needs: [prebuild, prebuild-helper]
     runs-on: windows-latest
     timeout-minutes: 20
@@ -401,9 +402,83 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm test test/windows-security-portable.test.ts test/windows-owner-helper.windows.test.ts
 
+  test-unsigned-windows:
+    name: Load unsigned Windows binaries (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    needs: [prebuild, prebuild-helper]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+          - os: windows-11-arm
+            arch: arm64
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up native Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+          architecture: ${{ matrix.arch }}
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: ./.github/actions/setup-archive-llvm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Download unsigned x64 binding
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-binding-win32-x64-msvc
+          path: unsigned-windows
+      - name: Download unsigned ARM64 binding
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-binding-win32-arm64-msvc
+          path: unsigned-windows
+      - name: Download unsigned Windows-built helper
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-helper-windows-latest
+          path: unsigned-windows
+      - name: Download unsigned Ubuntu-built helper
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-helper-ubuntu-latest
+          path: reference-helper
+      - name: Verify build hashes and unsigned helper reproducibility
+        run: node scripts/windows-signing.mjs prepare unsigned-windows reference-helper/windows-security-helper.exe
+      - name: Stage unsigned binaries
+        shell: pwsh
+        run: |
+          Copy-Item unsigned-windows/fs-safe-native.win32-${{ matrix.arch }}-msvc.node native/
+          Copy-Item unsigned-windows/windows-security-helper.exe src/
+          Copy-Item unsigned-windows/windows-security-helper.exe dist/
+          node scripts/stage-host-native.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Load unsigned addon on its native runtime
+        shell: pwsh
+        env:
+          FS_SAFE_NATIVE_MODE: require
+        run: |
+          node -e "if (process.platform !== 'win32' || process.arch !== '${{ matrix.arch }}') throw Error('native Node architecture required'); require('./unsigned-windows/fs-safe-native.win32-${{ matrix.arch }}-msvc.node')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm test test/native-loader.test.ts test/windows-native-fd-bridge.test.ts test/native-worker-fd-ownership.test.ts test/windows-native-private.test.ts test/secure-file-windows-native.test.ts
+      - name: Run unsigned security helper
+        shell: pwsh
+        run: |
+          node -e "const r = require('node:child_process').spawnSync('./dist/windows-security-helper.exe', ['paths'], { input: JSON.stringify([process.cwd()]), encoding: 'utf8', timeout: 30000 }); if (r.error || r.status !== 0 || JSON.parse(r.stdout).ok !== true) throw Error('unsigned helper failed', { cause: r.error });"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm test test/windows-security-portable.test.ts test/windows-owner-helper.windows.test.ts
+
   collect:
     name: Assemble and validate release packages
-    if: (github.event_name == 'push' && github.ref_protected) || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    if: github.event_name == 'push' && github.ref_protected
     needs: [prebuild, prebuild-freebsd, test-signed-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -459,6 +534,62 @@ jobs:
         with:
           name: release-package
           path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
+  collect-dry-run:
+    name: Assemble unsigned binaries and smoke test host packages
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    needs: [prebuild, prebuild-freebsd, test-unsigned-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Download all bindings
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binding-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download unsigned Windows bindings
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: unsigned-binding-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assemble platform packages
+        run: node scripts/assemble-native-binaries.mjs --source artifacts
+
+      - name: Pack and smoke test unsigned host packages
+        run: pnpm package:smoke --output dry-run-artifacts
+
+      - name: Upload unsigned development packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dry-run-package
+          path: dry-run-artifacts/*
           if-no-files-found: error
           retention-days: 7
 
