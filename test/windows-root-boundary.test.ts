@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FsSafeError } from "../src/errors.js";
@@ -8,7 +9,10 @@ import { realpathSync } from "../src/realpath.js";
 import { admitPathInsideRoot } from "../src/root-boundary.js";
 import { root as openRoot } from "../src/root.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { useSuiteFixture } from "./helpers/suite-fixture.js";
+import { allowWindowsFilesystemStalls, useRealTempDirs } from "./helpers/vitest.js";
+
+allowWindowsFilesystemStalls();
 
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const { tempRoot } = useRealTempDirs();
@@ -341,73 +345,91 @@ describe.skipIf(process.platform !== "win32")("real Windows case-sensitive Root 
     await expect(scoped.list(alternateRoot)).resolves.toEqual(["value.txt"]);
   });
 
-  it("rejects a case-folded sibling across reads, fallback writes, creates, and moves", async (context) => {
-    const container = await tempRoot("fs-safe-windows-case-sensitive-");
-    const enabled = spawnSync(
-      resolveWindowsSystemCommand("fsutil.exe"),
-      ["file", "setCaseSensitiveInfo", container, "enable"],
-      { stdio: "ignore", timeout: 10_000, windowsHide: true },
-    );
-    if (enabled.error || enabled.status !== 0) {
-      context.skip();
-      return;
-    }
+  describe("case-folded sibling rejection", () => {
+    let container: string | undefined;
+    // A test timeout does not cancel filesystem I/O. The suite owner drains
+    // setup and test work before removing the case-sensitive tree.
+    const withCaseSensitiveRoot = useSuiteFixture(async () => {
+      container = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-windows-case-sensitive-"));
+      const fixtureRoot = await fs.realpath(container);
+      const enabled = spawnSync(
+        resolveWindowsSystemCommand("fsutil.exe"),
+        ["file", "setCaseSensitiveInfo", fixtureRoot, "enable"],
+        { stdio: "ignore", timeout: 10_000, windowsHide: true },
+      );
+      if (enabled.error || enabled.status !== 0) {
+        return undefined;
+      }
 
-    const trustedRoot = path.join(container, "Root");
-    const foldedSibling = path.join(container, "root");
-    await fs.mkdir(trustedRoot);
-    await fs.mkdir(foldedSibling);
-    await fs.mkdir(path.join(trustedRoot, "nested"));
-    await fs.writeFile(path.join(trustedRoot, "source.txt"), "trusted-source");
-    await fs.writeFile(path.join(trustedRoot, "move-source.txt"), "trusted-move-source");
-    await fs.writeFile(path.join(foldedSibling, "outside.txt"), "outside");
-    await fs.writeFile(path.join(foldedSibling, "move-source.txt"), "outside-source");
-    await fs.symlink(foldedSibling, path.join(trustedRoot, "alias"), "junction");
-    await fs.symlink(
-      path.join(trustedRoot, "nested"),
-      path.join(foldedSibling, "reenter"),
-      "junction",
-    );
-    const scoped = await openRoot(trustedRoot, {
-      durable: false,
-      mkdir: false,
-      renameIdentity: "verify-content-with-lock",
+      const trustedRoot = path.join(fixtureRoot, "Root");
+      const foldedSibling = path.join(fixtureRoot, "root");
+      await fs.mkdir(trustedRoot);
+      await fs.mkdir(foldedSibling);
+      await fs.mkdir(path.join(trustedRoot, "nested"));
+      await fs.writeFile(path.join(trustedRoot, "source.txt"), "trusted-source");
+      await fs.writeFile(path.join(trustedRoot, "move-source.txt"), "trusted-move-source");
+      await fs.writeFile(path.join(foldedSibling, "outside.txt"), "outside");
+      await fs.writeFile(path.join(foldedSibling, "move-source.txt"), "outside-source");
+      await fs.symlink(foldedSibling, path.join(trustedRoot, "alias"), "junction");
+      await fs.symlink(
+        path.join(trustedRoot, "nested"),
+        path.join(foldedSibling, "reenter"),
+        "junction",
+      );
+      const scoped = await openRoot(trustedRoot, {
+        durable: false,
+        mkdir: false,
+        renameIdentity: "verify-content-with-lock",
+      });
+
+      return { trustedRoot, foldedSibling, scoped };
+    }, async () => {
+      if (container) await fs.rm(container, { recursive: true, force: true });
     });
 
-    const outside = (name: string) => path.join(foldedSibling, name);
-    const rejected: Array<[string, () => Promise<unknown>]> = [
-      ["resolve", () => scoped.resolve(outside("resolve.txt"))],
-      ["readAbsolute", () => scoped.readAbsolute(outside("outside.txt"))],
-      ["stat", () => scoped.stat(outside("outside.txt"))],
-      ["list", () => scoped.list(foldedSibling)],
-      ["canonical symlink hop", () => scoped.readText("alias/outside.txt", { symlinks: "follow-within-root" })],
-      ["openWritable", async () => { const opened = await scoped.openWritable(outside("open.txt")); await opened.handle.close(); }],
-      ["append", () => scoped.append(outside("append.txt"), "changed")],
-      ["write fallback", () => scoped.write(outside("write.txt"), "changed")],
-      ["writeJson fallback", () => scoped.writeJson(outside("write.json"), { changed: true })],
-      ["create fallback", () => scoped.create(outside("create.txt"), "changed")],
-      ["createJson fallback", () => scoped.createJson(outside("create.json"), { changed: true })],
-      ["move source", () => scoped.move(outside("move-source.txt"), "moved-in.txt")],
-      ["move raw re-entry source", () => scoped.move(
-        `${foldedSibling}${path.sep}reenter${path.sep}..${path.sep}move-source.txt`,
-        "moved-in.txt",
-      )],
-      ["move destination", () => scoped.move("source.txt", outside("moved-out.txt"))],
-    ];
-    for (const [label, operation] of rejected) {
-      await expect(operation(), label).rejects.toBeInstanceOf(FsSafeError);
-    }
+    it("rejects a case-folded sibling across reads, fallback writes, creates, and moves", async (context) => {
+      await withCaseSensitiveRoot(async (fixture) => {
+        if (!fixture) {
+          context.skip();
+          return;
+        }
+        const { trustedRoot, foldedSibling, scoped } = fixture;
+        const outside = (name: string) => path.join(foldedSibling, name);
+        const rejected: Array<[string, () => Promise<unknown>]> = [
+          ["resolve", () => scoped.resolve(outside("resolve.txt"))],
+          ["readAbsolute", () => scoped.readAbsolute(outside("outside.txt"))],
+          ["stat", () => scoped.stat(outside("outside.txt"))],
+          ["list", () => scoped.list(foldedSibling)],
+          ["canonical symlink hop", () => scoped.readText("alias/outside.txt", { symlinks: "follow-within-root" })],
+          ["openWritable", async () => { const opened = await scoped.openWritable(outside("open.txt")); await opened.handle.close(); }],
+          ["append", () => scoped.append(outside("append.txt"), "changed")],
+          ["write fallback", () => scoped.write(outside("write.txt"), "changed")],
+          ["writeJson fallback", () => scoped.writeJson(outside("write.json"), { changed: true })],
+          ["create fallback", () => scoped.create(outside("create.txt"), "changed")],
+          ["createJson fallback", () => scoped.createJson(outside("create.json"), { changed: true })],
+          ["move source", () => scoped.move(outside("move-source.txt"), "moved-in.txt")],
+          ["move raw re-entry source", () => scoped.move(
+            `${foldedSibling}${path.sep}reenter${path.sep}..${path.sep}move-source.txt`,
+            "moved-in.txt",
+          )],
+          ["move destination", () => scoped.move("source.txt", outside("moved-out.txt"))],
+        ];
+        for (const [label, operation] of rejected) {
+          await expect(operation(), label).rejects.toBeInstanceOf(FsSafeError);
+        }
 
-    await expect(fs.readFile(path.join(foldedSibling, "outside.txt"), "utf8")).resolves.toBe("outside");
-    await expect(fs.readFile(path.join(foldedSibling, "move-source.txt"), "utf8")).resolves.toBe("outside-source");
-    await expect(fs.readFile(path.join(trustedRoot, "move-source.txt"), "utf8")).resolves.toBe("trusted-move-source");
-    await expect(fs.readFile(path.join(trustedRoot, "source.txt"), "utf8")).resolves.toBe("trusted-source");
-    for (const name of [
-      "resolve.txt", "open.txt", "append.txt", "write.txt", "write.json", "create.txt",
-      "create.json", "moved-out.txt",
-    ]) {
-      await expect(fs.lstat(outside(name)), name).rejects.toMatchObject({ code: "ENOENT" });
-    }
-    await expect(fs.lstat(path.join(trustedRoot, "moved-in.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.readFile(path.join(foldedSibling, "outside.txt"), "utf8")).resolves.toBe("outside");
+        await expect(fs.readFile(path.join(foldedSibling, "move-source.txt"), "utf8")).resolves.toBe("outside-source");
+        await expect(fs.readFile(path.join(trustedRoot, "move-source.txt"), "utf8")).resolves.toBe("trusted-move-source");
+        await expect(fs.readFile(path.join(trustedRoot, "source.txt"), "utf8")).resolves.toBe("trusted-source");
+        for (const name of [
+          "resolve.txt", "open.txt", "append.txt", "write.txt", "write.json", "create.txt",
+          "create.json", "moved-out.txt",
+        ]) {
+          await expect(fs.lstat(outside(name)), name).rejects.toMatchObject({ code: "ENOENT" });
+        }
+        await expect(fs.lstat(path.join(trustedRoot, "moved-in.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      });
+    });
   });
 });
