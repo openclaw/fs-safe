@@ -43,10 +43,12 @@ Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE`, or
 `OPENCLAW_FS_SAFE_PYTHON_MODE` with `OPENCLAW_FS_SAFE_NATIVE_MODE`. Remove
 `pythonPath`, `FS_SAFE_PYTHON`, `OPENCLAW_FS_SAFE_PYTHON`,
 `OPENCLAW_PINNED_PYTHON`, and `OPENCLAW_PINNED_WRITE_PYTHON`; prebuilt native
-binaries need no interpreter. Python environment settings are now ignored
-silently: a deployment that set `FS_SAFE_PYTHON_MODE=require` or `off` runs in
-`auto` after upgrading unless it sets `FS_SAFE_NATIVE_MODE` (or calls
-`configureFsSafeNative`) first. Programmatic native configuration wins, followed by
+binaries need no interpreter. Preserve the mode value: `require` stays `require`,
+`off` stays `off`, and `auto` stays `auto`. Since 0.23.0 the bridge is removed;
+current builds reject leftover Python-mode variables with a migration error
+unless a valid native policy explicitly overrides them. Versions 0.23.0–0.26.6
+silently ignored them, so migrate before upgrading to those versions too.
+Programmatic native configuration wins, followed by
 `FS_SAFE_NATIVE_MODE`, `OPENCLAW_FS_SAFE_NATIVE_MODE`, and the default `auto`.
 
 Choose the production mode deliberately:

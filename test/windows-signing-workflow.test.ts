@@ -30,7 +30,28 @@ describe("release signing isolation", () => {
     expect(release.match(/environment: release-signing/g)).toHaveLength(1);
     expect(job("sign-windows")).toContain("needs: [prebuild, prebuild-helper]");
     expect(job("sign-windows")).toContain("runs-on: windows-latest");
+    expect(job("sign-windows")).toContain("if: github.event_name == 'push' && github.ref_protected");
     expect(job("sign-windows")).not.toContain("continue-on-error");
+  });
+
+  it("runs unsigned dry-run proof without signing credentials or release artifacts", () => {
+    for (const name of ["test-unsigned-windows", "collect-dry-run"]) {
+      const dryRun = job(name);
+      expect(dryRun).toContain("if: github.event_name == 'workflow_dispatch' && inputs.dry_run");
+      expect(dryRun).not.toMatch(/environment:|secrets\.|id-token:|azure\//);
+    }
+    const unsigned = job("test-unsigned-windows");
+    expect(unsigned).toContain("needs: [prebuild, prebuild-helper]");
+    expect(unsigned).toContain("os: windows-latest");
+    expect(unsigned).toContain("os: windows-11-arm");
+    expect(unsigned).toContain("scripts/windows-signing.mjs prepare unsigned-windows reference-helper/windows-security-helper.exe");
+    expect(unsigned).toContain("test/windows-owner-helper.windows.test.ts");
+    const collect = job("collect-dry-run");
+    expect(collect).toContain("needs: [prebuild, prebuild-freebsd, test-unsigned-windows]");
+    expect(collect).toContain("pnpm package:smoke --output dry-run-artifacts");
+    expect(collect).toContain("name: dry-run-package");
+    expect(collect).not.toContain("name: release-package");
+    expect(job("collect")).toContain("if: github.event_name == 'push' && github.ref_protected");
   });
 
   it("gates collection on signed runtime tests and preserves the publication artifact layout", () => {

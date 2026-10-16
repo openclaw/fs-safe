@@ -55,6 +55,8 @@ function getFsSafeNativeConfig(): FsSafeNativeConfig;
 ```
 
 Return the effective configuration: programmatic overrides win, then env vars, then the package default (`auto`).
+If only a removed Python-mode variable is configured, configuration reads and
+native operations throw an actionable migration error instead of using the default.
 
 ## `getFsSafeNativeStatus(options?)`
 
@@ -185,7 +187,11 @@ FS_SAFE_NATIVE_MODE=auto      # auto | off | require | true | false | on | 1 | 0
 ### Removed Python-helper configuration
 
 The deprecated Python configuration bridge and its environment variables have
-been removed. Use `configureFsSafeNative()` or `FS_SAFE_NATIVE_MODE`. See the
+been removed. Replace `FS_SAFE_PYTHON_MODE` with `FS_SAFE_NATIVE_MODE` and
+`OPENCLAW_FS_SAFE_PYTHON_MODE` with `OPENCLAW_FS_SAFE_NATIVE_MODE`, preserving the
+value. Without a valid native override, either legacy mode variable raises a
+migration error. Explicit native settings still win over leftover legacy settings.
+Use `configureFsSafeNative()` for a programmatic override. See the
 [0.5 migration checklist](migrating-to-0.5.md#2-replace-python-helper-configuration)
 for the migration path.
 

@@ -35,15 +35,16 @@ Use the existing package and publisher configuration; do not bootstrap or reconf
 ## Windows Authenticode signing (one-time maintainer setup)
 
 Release Windows addons (`win32-x64-msvc` and `win32-arm64-msvc`) and the main
-package's `dist/windows-security-helper.exe` must pass signing before collection
-or publication. There is no unsigned fallback. Only `release.yml` uses this
-signing environment; PR and main-push CI build and test unsigned binaries without
+package's `dist/windows-security-helper.exe` must pass signing before release
+collection or publication. There is no unsigned publication fallback. Only
+tag-triggered `release.yml` jobs use this signing environment; dry runs, PRs,
+and main-push CI build and test unsigned binaries without
 requesting it. npm trusted publishing above remains unchanged and does not use
 this environment.
 
 The maintainer completed this setup for PR #960:
 
-1. GitHub environment `release-signing` exists in `openclaw/fs-safe` and mirrors `npm-publish`'s protections: release tag policy `v*.*.*` (type **tag**), required reviewers (`steipete` or `vincentkoc`), and prevention of self-review. A temporary exact branch policy for `feat/windows-release-signing` permits the signing dry run only; remove it after proof. There is no standing branch exception.
+1. GitHub environment `release-signing` exists in `openclaw/fs-safe` and mirrors `npm-publish`'s protections: release tag policy `v*.*.*` (type **tag**), required reviewers (`steipete` or `vincentkoc`), and prevention of self-review. There is no standing branch exception.
 2. Environment secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` are configured for the dedicated Azure app registration `openclaw-fs-safe-signing`, appId `d151e936-0326-4a9d-81b7-9fcc0850a795`.
 3. The app has a federated identity credential with issuer `https://token.actions.githubusercontent.com`, subject `repo:openclaw/fs-safe:environment:release-signing`, and audience `api://AzureADTokenExchange`.
 4. The identity has the **Artifact Signing Certificate Profile Signer** role scoped to the `openclaw` certificate profile. The workflow uses endpoint `https://eus.codesigning.azure.net/`, account `openclaw`, and certificate profile `openclaw`.
@@ -51,36 +52,31 @@ The maintainer completed this setup for PR #960:
 Environment, secret, and Azure changes remain maintainer actions; do not change
 them as part of a code update. Missing configuration or failed signature
 validation stops the release with a pointer to this section. Setup completion
-does not substitute for the signing dry-run proof below.
+does not substitute for signed runtime proof during a real tag release.
 
-### Signing dry run (no publication)
+### Release dry run (unsigned, no publication)
 
-After setup, a maintainer can run the entire build/sign/verify/load-test/package
-collection path without creating a GitHub Release or publishing to npm:
+Run the current package version from merged `main` without changing environment
+policies, creating a tag, or publishing:
 
 ```bash
-gh workflow run release.yml --repo openclaw/fs-safe --ref <branch> -f dry_run=true
+gh workflow run release.yml --repo openclaw/fs-safe --ref main -f dry_run=true
 ```
 
-For this PR, `<branch>` is `feat/windows-release-signing`. A branch dry run needs
-a temporary deployment branch rule allowing that exact reviewed branch in
-`release-signing`; retain the required reviewer gate and remove the rule after
-proof. The existing release workflow is already registered in GitHub Actions;
-the CLI dispatch selects the version on the requested branch. After merge,
-the same command can use `main` with a temporary exact `main` rule, or an allowed
-release tag with no branch exception. Do not push a release tag merely to test
-signing. Every manual dispatch is publication-disabled, even on a release tag.
-`dry_run=false` skips the run; it does not enable publication.
+Dry runs never request `release-signing`, signing credentials, or OIDC access.
+They build every target, compare Ubuntu/Windows helper hashes, and load-test the
+unsigned Windows addons and helper on x64 and ARM64. The final dry-run job
+assembles all bindings and runs unsigned host-package installation smoke tests;
+FreeBSD jobs perform their own package smoke tests. Its `dry-run-package`
+artifact contains development packages, not the signed all-platform
+`release-package` artifact used for publication. Full signed package collection
+and Authenticode verification remain exclusive to protected tag releases.
 
-Inspect `Sign Windows release binaries`, both `Load signed Windows binaries`
-jobs, and `Assemble and validate release packages`. Download the `signed-windows`
-and `release-package` artifacts: `windows-signing.json` records the unsigned
-build and signed SHA-256 hashes, valid Foundation subject, and timestamp signer
-thumbprint. Windows verifies embedded Authenticode signatures before upload and
-again before native runtime tests. Collection hashes the actual packed Windows
-binary entries against that proof. The unsigned helper's Ubuntu/Windows hashes
-must match before signing. A normal PR or main CI run should contain only
-unsigned builds/tests, with no `release-signing` deployment or approval request.
+Every manual dispatch is publication-disabled, even on a release tag.
+`dry_run=false` skips the run; it does not enable publication. Inspect both
+`Load unsigned Windows binaries` jobs and `Assemble unsigned binaries and smoke
+test host packages`. Signing, signed runtime tests, release collection, and all
+publication jobs must be skipped. No deployment branch exception is needed.
 
 The helper build targets .NET Framework 4.6.2 (`net462`) and includes
 `src/windows-owner-query.cs` alongside the raw security bridge and transport.

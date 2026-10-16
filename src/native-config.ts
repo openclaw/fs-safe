@@ -27,13 +27,26 @@ export function configureFsSafeNative(config: Partial<FsSafeNativeConfig>): void
   overrideConfig = { ...overrideConfig, ...config };
 }
 
+function rejectLegacyMode(): "auto" {
+  for (const source of ["FS_SAFE_PYTHON_MODE", "OPENCLAW_FS_SAFE_PYTHON_MODE"] as const) {
+    if (process.env[source] === undefined) continue;
+    const mode = parseMode(process.env[source]) ?? "auto";
+    throw new Error(
+      `${source} has been removed. Set FS_SAFE_NATIVE_MODE=${mode} or ` +
+        `configureFsSafeNative({ mode: "${mode}" }) before using fs-safe, then remove ${source}. ` +
+        "Legacy mode settings no longer select native policy.",
+    );
+  }
+  return "auto";
+}
+
 export function getFsSafeNativeConfig(): FsSafeNativeConfig {
   return {
     mode:
       overrideConfig.mode ??
       parseMode(process.env.FS_SAFE_NATIVE_MODE) ??
       parseMode(process.env.OPENCLAW_FS_SAFE_NATIVE_MODE) ??
-      "auto",
+      rejectLegacyMode(),
   };
 }
 
@@ -47,14 +60,14 @@ export function getNativeModeSetting(): {
     const mode = parseMode(process.env[source]);
     if (mode !== undefined) return { mode, source };
   }
-  return { mode: "auto", source: "default" };
+  return { mode: rejectLegacyMode(), source: "default" };
 }
 
 export function isFsSafeNativeRequired(): boolean {
   return (overrideConfig.mode ??
     parseMode(process.env.FS_SAFE_NATIVE_MODE) ??
     parseMode(process.env.OPENCLAW_FS_SAFE_NATIVE_MODE) ??
-    "auto") === "require";
+    rejectLegacyMode()) === "require";
 }
 
 export function __resetFsSafeNativeConfigForTest(): void {
