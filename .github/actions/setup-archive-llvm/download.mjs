@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout } from "node:timers/promises";
@@ -28,5 +29,25 @@ export async function downloadArchive(url, archive, expectedHash, sdkName) {
     const delay = 1_000 * 2 ** (attempt - 1);
     console.warn(`LLVM download returned HTTP ${response.status}; retrying (${attempt + 1}/3) in ${delay}ms.`);
     await setTimeout(delay);
+  }
+}
+
+// Cache transport is not an integrity boundary: verify compressed bytes before
+// extraction, and rebuild a corrupt entry through the same pinned download.
+export async function ensureArchive(url, archive, expectedHash, sdkName) {
+  try {
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(archive)) hash.update(chunk);
+    if (hash.digest("hex") === expectedHash) return;
+    console.warn(`Cached LLVM checksum mismatch: ${sdkName}; downloading the pinned archive.`);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  await rm(archive, { force: true });
+  try {
+    await downloadArchive(url, archive, expectedHash, sdkName);
+  } catch (error) {
+    await rm(archive, { force: true });
+    throw error;
   }
 }

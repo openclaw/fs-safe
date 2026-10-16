@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { downloadArchive } from "../.github/actions/setup-archive-llvm/download.mjs";
+import { downloadArchive, ensureArchive } from "../.github/actions/setup-archive-llvm/download.mjs";
 
 const { delay } = vi.hoisted(() => ({ delay: vi.fn<(ms: number) => Promise<void>>() }));
 vi.mock("node:timers/promises", () => ({ setTimeout: delay }));
@@ -30,6 +30,43 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   await rm(directory, { recursive: true, force: true });
+});
+
+it("rehashes a restored archive without downloading trusted bytes again", async () => {
+  await writeFile(archive, bytes);
+  await ensureArchive(url, archive, hash, "fixture-sdk");
+  expect(request).not.toHaveBeenCalled();
+  expect(await readFile(archive)).toEqual(bytes);
+});
+
+it("rebuilds a corrupt cache entry through the checksum-pinned download", async () => {
+  await writeFile(archive, "corrupt cached archive");
+  request.mockResolvedValue(new Response(bytes));
+  await ensureArchive(url, archive, hash, "fixture-sdk");
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(await readFile(archive)).toEqual(bytes);
+});
+
+it("downloads and verifies an absent cache entry", async () => {
+  request.mockResolvedValue(new Response(bytes));
+  await ensureArchive(url, archive, hash, "fixture-sdk");
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(await readFile(archive)).toEqual(bytes);
+});
+
+it("discards a replacement download that fails checksum verification", async () => {
+  await writeFile(archive, "corrupt cached archive");
+  request.mockResolvedValue(new Response("corrupt upstream archive"));
+  await expect(ensureArchive(url, archive, hash, "fixture-sdk")).rejects.toThrow("LLVM checksum mismatch");
+  expect(await readdir(directory)).toEqual([]);
+});
+
+it("removes partial cache bytes when a replacement stream fails", async () => {
+  request.mockResolvedValue(new Response(new ReadableStream({
+    start(controller) { controller.error(new Error("broken stream")); },
+  })));
+  await expect(ensureArchive(url, archive, hash, "fixture-sdk")).rejects.toThrow("broken stream");
+  expect(await readdir(directory)).toEqual([]);
 });
 
 function rejected(status: number, cancel = vi.fn()) {
