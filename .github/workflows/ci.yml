@@ -36,6 +36,18 @@ jobs:
       - name: Lint workflows
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
 
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # These inspect source text; the runtime matrix below still builds and
+      # checks documentation, tests, and packed imports on every Node/OS pair.
+      - name: Lint source
+        run: |
+          node scripts/check-file-size.mjs
+          node scripts/check-fs-boundary-primitives.mjs
+
   secure-file-credential-candidate-build:
     name: Secure-file candidate bundle (Node ${{ matrix.node }})
     if: github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true
@@ -987,7 +999,7 @@ jobs:
       # Deliberately do not build a host binding here. On Windows this exercises
       # the shipping command fallback; native-check covers the platform binding.
       - name: Check JavaScript fallback
-        run: pnpm check
+        run: pnpm check:runtime
 
       - name: Smoke method benchmarks with JavaScript fallback
         if: matrix.node == 24
@@ -1166,10 +1178,6 @@ jobs:
           FS_SAFE_TEST_WATCH_EVENTS: "1"
         shell: bash
         run: pnpm test test/watch*.test.ts --maxWorkers=1 --testTimeout=30000 --reporter=verbose
-
-      - name: Measure published missing TREE overflow baseline
-        if: ${{ !matrix.no-openat2 }}
-        run: node scripts/watch-fold-proof.mjs baseline
 
       - name: Prove native event delivery on every platform
         run: node scripts/watch-events-proof.mjs
@@ -1768,10 +1776,81 @@ jobs:
             release-artifacts/windows-native-pe.json
           if-no-files-found: error
 
-  package-smoke:
-    name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
+  package-smoke-build:
+    name: Bundled package build (${{ matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-15
+          - windows-latest
+    steps:
+      - name: Check out exact package-proof source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify Windows CI runner
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/verify-windows-ci-runner
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 22
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # LLVM setup exports temporary paths; key its pinned toolchain source instead.
+          key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+          env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
+          workspaces: |
+            . -> target
+            . -> target/archive-wasm-allocator-tests
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Build and stage host binding
+        run: pnpm native:build
+
+      # The ES2022 output and napi8 binding are shared across Node 22/24.
+      # Each consumer checks out this same PR head; merge-ref builds stay separate.
+      - name: Upload exact-source package build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-smoke-build-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            dist/
+            src/windows-security-helper.exe
+            native/*.node
+            packages/*/fs-safe-native.node
+          if-no-files-found: error
+          retention-days: 1
+
+  package-smoke:
+    name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
+    # Required consumer checks must fail on missing artifacts, rather than
+    # being skipped when any build in the producer matrix fails.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    timeout-minutes: 30
+    needs: package-smoke-build
     strategy:
       fail-fast: false
       matrix:
@@ -1799,31 +1878,13 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      - name: Add portable TAR parser target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Cache Rust build dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # LLVM setup exports temporary paths; key its pinned toolchain source instead.
-          key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
-          env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
-          workspaces: |
-            . -> target
-            . -> target/archive-wasm-allocator-tests
-          save-if: ${{ matrix.node == 24 }}
-
-      - name: Set up portable archive LLVM
-        uses: ./.github/actions/setup-archive-llvm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build package
-        run: pnpm build
-
-      - name: Build and stage host binding
-        run: pnpm native:build
+      - name: Download exact-source package build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-smoke-build-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Prove platform capabilities on the main thread and in Workers
         env:
