@@ -211,6 +211,10 @@ backend loss, and batches without filenames still receive a full guarded pass.
 The periodic timer is independent of event traffic, so frequent hints cannot defer
 the full missed-event check. Repeated passes reuse bounded pathname strings, never
 cached metadata or filesystem authority.
+On Windows with the native helper, each listing fence obtains exact directory
+identity and physical path from one short-lived handle. Native-off and POSIX
+scans retain the JavaScript checks. Both paths recheck the Root and reject
+substituted directories or redirected ancestors at the same fences.
 When polling is selected, the interval is `pollIntervalMs`, then `intervalMs`,
 then 1000 ms, in that order. This applies to explicit `mode: "poll"`, `auto`
 selecting polling, and `auto` falling back after an unsupported event backend.
