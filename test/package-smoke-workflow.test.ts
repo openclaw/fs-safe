@@ -4,8 +4,16 @@ import { describe, expect, it } from "vitest";
 const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")
   .replace(/\r\n?/gu, "\n");
 const consumer = workflow.match(/^  package-smoke:\n((?: {4,}[^\n]*\n|\n)*)/mu)?.[1];
+const producer = workflow.match(/^  package-smoke-build:\n((?: {4,}[^\n]*\n|\n)*)/mu)?.[1];
 
 describe("required package consumer proof", () => {
+  it("preserves raw build and staged package bindings for both consumer paths", () => {
+    expect(producer).toBeDefined();
+    expect(producer).toContain("            native/*.node\n");
+    expect(producer).toContain("            packages/*/fs-safe-native.node\n");
+    expect(producer).toContain("            src/windows-security-helper.exe\n");
+  });
+
   it("runs after a producer failure instead of silently skipping required checks", () => {
     expect(consumer).toBeDefined();
     expect(consumer).toMatch(/^    needs: package-smoke-build$/mu);

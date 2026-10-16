@@ -1838,6 +1838,7 @@ jobs:
           path: |
             dist/
             src/windows-security-helper.exe
+            native/*.node
             packages/*/fs-safe-native.node
           if-no-files-found: error
           retention-days: 1
