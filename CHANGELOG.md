@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **ZIP integrity:** update the native ZIP decoder while preserving format-error and byte-limit classifications for entries that exceed their declared size.
 - **Release dry runs:** keep generated unsigned package artifacts outside source-provenance checks so the final package smoke test can complete without signing or publishing.
 - **Legacy native policy migration:** reject removed `FS_SAFE_PYTHON_MODE` and `OPENCLAW_FS_SAFE_PYTHON_MODE` settings with an actionable migration error when no explicit native policy is selected, instead of silently changing `require` or `off` to `auto`. Set the corresponding native-mode variable to the same value before upgrading.
 - **Root containment:** resolve nested and dangling symlink chains with kernel parent semantics, and reject redirected sibling-output parents before invoking external writers. Thanks @yetval for [#987](https://github.com/openclaw/fs-safe/issues/987) and [#986](https://github.com/openclaw/fs-safe/issues/986).

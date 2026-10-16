@@ -110,6 +110,10 @@ fn io_error(operation: &str, error: impl std::fmt::Display) -> Error {
     Error::from_reason(format!("{operation}: {error}"))
 }
 
+fn is_zip_size_error(message: &str) -> bool {
+    message.ends_with("File is larger than its declared uncompressed size")
+}
+
 fn open_tar_reader(
     path: &str,
     format: ArchiveFormat,
@@ -597,7 +601,13 @@ fn extract_zip(
                 cancelled: Arc::clone(&cancelled),
             };
             platform::write_archive_file(root_fd, &item.path, &mut reader, size, item.mode)
-                .map_err(|error| Error::from_reason(error.reason))?;
+                .map_err(|error| {
+                    if is_zip_size_error(&error.reason) {
+                        Error::new(Status::InvalidArg, format!("archive-header-invalid: {}", error.reason))
+                    } else {
+                        Error::from_reason(error.reason)
+                    }
+                })?;
         }
     }
     finish_directories(root_fd, directories)?;
@@ -698,7 +708,19 @@ fn read_bounded(
     }
     .take(max_bytes.saturating_add(1))
     .read_to_end(&mut output)
-    .map_err(|error| io_error("read archive entry", error))?;
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidData && is_zip_size_error(&error.to_string()) {
+            // ZIP rejects the read before returning its bytes. Exceeding the
+            // declared size also exceeds an equal or smaller caller budget.
+            if max_bytes <= expected_size {
+                Error::from_reason("archive-entry-extracted-size-exceeds-limit")
+            } else {
+                Error::new(Status::InvalidArg, format!("archive-header-invalid: {error}"))
+            }
+        } else {
+            io_error("read archive entry", error)
+        }
+    })?;
     if output.len() as u64 > max_bytes {
         return Err(Error::from_reason(
             "archive-entry-extracted-size-exceeds-limit",

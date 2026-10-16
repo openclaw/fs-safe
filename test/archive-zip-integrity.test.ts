@@ -115,9 +115,9 @@ for (const mode of ["off", "auto", "require"] as const) {
         await expectUnpublished(input.destDir);
       });
 
-      it.each([1, 16, 100])("enforces maxBytes=1 with declared size %s", async (declaredSize) => {
+      it.each([[0, 1], [1, 1], [1, 16], [1, 100]])("enforces maxBytes=%s with declared size %s", async (maxBytes, declaredSize) => {
         const { archivePath } = await fixture(zipFixture(method, declaredSize));
-        const operation = readArchiveEntry(archivePath, "selected", { maxBytes: 1 });
+        const operation = readArchiveEntry(archivePath, "selected", { maxBytes });
         await expect(operation).rejects.toBeInstanceOf(ArchiveLimitError);
         await expect(operation).rejects.toMatchObject({
           code: ARCHIVE_LIMIT_ERROR_CODE.ENTRY_EXTRACTED_SIZE_EXCEEDS_LIMIT,
