@@ -163,7 +163,12 @@ describe.each(["events", "poll"] as const)("watch %s", mode => {
     expect(states).not.toContain("unavailable");
     expect(writes).toBeGreaterThan(20);
     const truth = new Map<string, string>();
-    for (const name of await fs.readdir(dir)) truth.set(name, await fs.readFile(path.join(dir, name), "utf8"));
+    const names = await fs.readdir(dir);
+    // Keep the independent oracle from spending the deadline on serial I/O
+    // while the 20 ms poller continues scanning all 1,024 files.
+    for (let i = 0; i < names.length; i += 16) {
+      await Promise.all(names.slice(i, i + 16).map(async name => { truth.set(name, await fs.readFile(path.join(dir, name), "utf8")); }));
+    }
     expect(cache).toEqual(truth);
     await fs.writeFile(path.join(dir, "file-0"), "isolated-final-edit");
     await expect.poll(() => cache.get("file-0"), { timeout: 5000 }).toBe("isolated-final-edit");
