@@ -1,6 +1,29 @@
 name: Windows helper reproducibility
 on:
   pull_request:
+    # The helper has explicit C# inputs; keep implicit SDK/MSBuild/NuGet
+    # configuration and both setup actions in the same input closure.
+    paths:
+      - 'src/windows-security-bridge.cs'
+      - 'src/windows-security-helper.cs'
+      - 'src/windows-owner-query.cs'
+      - 'native/windows-security-helper/**'
+      - 'scripts/build-windows-helper.mjs'
+      - 'global.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
+      - '.pnpmfile.cjs'
+      - 'pnpmfile.cjs'
+      - '.gitattributes'
+      - '**/.editorconfig'
+      - '**/Directory.Build.*'
+      - '**/Directory.Packages.props'
+      - '**/*[Nn]u[Gg]et*'
+      - '.github/actions/setup-node-pnpm/**'
+      - '.github/actions/setup-windows-helper/**'
+      - '.github/workflows/windows-helper.yml'
   push:
     branches: [main]
 permissions:
