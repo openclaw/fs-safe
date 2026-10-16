@@ -7,9 +7,9 @@ import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 
-it("keeps dry-run package outputs out of source provenance while detecting source edits", async () => {
-  const workflow = await fs.readFile(".github/workflows/release.yml", "utf8");
-  const collect = workflow.split("\n  collect-dry-run:\n")[1]?.split("\n  draft-release:\n")[0];
+it.each(["\n", "\r\n"])("preserves dry-run provenance and detects source edits with %j line endings", async (newline) => {
+  const workflow = (await fs.readFile(".github/workflows/release.yml", "utf8")).replace(/\r?\n/g, newline);
+  const collect = workflow.split(/\r?\n  collect-dry-run:\r?\n/)[1]?.split(/\r?\n  draft-release:\r?\n/)[0];
   const output = collect?.match(/pnpm package:smoke --output ([^\s]+)/)?.[1];
   expect(output).toBeDefined();
   const directory = await tempRoot("fs-safe-dry-run-provenance-");
