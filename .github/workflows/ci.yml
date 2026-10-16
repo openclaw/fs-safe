@@ -1844,6 +1844,9 @@ jobs:
 
   package-smoke:
     name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
+    # Required consumer checks must fail on missing artifacts, rather than
+    # being skipped when any build in the producer matrix fails.
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 30
     needs: package-smoke-build
