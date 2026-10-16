@@ -37,7 +37,7 @@ jobs:
       - name: Check out candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up pnpm
@@ -86,6 +86,8 @@ jobs:
             if ($LASTEXITCODE -ne 0 -or $candidate -notmatch '^[a-f0-9]{40}$') { throw 'Missing candidate commit.' }
             $receipt.candidateCommit = $candidate
             $receipt.candidateIsPullRequestMergeCommit = $true
+            # Fetch only the fixed negative control; HEAD remains the PR merge commit.
+            Run-Checked 'git' @('-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'fetch.writeCommitGraph=false', 'fetch', '--no-tags', '--no-write-fetch-head', '--depth=1', 'origin', $baseline)
             Run-Checked 'pnpm' @('install', '--frozen-lockfile')
             Run-Checked 'pnpm' @('build')
             # Git archive honors EOL conversion; keep the baseline's committed bytes.
