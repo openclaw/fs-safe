@@ -1710,6 +1710,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup override set stable-${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}-pc-windows-msvc
 
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The ARM64 host runs separate native and emulated Rust toolchains.
+          # Restore before LLVM exports temporary compiler paths into the environment.
+          key: windows-arm64-node-${{ matrix.arch }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+
       - name: Set up portable archive LLVM
         uses: ./.github/actions/setup-archive-llvm
 

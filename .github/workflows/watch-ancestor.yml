@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+# Keep non-PR runs independent, including pending main pushes and manual studies.
+concurrency:
+  group: watch-ancestor-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ancestor:
     name: Ancestor scopes (${{ matrix.os }})

@@ -267,6 +267,7 @@ jobs:
 
   benchmark:
     name: Node 22 benchmarks
+    if: github.event_name != 'workflow_dispatch' || !inputs.method_audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

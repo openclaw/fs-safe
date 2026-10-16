@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { downloadArchive } from "./download.mjs";
+import { ensureArchive } from "./download.mjs";
 
 // Use the official WASI SDK 34 LLVM tools. Verify before extracting because
 // upstream release assets can be replaced without changing their names.
@@ -30,11 +30,16 @@ function run(command, args) {
 }
 
 const [platform, expectedHash] = asset;
-const directory = await mkdtemp(join(process.env.RUNNER_TEMP, "fs-safe-archive-llvm-"));
 const sdkName = `wasi-sdk-34.0-${platform}`;
-const archive = join(directory, `${sdkName}.tar.gz`);
+const archive = join(process.env.RUNNER_TEMP, `${sdkName}-${expectedHash}.tar.gz`);
+if (process.argv.includes("--cache-plan")) {
+  if (!process.env.GITHUB_OUTPUT) throw new Error("Archive cache planning requires GITHUB_OUTPUT.");
+  await appendFile(process.env.GITHUB_OUTPUT, `archive=${archive}\nkey=archive-llvm-v1-${compilerHost}-${expectedHash}\n`);
+  process.exit(0);
+}
+const directory = await mkdtemp(join(process.env.RUNNER_TEMP, "fs-safe-archive-llvm-"));
 try {
-  await downloadArchive(
+  await ensureArchive(
     `https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/${sdkName}.tar.gz`,
     archive,
     expectedHash,
@@ -44,7 +49,6 @@ try {
     ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
     : "tar";
   run(tar, ["-xzf", archive, "-C", directory]);
-  await rm(archive);
 
   const suffix = process.platform === "win32" ? ".exe" : "";
   const clang = join(directory, sdkName, "bin", `clang${suffix}`);

@@ -14,6 +14,17 @@ runs:
       uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
       with:
         global-json-file: ${{ steps.sdk.outputs.sdk_file }}
+    - name: Resolve portable archive cache
+      id: archive
+      shell: bash
+      env:
+        ARCHIVE_LLVM_ACTION_PATH: ${{ github.action_path }}
+      run: node "$ARCHIVE_LLVM_ACTION_PATH/install.mjs" --cache-plan
+    - name: Cache checksum-pinned SDK archive
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ steps.archive.outputs.archive }}
+        key: ${{ steps.archive.outputs.key }}
     - name: Install portable archive compiler and archiver
       shell: bash
       env:

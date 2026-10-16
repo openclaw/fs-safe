@@ -4,7 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
-import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, itPosix, useTempDirs } from "./helpers/vitest.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { FsSafeError } from "../src/errors.js";
 import {
@@ -15,6 +15,8 @@ import {
 } from "../src/json-durable-queue.js";
 import { jsonStore } from "../src/json-store.js";
 
+allowWindowsFilesystemStalls();
+
 const { tempRoot } = useTempDirs();
 
 function circularValue(): Record<string, unknown> {
@@ -24,16 +26,22 @@ function circularValue(): Record<string, unknown> {
 }
 
 describe("store stress matrix", () => {
-  it.each([false, true])(
-    "keeps async and sync targets intact across serializer and stream failures (private=%s)",
-    async (privateMode) => {
-      const root = await tempRoot("fs-safe-store-failures-");
-      const asyncStore = fileStore({ rootDir: root, private: privateMode });
-      const syncStore = fileStoreSync({ rootDir: root, private: privateMode });
+  describe.each([false, true])("serializer and stream failures (private=%s)", (privateMode) => {
+    let directory: string | undefined;
+    // A timeout does not cancel durable writes or stream rollback. Drain both before cleanup.
+    const run = useSuiteFixture(async () => {
+      directory = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-store-failures-"));
+      const asyncStore = fileStore({ rootDir: directory, private: privateMode });
+      const syncStore = fileStoreSync({ rootDir: directory, private: privateMode });
       await asyncStore.writeJson("async.json", { version: 1 });
       syncStore.writeJson("sync.json", { version: 1 });
       await asyncStore.writeText("stream.txt", "complete");
+      return { root: directory, asyncStore, syncStore };
+    }, async () => {
+      if (directory) await fs.rm(directory, { recursive: true, force: true });
+    });
 
+    it("keeps async and sync targets intact", () => run(async ({ root, asyncStore, syncStore }) => {
       await expect(asyncStore.writeJson("async.json", circularValue())).rejects.toThrow(TypeError);
       expect(() => syncStore.writeJson("sync.json", circularValue())).toThrow(TypeError);
       const brokenStream = Readable.from(
@@ -50,8 +58,8 @@ describe("store stress matrix", () => {
       expect(syncStore.readJsonIfExists("sync.json")).toEqual({ version: 1 });
       await expect(asyncStore.readText("stream.txt")).resolves.toBe("complete");
       expect((await fs.readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-    },
-  );
+    }));
+  });
 
   describe.each([false, true])("overlapping reads and writes (private=%s)", (privateMode) => {
     let directory: string | undefined;

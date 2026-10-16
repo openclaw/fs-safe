@@ -1,10 +1,38 @@
 name: Windows helper reproducibility
 on:
   pull_request:
+    # The helper has explicit C# inputs; keep implicit SDK/MSBuild/NuGet
+    # configuration and both setup actions in the same input closure.
+    paths:
+      - 'src/windows-security-bridge.cs'
+      - 'src/windows-security-helper.cs'
+      - 'src/windows-owner-query.cs'
+      - 'native/windows-security-helper/**'
+      - 'scripts/build-windows-helper.mjs'
+      - 'global.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
+      - '.pnpmfile.cjs'
+      - 'pnpmfile.cjs'
+      - '.gitattributes'
+      - '**/.editorconfig'
+      - '**/Directory.Build.*'
+      - '**/Directory.Packages.props'
+      - '**/*[Nn]u[Gg]et*'
+      - '.github/actions/setup-node-pnpm/**'
+      - '.github/actions/setup-windows-helper/**'
+      - '.github/workflows/windows-helper.yml'
   push:
     branches: [main]
 permissions:
   contents: read
+# Keep non-PR runs independent, including pending main pushes and manual studies.
+concurrency:
+  group: windows-helper-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     name: Windows helper (${{ matrix.os }})
