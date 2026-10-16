@@ -16,6 +16,7 @@ import {
 import { FsSafeError } from "./errors.js";
 import {
   inspectNativeDirectoryObservation,
+  getNativeDirectoryObservationBackend,
   isNativeDirectoryObservationGuard,
   type NativeDirectoryObservationBackend,
 } from "./native-directory-observation.js";
@@ -114,6 +115,7 @@ function directoryChangedError(error: unknown): FsSafeError {
 export async function assertRootDirectoryObservationGuard(
   root: RootContext,
   guard: RootDirectoryObservationGuard | RootPathDirectoryObservationGuard,
+  backend?: NativeDirectoryObservationBackend,
 ): Promise<void> {
   if (isNativeDirectoryObservationGuard(guard)) {
     throw new FsSafeError("path-mismatch", "native directory observation cannot be revalidated");
@@ -123,7 +125,8 @@ export async function assertRootDirectoryObservationGuard(
     identity.dev === root.rootIdentity.dev && identity.ino === root.rootIdentity.ino;
   if (guardPinsRoot) {
     try {
-      if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
+      if (backend && "identity" in guard) assertReceiptDirectoryGuardSync(root, guard, backend);
+      else if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
       else await assertAsyncDirectoryGuard(guard);
     } catch (error) {
       throw rootPathChangedError(error instanceof Error ? error : undefined);
@@ -141,7 +144,8 @@ export async function assertRootDirectoryObservationGuard(
     await assertRootIdentityCurrent(root);
   }
   try {
-    if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
+    if (backend && "identity" in guard) assertReceiptDirectoryGuardSync(root, guard, backend);
+    else if ("identity" in guard) assertDirectoryObservationGuardSync(guard);
     else await assertAsyncDirectoryGuard(guard);
   } catch (error) {
     throw directoryChangedError(error);
@@ -322,10 +326,13 @@ export async function openRootDirectoryListing(
       identity: { dev: admitted.stat.dev, ino: admitted.stat.ino },
     }, admitted.dir, admitted.realPath);
   }
+  // Watch listings keep every entry fence, but obtain identity and physical
+  // pathname from one native handle instead of walking the path again.
+  const backend = getNativeDirectoryObservationBackend(options.exactIdentity === true);
   const assertCurrent = async () => {
     options.signal?.throwIfAborted();
     if (receipt) assertRootPathObservationReceiptCurrent(root, receipt);
-    else await assertRootDirectoryObservationGuard(root, guard);
+    else await assertRootDirectoryObservationGuard(root, guard, backend);
     options.signal?.throwIfAborted();
   };
   const paths: RootDirectoryListingPaths = { directory: guard.realPath, names: new Map() };

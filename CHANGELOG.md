@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Watch scan CPU:** avoid repeated full path walks while checking each listed entry's exact directory identity and physical path. Thanks @martinderm for reporting the idle Gateway CPU regression in [openclaw#174341](https://github.com/openclaw/openclaw/issues/174341).
 - **ZIP integrity:** update the native ZIP decoder while preserving format-error and byte-limit classifications for entries that exceed their declared size.
 - **Release dry runs:** keep generated unsigned package artifacts outside source-provenance checks so the final package smoke test can complete without signing or publishing.
 - **Legacy native policy migration:** reject removed `FS_SAFE_PYTHON_MODE` and `OPENCLAW_FS_SAFE_PYTHON_MODE` settings with an actionable migration error when no explicit native policy is selected, instead of silently changing `require` or `off` to `auto`. Set the corresponding native-mode variable to the same value before upgrading.
