@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# Keep non-PR runs independent, including pending main pushes and manual studies.
+concurrency:
+  group: hash-identity-proof-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   windows-proof:
     name: Windows Node ${{ matrix.node }} hash proof
