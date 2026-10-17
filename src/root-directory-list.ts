@@ -31,7 +31,8 @@ import type {
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { realpathSync } from "./realpath.js";
-import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
+import type { ExactStatIdentity } from "./stat-observation.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import type { DirEntry, PathStat } from "./types.js";
 import type { RootDirectoryListing, RootDirectoryListingOptions, RootDirectoryListingPaths, RootDirectoryListingResult } from "./root-directory-list-types.js";
@@ -468,8 +469,10 @@ export async function openRootDirectoryListing(
           if (options.exactIdentity) paths.names.set(name, pathname);
           let observed: { stat: Stats | BigIntStats; identity?: ExactStatIdentity };
           try {
-            observed = options.exactIdentity ? inspectStatObservationSync(() =>
-              fsSync.lstatSync(pathname, { bigint: true })) : { stat: fsSync.lstatSync(pathname, { bigint: true }) };
+            const stat = options.exactIdentity
+              ? inspectFileIdentitySync(() => fsSync.lstatSync(pathname, { bigint: true }))
+              : fsSync.lstatSync(pathname, { bigint: true });
+            observed = { stat, ...(options.exactIdentity ? { identity: { dev: stat.dev, ino: stat.ino } } : {}) };
           } catch (error) {
             await assertCurrent();
             if (options.skipVanished && isNotFoundPathError(error)) continue;

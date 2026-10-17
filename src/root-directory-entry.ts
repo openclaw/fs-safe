@@ -5,6 +5,7 @@ import { isNotFoundPathError } from "./path.js";
 import { assertValidRootRelativePath, type RootContext } from "./root-context.js";
 import { assertRootDirectoryObservationGuard, pathStatFromStats, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { DirEntry } from "./types.js";
 
 /** One literal entry lookup under an operation-local admitted parent; never follow the leaf. */
@@ -18,8 +19,9 @@ export async function lookupRootDirectoryEntry(
   await assertRootDirectoryObservationGuard(root, guard);
   try {
     const pathname = path.join(guard.realPath, name);
-    const observed = inspectStatObservationSync(bigint => bigint || exactMetadata
-      ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname));
+    const exact = exactMetadata ? inspectFileIdentitySync(() => fs.lstatSync(pathname, { bigint: true })) : undefined;
+    const observed = exact ? { stat: exact, identity: { dev: exact.dev, ino: exact.ino } }
+      : inspectStatObservationSync(bigint => bigint ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname));
     await assertRootDirectoryObservationGuard(root, guard);
     return { entry: pathStatFromStats(observed.stat, name), identity: observed.identity,
       ...(exactMetadata ? { observation: observed.stat as BigIntStats } : {}) };
