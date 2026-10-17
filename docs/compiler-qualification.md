@@ -25,7 +25,7 @@ Prepare small draft PRs. Obtain explicit maintainer approval before merging, rel
 | Official compiler | Lockfile resolves `typescript@7.0.2` |
 | tsc-ts source | `7e21c1012710cc438fd30da0f22f30e276d4222b` |
 | scriptc source | `66125d783b0e03af6e28843229c10b6436333c08` |
-| Candidate binaries | Not selected or executed. Record release, source SHA, platform, package integrity, and executable hash before testing. |
+| Initial candidate | Published `tsc-ts@0.0.2` + `@tsc-ts/linux-x64-gnu@0.0.2`; release tag target `b0dbfb0ea2240b59d51de5de1aae3a35a9f3dc10`, distinct from inspected main above. |
 
 Do not equate a release binary with a later source revision that declares the same package version.
 Freeze source, lockfile, compiler libraries, runner, flags, and binary identities for each comparison.
@@ -70,6 +70,52 @@ The inspected [upstream benchmark](https://github.com/vercel-labs/tsc-ts/blob/7e
 Its whole-project timer ignores child status, and that comparison omits native tsc-ts.
 Record this as an upstream follow-up. Do not use that timing table as fs-safe qualification.
 
+### First harness
+
+Run `scripts/compiler-qualification.mjs` on an isolated validation host after
+`pnpm install --frozen-lockfile`. Supply the candidate's native executable,
+not its npm JavaScript launcher. Keep its installer provenance separately:
+release, source commit, npm integrity, platform package, and download origin.
+
+```sh
+node scripts/compiler-qualification.mjs \
+  --candidate /path/to/native/tsc-ts \
+  --output /path/to/new-evidence-directory
+```
+
+The output directory must be new and its parent must exist. The harness resolves
+the locked official `typescript@7.0.2` and its matching platform package, then
+uses both native executables directly. It sets `TSC_TS_LIB_DIR` to the official
+platform package's libraries and verifies the actual resolved input bytes.
+The official package remains installed for the existing API checker.
+The harness clears inherited `TSC_TS_*`, `GOGC`, `GOMEMLIMIT`, `GOMAXPROCS`, and
+`GODEBUG` tuning before setting the library directory. It records cleared names.
+
+The harness requires identical effective configs, source checks, one valid and
+one deliberately invalid language fixture, and emitted JS/declaration inventories
+and bytes before timing. It records CLI diagnostic **start-location parity**;
+CLI text does not expose diagnostic end positions or lengths. Structured-span
+and public declaration-consumer proof remain separate experiments.
+
+`report.json` records hashes, versions, effective config, input/output inventories,
+process status and streams, and every successful timing sample. A failed process
+remains in the process log and makes the entire campaign fail. No failed campaign
+qualifies performance. Initial and final hashes reject changed source, inputs,
+compiler executables, libraries, manifests, and retained output.
+
+Default timing is two warmups and ten measured runs per compiler for each of
+checking and emission, interleaved in ABBA/BAAB blocks. Counts must be positive
+even integers. `--single-threaded` passes the same flag to both compilers;
+unsupported flags fail the campaign. `--timeout-ms` defaults to 120000 per process.
+This first harness measures **wall time only**. CPU time and peak RSS remain
+unmeasured. Filesystem cache state is uncontrolled. It does not qualify the
+complete build, installed package, target runtime, or a compiler replacement.
+
+Use `official/` and `candidate/` only as retained compiler-output artifacts.
+Successful timing samples discard their duplicate emit directories after hashing.
+The harness never writes `dist` or invokes a packaging command that rebuilds it.
+Review the report for private diagnostics before publishing it.
+
 ### Performance protocol
 
 Use one isolated runner without competing builds. Record CPU allocation, operating system, filesystem, runtime, and resource limits.
@@ -85,6 +131,11 @@ Measure incremental no-op and one-file edits only as optional scenarios because 
 Measure repeated API/watch operation separately if adoption later includes a persistent compiler process.
 
 Select a material benefit threshold after measuring the baseline and before evaluating candidate timings.
+The initial official-only pilot took about 0.37 seconds per check or emit on a
+Linux x64 c7a.8xlarge runner. For this investigation, require at least 20% median
+compiler-time savings and 10% whole-build savings before proposing optional
+selection. Report absolute savings and complete-check impact as well; meeting
+those thresholds does not replace compatibility or maintenance review.
 Prefer whole-build savings and runner cost over a microbenchmark ratio.
 Do not adopt a candidate that saves negligible time while adding substantial platform or maintenance cost.
 
@@ -203,3 +254,21 @@ Keep the full objective open while required tests, verified fixes, stack prepara
 The final handoff must identify measured benefits, semantic differences, package/platform coverage, remaining blockers, and every draft PR dependency.
 Keep source validation, CI status, merge approval, release publication, and deployed behavior separate.
 No landing occurs without explicit maintainer approval.
+
+## Initial Linux pilot
+
+On Node 24.19.0 with pnpm 12.10.1, the published tsc-ts 0.0.2 Linux GNU binary
+passed the first comparison: 508 identical resolved input hashes, 634 identical
+emitted JavaScript/declaration files, and matching valid/invalid fixture results.
+The official-versus-official control also passed. Each pilot used two warmups
+and two measured samples per compiler per mode. These small pilots validate
+harness execution; they do not establish a speedup or full package compatibility.
+
+Native executable SHA-256 identities:
+
+- Official TypeScript 7.0.2: `4f2de678286401759b3fb4475bafe35b8f32b4b3a07d92642bbf37eadc9b34a4`
+- tsc-ts 0.0.2 Linux GNU: `fb24c9cc43533dc004b9dfc9547d7066cea348b807c3239f8e31c7ba062017b6`
+
+The installed package's launcher selects `lib/tsc-ts` (`tsc-ts.exe` on Windows).
+Record the npm package integrity from the experiment's installation lockfile;
+do not infer binary provenance from its `Version 7.0.2` CLI output alone.
