@@ -36,10 +36,12 @@ it.skipIf(!!process.versions.bun || !!process.versions.deno)("keeps compiled wat
       const before = await watchIoMetrics();
       const original = new Map();
       let syncCalls = 0;
-      for (const method of ["lstatSync", "statSync", "realpathSync", "openSync", "readSync"]) {
+      for (const method of ["lstatSync", "statSync", "realpathSync", "openSync", "readSync", "readlinkSync", "fstatSync", "closeSync"]) {
         original.set(method, fs[method]);
         fs[method] = Object.assign(function (...args) { syncCalls++; return original.get(method).apply(this, args); }, original.get(method));
       }
+      const nativeRealpath = fs.realpathSync.native;
+      fs.realpathSync.native = (...args) => { syncCalls++; return nativeRealpath(...args); };
       try {
         await new Promise(resolve => { ready = resolve; }); ready = undefined;
         const idle = await watchIoMetrics();
