@@ -217,14 +217,24 @@ export async function admittedNativeChanges(
       // Native recursion observes one Root handle and may report descendants of
       // unselected/entry-only directories. Admit a parent alias by exact identity,
       // not by lowercasing, and do not turn unselected descendants into events.
-      try {
-        guard = await admittedParent(parent);
-      } catch (error) {
-        await assertRootIdentityCurrent(root);
-        if (scheduling) throw error;
-        if (isNotFoundPathError(error) || (error instanceof FsSafeError && ["not-found", "path-alias", "outside-workspace", "symlink", "not-file"].includes(error.code))) continue;
-        throw error;
+      for (let attempt = 0; ; attempt++) {
+        const retained = guards.has(parent);
+        try {
+          guard = await admittedParent(parent);
+          break;
+        } catch (error) {
+          await assertRootIdentityCurrent(root);
+          // An earlier hint may already depend on this selected-alias guard.
+          if (scheduling || retained) throw error;
+          guards.delete(parent);
+          if (isNotFoundPathError(error) || (error instanceof FsSafeError && ["not-found", "path-alias", "outside-workspace", "symlink", "not-file"].includes(error.code))) break;
+          // A yielded admission may race an ordinary sibling deletion. Fresh
+          // admission can establish absence; persistent ambiguity still fails.
+          if (error instanceof FsSafeError && error.code === "path-mismatch" && attempt < 2) continue;
+          throw error;
+        }
       }
+      if (!guard) continue;
       let admitted: [string, { dev: bigint; ino: bigint }] | undefined;
       for (const entry of after.directories) {
         await checkpoint();
