@@ -40,7 +40,7 @@ export async function mergeWatchRescan(scopes: readonly WatchScope[], before: Wa
     for (const [key, value] of right ?? []) { result.set(key, value); await checkpoint(); }
     return result;
   };
-  if (slice.overflow || slice.structural?.size) return;
+  if (before.overflow || before.structural?.size || slice.overflow || slice.structural?.size) return;
   // An exclusion or a blocked path may stop before a requested directory is listed.
   for (const scope of requested) if (scope.kind === "tree" && scope.depth! > 0 && !slice.listed?.has(scope.path)) return;
   for (const [name, current] of slice.directories) {

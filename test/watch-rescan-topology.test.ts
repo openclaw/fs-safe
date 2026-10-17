@@ -19,3 +19,15 @@ it.each(["created", "removed", "replaced", "file-to-directory", "directory-to-fi
   const scopes = [{ path: "tree", kind: "tree" as const, depth: 2 }];
   expect(await mergeWatchRescan(scopes, before, slice, [{ ...scopes[0]!, depth: 1 }])).toBeUndefined();
 });
+
+it.each(["structural", "overflow"] as const)("requires a full pass after an uncertain previous %s scan", async uncertainty => {
+  const snapshot: WatchSnapshot = { entries: new Map([["", "directory:1:2:493"]]),
+    directories: new Map([["", { dev: 1n, ino: 2n }]]), targets: new Map(), scanned: 0,
+    listed: new Map([["", 0]]), childPaths: new Map([["", new Map()]]), observations: new Map(),
+  };
+  const before = { ...snapshot, structural: new Set(uncertainty === "structural" ? [path.join("unreadable", "deep")] : []),
+    overflow: uncertainty === "overflow" };
+  const slice = { ...snapshot, structural: new Set<string>(), overflow: false };
+  const scopes = [{ path: "", kind: "tree" as const, depth: 2 }];
+  expect(await mergeWatchRescan(scopes, before, slice, [{ ...scopes[0]!, depth: 1 }])).toBeUndefined();
+});
