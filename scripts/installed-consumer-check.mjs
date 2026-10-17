@@ -1,10 +1,12 @@
-import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { officialCompiler, runProcess } from "./compiler-qualification.mjs";
 
 const repository = resolve(import.meta.dirname, "..");
-const consumer = resolve(process.argv[2]);
+// Native compilers report paths relative to the physical cwd. Keep config paths
+// on that same identity when the temporary directory contains a symlink alias.
+const consumer = realpathSync(process.argv[2]);
 const require = createRequire(import.meta.url);
 const official = officialCompiler(repository);
 const compilers = { official: official.executable };
