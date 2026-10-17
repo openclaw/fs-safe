@@ -1,14 +1,14 @@
+import { watchRootCurrent as assertRootIdentityCurrent, watchResolve as resolvePathInRoot, watchGuard as createRootDirectoryObservationGuard, watchAssert as assertRootDirectoryObservationGuard, watchListing as openRootDirectoryListing, watchLookup as lookupRootDirectoryEntry, watchYield } from "./watch-io.js";
 import path from "node:path";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { isNotFoundPathError } from "./path.js";
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
 import { validatePinnedRelativePath } from "./pinned-operation.js";
-import { assertRootIdentityCurrent, assertValidRootRelativePath, resolvePathInRoot, type RootContext } from "./root-context.js";
-import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, openRootDirectoryListing, pathStatFromStats, type RootDirectoryObservationGuard } from "./root-directory-list.js";
+import { assertValidRootRelativePath, type RootContext } from "./root-context.js";
+import { pathStatFromStats, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import type { RootDirectoryListingPaths } from "./root-directory-list-types.js";
 import { createSuppressedError } from "./suppressed-error.js";
-import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
 import type { DirEntry } from "./types.js";
 import type { WatchEntry, WatchOptions, WatchScope } from "./watch-types.js";
 import type { WatchObservation } from "./watch-probe.js";
@@ -16,7 +16,7 @@ import type { WatchObservation } from "./watch-probe.js";
 export type DirectoryIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 export type WatchEntryAnchor = { directory: string; name: string; target?: DirectoryIdentity & { kind: WatchEntry["kind"] } };
 export type WatchSnapshot = { entries: Map<string, string>; entryAnchors?: Map<string, WatchEntryAnchor>; excluded?: Map<string, WatchEntry["kind"]>; excludedDirectories?: Map<string, string>; directoryPaths?: Map<string, string>; directories: Map<string, DirectoryIdentity>; targets: Map<string, DirectoryIdentity>; scanned: number; structural?: Set<string>; overflow?: boolean;
-  scopeAnchors?: Map<string, WatchEntryAnchor>; listed?: Map<string, number>; childPaths?: Map<string, Map<string, string>>; listingPaths?: Map<string, RootDirectoryListingPaths>; observations?: Map<string, WatchObservation> };
+  scopeAnchors?: Map<string, WatchEntryAnchor>; listed?: Map<string, number>; childPaths?: Map<string, Map<string, string>>; listingPaths?: Map<string, RootDirectoryListingPaths>; observations?: Map<string, WatchObservation>; unsettled?: Set<string> };
 export function watchScopes(input: readonly WatchScope[]): readonly WatchScope[] {
   if (!Array.isArray(input) || input.length > 128) throw new RangeError("watch accepts at most 128 scopes");
   return Object.freeze(input.map(scope => {
@@ -66,25 +66,32 @@ export async function scanWatch(
   register: (name: string, identity: DirectoryIdentity, guard: RootDirectoryObservationGuard) => Promise<void>,
   onCleanupFailure?: (error: unknown) => void,
 ): Promise<WatchSnapshot> {
+  const checkpoint = watchYield();
   const exclusions = new Map<string, WatchEntry["kind"]>();
   const excludedDirectories = new Map<string, string>(), directoryPaths = new Map<string, string>();
   const entryAnchors = new Map<string, WatchEntryAnchor>();
   const scopeAnchors = new Map<string, WatchEntryAnchor>();
   const listed = new Map<string, number>(), childPaths = new Map<string, Map<string, string>>(), listingPaths = new Map<string, RootDirectoryListingPaths>();
   const observations = new Map<string, WatchObservation>();
-  const result: WatchSnapshot = { entries: new Map(), entryAnchors, scopeAnchors, excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0, listed, childPaths, listingPaths, observations };
+  const unsettled = new Set<string>();
+  const record = (name: string, observation: WatchObservation, directory: string) => {
+    observations.set(name, observation);
+    const settledBefore = BigInt(Date.now() - 1000) * 1_000_000n;
+    if (observation.mtimeNs > settledBefore || observation.ctimeNs > settledBefore) unsettled.add(directory);
+  };
+  const result: WatchSnapshot = { entries: new Map(), entryAnchors, scopeAnchors, excluded: exclusions, excludedDirectories, directoryPaths, directories: new Map(), targets: new Map(), scanned: 0, listed, childPaths, listingPaths, observations, unsettled };
   const attempts = new Map<string, number>();
   const guards = new Map<string, RootDirectoryObservationGuard>();
   const walked = new Map<string, number>();
   const structural = new Set<string>();
   result.structural = structural;
-  const invalidate = (relative: string) => {
+  const invalidate = async (relative: string) => {
     if (structural.size < options.maxPendingPaths) structural.add(relative); else result.overflow = true;
     // Discard partially observed names when their enclosing directory lost admission.
     const below = (name: string) => name === relative || !relative || name.startsWith(relative + path.sep);
     for (const anchors of [entryAnchors, scopeAnchors]) for (const [scope, anchor] of anchors) if (below(anchor.directory)) anchors.delete(scope);
-    for (const map of [result.entries, exclusions, excludedDirectories, directoryPaths, result.targets, result.directories, guards, walked, listed, childPaths, listingPaths, observations]) {
-      for (const name of map.keys()) if (below(name)) map.delete(name);
+    for (const map of [result.entries, exclusions, excludedDirectories, directoryPaths, result.targets, result.directories, guards, walked, listed, childPaths, listingPaths, observations, unsettled]) {
+      for (const name of map.keys()) { await checkpoint(); if (below(name)) map.delete(name); }
     }
   };
   const recover = async (relative: string, error: unknown) => {
@@ -92,7 +99,7 @@ export async function scanWatch(
     await assertRootIdentityCurrent(root);
     const code = error instanceof FsSafeError ? error.details?.code ?? error.code : (error as { code?: string } | null)?.code;
     if (!isWatchPathError(error) || (!relative && (code === "EACCES" || code === "EPERM"))) throw error;
-    invalidate(relative);
+    await invalidate(relative);
   };
   const examined = () => {
     if (++result.scanned > options.maxEntries) throw new FsSafeError("too-large", "watch entry budget exceeded", { details: { operation: "scan" } });
@@ -141,7 +148,7 @@ export async function scanWatch(
         const guard = await createRootDirectoryObservationGuard(root, resolved.resolved);
         const identity = { dev: guard.stat.dev, ino: guard.stat.ino };
         result.directories.set(relative, identity);
-        observations.set(relative, guard.stat);
+        record(relative, guard.stat, relative);
         directoryPaths.set(relative, guard.realPath);
         await register(relative, identity, guard);
         signal.throwIfAborted();
@@ -156,6 +163,7 @@ export async function scanWatch(
     throw new FsSafeError("path-mismatch", "watch directory changed during registration");
   };
   const tree = async (relative: string, depth: number): Promise<void> => {
+    await checkpoint();
     if ((walked.get(relative) ?? 0) >= depth) return;
     walked.set(relative, depth);
     const previous = options.previous;
@@ -168,8 +176,10 @@ export async function scanWatch(
       result.directories.set(relative, previous.directories.get(relative)!);
       directoryPaths.set(relative, previous.directoryPaths!.get(relative)!);
       observations.set(relative, previous.observations!.get(relative)!);
+      if (previous.unsettled?.has(relative)) unsettled.add(relative);
       result.scanned += previous.listed!.get(relative)!;
       for (const name of names.values()) {
+        await checkpoint();
         const observation = previous.observations?.get(name);
         if (observation) observations.set(name, observation);
         const excludedKind = previous.excluded?.get(name);
@@ -195,7 +205,7 @@ export async function scanWatch(
           order: "filesystem", snapshot: false, signal, exactIdentity: true, skipVanished: true, onCleanupFailure,
           previousPaths: options.previous?.listingPaths?.get(relative),
           admitEntry: () => { examined(); listed.set(relative, (listed.get(relative) ?? 0) + 1); return true; },
-        });
+        }, () => options.maxEntries - result.scanned);
         // The listing has its own guard. Both identities must agree before reading names.
         await assertRootDirectoryObservationGuard(root, guard);
         break;
@@ -213,6 +223,7 @@ export async function scanWatch(
     let operationError: unknown;
     try {
       while (true) {
+        await checkpoint();
         const next = await listing.next();
         signal.throwIfAborted();
         if (!next) break;
@@ -221,7 +232,7 @@ export async function scanWatch(
         const entry = next.entry;
         const name = previousNames?.get(entry.name) ?? (relative ? path.join(relative, entry.name) : entry.name);
         names.set(entry.name, name);
-        if (next.observation) observations.set(name, next.observation);
+        if (next.observation) record(name, next.observation, relative);
         if (await excluded(name, entry)) continue;
         result.entries.set(name, fingerprint(entry, next.identity, next.observation));
         if (entry.isDirectory && !entry.isSymbolicLink && depth > 1) await tree(name, depth - 1);
@@ -264,7 +275,7 @@ export async function scanWatch(
         signal.throwIfAborted();
         if (!found) break;
         const name = relative ? path.join(relative, segments[i]!) : segments[i]!;
-        if (found.observation) observations.set(name, found.observation);
+        if (found.observation) record(name, found.observation, relative);
         if (await excluded(name, found.entry)) break;
         anchor.target = { ...found.identity, kind: kind(found.entry) };
         if (i === segments.length - 1) {
@@ -275,7 +286,7 @@ export async function scanWatch(
         }
         if (found.entry.isSymbolicLink) {
           if (options.admitting) throw new FsSafeError("symlink", "watch scope traverses a symbolic link; admit its target separately", { details: { operation: "scope" } });
-          invalidate(name); break;
+          await invalidate(name); break;
         }
         if (!found.entry.isDirectory) break;
         relative = name;
@@ -286,6 +297,7 @@ export async function scanWatch(
     }
   }
   for (const [relative, guard] of guards) {
+    await checkpoint();
     try { await assertRootDirectoryObservationGuard(root, guard); }
     catch (error) { await recover(relative, error); }
   }
@@ -297,6 +309,7 @@ export async function scanWatch(
   // Native deletion hints can arrive after a later scan. Keep bounded tombstones
   // until the name is admitted again; they never grant authority to publish it.
   for (const [name, kind] of options.previous?.excluded ?? []) {
+    await checkpoint();
     if (exclusions.size >= options.maxEntries) break;
     if (!result.entries.has(name) && !result.directories.has(name) && !exclusions.has(name)) exclusions.set(name, kind);
     const priorPath = options.previous?.excludedDirectories?.get(name);

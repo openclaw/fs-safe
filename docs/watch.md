@@ -196,9 +196,29 @@ handles and delivery queues, and closing one does not retire another's observati
 | `maxPendingPaths` | 256; maximum 4096 |
 | Reconciliation | One active pass and one coalesced pending pass; no convergence/pass budget |
 
+On Node, bulk watcher filesystem observations run in a shared `worker_thread`,
+including exact metadata probes, path resolution, synchronous directory reads and
+all pre/post observation guards. The worker retains open listing handles until
+joined disposal. Policy callbacks and native event delivery remain with the
+subscription, and host snapshot bookkeeping yields every 32 entries. The worker
+is shared across subscriptions with the same native policy and stops when its
+last subscription closes; `persistent: false` still permits process exit.
+Ordinary single Root operations retain their synchronous observation fences.
+Source-loader, test-hook, Bun and Deno execution uses the same guarded helpers
+with explicit event-loop yields between entries, probes and directory checks.
+A slow filesystem call or user callback cannot be preempted in that fallback;
+callbacks must remain cheap. Worker startup/observation failures fail closed.
+
 Periodic metadata checks run without needing an event. Each check compares exact
 bigint identities, mode, link count, size, mtime and ctime with the last guarded
-observations. Unchanged directories reuse their guarded listings; changed
+observations. Observations less than one second old are re-listed until the
+clock update window passes, because timestamp storage precision alone does not
+prove update frequency. A later guarded listing must confirm each such directory
+before its cached names become reusable, even if the next tick arrives after
+that window. Entirely unchanged ticks retain their previous snapshot after the
+final identity fence. Each probe also verifies the Root's canonical path, so
+moving an ancestor above the Root cannot preserve admission using only an
+unchanged inode. Unchanged directories reuse their guarded listings; changed
 directories and newly discovered children are listed and verified through the
 ordinary Root guards. File metadata is checked separately because in-place writes
 need not change the parent directory's timestamps. Probe metadata never admits a

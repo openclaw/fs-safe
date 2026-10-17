@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { WatchSnapshot } from "./watch-scan.js";
 import type { WatchScope } from "./watch-types.js";
+import { watchYield } from "./watch-io.js";
 
 export type WatchStreamPaths = { anchors: string[]; exclusions: string[] };
 function shallowest(paths: Iterable<string>, limit: number): string[] {
@@ -29,4 +30,22 @@ export function watchStreamPaths(snapshot: WatchSnapshot, scopes: readonly Watch
     if (canonical) anchors.push(canonical);
   }
   return { anchors: shallowest(anchors, 128), exclusions: shallowest(snapshot.excludedDirectories?.values() ?? [], 8) };
+}
+
+/** Avoid a tree-sized sort on the host when many directories are excluded. */
+export async function watchStreamPathsAsync(snapshot: WatchSnapshot, scopes: readonly WatchScope[]): Promise<WatchStreamPaths> {
+  const result = watchStreamPaths({ ...snapshot, excludedDirectories: undefined }, scopes);
+  const checkpoint = watchYield();
+  for (let n = 0; n < 8; n++) {
+    let selected: string | undefined, depth = Infinity;
+    for (const name of snapshot.excludedDirectories?.values() ?? []) {
+      await checkpoint();
+      if (result.exclusions.some(parent => name === parent || name.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep))) continue;
+      const nextDepth = name.split(path.sep).length;
+      if (nextDepth < depth || (nextDepth === depth && name.localeCompare(selected!) < 0)) { selected = name; depth = nextDepth; }
+    }
+    if (selected === undefined) break;
+    result.exclusions.push(selected);
+  }
+  return result;
 }

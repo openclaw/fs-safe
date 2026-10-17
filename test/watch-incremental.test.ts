@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as settle } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
+import * as scan from "../src/watch-scan.js";
 import { root } from "../src/root.js";
 import { watch, type WatchInvalidation, type WatchSubscription } from "../src/watch.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -28,6 +30,7 @@ async function fixture(options: { fullReconcileIntervalMs?: number; exclude?: ()
     for (let file = 0; file < 3; file++) fs.writeFileSync(path.join(child, `f${file}`), "before");
   }
   if (fixedMtime) fs.utimesSync(path.join(directory, "d4", "deep", "f1"), 1_700_000_000, 1_700_000_000);
+  await settle(1100);
   const changes: WatchInvalidation[] = [];
   const capability = await root(directory);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -48,10 +51,12 @@ for (const nativeMode of ["off", "require"] as const) it.skipIf(nativeMode === "
   const { changes, tick } = await fixture({ nativeMode });
   const listing = vi.spyOn(fsPromises, "opendir");
   const metadata = vi.spyOn(fs, "lstatSync");
+  const guardedScan = vi.spyOn(scan, "scanWatch");
   for (let n = 0; n < 2; n++) {
     listing.mockClear(); metadata.mockClear();
     await tick();
     expect(listing).not.toHaveBeenCalled();
+    expect(guardedScan).not.toHaveBeenCalled();
     expect(metadata.mock.calls.length).toBeLessThanOrEqual(140); // 2 * 33 dirs + 48 leaves + Root fences
     expect(changes).toEqual([]);
   }
@@ -188,4 +193,26 @@ it("uses a full scan when an observed clock goes backwards", async () => {
   const listing = vi.spyOn(fsPromises, "opendir");
   await tick();
   expect(listing.mock.calls.length).toBe(33);
+});
+
+it("does not reuse a recent directory timestamp when the clock has not advanced", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("watch-clock-quantum-");
+  const capability = await root(directory);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let completedTick: (() => void) | undefined;
+  const changes: WatchInvalidation[] = [];
+  owner = watch(capability, { mode: "poll", intervalMs: 1000, scopes: [{ path: "", kind: "tree" }],
+    onInvalidate(value) { changes.push(value); }, onHealth(value) { if (value.state === "ready") completedTick?.(); },
+  });
+  await owner.ready; changes.length = 0;
+  const stamp = fs.lstatSync(directory, { bigint: true });
+  const original = fs.lstatSync;
+  vi.spyOn(fs, "lstatSync").mockImplementation(((name: fs.PathLike, options: { bigint?: boolean }) =>
+    String(name) === directory && options?.bigint ? stamp : original(name, options as { bigint: true })) as typeof fs.lstatSync);
+  fs.writeFileSync(path.join(directory, "new-with-same-timestamp"), "changed within a clock quantum");
+  vi.spyOn(Date, "now").mockReturnValue(Number(stamp.mtimeNs / 1_000_000n) + 5000);
+  const ready = new Promise<void>(resolve => { completedTick = resolve; });
+  await vi.advanceTimersByTimeAsync(1000); await ready;
+  expect(changes.flatMap(value => value.changes ?? [])).toContainEqual({ path: "new-with-same-timestamp", type: "structural" });
 });

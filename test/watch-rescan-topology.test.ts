@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { mergeWatchRescan } from "../src/watch-rescan.js";
 import type { WatchSnapshot } from "../src/watch-scan.js";
 
-it.each(["created", "removed", "replaced", "file-to-directory", "directory-to-file"])("requires a full pass for a %s child directory", scenario => {
+it.each(["created", "removed", "replaced", "file-to-directory", "directory-to-file"])("requires a full pass for a %s child directory", async scenario => {
   const child = path.join("tree", "child");
   const before: WatchSnapshot = {
     entries: new Map([["tree", "directory:1:2:493"], [child, "directory:1:3:493"]]),
@@ -17,5 +17,5 @@ it.each(["created", "removed", "replaced", "file-to-directory", "directory-to-fi
   if (scenario === "file-to-directory") before.entries.set(child, "file:1:3:1:1:420");
   if (scenario === "directory-to-file") slice.entries.set(child, "file:1:3:1:1:420");
   const scopes = [{ path: "tree", kind: "tree" as const, depth: 2 }];
-  expect(mergeWatchRescan(scopes, before, slice, [{ ...scopes[0]!, depth: 1 }])).toBeUndefined();
+  expect(await mergeWatchRescan(scopes, before, slice, [{ ...scopes[0]!, depth: 1 }])).toBeUndefined();
 });
