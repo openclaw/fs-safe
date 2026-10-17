@@ -3,6 +3,11 @@ import { FsSafeError } from "../src/errors.js";
 import { createSuppressedError } from "../src/suppressed-error.js";
 import { encodeWatchError, decodeWatchError } from "../src/watch-io-error.js";
 
+it.each(["realpath", "lstat"])("preserves the %s syscall for bounded retry classification", syscall => {
+  const error = Object.assign(new Error("descriptor race"), { code: "EBADF", syscall });
+  expect(decodeWatchError(structuredClone(encodeWatchError(error)))).toMatchObject({ code: "EBADF", syscall });
+});
+
 it("retains both scan and retirement failures across the worker boundary", () => {
   const scan = new FsSafeError("path-mismatch", "directory replaced", { details: { operation: "scan" }, cause: new Error("identity") });
   const close = Object.assign(new Error("close failed"), { code: "EIO" });

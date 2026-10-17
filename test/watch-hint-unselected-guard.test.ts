@@ -6,6 +6,7 @@ import { FsSafeError } from "../src/errors.js";
 import { rootHandleContext } from "../src/root-handle-context.js";
 import { admittedNativeChanges } from "../src/watch-hints.js";
 import * as io from "../src/watch-io.js";
+import { encodeWatchError, decodeWatchError } from "../src/watch-io-error.js";
 import { scanWatch, watchScopes } from "../src/watch-scan.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -46,9 +47,9 @@ it.each([
         removed = true;
         await fs.rm(changedParent, { recursive: true });
       }
-      throw Object.assign(new Error("descriptor race"), {
+      throw decodeWatchError(structuredClone(encodeWatchError(Object.assign(new Error("descriptor race"), {
         code: "EBADF", syscall: timing === "bad-lstat" ? "lstat" : "realpath",
-      });
+      }))));
     }
     const guard = await capture(root, name);
     if (timing === "capture") await remove(guard);
