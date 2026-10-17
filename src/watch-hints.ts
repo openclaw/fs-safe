@@ -233,6 +233,9 @@ export async function admittedNativeChanges(
       if (!admitted) {
         // A newly created directory may contain selected entries absent from the baseline.
         if (scheduling) return undefined;
+        // The guarded observation proved this parent is not a selected alias.
+        // No result depends on it; do not extend its lifetime through sibling churn.
+        guards.delete(hint.directory);
         continue;
       }
       [parent, expected] = admitted;
