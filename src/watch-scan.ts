@@ -56,7 +56,10 @@ export function isWatchPathError(error: unknown): boolean {
     if (error.details?.operation === "watch" && ["EACCES", "EPERM", "EBUSY"].includes(String(error.details.code))) return true;
     return ["not-found", "path-mismatch", "not-file", "symlink", "outside-workspace", "path-alias"].includes(error.code);
   }
-  return ["ENOTDIR", "EACCES", "EPERM", "EBUSY", "ESTALE", "EIO", "ELOOP"].includes((error as { code?: string } | null)?.code ?? "");
+  const failure = error as NodeJS.ErrnoException | null;
+  // Windows realpath can lose its temporary handle during directory removal.
+  if (failure?.code === "EBADF" && failure.syscall === "realpath") return true;
+  return ["ENOTDIR", "EACCES", "EPERM", "EBUSY", "ESTALE", "EIO", "ELOOP"].includes(failure?.code ?? "");
 }
 export async function scanWatch(
   root: RootContext,
