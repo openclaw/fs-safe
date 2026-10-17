@@ -2,14 +2,25 @@
 
 ## Unreleased
 
+## 0.26.7 - 2026-10-17
+
+### Highlights
+
+- **Windows idle watch CPU:** share native identity and physical-path queries while retaining directory checks. ([#1000](https://github.com/openclaw/fs-safe/pull/1000))
+- **Root containment:** preserve kernel parent semantics through nested and dangling symlink chains, and reject redirected sibling-output parents. ([#993](https://github.com/openclaw/fs-safe/pull/993))
+- **Legacy native policy migration:** removed Python-mode settings now fail with an actionable migration error when no explicit native policy is selected. ([#995](https://github.com/openclaw/fs-safe/pull/995))
+
 ### Fixes
 
-- **Windows watch scan CPU:** share native identity and physical-path queries while retaining every listed entry's directory checks. Thanks @martinderm for reporting the idle Gateway CPU regression in [openclaw#174341](https://github.com/openclaw/openclaw/issues/174341).
-- **ZIP integrity:** update the native ZIP decoder while preserving format-error and byte-limit classifications for entries that exceed their declared size.
-- **Release dry runs:** keep generated unsigned package artifacts outside source-provenance checks so the final package smoke test can complete without signing or publishing.
-- **Legacy native policy migration:** reject removed `FS_SAFE_PYTHON_MODE` and `OPENCLAW_FS_SAFE_PYTHON_MODE` settings with an actionable migration error when no explicit native policy is selected, instead of silently changing `require` or `off` to `auto`. Set the corresponding native-mode variable to the same value before upgrading.
-- **Root containment:** resolve nested and dangling symlink chains with kernel parent semantics, and reject redirected sibling-output parents before invoking external writers. Thanks @yetval for [#987](https://github.com/openclaw/fs-safe/issues/987) and [#986](https://github.com/openclaw/fs-safe/issues/986).
-- **Watch invalidations:** refresh the admitted parent after transient create/delete activity so consumer caches cannot retain a file absent from both watcher scans.
+- **Windows watch scan CPU:** share native identity and physical-path queries while retaining every listed entry's directory checks. Thanks @martinderm for reporting the idle Gateway CPU regression in [openclaw#174341](https://github.com/openclaw/openclaw/issues/174341). ([#1000](https://github.com/openclaw/fs-safe/pull/1000))
+- **ZIP integrity:** update the native ZIP decoder while preserving format-error and byte-limit classifications for entries that exceed their declared size. ([#997](https://github.com/openclaw/fs-safe/pull/997))
+- **Release dry runs:** keep generated unsigned package artifacts outside source-provenance checks so the final package smoke test can complete without signing or publishing. ([#996](https://github.com/openclaw/fs-safe/pull/996))
+- **Root containment:** resolve nested and dangling symlink chains with kernel parent semantics, and reject redirected sibling-output parents before invoking external writers. Thanks @yetval for [#987](https://github.com/openclaw/fs-safe/issues/987) and [#986](https://github.com/openclaw/fs-safe/issues/986). ([#993](https://github.com/openclaw/fs-safe/pull/993))
+- **Watch invalidations:** refresh the admitted parent after transient create/delete activity so consumer caches cannot retain a file absent from both watcher scans. ([#993](https://github.com/openclaw/fs-safe/pull/993))
+
+### Compatibility
+
+- **Legacy native policy migration:** reject removed `FS_SAFE_PYTHON_MODE` and `OPENCLAW_FS_SAFE_PYTHON_MODE` settings with an actionable migration error when no explicit native policy is selected, instead of silently changing `require` or `off` to `auto`. Set the corresponding native-mode variable to the same value before upgrading. ([#995](https://github.com/openclaw/fs-safe/pull/995))
 
 ## 0.26.6 - 2026-10-15
 
