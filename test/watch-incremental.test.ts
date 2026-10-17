@@ -161,6 +161,22 @@ it("uses full scans on filesystems with coarse timestamps", async () => {
   expect(listing.mock.calls.length).toBe(33);
 });
 
+it("does not mistake one timestamp-aligned file for a coarse filesystem", async () => {
+  const original = fs.lstatSync;
+  vi.spyOn(fs, "lstatSync").mockImplementation(((name: fs.PathLike, options: { bigint?: boolean }) => {
+    const stat = original(name, options as { bigint: true });
+    if (String(name).endsWith(path.join("d4", "deep", "f1")) && typeof stat.mtimeNs === "bigint") {
+      stat.mtimeNs -= stat.mtimeNs % 1_000_000n;
+      stat.ctimeNs -= stat.ctimeNs % 1_000_000n;
+    }
+    return stat;
+  }) as typeof fs.lstatSync);
+  const { tick } = await fixture();
+  const listing = vi.spyOn(fsPromises, "opendir");
+  await tick();
+  expect(listing).not.toHaveBeenCalled();
+});
+
 it("uses a full scan when an observed clock goes backwards", async () => {
   const { directory, tick } = await fixture();
   const original = fs.lstatSync;

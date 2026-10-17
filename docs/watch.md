@@ -207,8 +207,9 @@ checked again after the pass to detect ancestor swaps during file probes.
 
 Full guarded reconciliation still runs every five minutes by default, controlled
 by `fullReconcileIntervalMs`. It also runs on a probe error, identity mismatch,
-timestamp regression, or timestamps indicating coarse (millisecond or worse)
-resolution. This safety net catches missed events and provides conservative
+timestamp regression, or devices whose guarded timestamps show only coarse
+(millisecond or worse) resolution. A single aligned timestamp on an otherwise
+precise device does not disable incremental checks. This safety net catches missed events and provides conservative
 behavior on filesystems that cannot support incremental checks. Listing work
 scales with changed directories; stat-only probes still scale with watched
 entries. `exclude` callbacks must remain cheap; they are evaluated on cached
