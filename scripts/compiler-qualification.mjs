@@ -86,7 +86,7 @@ export function inputInventory(text, root, library) {
   return result;
 }
 
-function officialCompiler(root) {
+export function officialCompiler(root) {
   const manifest = createRequire(path.join(root, "package.json")).resolve("typescript/package.json");
   const pkg = readJson(manifest);
   const platformName = `@typescript/typescript-${process.platform}-${process.arch}`;
