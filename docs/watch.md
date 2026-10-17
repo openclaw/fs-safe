@@ -190,13 +190,50 @@ handles and delivery queues, and closing one does not retire another's observati
 | `persistent` | `true`; `false` lets Node exit with the subscription still open |
 | `intervalMs` | 30000 with events; 1000 with poll; minimum 20 ms |
 | `pollIntervalMs` | Optional polling override; minimum 20 ms, maximum 2147483647 ms (same as `intervalMs`) |
+| `fullReconcileIntervalMs` | 300000 ms (5 minutes); minimum 20 ms, maximum 2147483647 ms |
 | `maxDirectories` | 4096 observed directories, including scope ancestors |
 | `maxEntries` | 100000 examined entries per pass, including excluded entries |
 | `maxPendingPaths` | 256; maximum 4096 |
 | Reconciliation | One active pass and one coalesced pending pass; no convergence/pass budget |
 
-Periodic guarded reconciliation runs without needing an event. It catches
-missed events and works on filesystems where native hints are incomplete.
+On Node, bulk watcher filesystem observations run in a shared `worker_thread`,
+including exact metadata probes, path resolution, synchronous directory reads and
+all pre/post observation guards. The worker retains open listing handles until
+joined disposal. Policy callbacks and native event delivery remain with the
+subscription, and host snapshot bookkeeping yields every 32 entries. The worker
+is shared across subscriptions with the same native policy and stops when its
+last subscription closes; `persistent: false` still permits process exit.
+Ordinary single Root operations retain their synchronous observation fences.
+Source-loader, test-hook, Bun and Deno execution uses the same guarded helpers
+with explicit event-loop yields between entries, probes and directory checks.
+A slow filesystem call or user callback cannot be preempted in that fallback;
+callbacks must remain cheap. Worker startup/observation failures fail closed.
+
+Periodic metadata checks run without needing an event. Each check compares exact
+bigint identities, mode, link count, size, mtime and ctime with the last guarded
+observations. Observations less than one second old are re-listed until the
+clock update window passes, because timestamp storage precision alone does not
+prove update frequency. A later guarded listing must confirm each such directory
+before its cached names become reusable, even if the next tick arrives after
+that window. Entirely unchanged ticks retain their previous snapshot after the
+final identity fence. Each probe also verifies the Root's canonical path, so
+moving an ancestor above the Root cannot preserve admission using only an
+unchanged inode. Unchanged directories reuse their guarded listings; changed
+directories and newly discovered children are listed and verified through the
+ordinary Root guards. File metadata is checked separately because in-place writes
+need not change the parent directory's timestamps. Probe metadata never admits a
+new name or authorizes a read. Reused directory identities and observations are
+checked again after the pass to detect ancestor swaps during file probes.
+
+Full guarded reconciliation still runs every five minutes by default, controlled
+by `fullReconcileIntervalMs`. It also runs on a probe error, identity mismatch,
+timestamp regression, or devices whose guarded timestamps show only coarse
+(millisecond or worse) resolution. A single aligned timestamp on an otherwise
+precise device does not disable incremental checks. This safety net catches missed events and provides conservative
+behavior on filesystems that cannot support incremental checks. Listing work
+scales with changed directories; stat-only probes still scale with watched
+entries. `exclude` callbacks must remain cheap; they are evaluated on cached
+entries during incremental checks so changing an exclusion still takes effect.
 Hint validation, scope relevance, and spelling-alias admission share the internal
 hint module. Bounded change merging preserves structural precedence and insertion
 order; nameless children require remaining tree depth, while folded subtrees also
@@ -209,8 +246,8 @@ hints, vanished or hard-linked leaves, changed topology, uncertain identities,
 backend loss, and batches without filenames still receive a full guarded pass.
 `reconcile()`, initial admission, and scope replacement always reconcile every scope.
 The periodic timer is independent of event traffic, so frequent hints cannot defer
-the full missed-event check. Repeated passes reuse bounded pathname strings, never
-cached metadata or filesystem authority.
+the full safety-net check. Repeated passes reuse bounded pathname strings and
+unchanged guarded observations; neither raw hints nor probes grant filesystem authority.
 On Windows with the native helper, each listing fence obtains exact directory
 identity and physical path from one short-lived handle. Native-off and POSIX
 scans retain the JavaScript checks. Both paths recheck the Root and reject

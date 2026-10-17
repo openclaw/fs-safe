@@ -1,16 +1,18 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertValidRootRelativePath, type RootContext } from "./root-context.js";
 import { assertRootDirectoryObservationGuard, pathStatFromStats, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { DirEntry } from "./types.js";
+import type { RootEntryObservation } from "./root-directory-list-types.js";
 
 /** One literal entry lookup under an operation-local admitted parent; never follow the leaf. */
 export async function lookupRootDirectoryEntry(
-  root: RootContext, guard: RootDirectoryObservationGuard, name: string,
-): Promise<{ entry: DirEntry; identity: ExactStatIdentity } | undefined> {
+  root: RootContext, guard: RootDirectoryObservationGuard, name: string, exactMetadata = false,
+): Promise<{ entry: DirEntry; identity: ExactStatIdentity; observation?: RootEntryObservation } | undefined> {
   if (!name || name === "." || name === ".." || path.basename(name) !== name || path.isAbsolute(name)) {
     throw new FsSafeError("invalid-path", "directory lookup requires one literal name");
   }
@@ -18,10 +20,12 @@ export async function lookupRootDirectoryEntry(
   await assertRootDirectoryObservationGuard(root, guard);
   try {
     const pathname = path.join(guard.realPath, name);
-    const observed = inspectStatObservationSync(bigint => bigint
-      ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname));
+    const exact = exactMetadata ? inspectFileIdentitySync(() => fs.lstatSync(pathname, { bigint: true })) : undefined;
+    const observed = exact ? { stat: exact, identity: { dev: exact.dev, ino: exact.ino } }
+      : inspectStatObservationSync(bigint => bigint ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname));
     await assertRootDirectoryObservationGuard(root, guard);
-    return { entry: pathStatFromStats(observed.stat, name), identity: observed.identity };
+    return { entry: pathStatFromStats(observed.stat, name), identity: observed.identity,
+      ...(exactMetadata ? { observation: observed.stat as BigIntStats } : {}) };
   } catch (error) {
     await assertRootDirectoryObservationGuard(root, guard);
     if (isNotFoundPathError(error)) return undefined;

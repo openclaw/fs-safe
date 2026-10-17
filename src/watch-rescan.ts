@@ -1,3 +1,4 @@
+import { watchYield } from "./watch-io.js";
 import path from "node:path";
 import type { WatchChange, WatchScope } from "./watch-types.js";
 import type { WatchSnapshot } from "./watch-scan.js";
@@ -27,57 +28,93 @@ export function watchRescanScopes(scopes: readonly WatchScope[], snapshot: Watch
 }
 
 /** Merge only freshly observed slices. Any topology/anchor ambiguity requires a full pass. */
-export function mergeWatchRescan(scopes: readonly WatchScope[], before: WatchSnapshot, slice: WatchSnapshot, requested: readonly WatchScope[]): WatchSnapshot | undefined {
-  if (slice.overflow || slice.structural?.size) return;
+export async function mergeWatchRescan(scopes: readonly WatchScope[], before: WatchSnapshot, slice: WatchSnapshot, requested: readonly WatchScope[]): Promise<WatchSnapshot | undefined> {
+  const checkpoint = watchYield();
+  const copy = async <K, V>(entries?: Iterable<readonly [K, V]>): Promise<Map<K, V>> => {
+    const result = new Map<K, V>();
+    for (const [key, value] of entries ?? []) { result.set(key, value); await checkpoint(); }
+    return result;
+  };
+  const combine = async <K, V>(left?: Iterable<readonly [K, V]>, right?: Iterable<readonly [K, V]>) => {
+    const result = await copy(left);
+    for (const [key, value] of right ?? []) { result.set(key, value); await checkpoint(); }
+    return result;
+  };
+  if (before.overflow || before.structural?.size || slice.overflow || slice.structural?.size) return;
   // An exclusion or a blocked path may stop before a requested directory is listed.
   for (const scope of requested) if (scope.kind === "tree" && scope.depth! > 0 && !slice.listed?.has(scope.path)) return;
   for (const [name, current] of slice.directories) {
+    await checkpoint();
     const prior = before.directories.get(name);
     if (!prior || prior.dev !== current.dev || prior.ino !== current.ino) return;
   }
   for (const scope of scopes) {
     if (identity(before.entries.get(scope.path)) !== identity(slice.entries.get(scope.path))) return;
     // A missing/blocked intermediate scope must not retain old descendant registrations.
-    for (const name of before.directories.keys()) if ((name === scope.path || below(name, scope.path)) &&
-      !slice.directories.has(name) && name !== scope.path) return;
+    for (const name of before.directories.keys()) {
+      await checkpoint();
+      if ((name === scope.path || below(name, scope.path)) && !slice.directories.has(name) && name !== scope.path) return;
+    }
   }
   const directories = slice.listed!;
   const selected = new Set(scopes.map(scope => scope.path));
   for (const directory of directories.keys()) {
-    for (const name of before.childPaths?.get(directory)?.values() ?? []) selected.add(name);
-    for (const name of slice.childPaths?.get(directory)?.values() ?? []) selected.add(name);
+    for (const name of before.childPaths?.get(directory)?.values() ?? []) { selected.add(name); await checkpoint(); }
+    for (const name of slice.childPaths?.get(directory)?.values() ?? []) { selected.add(name); await checkpoint(); }
   }
   for (const name of selected) {
+    await checkpoint();
     const previous = before.entries.get(name), current = slice.entries.get(name);
     if ((previous?.startsWith("directory:") || current?.startsWith("directory:")) && identity(previous) !== identity(current)) return;
   }
   // Exclusion changes can retire or admit a subtree, including callback-driven changes.
-  for (const [name, kind] of before.excluded ?? []) if (selected.has(name) && kind === "directory" && slice.entries.has(name)) return;
-  const entries = new Map(before.entries);
-  for (const name of selected) if (!slice.entries.has(name)) entries.delete(name);
-  for (const [name, value] of slice.entries) if (selected.has(name)) entries.set(name, value);
-  const excluded = new Map(before.excluded), excludedDirectories = new Map(before.excludedDirectories);
-  for (const name of selected) { excluded.delete(name); excludedDirectories.delete(name); }
-  for (const [name, kind] of slice.excluded ?? []) if (selected.has(name)) {
+  for (const [name, kind] of before.excluded ?? []) {
+    await checkpoint();
+    if (selected.has(name) && kind === "directory" && slice.entries.has(name)) return;
+  }
+  const entries = await copy(before.entries);
+  for (const name of selected) { await checkpoint(); if (!slice.entries.has(name)) entries.delete(name); }
+  for (const [name, value] of slice.entries) { await checkpoint(); if (selected.has(name)) entries.set(name, value); }
+  const excluded = await copy(before.excluded), excludedDirectories = await copy(before.excludedDirectories);
+  for (const name of selected) { await checkpoint(); excluded.delete(name); excludedDirectories.delete(name); }
+  for (const [name, kind] of slice.excluded ?? []) {
+    await checkpoint();
+    if (!selected.has(name)) continue;
     excluded.set(name, kind);
     const canonical = slice.excludedDirectories?.get(name);
     if (canonical) excludedDirectories.set(name, canonical);
   }
-  const listed = new Map(before.listed);
+  const listed = await copy(before.listed);
   let scanned = before.scanned;
   for (const [name, count] of directories) {
+    await checkpoint();
     scanned += count - (listed.get(name) ?? 0);
     listed.set(name, count);
   }
-  return { ...before, entries, excluded, excludedDirectories, listed, scanned,
+  const observations = before.observations && slice.observations ? await copy(before.observations) : undefined;
+  if (observations) {
+    for (const name of selected) { await checkpoint(); if (!slice.observations!.has(name)) observations.delete(name); }
+    for (const [name, observation] of slice.observations!) {
+      await checkpoint();
+      // A parent's listing can observe a child's new timestamps without reading
+      // its children. Keep the old stamp until that directory is actually listed.
+      if (before.listed?.has(name) && !directories.has(name)) continue;
+      observations.set(name, observation);
+    }
+  }
+  const unsettled = new Set<string>();
+  for (const name of before.unsettled ?? []) { await checkpoint(); if (!directories.has(name)) unsettled.add(name); }
+  for (const name of slice.unsettled ?? []) { await checkpoint(); unsettled.add(name); }
+  return { ...before, entries, excluded, excludedDirectories, listed, scanned, unsettled,
     entryAnchors: slice.entryAnchors,
     scopeAnchors: new Map(scopes.flatMap(scope => {
       const anchor = slice.scopeAnchors?.get(scope.path);
       return anchor ? [[scope.path, anchor] as const] : [];
     })),
-    directoryPaths: new Map([...before.directoryPaths ?? [], ...slice.directoryPaths ?? []]),
-    childPaths: new Map([...before.childPaths ?? [], ...slice.childPaths ?? []]),
-    listingPaths: new Map([...before.listingPaths ?? [], ...slice.listingPaths ?? []]),
+    directoryPaths: await combine(before.directoryPaths, slice.directoryPaths),
+    childPaths: await combine(before.childPaths, slice.childPaths),
+    listingPaths: await combine(before.listingPaths, slice.listingPaths),
+    observations,
     targets: new Map(scopes.flatMap(scope => {
       const target = slice.targets.get(scope.path);
       return target ? [[scope.path, target] as const] : [];

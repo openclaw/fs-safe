@@ -31,27 +31,27 @@ describe("bounded advisory hints", () => {
     expect(Object.isFrozen(merged![0])).toBe(true);
     expect(nativeChanges(scopes, before, { overflow: false, hints: [...hints, { directory: "skills", name: "new", event: "rename" }] }, 1)).toBeUndefined();
   });
-  it("distinguishes structural and content reconciliation without using numeric metadata as authority", () => {
+  it("distinguishes structural and content reconciliation without using numeric metadata as authority", async () => {
     const before = snapshot([["file", "file:1:2:3:4:5"], ["link", "symlink:1:3:4:5:6"]]);
     const after = snapshot([["file", "file:1:2:4:5:5"], ["link", "symlink:1:4:4:5:6"]]);
-    expect(changedEntries(before, after, 2)).toEqual([{ path: "file", type: "content" }, { path: "link", type: "structural" }]);
-    expect(changedEntries(before, after, 1)).toBeUndefined();
-    expect(changedEntries(undefined, after, 2)).toBeUndefined();
+    expect(await changedEntries(before, after, 2)).toEqual([{ path: "file", type: "content" }, { path: "link", type: "structural" }]);
+    expect(await changedEntries(before, after, 1)).toBeUndefined();
+    expect(await changedEntries(undefined, after, 2)).toBeUndefined();
   });
-  it("keeps prior snapshot order before appending newly observed names", () => {
+  it("keeps prior snapshot order before appending newly observed names", async () => {
     const before = snapshot([["second", "file:1:2:3:4:5"], ["first", "file:1:3:3:4:5"]]);
     const after = snapshot([["first", "file:1:3:4:5:5"], ["created", "file:1:4:3:4:5"]]);
-    expect(changedEntries(before, after, 3)).toEqual([
+    expect(await changedEntries(before, after, 3)).toEqual([
       { path: "second", type: "structural" }, { path: "first", type: "content" }, { path: "created", type: "structural" },
     ]);
   });
 });
 
 
-it("retains admitted namespace activity despite equal before/after fingerprints", () => {
+it("retains admitted namespace activity despite equal before/after fingerprints", async () => {
   const before = snapshot([["config.json", "file:1:2:3:4:5"]]);
   const after = snapshot([["config.json", "file:1:2:3:4:5"]]);
-  const observed = changedEntries(before, after, 256);
+  const observed = await changedEntries(before, after, 256);
   expect(observed).toEqual([]);
   const hints = nativeChanges(scopes, before, { overflow: false, hints: [{ directory: "", name: "config.json", event: "rename" }] });
   expect(guardedHintChanges(scopes, before, after, hints, observed, 256)).toEqual([{ path: "config.json", type: "structural" }]);

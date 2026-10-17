@@ -1,0 +1,66 @@
+name: watch performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Full baseline commit SHA
+        required: true
+        default: 2921851bf7c511d830edf7272e92b3f245258cc6
+
+permissions:
+  contents: read
+
+jobs:
+  idle:
+    name: Idle watch (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 24
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: ./.github/actions/setup-archive-llvm
+      - name: Build candidate and baseline
+        env:
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          [[ "$BASELINE" =~ ^[a-f0-9]{40}$ ]]
+          git cat-file -e "$BASELINE^{commit}"
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm native:build
+          mkdir -p "$RUNNER_TEMP/watch-baseline" results
+          git archive "$BASELINE" | tar -x -C "$RUNNER_TEMP/watch-baseline"
+          cd "$RUNNER_TEMP/watch-baseline"
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm native:build
+      - name: Repeated idle measurements
+        run: |
+          for pass in a b; do
+            for native in off require; do
+              for mode in poll auto; do
+                FS_SAFE_NATIVE_MODE="$native" node benchmarks/watch.mjs --dist="$RUNNER_TEMP/watch-baseline/dist" --mode="$mode" --ticks=3 > "results/before-$pass-$native-$mode.jsonl"
+                FS_SAFE_NATIVE_MODE="$native" node benchmarks/watch.mjs --mode="$mode" --ticks=3 > "results/after-$pass-$native-$mode.jsonl"
+              done
+            done
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: watch-performance-${{ matrix.os }}
+          path: results/*.jsonl
+          if-no-files-found: error

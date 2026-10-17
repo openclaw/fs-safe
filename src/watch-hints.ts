@@ -1,9 +1,9 @@
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
-import { assertRootIdentityCurrent, resolvePathInRoot, type RootContext } from "./root-context.js";
-import { createRootDirectoryObservationGuard, assertRootDirectoryObservationGuard, type RootDirectoryObservationGuard } from "./root-directory-list.js";
-import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
+import { type RootContext } from "./root-context.js";
+import { type RootDirectoryObservationGuard } from "./root-directory-list.js";
+import { watchRootCurrent as assertRootIdentityCurrent, watchResolve as resolvePathInRoot, watchGuard as createRootDirectoryObservationGuard, watchAssert as assertRootDirectoryObservationGuard, watchLookup as lookupRootDirectoryEntry, watchYield } from "./watch-io.js";
 import type { NativeWatchBatch } from "./watch-native.js";
 import type { WatchSnapshot } from "./watch-scan.js";
 import type { WatchChange, WatchScope } from "./watch-types.js";
@@ -79,7 +79,7 @@ export function nativeChanges(scopes: readonly WatchScope[], snapshot: WatchSnap
   }
   return [...result.values()];
 }
-export function changedEntries(before: WatchSnapshot | undefined, after: WatchSnapshot, limit: number): WatchChange[] | undefined {
+export async function changedEntries(before: WatchSnapshot | undefined, after: WatchSnapshot, limit: number): Promise<WatchChange[] | undefined> {
   if (!before) return undefined;
   const changes: WatchChange[] = [];
   const compare = (name: string): boolean => {
@@ -92,8 +92,9 @@ export function changedEntries(before: WatchSnapshot | undefined, after: WatchSn
     changes.push(Object.freeze({ path: name, type: sameFile ? "content" : "structural" }));
     return true;
   };
-  for (const name of before.entries.keys()) if (!compare(name)) return undefined;
-  for (const name of after.entries.keys()) if (!before.entries.has(name) && !compare(name)) return undefined;
+  const checkpoint = watchYield();
+  for (const name of before.entries.keys()) { await checkpoint(); if (!compare(name)) return undefined; }
+  for (const name of after.entries.keys()) { await checkpoint(); if (!before.entries.has(name) && !compare(name)) return undefined; }
   return changes;
 }
 
@@ -136,11 +137,16 @@ export async function admittedNativeChanges(
 ): Promise<WatchChange[] | undefined> {
   if (!nativeChanges(scopes, before, batch, limit, after)) return undefined;
   if (scheduling && !batch.hints.length) return undefined;
+  const checkpoint = watchYield();
   const result = new Map<string, WatchChange>();
-  const candidates = new Map([...before?.targets ?? [], ...after.targets, ...after.directories]);
+  const candidates = new Map<string, { dev: bigint; ino: bigint }>();
+  for (const entries of [before?.targets, after.targets, after.directories]) for (const [name, identity] of entries ?? []) {
+    candidates.set(name, identity); await checkpoint();
+  }
   if (scheduling) {
     const identities = new Map<bigint, Set<bigint>>();
     for (const { dev, ino } of candidates.values()) {
+      await checkpoint();
       let inodes = identities.get(dev);
       if (!inodes) identities.set(dev, inodes = new Set());
       // One spelling cannot discard activity selected through another spelling,
@@ -167,8 +173,10 @@ export async function admittedNativeChanges(
   };
   if (scheduling) {
     // A sibling hint cannot hide a replaced scope anchor or its identity chain.
-    for (const name of after.directories.keys()) if (scopes.some(scope =>
-      !name || scope.path === name || scope.path.startsWith(name + path.sep))) await admittedParent(name);
+    for (const name of after.directories.keys()) {
+      await checkpoint();
+      if (scopes.some(scope => !name || scope.path === name || scope.path.startsWith(name + path.sep))) await admittedParent(name);
+    }
     for (const scope of scopes) {
       const anchor = after.scopeAnchors?.get(scope.path);
       if (!anchor) return undefined;
@@ -191,6 +199,7 @@ export async function admittedNativeChanges(
       if (selectedWatchSubtree(scopes, hint.directory)) return undefined;
       const guard = await admittedParent(hint.directory);
       for (const [name, identity] of candidates) {
+        await checkpoint();
         if (identity.dev === guard.stat.dev && identity.ino === guard.stat.ino && selectedWatchSubtree(scopes, name)) return undefined;
       }
       continue;
@@ -208,18 +217,37 @@ export async function admittedNativeChanges(
       // Native recursion observes one Root handle and may report descendants of
       // unselected/entry-only directories. Admit a parent alias by exact identity,
       // not by lowercasing, and do not turn unselected descendants into events.
-      try {
-        guard = await admittedParent(parent);
-      } catch (error) {
-        await assertRootIdentityCurrent(root);
-        if (scheduling) throw error;
-        if (isNotFoundPathError(error) || (error instanceof FsSafeError && ["not-found", "path-alias", "outside-workspace", "symlink", "not-file"].includes(error.code))) continue;
-        throw error;
+      for (let attempt = 0; ; attempt++) {
+        const retained = guards.has(parent);
+        try {
+          guard = await admittedParent(parent);
+          break;
+        } catch (error) {
+          await assertRootIdentityCurrent(root);
+          // An earlier hint may already depend on this selected-alias guard.
+          if (scheduling || retained) throw error;
+          guards.delete(parent);
+          if (isNotFoundPathError(error) || (error instanceof FsSafeError && ["not-found", "path-alias", "outside-workspace", "symlink", "not-file"].includes(error.code))) break;
+          // A yielded admission may race an ordinary sibling deletion. Fresh
+          // admission can establish absence; persistent ambiguity still fails.
+          const failedRealpath = (error as NodeJS.ErrnoException | null)?.code === "EBADF" &&
+            (error as NodeJS.ErrnoException).syscall === "realpath";
+          if (attempt < 2 && (failedRealpath || error instanceof FsSafeError && error.code === "path-mismatch")) continue;
+          throw error;
+        }
       }
-      const admitted = [...after.directories].find(([, identity]) => identity.dev === guard!.stat.dev && identity.ino === guard!.stat.ino);
+      if (!guard) continue;
+      let admitted: [string, { dev: bigint; ino: bigint }] | undefined;
+      for (const entry of after.directories) {
+        await checkpoint();
+        if (entry[1].dev === guard!.stat.dev && entry[1].ino === guard!.stat.ino) { admitted = entry; break; }
+      }
       if (!admitted) {
         // A newly created directory may contain selected entries absent from the baseline.
         if (scheduling) return undefined;
+        // The guarded observation proved this parent is not a selected alias.
+        // No result depends on it; do not extend its lifetime through sibling churn.
+        guards.delete(hint.directory);
         continue;
       }
       [parent, expected] = admitted;
@@ -259,6 +287,7 @@ export async function admittedNativeChanges(
     if (!found) continue;
     if (scheduling && found.entry.isSymbolicLink) return undefined;
     for (const [relative, identity] of candidates) {
+      await checkpoint();
       if (!relative || identity.dev !== found.identity.dev || identity.ino !== found.identity.ino) continue;
       if ((path.dirname(relative) === "." ? "" : path.dirname(relative)) !== parent) {
         if (scheduling) return undefined;

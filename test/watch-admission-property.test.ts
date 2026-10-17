@@ -10,7 +10,8 @@ import * as entries from "../src/root-directory-entry.js";
 import { admittedNativeChanges } from "../src/watch-hints.js";
 
 const fake = { directories: new Map<string, bigint>(), entries: new Map<string, { ino: bigint; directory: boolean }>() };
-const fakeRoot = Object.freeze({}) as RootContext;
+const fakeRoot: RootContext = Object.freeze({ rootDir: "", rootReal: "", rootWithSep: path.sep,
+  rootIdentity: Object.freeze({ dev: 1n, ino: 1n }) });
 beforeEach(() => {
   const original = {
     assertRoot: rootContext.assertRootIdentityCurrent, resolve: rootContext.resolvePathInRoot,

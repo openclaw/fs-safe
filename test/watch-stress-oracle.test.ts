@@ -19,13 +19,13 @@ function observerFor(readBytes: () => Promise<Buffer>, present: () => boolean) {
   }) };
 }
 
-it.each(["EPERM", "EBADF"].flatMap(code => [false, true].map(detailed => ({ code, detailed }))))(
-  "preserves a Windows deleted-file invalidation ($code, detailed=$detailed)", async ({ code, detailed }) => {
+it.each([["EPERM", "realpath"], ["EBADF", "realpath"], ["EPERM", "open"]].flatMap(([code, syscall]) => [false, true].map(detailed => ({ code, syscall, detailed }))))(
+  "preserves a Windows deleted-file invalidation ($code $syscall, detailed=$detailed)", async ({ code, syscall, detailed }) => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     let present = true;
     const read = vi.fn(async () => {
       present = false;
-      throw Object.assign(new Error("deleted while open"), { code, syscall: "realpath" });
+      throw Object.assign(new Error("deleted while open"), { code, syscall });
     });
     const { observer, invalidate } = observerFor(read, () => present);
     try {
@@ -39,7 +39,7 @@ it.each(["EPERM", "EBADF"].flatMap(code => [false, true].map(detailed => ({ code
   },
 );
 
-it.each([["linux", "EPERM", "realpath"], ["win32", "EPERM", "open"], ["win32", "EACCES", "realpath"]])(
+it.each([["linux", "EPERM", "realpath"], ["linux", "EPERM", "open"], ["win32", "EBADF", "open"], ["win32", "EACCES", "realpath"]])(
   "still rejects an unexpected read error (%s %s %s)", async (platform, code, syscall) => {
     vi.spyOn(process, "platform", "get").mockReturnValue(platform as NodeJS.Platform);
     const failure = Object.assign(new Error("unexpected refusal"), { code, syscall });

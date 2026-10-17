@@ -1,10 +1,11 @@
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
-import { assertRootIdentityCurrent } from "./root-context.js";
+import { createWatchIo, watchRootCurrent as assertRootIdentityCurrent, watchYield } from "./watch-io.js";
 import { rootHandleContext } from "./root-handle-context.js";
 import type { Root } from "./root.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { probeWatchSnapshot, verifyWatchReuse } from "./watch-probe.js";
 import { mergeWatchRescan, watchRescanScopes } from "./watch-rescan.js";
 import { admittedNativeChanges, changedEntries, excludedWatchPath, guardedHintChanges, scopedChanges } from "./watch-hints.js";
 import path from "node:path";
@@ -37,7 +38,7 @@ const coalesceMs = 25;
 
 /** Advisory observation only. Hints never grant filesystem authority. */
 export function watch(root: Root, input: WatchOptions): WatchSubscription {
-  const context = rootHandleContext(root);
+  const context = { ...rootHandleContext(root) };
   const options = { ...input };
   const persistent = options.persistent !== false;
   if (!["auto", "events", "poll"].includes(options.mode)) throw new TypeError("invalid watch mode");
@@ -50,6 +51,8 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const pollIntervalMs = budget(options.pollIntervalMs, options.intervalMs ?? 1000, "pollIntervalMs", 2_147_483_647);
   if (pollIntervalMs < 20) throw new RangeError("watch pollIntervalMs must be at least 20");
   if (mode === "poll") intervalMs = pollIntervalMs;
+  const fullReconcileIntervalMs = budget(options.fullReconcileIntervalMs, 300_000, "fullReconcileIntervalMs", 2_147_483_647);
+  if (fullReconcileIntervalMs < 20) throw new RangeError("watch fullReconcileIntervalMs must be at least 20");
   const maxDirectories = budget(options.maxDirectories, 4096, "maxDirectories");
   const maxEntries = budget(options.maxEntries, 100_000, "maxEntries");
   const maxPendingPaths = budget(options.maxPendingPaths, 256, "maxPendingPaths", 4096);
@@ -69,13 +72,16 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   let closing: Promise<void> | undefined;
   let active: Promise<void> | undefined;
   let backend: NativeWatchBackend | undefined;
+  let closeIo: (() => Promise<void>) | undefined;
   const registered = new Map<string, DirectoryIdentity>();
   let observedDirectories = 0;
   let snapshot: WatchSnapshot | undefined;
+  let lastFullReconcile = 0;
   let resetRequested = false;
   let refreshBackend = false;
   let pending = false;
   let fullRequested = false;
+  let periodicRequested = false;
   let pendingUncertain = false;
   let pendingWaiter: ReturnType<typeof deferred> | undefined;
   let runningWaiter: ReturnType<typeof deferred> | undefined;
@@ -161,7 +167,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const scheduleInterval = () => {
     if (timer || fullRequested || terminal || failure !== undefined) return;
-    timer = setTimeout(() => { timer = undefined; void request().catch(() => {}); }, intervalMs);
+    timer = setTimeout(() => { timer = undefined; periodicRequested = true; void request(false).catch(() => {}); }, Math.min(intervalMs, fullReconcileIntervalMs));
     if (!persistent) timer.unref();
   };
   const onHint = (g: Generation, batch: NativeWatchBatch) => {
@@ -213,6 +219,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   };
   const observe = async (g: Generation) => {
     check(g);
+    closeIo ??= createWatchIo(context, persistent, retainRetirement);
     if (selectionFailure !== undefined) throw new FsSafeError("helper-unavailable", "native watch events are unavailable", { cause: selectionFailure, details: { operation: "watch" } });
     if (refreshBackend) { await retireBackend(); check(g); refreshBackend = false; fullRequested = true; }
     if (resetRequested) {
@@ -222,13 +229,16 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     const hadHints = pendingHint;
     const hadBackendOverflow = pendingBackendOverflow;
     const hints = pendingChanges;
-    const full = fullRequested || pendingUncertain;
+    const age = performance.now() - lastFullReconcile;
+    const full = fullRequested || pendingUncertain || age < 0 || age >= fullReconcileIntervalMs;
+    const periodic = periodicRequested;
+    periodicRequested = false;
     fullRequested = false; pendingUncertain = false;
     pendingHint = false; pendingChanges = new Map();
     pendingBackendOverflow = false;
     clearTimeout(hintTimer); hintTimer = undefined;
     let scanScopes = g.scopes;
-    if (snapshot && hadHints && hints && !full) {
+    if (snapshot && hadHints && hints && !full && !periodic) {
       try {
         const admitted = await admittedNativeChanges(context, g.scopes, snapshot, snapshot, {
           hints: [...hints.values()], overflow: false,
@@ -246,13 +256,23 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     state = snapshot ? "reconciling" : "starting";
     notifyHealth();
     check(g);
+    const probe = snapshot && !full && (!hadHints || periodic)
+      ? await probeWatchSnapshot(context, snapshot, g.abort.signal, options.exclude) : undefined;
+    check(g);
+    let reuse = probe?.reuse;
+    if (snapshot && probe?.stable && !hadHints && (mode === "poll" || backend) &&
+      await verifyWatchReuse(context, snapshot, probe.reuse, g.abort.signal)) {
+      check(g);
+      state = "ready"; notifyHealth(); check(g); scheduleInterval();
+      return;
+    }
     if (mode === "events" && !backend && g.scopes.length) {
       try {
         const candidate = new NativeWatchBackend(binding!, context, batch => {
           if (backend === candidate) onHint(g, batch);
         }, maxPendingPaths, persistent);
         backend = candidate;
-        if (snapshot) candidate.configure(snapshot, g.scopes);
+        if (snapshot) await candidate.configure(snapshot, g.scopes);
         const hookResult = getFsSafeTestHooks()?.afterWatchBackendCreated?.(context.rootReal, batch => {
           if (backend === candidate) onHint(g, batch);
         }, (path, flags) => candidate.testEvent(path, flags));
@@ -263,7 +283,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     let next: WatchSnapshot;
     for (let attempt = 0; ; attempt++) {
       if (scanScopes === g.scopes) { clearTimeout(timer); timer = undefined; }
-      try { next = await scanWatch(context, scanScopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot }, g.abort.signal,
+      try { next = await scanWatch(context, scanScopes, { exclude: options.exclude, maxDirectories, maxEntries, maxPendingPaths, admitting: !snapshot, previous: snapshot, reuse }, g.abort.signal,
         async (name, identity, guard) => {
           check(g);
           const existing = registered.get(name);
@@ -291,8 +311,13 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
         throw error;
       }
       check(g);
+      if (reuse && !await verifyWatchReuse(context, snapshot!, reuse, g.abort.signal)) {
+        reuse = undefined;
+        scanScopes = g.scopes;
+        continue;
+      }
       if (scanScopes !== g.scopes) {
-        const merged = mergeWatchRescan(g.scopes, snapshot!, next, scanScopes);
+        const merged = await mergeWatchRescan(g.scopes, snapshot!, next, scanScopes);
         if (!merged || merged.scanned > maxEntries || merged.directories.size > maxDirectories || (merged.excluded?.size ?? 0) > maxEntries) {
           scanScopes = g.scopes;
           continue;
@@ -301,7 +326,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       }
       try {
         const entriesChanged = backend?.entries(next);
-        const streamsChanged = backend?.configure(next, g.scopes);
+        const streamsChanged = await backend?.configure(next, g.scopes);
         if (entriesChanged || streamsChanged) {
           // Complete a guarded pass with the new transport before publishing readiness.
           // Bound handovers under churn; later passes still reconcile ongoing changes.
@@ -320,13 +345,15 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       }
     }
     // Retire stale inventory before the next pass; that crawl installs fresh anchors first.
-    if ([...registered.keys()].some(name => !next.directories.has(name))) {
-      refreshBackend = true;
+    const checkpoint = watchYield();
+    for (const name of registered.keys()) {
+      await checkpoint();
+      if (!next.directories.has(name)) { refreshBackend = true; break; }
     }
     observedDirectories = backend?.directories === undefined ? next.directories.size
       : backend.directories + (g.scopes.some(scope => scope.kind === "tree") ? next.directories.size : 0);
     const initial = !snapshot;
-    let observed = next.overflow ? undefined : changedEntries(snapshot, next, maxPendingPaths);
+    let observed = next.overflow ? undefined : await changedEntries(snapshot, next, maxPendingPaths);
     if (observed) {
       const changes = new Map(observed.map(change => [change.path, change]));
       for (const name of next.structural ?? []) for (const change of scopedChanges(g.scopes, { path: name, type: "structural" })) changes.set(change.path, change);
@@ -350,6 +377,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       ? guardedHintChanges(g.scopes, snapshot, next, admittedHints, observed, maxPendingPaths)
       : observed;
     snapshot = next;
+    if (!reuse && scanScopes === g.scopes) lastFullReconcile = performance.now();
     if (!initial && !details && hadBackendOverflow) {
       assertSynchronousCallbackResult(getFsSafeTestHooks()?.afterWatchBackendOverflow?.(context.rootReal, "reconciled"), "afterWatchBackendOverflow");
     }
@@ -384,6 +412,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
           g.waiter.reject(error);
           if (!g.abort.signal.aborted && current === g && !terminal) lose(error);
           try { await retireBackend(); } catch (closeError) { retainRetirement(closeError); }
+          await closeIo?.(); closeIo = undefined;
         }
         if (current !== g) {
           await retireBackend(); snapshot = undefined; pending = true;
@@ -420,6 +449,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     closing = Promise.resolve().then(async () => {
       await active;
       try { await retireBackend(); } catch (error) { retainRetirement(error); }
+      await closeIo?.(); closeIo = undefined;
       state = "closed";
       if (retirementFailure) throw combinedFailure();
     });
