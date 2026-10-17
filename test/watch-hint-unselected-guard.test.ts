@@ -16,6 +16,8 @@ it.each([
   { selected: false, timing: "capture" }, { selected: true, timing: "capture" },
   { selected: false, timing: "assert" }, { selected: true, timing: "assert" },
   { selected: false, timing: "unstable" },
+  { selected: false, timing: "bad-realpath" }, { selected: true, timing: "bad-realpath" },
+  { selected: false, timing: "bad-realpath-persistent" }, { selected: false, timing: "bad-lstat" },
 ])("fences parent churn ($timing, selected=$selected)", async ({ selected, timing }) => {
   const directory = await tempRoot("watch-unselected-parent-");
   await fs.mkdir(path.join(directory, "selected"));
@@ -39,6 +41,15 @@ it.each([
     }
   };
   vi.spyOn(io, "watchGuard").mockImplementation(async (root, name) => {
+    if (name === changedParent && timing.startsWith("bad-") && (timing !== "bad-realpath" || !removed)) {
+      if (timing === "bad-realpath" && !removed) {
+        removed = true;
+        await fs.rm(changedParent, { recursive: true });
+      }
+      throw Object.assign(new Error("descriptor race"), {
+        code: "EBADF", syscall: timing === "bad-lstat" ? "lstat" : "realpath",
+      });
+    }
     const guard = await capture(root, name);
     if (timing === "capture") await remove(guard);
     return guard;
@@ -53,10 +64,12 @@ it.each([
   const observed = admittedNativeChanges(context, scopes, snapshot, snapshot, {
     hints: [{ directory: selected ? "selected" : "unrelated", name: "child", event: "rename" }], overflow: false,
   }, signal, 100);
-  if (selected || timing === "unstable") await expect(observed).rejects.toMatchObject({ code: "path-mismatch" });
+  if (selected || timing === "unstable" || timing === "bad-realpath-persistent" || timing === "bad-lstat") {
+    await expect(observed).rejects.toMatchObject({ code: timing.startsWith("bad-") ? "EBADF" : "path-mismatch" });
+  }
   else await expect(observed).resolves.toEqual([]);
-  if (timing === "unstable") {
-    expect(vi.mocked(io.watchGuard).mock.calls.filter(([, name]) => name === changedParent)).toHaveLength(3);
+  if (timing === "unstable" || timing === "bad-realpath-persistent" || timing === "bad-lstat") {
+    expect(vi.mocked(io.watchGuard).mock.calls.filter(([, name]) => name === changedParent)).toHaveLength(timing === "bad-lstat" ? 1 : 3);
   } else expect(removed).toBe(true);
 });
 
