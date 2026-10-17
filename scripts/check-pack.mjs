@@ -6,7 +6,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { resolveNpmCli } from "./npm-cli.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
 import { validateArchiveWasm } from "./archive-wasm-build-tools.mjs";
@@ -17,6 +18,11 @@ import {
   writePublicApiManifest,
 } from "./public-api-surface.mjs";
 
+const { values } = parseArgs({ options: {
+  "guest-cross-device": { type: "boolean" },
+  "update-public-api": { type: "boolean" },
+  "candidate-compiler": { type: "string" },
+} });
 const workdir = mkdtempSync(join(tmpdir(), "fs-safe-pack-"));
 const npmCommand = resolveNpmCli();
 const npmEnv = Object.fromEntries(
@@ -112,7 +118,7 @@ try {
     { cwd: workdir, stdio: "pipe" },
   );
   const guestSmokeArgs = [join(import.meta.dirname, "guest-package-smoke.mjs"), workdir];
-  if (process.argv.includes("--guest-cross-device")) guestSmokeArgs.push("--cross-device");
+  if (values["guest-cross-device"]) guestSmokeArgs.push("--cross-device");
   execFileSync(process.execPath, guestSmokeArgs, {
     cwd: workdir,
     stdio: "inherit",
@@ -122,12 +128,15 @@ try {
     [join(import.meta.dirname, "directory-receipt-package-smoke.mjs"), workdir],
     { cwd: workdir, stdio: "inherit" },
   );
+  const consumerArgs = [join(import.meta.dirname, "installed-consumer-check.mjs"), workdir];
+  if (values["candidate-compiler"]) consumerArgs.push(resolve(values["candidate-compiler"]));
+  execFileSync(process.execPath, consumerArgs, { cwd: workdir, stdio: "inherit" });
   const publicApi = inspectPublicApi({
     packageName: pkg.name,
     packageSubpaths: Object.keys(pkg.exports),
     workdir,
   });
-  if (process.argv.includes("--update-public-api")) {
+  if (values["update-public-api"]) {
     writePublicApiManifest(publicApi);
   } else {
     assertPublicApi(publicApi);
