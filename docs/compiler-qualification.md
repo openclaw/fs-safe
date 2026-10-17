@@ -31,14 +31,14 @@ Do not equate a release binary with a later source revision that declares the sa
 Freeze source, lockfile, compiler libraries, runner, flags, and binary identities for each comparison.
 Changes to those inputs require new evidence for the affected experiment.
 
-The current [tsconfig](../tsconfig.json) includes 317 source TypeScript files. It excludes the test tree and JavaScript tooling.
+The frozen [tsconfig](https://github.com/openclaw/fs-safe/blob/0f396cd9cbd05519a9600d95daadcf827bff6b76/tsconfig.json) includes 317 source TypeScript files. It excludes the test tree and JavaScript tooling.
 Its contract includes strict NodeNext, ES2022 output, declarations, `noUncheckedIndexedAccess`, and `verbatimModuleSyntax`.
 
-The [build script](../scripts/prepack-build.mjs) invokes the official compiler through Node.
+The [build script](https://github.com/openclaw/fs-safe/blob/0f396cd9cbd05519a9600d95daadcf827bff6b76/scripts/prepack-build.mjs) invokes the official compiler through Node.
 It then prepares the Windows helper and Rust/WASM archive artifact.
 Measure the compiler separately from the complete build.
 
-The [package API checker](../scripts/public-api-surface.mjs) imports `typescript/unstable/ast` and `typescript/unstable/sync`.
+The [package API checker](https://github.com/openclaw/fs-safe/blob/0f396cd9cbd05519a9600d95daadcf827bff6b76/scripts/public-api-surface.mjs) imports `typescript/unstable/ast` and `typescript/unstable/sync`.
 Keep that dependency when evaluating a different compiler CLI.
 Its export-name and error-code checks do not prove complete declaration-signature parity.
 
