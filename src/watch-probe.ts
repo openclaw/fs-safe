@@ -1,5 +1,5 @@
-import { type BigIntStats } from "node:fs";
 import path from "node:path";
+import type { RootEntryObservation } from "./root-directory-list-types.js";
 import { type RootContext } from "./root-context.js";
 import { watchRootCurrent as assertRootIdentityCurrent, watchStats, watchYield } from "./watch-io.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
@@ -7,7 +7,12 @@ import { FsSafeError } from "./errors.js";
 import type { WatchSnapshot } from "./watch-scan.js";
 import type { WatchOptions } from "./watch-types.js";
 
-export type WatchObservation = Pick<BigIntStats, "dev" | "ino" | "mode" | "nlink" | "size" | "mtimeNs" | "ctimeNs">;
+export type WatchObservation = RootEntryObservation;
+/** Do not retain or clone unused Stats fields for every cached entry. */
+export function watchObservation(stat: WatchObservation): WatchObservation {
+  const { dev, ino, mode, nlink, size, mtimeNs, ctimeNs } = stat;
+  return { dev, ino, mode, nlink, size, mtimeNs, ctimeNs };
+}
 export const sameWatchObservation = (a: WatchObservation, b: WatchObservation): boolean =>
   a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.nlink === b.nlink &&
   a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;

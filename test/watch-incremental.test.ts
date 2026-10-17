@@ -62,6 +62,18 @@ for (const nativeMode of ["off", "require"] as const) it.skipIf(nativeMode === "
   }
 });
 
+it("retains only exact comparison metadata in the snapshot", async () => {
+  const scanned = vi.spyOn(scan, "scanWatch");
+  const { directory } = await fixture();
+  const snapshot = await scanned.mock.results[0]!.value;
+  const fields = ["ctimeNs", "dev", "ino", "mode", "mtimeNs", "nlink", "size"];
+  for (const [name, observation] of snapshot.observations!) {
+    expect(Object.keys(observation).sort()).toEqual(fields);
+    const current = fs.lstatSync(path.join(directory, name), { bigint: true });
+    for (const field of fields) expect(observation[field as keyof typeof observation]).toBe(current[field as keyof typeof current]);
+  }
+});
+
 it("lists only a changed directory and its new descendants", async () => {
   const { directory, changes, tick } = await fixture();
   fs.mkdirSync(path.join(directory, "d0", "deep", "new"));

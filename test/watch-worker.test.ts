@@ -14,7 +14,7 @@ it.skipIf(!!process.versions.bun || !!process.versions.deno)("keeps compiled wat
     import { root } from "./dist/root.js";
     import { watch } from "./dist/watch.js";
     import { rootHandleContext } from "./dist/root-handle-context.js";
-    import { createWatchIo, watchGuard, watchAssert, watchStats, enableWatchIoDiagnostics, watchIoMetrics } from "./dist/watch-io.js";
+    import { createWatchIo, watchGuard, watchAssert, watchStats, watchLookup, enableWatchIoDiagnostics, watchIoMetrics } from "./dist/watch-io.js";
     const directory = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "watch-worker-")));
     let owner;
     try {
@@ -66,6 +66,8 @@ it.skipIf(!!process.versions.bun || !!process.versions.deno)("keeps compiled wat
         const moved = path.join(directory, "moved-" + substitution);
         try {
           const guard = await watchGuard(context, child);
+          const found = await watchLookup(context, guard, "file", true);
+          assert.deepEqual(Object.keys(found.observation).sort(), ["ctimeNs", "dev", "ino", "mode", "mtimeNs", "nlink", "size"]);
           if (substitution === "hardlink") {
             const file = path.join(child, "file");
             const [before] = await watchStats(context, [{ path: file, directory: false,

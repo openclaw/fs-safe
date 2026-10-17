@@ -43,6 +43,8 @@ export class WatchEndpoint {
     const entry = process.execArgv.some(arg => arg === "--input-type" || arg.startsWith("--input-type="))
       ? new URL(`data:text/javascript,${encodeURIComponent(`import ${JSON.stringify(module.href)};`)}`) : module;
     this.worker = new Worker(entry, {
+      // Replies are short-lived; bound nursery growth without capping retained listings.
+      resourceLimits: { maxYoungGenerationSizeMb: 4 },
       workerData: { native: getFsSafeNativeConfig(), diagnostics: measureIo },
     });
     this.worker.on("message", ({ id, value, error, failed, cleanupErrors }) => {

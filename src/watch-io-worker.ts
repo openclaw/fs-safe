@@ -8,6 +8,7 @@ import { assertRootDirectoryObservationGuard, createRootDirectoryObservationGuar
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
 import type { RootDirectoryListing } from "./root-directory-list-types.js";
 import { encodeWatchError as errorWire } from "./watch-io-error.js";
+import { watchObservation } from "./watch-probe.js";
 
 // This worker owns only filesystem observations. Callbacks and transport policy
 // remain with the subscription; no worker observation grants read authority.
@@ -38,11 +39,12 @@ async function run(method: string, args: any[], root: RootContext): Promise<unkn
     case "resolve": return resolvePathInRoot(root, args[0], args[1]);
     case "guard": return createRootDirectoryObservationGuard(root, args[0]);
     case "assert": return assertRootDirectoryObservationGuard(root, args[0]);
-    case "lookup": return lookupRootDirectoryEntry(root, args[0], args[1], args[2]);
-    case "stat": return args[0].map((request: WatchStatRequest) => {
-      const { dev, ino, mode, nlink, size, mtimeNs, ctimeNs } = checkedWatchStat(request);
-      return { dev, ino, mode, nlink, size, mtimeNs, ctimeNs };
-    });
+    case "lookup": {
+      const found = await lookupRootDirectoryEntry(root, args[0], args[1], args[2]);
+      if (found?.observation) found.observation = watchObservation(found.observation);
+      return found;
+    }
+    case "stat": return args[0].map((request: WatchStatRequest) => watchObservation(checkedWatchStat(request)));
     case "open": {
       const listing = await openRootDirectoryListing(root, args[0], {
         ...args[1], onCleanupFailure: (error: unknown) => cleanupErrors.push(error),
@@ -54,7 +56,11 @@ async function run(method: string, args: any[], root: RootContext): Promise<unkn
     }
     case "next": {
       allowance = args[1]; consumed = 0;
-      try { return { entry: await listings.get(args[0])!.next(), consumed }; }
+      try {
+        const entry = await listings.get(args[0])!.next();
+        if (entry?.kind === "entry" && entry.observation) entry.observation = watchObservation(entry.observation);
+        return { entry, consumed };
+      }
       catch (error) { return { entryError: errorWire(error), failed: true, consumed }; }
     }
     case "current": return listings.get(args[0])!.assertCurrent();

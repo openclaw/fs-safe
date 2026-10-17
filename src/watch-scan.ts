@@ -11,7 +11,7 @@ import type { RootDirectoryListingPaths } from "./root-directory-list-types.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import type { DirEntry } from "./types.js";
 import type { WatchEntry, WatchOptions, WatchScope } from "./watch-types.js";
-import type { WatchObservation } from "./watch-probe.js";
+import { watchObservation, type WatchObservation } from "./watch-probe.js";
 
 export type DirectoryIdentity = Readonly<{ dev: bigint; ino: bigint }>;
 export type WatchEntryAnchor = { directory: string; name: string; target?: DirectoryIdentity & { kind: WatchEntry["kind"] } };
@@ -78,7 +78,7 @@ export async function scanWatch(
   const observations = new Map<string, WatchObservation>();
   const unsettled = new Set<string>();
   const record = (name: string, observation: WatchObservation, directory: string) => {
-    observations.set(name, observation);
+    observations.set(name, watchObservation(observation));
     const settledBefore = BigInt(Date.now() - 1000) * 1_000_000n;
     if (observation.mtimeNs > settledBefore || observation.ctimeNs > settledBefore) unsettled.add(directory);
   };

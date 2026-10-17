@@ -7,11 +7,12 @@ import { assertRootDirectoryObservationGuard, pathStatFromStats, type RootDirect
 import { inspectStatObservationSync, type ExactStatIdentity } from "./stat-observation.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { DirEntry } from "./types.js";
+import type { RootEntryObservation } from "./root-directory-list-types.js";
 
 /** One literal entry lookup under an operation-local admitted parent; never follow the leaf. */
 export async function lookupRootDirectoryEntry(
   root: RootContext, guard: RootDirectoryObservationGuard, name: string, exactMetadata = false,
-): Promise<{ entry: DirEntry; identity: ExactStatIdentity; observation?: BigIntStats } | undefined> {
+): Promise<{ entry: DirEntry; identity: ExactStatIdentity; observation?: RootEntryObservation } | undefined> {
   if (!name || name === "." || name === ".." || path.basename(name) !== name || path.isAbsolute(name)) {
     throw new FsSafeError("invalid-path", "directory lookup requires one literal name");
   }

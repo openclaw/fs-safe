@@ -114,10 +114,11 @@ export function observe(f, options = {}, subscribe = watch) {
           metrics.consumerReadErrors++;
           metrics.lastConsumerReadError = errorInfo(error);
           if (unavailable || readsAfterClose) return;
-          // Windows realpath can reject a deleted-but-open file this way. The
+          // Windows open/realpath can reject a deleted-but-open file this way. The
           // guarded read returned no bytes; keep its invalidation pending.
-          const deletedWindowsRead = process.platform === "win32" && error?.syscall === "realpath" &&
-            ["EPERM", "EBADF"].includes(error?.code);
+          const deletedWindowsRead = process.platform === "win32" &&
+            ((error?.syscall === "realpath" && ["EPERM", "EBADF"].includes(error?.code)) ||
+              (error?.syscall === "open" && error?.code === "EPERM"));
           if (!deletedWindowsRead && !["path-mismatch", "symlink", "outside-workspace", "not-file", "not-found", "ENOENT", "ENOTDIR", "EBUSY"].includes(error?.code)) {
             callbackFailure ??= error; return;
           }
