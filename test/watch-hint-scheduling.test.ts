@@ -360,12 +360,22 @@ it("fully reconciles overlapping tree scopes without retaining ghost descendants
   expect(values).toEqual([]);
 });
 
-it("runs periodic full reconciliation during a continuous stream of relevant hints", async () => {
+it("runs periodic metadata reconciliation during a continuous stream of relevant hints", async () => {
   await start({ intervalMs: 80 });
   await fs.writeFile(path.join(directory, "memory/b/f0"), "unhinted edit");
   for (let i = 0; i < 16; i++) { emit(hint(path.join("memory", "a"), "f0")); await delay(20); }
   expect(values.flatMap(value => value.changes ?? [])).toContainEqual({ path: path.join("memory", "b", "f0"), type: "content" });
   expect(owner!.health().failure).toBeUndefined();
+});
+
+it("forces an overdue full reconciliation before selecting a hinted slice", async () => {
+  await start({ fullReconcileIntervalMs: 1000 });
+  const now = performance.now();
+  vi.spyOn(performance, "now").mockReturnValue(now + 2000);
+  await fs.writeFile(path.join(directory, "memory/b/f0"), "unhinted edit");
+  await scanned(hint(path.join("memory", "a"), "f0"));
+  expect(visits).toContain(path.join("memory", "b", "f0"));
+  expect(values.flatMap(value => value.changes ?? [])).toContainEqual({ path: path.join("memory", "b", "f0"), type: "content" });
 });
 
 it("does not turn a periodic request during a slow partial scan into continuous full scans", async () => {

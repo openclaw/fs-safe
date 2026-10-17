@@ -702,3 +702,13 @@ The JSON contains the syscall-name breakdown for each arm. It is a selected
 family, not all kernel calls, and traced durations are never used as latency
 measurements. Native task names vary by Node/binding; no unnamed resource is
 assumed to be a portable NAPI counter.
+# Watcher idle cost
+
+After `pnpm build` and `pnpm native:build`, run
+`node benchmarks/watch.mjs --mode=poll --sizes=500,4000,20000 --ticks=3`.
+Repeat with `--mode=auto` and with `FS_SAFE_NATIVE_MODE=off` to compare event
+transport and native-off fallback. `--dist=/absolute/path/to/dist` selects a
+frozen baseline built from another revision. Each JSON line records actual
+transport, tree size, process CPU, wall time, load, and instrumented filesystem
+API calls per idle tick, excluding creation and initial admission. These call
+counts are not kernel syscall counts; use `strace` on Linux for that distinction.

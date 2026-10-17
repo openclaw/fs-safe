@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- Reuse unchanged guarded watcher listings between full safety-net reconciliations, with cheap per-entry metadata checks and full rescans on uncertainty; thanks @martinderm for openclaw/openclaw#174341.
+
 ## 0.26.7 - 2026-10-17
 
 ### Highlights

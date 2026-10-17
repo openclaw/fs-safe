@@ -21,8 +21,10 @@ export type WatchOptions = {
   mode: "auto" | "events" | "poll";
   /** Keep the Node event loop alive while open. Defaults to true. */
   persistent?: boolean;
-  /** Guarded reconciliation interval: events 30000, poll 1000; minimum 20 ms. */
+  /** Incremental metadata check interval: events 30000, poll 1000; minimum 20 ms. */
   intervalMs?: number;
+  /** Full guarded safety-net reconciliation interval. Defaults to 300000 ms; minimum 20 ms. */
+  fullReconcileIntervalMs?: number;
   /** Polling transport interval; overrides intervalMs in poll mode or auto fallback. Minimum 20 ms. */
   pollIntervalMs?: number;
   exclude?: (entry: WatchEntry) => boolean;

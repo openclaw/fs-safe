@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { isNotFoundPathError } from "./path.js";
@@ -9,8 +9,8 @@ import type { DirEntry } from "./types.js";
 
 /** One literal entry lookup under an operation-local admitted parent; never follow the leaf. */
 export async function lookupRootDirectoryEntry(
-  root: RootContext, guard: RootDirectoryObservationGuard, name: string,
-): Promise<{ entry: DirEntry; identity: ExactStatIdentity } | undefined> {
+  root: RootContext, guard: RootDirectoryObservationGuard, name: string, exactMetadata = false,
+): Promise<{ entry: DirEntry; identity: ExactStatIdentity; observation?: BigIntStats } | undefined> {
   if (!name || name === "." || name === ".." || path.basename(name) !== name || path.isAbsolute(name)) {
     throw new FsSafeError("invalid-path", "directory lookup requires one literal name");
   }
@@ -18,10 +18,11 @@ export async function lookupRootDirectoryEntry(
   await assertRootDirectoryObservationGuard(root, guard);
   try {
     const pathname = path.join(guard.realPath, name);
-    const observed = inspectStatObservationSync(bigint => bigint
+    const observed = inspectStatObservationSync(bigint => bigint || exactMetadata
       ? fs.lstatSync(pathname, { bigint: true }) : fs.lstatSync(pathname));
     await assertRootDirectoryObservationGuard(root, guard);
-    return { entry: pathStatFromStats(observed.stat, name), identity: observed.identity };
+    return { entry: pathStatFromStats(observed.stat, name), identity: observed.identity,
+      ...(exactMetadata ? { observation: observed.stat as BigIntStats } : {}) };
   } catch (error) {
     await assertRootDirectoryObservationGuard(root, guard);
     if (isNotFoundPathError(error)) return undefined;

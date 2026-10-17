@@ -468,15 +468,16 @@ export async function openRootDirectoryListing(
           if (options.exactIdentity) paths.names.set(name, pathname);
           let observed: { stat: Stats | BigIntStats; identity?: ExactStatIdentity };
           try {
-            observed = options.exactIdentity ? inspectStatObservationSync(bigint => bigint
-              ? fsSync.lstatSync(pathname, { bigint: true }) : fsSync.lstatSync(pathname)) : { stat: fsSync.lstatSync(pathname, { bigint: true }) };
+            observed = options.exactIdentity ? inspectStatObservationSync(() =>
+              fsSync.lstatSync(pathname, { bigint: true })) : { stat: fsSync.lstatSync(pathname, { bigint: true }) };
           } catch (error) {
             await assertCurrent();
             if (options.skipVanished && isNotFoundPathError(error)) continue;
             throw error;
           }
           await assertCurrent();
-          return { kind: "entry", entry: pathStatFromStats(observed.stat, name), identity: observed.identity };
+          return { kind: "entry", entry: pathStatFromStats(observed.stat, name), identity: observed.identity,
+            ...(options.exactIdentity ? { observation: observed.stat as BigIntStats } : {}) };
         }
     } catch (error) { throw normalizeDirectoryError(error); } },
     [Symbol.asyncDispose]: close,

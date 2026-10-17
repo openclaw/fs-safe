@@ -78,6 +78,8 @@ export function mergeWatchRescan(scopes: readonly WatchScope[], before: WatchSna
     directoryPaths: new Map([...before.directoryPaths ?? [], ...slice.directoryPaths ?? []]),
     childPaths: new Map([...before.childPaths ?? [], ...slice.childPaths ?? []]),
     listingPaths: new Map([...before.listingPaths ?? [], ...slice.listingPaths ?? []]),
+    // A hint slice may retire entries; rebuild advisory observations on the next full pass.
+    observations: undefined,
     targets: new Map(scopes.flatMap(scope => {
       const target = slice.targets.get(scope.path);
       return target ? [[scope.path, target] as const] : [];
