@@ -29,7 +29,7 @@ function statMethods(stat: BigIntStats): BigIntStats {
     isSymbolicLink: () => kind === 0o120000n, isFile: () => kind === 0o100000n });
 }
 
-class WatchEndpoint {
+export class WatchEndpoint {
   private worker: Worker;
   private next = 0;
   private failure: unknown;
