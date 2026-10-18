@@ -158,7 +158,17 @@ For candidate output, compare compiler artifacts before packaging.
 Prepare required native/WASM/helper artifacts through their existing owners.
 Then run `node scripts/check-pack.mjs` against the candidate's `dist` in its isolated validation checkout.
 This checker packs with `--ignore-scripts`, imports public subpaths, and runs installed-package smoke checks.
-Add focused installed-package behavior probes where current source tests leave a gap.
+It also compiles installed consumers for root overloads, JSON stores, lock callbacks,
+resource disposal, and discriminated results, with strict checking and exact optional properties.
+To check those same consumers with the candidate compiler as well:
+
+```sh
+node scripts/check-pack.mjs --candidate-compiler /path/to/native/tsc-ts
+```
+
+Both compilers use the official standard library and the same installed tarball.
+An unused `@ts-expect-error` control must fail before negative consumer cases are trusted.
+The fixtures are compile-only; the existing package smoke tests own runtime behavior.
 
 Do not run `pnpm pack:check` or `pnpm check` over candidate output and claim that output survived.
 Those commands rebuild with the official compiler in the frozen baseline.
@@ -272,3 +282,67 @@ Native executable SHA-256 identities:
 The installed package's launcher selects `lib/tsc-ts` (`tsc-ts.exe` on Windows).
 Record the npm package integrity from the experiment's installation lockfile;
 do not infer binary provenance from its `Version 7.0.2` CLI output alone.
+
+## Linux compiler and package results
+
+The 2026-10-17 campaign used the same frozen source and executable identities
+above, Linux x64 on an AWS c7a.8xlarge (32 logical CPUs), Node 24.19.0, and
+pnpm 12.10.1. Each comparison used two warmups and ten measured samples per
+compiler, in balanced ABBA/BAAB order. OS caches were uncontrolled.
+
+| Invocation | Official median | tsc-ts median | Speedup |
+| --- | --- | --- | --- |
+| Default check | 387 ms | 114 ms | 3.40x |
+| Default emit | 400 ms | 124 ms | 3.24x |
+| Single-threaded check | 973 ms | 704 ms | 1.38x |
+| Single-threaded emit | 1,041 ms | 863 ms | 1.21x |
+| Complete warm build | 1,324 ms | 1,031 ms | 1.28x |
+
+Both compiler configurations preserved all 508 resolved inputs and 634 emitted
+JavaScript/declaration files. The complete build used the existing prepack
+steps with only the compiler invocation substituted in a temporary runner.
+Dependencies and Rust/.NET/WASM toolchains were warm; `dist` was recreated on
+each invocation. All 636 complete-build artifacts matched across every run.
+The median build saving was 22.1%, approximately 293 ms.
+
+GNU time measured median build user CPU of 2.890/1.955 seconds, system CPU of
+0.715/0.475 seconds, and maximum RSS of 310,372/261,192 KiB (official/candidate).
+Maximum RSS is a process high-water mark, not summed concurrent memory.
+Compiler-only CPU and RSS were not measured.
+
+Candidate output also passed the installed-package checker without a rebuild:
+public imports and API manifest, guest Python/rename protocol, directory receipt
+runtime behavior, Root.walk declarations, and the three consumer fixtures under
+both compilers. The complete `dist` inventory was unchanged after packing.
+
+This clears the provisional Linux performance gate. It does not qualify cold
+builds, macOS/Windows compiler binaries, other runtimes, or every native mode.
+Identical emitted JavaScript provides no evidence of faster filesystem I/O.
+Keep compiler adoption separate from these qualification tools.
+
+### Separate scriptc runtime probe
+
+Published scriptc 0.3.5 was installed on the same Linux host. Its native
+control program built and ran after the host's missing Clang was installed.
+The executable SHA-256 was
+`b7087211a304c049de53fcaac40564e9a6e9adac6b4055c895ab340e82d47a84`.
+Its [release tag](https://github.com/vercel-labs/scriptc/tree/973362d0d2be9b948b3e0d59d77ff3705278f24c)
+is a source reference, not an attestation of the npm binary.
+
+All three filesystem probes ran successfully in Node. With scriptc coverage
+configured to fail on blockers:
+
+- `statSync(path, { bigint: true })` failed preflight with `SC0001`: the
+  supported declaration accepts only one argument.
+- Passing computed numeric open flags failed lowering with `SC2020`.
+- An installed-package consumer using `root(path).readBytes(...)` failed
+  preflight with missing `BigIntStats` and `NodeJS.Platform` declarations
+  (`SC0001`), plus the package's computed/escaping `createRequire` use (`SC2013`).
+
+These results agree with the release's documented
+[descriptor/identity limits](https://github.com/vercel-labs/scriptc/blob/973362d0d2be9b948b3e0d59d77ff3705278f24c/docs/content/limitations/builtin-apis/filehandle-and-descriptor-i-o.mdx)
+and [native-addon boundary](https://github.com/vercel-labs/scriptc/blob/973362d0d2be9b948b3e0d59d77ff3705278f24c/docs/content/limitations/native-addons.mdx).
+They block runtime adoption; they do not establish a newly broken supported
+contract or justify a fork. No fs-safe safety policy was weakened for these probes.
+Further native-port design requires an exact-identity and addon/FFI solution
+before broader runtime tests can become meaningful.
