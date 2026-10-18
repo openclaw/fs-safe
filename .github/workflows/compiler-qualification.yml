@@ -1,0 +1,70 @@
+name: Compiler platform qualification
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/compiler-qualification.yml"
+      - "scripts/compiler*qualification.mjs"
+      - "scripts/prepack-build.mjs"
+      - "scripts/installed-consumer-check.mjs"
+      - "test/compiler-platform-qualification.test.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Compiler qualification (${{ matrix.os }})
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    steps:
+      - name: Preserve source line endings
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify Windows runner
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/verify-windows-ci-runner
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: 24.19.0
+
+      - name: Add portable archive target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Set up helper SDK and archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test qualification controls
+        run: pnpm test test/compiler-qualification.test.ts test/compiler-platform-qualification.test.ts
+
+      - name: Qualify native binaries and complete builds
+        id: campaign
+        run: node scripts/compiler-platform-qualification.mjs
+
+      - name: Upload redacted JSON reports
+        if: always() && steps.campaign.outputs.reports != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compiler-qualification-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ steps.campaign.outputs.reports }}/*.json
+          if-no-files-found: error
+          retention-days: 14

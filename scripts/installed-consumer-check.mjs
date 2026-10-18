@@ -1,7 +1,7 @@
 import { copyFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { officialCompiler, runProcess } from "./compiler-qualification.mjs";
+import { compilerEnvironment, officialCompiler, runProcess } from "./compiler-qualification.mjs";
 
 const repository = resolve(import.meta.dirname, "..");
 // Native compilers report paths relative to the physical cwd. Keep config paths
@@ -12,10 +12,7 @@ const official = officialCompiler(repository);
 const compilers = { official: official.executable };
 if (process.argv[3]) compilers.candidate = resolve(process.argv[3]);
 const fixtures = ["root-overloads.mts", "state-and-locks.mts", "lifetimes-and-results.mts"];
-const env = { ...process.env };
-for (const key of Object.keys(env)) {
-  if (key.startsWith("TSC_TS_") || ["GOGC", "GOMEMLIMIT", "GOMAXPROCS", "GODEBUG"].includes(key)) delete env[key];
-}
+const { env } = compilerEnvironment();
 env.TSC_TS_LIB_DIR = official.library;
 
 // All package imports resolve from the installed tarball. Never use src/ aliases:

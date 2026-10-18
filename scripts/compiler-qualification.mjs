@@ -18,6 +18,14 @@ export function assertSame(actual, expected, label) {
   if (!isDeepStrictEqual(actual, expected)) throw new Error(`${label} differ`);
 }
 
+export function compilerEnvironment(input = process.env) {
+  const env = { ...input };
+  const cleared = Object.keys(env).filter((key) => key.toUpperCase().startsWith("TSC_TS_") ||
+    ["GOGC", "GOMEMLIMIT", "GOMAXPROCS", "GODEBUG"].includes(key.toUpperCase())).sort();
+  for (const key of cleared) delete env[key];
+  return { env, cleared };
+}
+
 export function runProcess(executable, args, options = {}) {
   const start = performance.now();
   const child = spawnSync(executable, args, {
@@ -156,10 +164,7 @@ export function qualify({ root = repository, candidate, output, runs = 10, warmu
       }
       return value.replaceAll("\r\n", "\n");
     };
-    const env = { ...process.env };
-    const cleared = Object.keys(env).filter((key) => key.startsWith("TSC_TS_") ||
-      ["GOGC", "GOMEMLIMIT", "GOMAXPROCS", "GODEBUG"].includes(key)).sort();
-    for (const key of cleared) delete env[key];
+    const { env, cleared } = compilerEnvironment();
     env.TSC_TS_LIB_DIR = official.library;
     report.compilerEnvironment = { cleared, TSC_TS_LIB_DIR: "<typescript-lib>" };
     const binaries = { official: official.executable, candidate };
