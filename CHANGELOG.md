@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+## 0.26.8 - 2026-10-18
+
+### Highlights
+
+- **Watcher reconciliation:** measured Linux polling on a 20,313-directory tree uses about 10× less idle CPU and 29× fewer filesystem syscalls, with worst event-loop stall reduced from 151 ms to about 6 ms. ([#1002](https://github.com/openclaw/fs-safe/pull/1002))
+
 ### Performance
 
-- Reuse unchanged guarded watcher listings between full safety-net reconciliations, with off-thread guarded filesystem work on Node, cheap per-entry metadata checks and full rescans on uncertainty; thanks @martinderm for openclaw/openclaw#174341.
+- **Watcher reconciliation:** reuse unchanged guarded watcher listings between full safety-net reconciliations, with guarded filesystem work in a shared Node worker thread, cheap per-entry metadata checks and full rescans on uncertainty. Ticks reconcile incrementally; full guarded reconciliation runs every five minutes by default, configurable with `fullReconcileIntervalMs`. Thanks @martinderm for [openclaw#174341](https://github.com/openclaw/openclaw/issues/174341). ([#1002](https://github.com/openclaw/fs-safe/pull/1002))
 
 ## 0.26.7 - 2026-10-17
 
