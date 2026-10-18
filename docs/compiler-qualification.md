@@ -320,6 +320,50 @@ builds, macOS/Windows compiler binaries, other runtimes, or every native mode.
 Identical emitted JavaScript provides no evidence of faster filesystem I/O.
 Keep compiler adoption separate from these qualification tools.
 
+## Platform and clean-output campaign
+
+`compiler-qualification.yml` runs the published tsc-ts 0.0.2 native package on
+Linux, macOS, and Windows with Node 24.19.0. It records npm lockfile integrity,
+native executable hashes, the exact checkout commit, and toolchain versions.
+Windows uses the existing x64 CI runner; upstream 0.0.2 has no Windows ARM64
+package. The npm launcher gets a separate smoke check using its default libraries.
+Parity and package consumers continue to use the official TypeScript libraries.
+
+The campaign runs the compiler parity harness in default and single-threaded
+modes, with two warmups and ten measured samples per arm. Complete builds use
+the existing prepack owner with an explicit native compiler for both arms.
+Ordinary builds retain the official compiler; this option is experimental
+qualification tooling, not an adoption decision. Strict toolchain mode requires
+the .NET helper build and cannot reuse the staged executable as a fallback.
+
+Warm complete builds retain Rust/.NET outputs and recreate `dist`. Clean-output
+builds use a fresh Cargo target and remove only the helper's `bin` and `obj`
+directories before each invocation. Dependencies and their download stores stay
+installed; OS and dependency caches are uncontrolled. These are **clean build
+outputs**, not cold-machine or cold-page-cache measurements. Each arm has two
+warmups, ten measured warm builds, and six measured clean-output builds, in
+balanced ABBA/BAAB order. Timings cover the complete build, excluding hashing,
+output cleanup and installed-package checks. They measure wall time only.
+
+Every build must match all JavaScript, declaration, helper, and WASM bytes on
+that runner. Cross-OS binary equality is not required. Source, build scripts,
+lockfiles, generated helper input, compiler binaries, and libraries are checked
+for mutation. Both arms in each cache mode get installed-package proof without
+a rebuild, followed by another complete `dist` hash comparison.
+
+The runner accepts only its disposable Actions checkout. The isolated job's
+45-minute deadline owns cancellation of the full Cargo/.NET process tree;
+it does not use a parent-only build timeout and then continue measuring.
+It uploads at most three redacted JSON reports per platform, each capped at
+4 MiB, for 14 days. Generated binaries and compiler installations stay temporary.
+A failed campaign cannot establish a performance claim, even if it has samples.
+
+OpenClaw is a separate qualification target. Its declaration build uses
+`typescript/unstable` API transport and `program.emitToString`; a faster CLI
+typecheck does not establish compatibility with that build owner. Reuse the
+existing compiler lane's exact-source evidence before proposing an API/emission
+adapter or a paired `build:strict-smoke` comparison.
+
 ### Separate scriptc runtime probe
 
 Published scriptc 0.3.5 was installed on the same Linux host. Its native
