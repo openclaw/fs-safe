@@ -8,7 +8,7 @@ export const sections = [
   ["Stores", ["store.md", "json-store.md", "file-store.md", "queue-link-free-design.md"]],
   ["Specialized", ["copy.md", "pipe.md", "guest.md", "secret-file.md", "secure-file.md", "permissions.md", "creation.md", "regular-file.md", "positional-read.md", "file-contents.md", "in-place-write.md", "sidecar-lock.md", "entry-publication.md", "retained-file.md", "local-roots.md"]],
   ["Path & filename", ["path.md", "filename.md", "install-path.md", "directory-identity.md", "path-case.md", "path-prefix.md", "path-suffix-aliases.md"]],
-  ["Reference", ["errors.md", "types.md", "public-api.md", "testing.md", "timing.md", "advanced.md", "migrating-to-0.5.md", "migrating-to-0.6.md", "contributing.md"]],
+  ["Reference", ["errors.md", "types.md", "public-api.md", "testing.md", "timing.md", "advanced.md", "migrating-to-0.5.md", "migrating-to-0.6.md", "contributing.md", "compiler-qualification.md"]],
 ];
 
 const buildExcludes = [];
