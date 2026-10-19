@@ -20,7 +20,7 @@ describe("required package consumer proof", () => {
     // A status predicate overrides the implicit success() dependency gate.
     expect(consumer).toMatch(/^    if: \$\{\{ !cancelled\(\) \}\}$/mu);
     expect(consumer).not.toMatch(/^    continue-on-error:/mu);
-    expect(consumer).toContain("name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})");
+    expect(consumer).toContain("name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})");
     expect(consumer).toMatch(/        node:\n          - 22\n          - 24\n/u);
   });
 

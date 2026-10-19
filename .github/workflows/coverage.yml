@@ -18,7 +18,8 @@ concurrency:
 
 jobs:
   coverage:
-    name: Node 22 coverage (${{ matrix.os }})
+    # Keep the required status identifier; runs-on uses the current matrix runner.
+    name: Node 22 coverage (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     # Windows includes native/WASM builds and serial instrumented filesystem tests.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}

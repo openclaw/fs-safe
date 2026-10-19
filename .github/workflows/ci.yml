@@ -949,7 +949,8 @@ jobs:
           retention-days: 1
 
   check:
-    name: Node ${{ matrix.node }} check (${{ matrix.os }})
+    # Preserve the required status identifier while changing the actual runner.
+    name: Node ${{ matrix.node }} check (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -1030,7 +1031,8 @@ jobs:
         run: node scripts/regular-append-windows-proof.mjs
 
   native-check:
-    name: Native check (${{ matrix.label || matrix.os }})
+    # The arm64 status name is part of the main branch protection contract.
+    name: Native check (${{ matrix.label || (matrix.os == 'xcode-27' && 'macos-15' || matrix.os) }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.runner || matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -1867,7 +1869,8 @@ jobs:
           retention-days: 1
 
   package-smoke:
-    name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
+    # Artifact routing still uses matrix.os; only the required status name is stable.
+    name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})
     # Required consumer checks must fail on missing artifacts, rather than
     # being skipped when any build in the producer matrix fails.
     if: ${{ !cancelled() }}

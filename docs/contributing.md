@@ -335,7 +335,9 @@ Bun 1.4.2 (as do macOS and Windows).
 | Bundled package smoke | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22, 24 |
 | Coverage | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22 |
 
-All macOS jobs use the arm64 `xcode-27` image. The x64 native and watch lanes
+All macOS jobs use the arm64 `xcode-27` image. Required status-check names
+retain their historical `macos-15` identifiers to preserve branch protection;
+those names do not select the runner. The x64 native and watch lanes
 assert Rosetta availability and run their shells, Node, and Bun under Rosetta;
 they do not require Intel hardware. Native builds preserve the published macOS
 minimums: 11.0 for arm64 and 10.12 for x64. Native CI and release prebuilds
