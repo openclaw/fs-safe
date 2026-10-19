@@ -6,8 +6,9 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { root } from "../src/root.js";
 import { watch, type WatchSubscription } from "../src/watch.js";
 import { loadTestNative } from "./helpers/native-probe.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, useRealTempDirs } from "./helpers/vitest.js";
 
+allowWindowsFilesystemStalls();
 const { tempRoot } = useRealTempDirs();
 const binding = loadTestNative("required-env");
 const nodeRuntime = !process.versions.bun && !process.versions.deno;
