@@ -131,11 +131,13 @@ jobs:
             target: aarch64-unknown-linux-musl
             cross: zig
           - label: darwin-x64
-            os: macos-15
+            os: xcode-27
+            architecture: x64
             target: x86_64-apple-darwin
             cross: none
           - label: darwin-arm64
-            os: macos-15
+            os: xcode-27
+            architecture: arm64
             target: aarch64-apple-darwin
             cross: none
           - label: win32-arm64-msvc
@@ -146,6 +148,9 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             cross: none
+    defaults:
+      run:
+        shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || (startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash') }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,6 +158,7 @@ jobs:
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
+          architecture: ${{ matrix.architecture }}
           node-version: ${{ env.NODE_VERSION }}
           pnpm-version: ${{ env.PNPM_VERSION }}
 
@@ -201,6 +207,10 @@ jobs:
       - name: Test ARM64 native crate
         if: matrix.label == 'win32-arm64-msvc'
         run: cargo test --workspace --locked --target aarch64-pc-windows-msvc
+
+      - name: Verify Darwin deployment floor and load binding
+        if: runner.os == 'macOS'
+        run: arch -${{ matrix.architecture == 'x64' && 'x86_64' || 'arm64' }} node scripts/check-darwin-minos.mjs artifacts/fs-safe-native.${{ matrix.label }}.node ${{ matrix.architecture }}
 
       - name: Record unsigned Windows binding SHA-256
         if: startsWith(matrix.label, 'win32-')

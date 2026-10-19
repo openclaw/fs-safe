@@ -106,7 +106,7 @@ must retain that limitation rather than call it proved kernel overflow.
 ### Nightly workload
 
 The nightly workflow runs on `ubuntu-latest` (x64), `ubuntu-24.04-arm`,
-`macos-15` (arm64), `macos-15-intel`, and the Windows latest 16-core runner,
+`xcode-27` (arm64), `xcode-27` under Rosetta (`x64`), and the Windows latest 16-core runner,
 using Node 24 and freshly built native bindings. Each job has a 25-minute
 budget, uploads one JSON result per scenario (including failures), and fails
 if any scenario fails. Remaining scenarios still run after a failure. Only

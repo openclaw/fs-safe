@@ -318,13 +318,13 @@ Bun 1.4.2 (as do macOS and Windows).
 | Lane | Runner | Architecture / libc | Runtime |
 | --- | --- | --- | --- |
 | JavaScript check | `ubuntu-latest` | x64 / glibc | Node 22, 24, 26 |
-| JavaScript check | `macos-15` | arm64 | Node 22, 24, 26 |
+| JavaScript check | `xcode-27` | arm64 | Node 22, 24, 26 |
 | JavaScript check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 22, 24, 26 |
 | Native check | `ubuntu-latest` | x64 / glibc | Node 24, Bun 1.4.2 |
 | Native check (forced no-openat2) | `ubuntu-latest` | x64 / glibc | Node 24 |
 | Native check | `ubuntu-24.04-arm` | arm64 / glibc | Node 24, Bun 1.4.2 |
-| Native check | `macos-15` | arm64 | Node 24, Bun 1.4.2 |
-| Native check | `macos-15-intel` | x64 | Node 24, Bun 1.4.2 |
+| Native check | `xcode-27` | arm64 | Node 24, Bun 1.4.2 |
+| Native check | `xcode-27` under Rosetta (`x64`) | x64 | Node 24, Bun 1.4.2 |
 | Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.2 |
 | Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.2 |
 | Windows ARM64 host | `windows-11-arm` | arm64 native and x64 emulated | Node 24 |
@@ -332,8 +332,14 @@ Bun 1.4.2 (as do macOS and Windows).
 | Native check (Alpine 3.24) | `ubuntu-24.04-arm` | arm64 / musl | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-latest` | x64 / glibc | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-24.04-arm` | arm64 / glibc | Node 24 |
-| Bundled package smoke | `ubuntu-latest`, `macos-15`, `fs-safe-windows-16core` | host | Node 22, 24 |
-| Coverage | `ubuntu-latest`, `macos-15`, `fs-safe-windows-16core` | host | Node 22 |
+| Bundled package smoke | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22, 24 |
+| Coverage | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22 |
+
+All macOS jobs use the arm64 `xcode-27` image. The x64 native and watch lanes
+assert Rosetta availability and run their shells, Node, and Bun under Rosetta;
+they do not require Intel hardware. Native builds preserve the published macOS
+minimums: 11.0 for arm64 and 10.12 for x64. Native CI and release prebuilds
+verify the Mach-O deployment command and load each binding with matching Node.
 
 Both musl lanes also run root-only package smoke with the real host binding.
 The eight-target source build matrix still runs on release tags. The smoke writes manager versions,

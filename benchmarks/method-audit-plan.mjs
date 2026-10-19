@@ -11,11 +11,11 @@ const EXECUTION_TRUST = Object.freeze({
 const PLATFORM_MATRIX = Object.freeze({
   all: [
     { platform: "linux", os: "ubuntu-latest" },
-    { platform: "macos", os: "macos-15" },
+    { platform: "macos", os: "xcode-27" },
     { platform: "windows", os: "windows-latest" },
   ],
   linux: [{ platform: "linux", os: "ubuntu-latest" }],
-  macos: [{ platform: "macos", os: "macos-15" }],
+  macos: [{ platform: "macos", os: "xcode-27" }],
   windows: [{ platform: "windows", os: "windows-latest" }],
 });
 

@@ -13,6 +13,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/setup-macos-runtime
+      with:
+        architecture: ${{ inputs.architecture }}
     # pnpm 12 installs a native executable through npm. Select the requested
     # Node architecture first so its installer does not inherit the host arch.
     - name: Select Node architecture before installing pnpm

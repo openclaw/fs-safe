@@ -30,7 +30,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-15
+          - xcode-27
           - windows-latest
     steps:
       - name: Check out
