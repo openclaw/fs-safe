@@ -119,6 +119,13 @@ may still use the existing addon. Existing `FS_SAFE_NATIVE_MODE=off` and
 `auto` too. Health reports the selected `events` or `poll` mode and failures
 from selection have `operation: "watch"`.
 
+If macOS cannot create or start an FSEvents stream during initial admission,
+`auto` falls back to guarded polling. This includes the system-wide stream
+ceiling: FSEvents does not expose a distinct capacity error. Explicit `events`
+and native `require` mode reject with `helper-unavailable` instead. Exclusion
+configuration failures remain fatal, and a stream failure after readiness
+does not silently change the subscription's mode.
+
 Linux installs each watch **before** enumerating children. It opens directories
 beneath the Root using the shared guarded native open (openat2, or its checked
 openat fallback), checks exact identities, verifies the procfs namespace, and

@@ -76,6 +76,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
   const registered = new Map<string, DirectoryIdentity>();
   let observedDirectories = 0;
   let snapshot: WatchSnapshot | undefined;
+  let hasBeenReady = false;
   let lastFullReconcile = 0;
   let resetRequested = false;
   let refreshBackend = false;
@@ -211,7 +212,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     if (!persistent) hintTimer.unref();
   };
   const fallBack = (error: unknown): boolean => {
-    if (options.mode !== "auto" || getFsSafeNativeConfig().mode === "require" ||
+    if (hasBeenReady || options.mode !== "auto" || getFsSafeNativeConfig().mode === "require" ||
       !(error instanceof FsSafeError) || error.code !== "helper-unavailable") return false;
     mode = "poll"; binding = undefined;
     intervalMs = pollIntervalMs;
@@ -339,6 +340,10 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
       } catch (error) {
         await assertRootIdentityCurrent(context);
         check(g);
+        if (!snapshot && fallBack(error)) {
+          await retireBackend(); check(g);
+          break;
+        }
         if (attempt >= 2 || !isWatchPathError(error)) throw error;
         scanScopes = g.scopes;
         // A replacement between scan and descriptor admission requires a fresh identity.
@@ -384,6 +389,7 @@ export function watch(root: Root, input: WatchOptions): WatchSubscription {
     // Publish before readiness; callbacks may synchronously retire this generation.
     if (initial || !details || details.length) dirty(g, initial ? "reconcile" : !details ? "overflow" : hadHints ? "event" : "reconcile", initial ? undefined : details);
     check(g);
+    hasBeenReady = true;
     state = "ready";
     notifyHealth();
     check(g);

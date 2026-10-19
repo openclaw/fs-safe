@@ -131,16 +131,35 @@ it("carries running and pending reconcile waiters into a replacement baseline", 
   expect(passes).toBe(2); expect(owner.health().state).toBe("ready");
 });
 
-it.each(["register", "add"])("falls back during initial %s only in auto mode", async stage => {
+it.each(["register", "add", ...(process.platform === "darwin" ? ["configure"] : [])])("falls back during initial %s only in auto mode", async stage => {
   const binding = backend();
-  binding[stage === "register" ? "watchRegister" : "watchAdd"].mockImplementation(() => { throw Object.assign(new Error("unsupported"), { code: "ENOTSUP" }); });
+  binding[stage === "register" ? "watchRegister" : stage === "add" ? "watchAdd" : "watchConfigure"].mockImplementation(() => { throw Object.assign(new Error("unsupported"), { code: "ENOTSUP" }); });
   const invalidations: WatchInvalidation[] = [];
   const owner = make({ mode: "auto", onInvalidate: value => { invalidations.push(value); } });
   await owner.ready;
   expect(owner.health()).toMatchObject({ mode: "poll", state: "ready" });
-  expect(binding.watchUnregister).toHaveBeenCalledTimes(stage === "add" ? 1 : 0);
+  expect(binding.watchUnregister).toHaveBeenCalledTimes(stage === "register" ? 0 : 1);
   await fs.writeFile(path.join(dir, "edit"), "value"); await owner.reconcile();
   expect(invalidations.at(-1)?.changes).toContainEqual({ path: "edit", type: "structural" });
+});
+
+it.skipIf(process.platform !== "darwin").each(["events", "require", "other-code"])("refuses FSEvents startup fallback for %s", async policy => {
+  const binding = backend();
+  if (policy === "require") configureFsSafeNative({ mode: "require" });
+  binding.watchConfigure.mockImplementation(() => { throw Object.assign(new Error("configure"), { code: policy === "other-code" ? "EIO" : "ENOTSUP" }); });
+  const owner = make({ mode: policy === "events" ? "events" : "auto" });
+  await expect(owner.ready).rejects.toMatchObject({ code: policy === "other-code" ? "helper-failed" : "helper-unavailable" });
+  expect(owner.health()).toMatchObject({ state: "unavailable", mode: "events" });
+  await owner.close();
+  expect(binding.watchUnregister).toHaveBeenCalledTimes(1);
+});
+
+it.skipIf(process.platform !== "darwin")("does not fall back when a ready FSEvents stream cannot restart", async () => {
+  const binding = backend();
+  const owner = make({ mode: "auto" }); await owner.ready;
+  binding.watchConfigure.mockImplementation(() => { throw Object.assign(new Error("start"), { code: "ENOTSUP" }); });
+  await expect(owner.setScopes([{ path: "new", kind: "tree" }])).rejects.toMatchObject({ code: "helper-unavailable" });
+  expect(owner.health()).toMatchObject({ state: "unavailable", mode: "events" });
 });
 
 it.each(["events", "require", "other-code"])("refuses fallback for %s", async policy => {
