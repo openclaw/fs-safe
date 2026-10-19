@@ -397,11 +397,13 @@ fn fails_then_recovers(scenario: Scenario, excluded: bool, replace: bool) {
     fake(|state| state.scenario = scenario);
     assert_error(
         backend.configure(7, &anchors, &exclusions),
-        "EIO",
+        if scenario == Scenario::ExclusionFails { "EIO" } else { "ENOTSUP" },
         if scenario == Scenario::CreateFails {
             "create FSEvents stream"
+        } else if scenario == Scenario::ExclusionFails {
+            "configure FSEvents exclusions"
         } else {
-            "configure/start FSEvents stream"
+            "start FSEvents stream"
         },
     );
     let mut expected = if replace { RETIRE.to_vec() } else { vec![] };

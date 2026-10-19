@@ -222,20 +222,25 @@ impl Backend {
             FSEventStreamCreate(null_mut(), callback, &mut context, array.0, u64::MAX, 0.03, 0x10 | 0x2 | 0x4)
         };
         if stream.is_null() {
-            return Err(native_error("EIO", "create FSEvents stream"));
+            return Err(native_error("ENOTSUP", "create FSEvents stream"));
         }
         unsafe {
             FSEventStreamSetDispatchQueue(stream, self.queue);
         }
-        if (!exclusions.is_empty() && unsafe { FSEventStreamSetExclusionPaths(stream, excluded.0) } == 0)
-            || unsafe { FSEventStreamStart(stream) } == 0
-        {
+        let configured = exclusions.is_empty()
+            || unsafe { FSEventStreamSetExclusionPaths(stream, excluded.0) } != 0;
+        if !configured || unsafe { FSEventStreamStart(stream) } == 0 {
             unsafe {
                 // No successful start occurred; Stop requires a started stream.
                 dispatch_sync_f(self.queue, stream, invalidate_and_release);
                 dispatch_sync_f(self.queue, null_mut(), barrier);
             }
-            return Err(native_error("EIO", "configure/start FSEvents stream"));
+            return Err(if configured {
+                // FSEvents exposes no errno for unavailable streams, including exhaustion.
+                native_error("ENOTSUP", "start FSEvents stream")
+            } else {
+                native_error("EIO", "configure FSEvents exclusions")
+            });
         }
         self.streams.insert(id, Stream { _paths: array, _exclusions: excluded, stream });
         Ok(())

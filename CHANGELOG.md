@@ -6,6 +6,8 @@
 
 ### Fixes
 
+- **macOS watch:** fall back to guarded polling when FSEvents cannot create or start a stream during initial `auto` admission, including system-wide stream exhaustion. Explicit event and required-native modes still fail. Thanks @LGx0. ([#1005](https://github.com/openclaw/fs-safe/issues/1005))
+
 - **Watch errors:** consistently report `path-mismatch` if a Root disappears during identity revalidation, without adopting a replacement directory.
 
 - **Windows watch:** avoid spurious overflow notifications when an unrelated directory disappears during path validation, while retaining failures for persistent access errors and selected-path changes.
