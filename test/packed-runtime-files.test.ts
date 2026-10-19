@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveNpmCli } from "../scripts/npm-cli.mjs";
 import { normalizePackResult } from "../scripts/npm-pack-result.mjs";
@@ -80,6 +81,46 @@ describe("packed runtime files", () => {
     await expect(assertPackedRuntimeFiles(archive)).rejects.toThrow(
       "dist/index.js: ./literal%23file.js -> dist/literal%23file.js",
     );
+  }, 60_000);
+
+  it("matches Node require file and directory resolution", async () => {
+    const targets = {
+      "./worker": "worker.js",
+      "./settings": "settings.json",
+      "./addon": "addon.node",
+      "./directory": "directory/index.json",
+      "./main-package": "main-package/lib/worker.js",
+      "./nested-main": "nested-main/lib/index.js",
+      "./fallback": "fallback/index.js",
+    };
+    const archive = pack({
+      "dist/index.cjs": Object.keys(targets).map(name => `require(${JSON.stringify(name)});`).join("\n"),
+      ...Object.fromEntries(Object.values(targets).map(name => [`dist/${name}`, name.endsWith(".json") ? "{}" : ""])),
+      "dist/main-package/package.json": '{"main":"lib/worker"}',
+      "dist/nested-main/package.json": '{"main":"lib"}',
+      "dist/fallback/package.json": '{"main":"missing"}',
+    });
+    const require = createRequire(join(dirname(archive), "dist/index.cjs"));
+    for (const [request, target] of Object.entries(targets)) {
+      expect(require.resolve(request)).toBe(join(dirname(archive), "dist", target));
+    }
+    await expect(assertPackedRuntimeFiles(archive)).resolves.toEqual({ modules: 5, references: 7 });
+  }, 60_000);
+
+  it("does not resolve a trailing-slash require to a sibling JavaScript file", async () => {
+    const archive = pack({
+      "dist/index.cjs": "require('./worker/');",
+      "dist/worker.js": "",
+    });
+    await expect(assertPackedRuntimeFiles(archive)).rejects.toThrow("dist/index.cjs: ./worker/ -> dist/worker/");
+  }, 60_000);
+
+  it("rejects an extensionless require whose source file was omitted from the tarball", async () => {
+    const archive = pack({
+      "dist/index.cjs": "require('./worker');",
+      "dist/worker.js": "",
+    }, ["dist/index.cjs"]);
+    await expect(assertPackedRuntimeFiles(archive)).rejects.toThrow("dist/index.cjs: ./worker -> dist/worker");
   }, 60_000);
 
   it("does not resolve an escaping URL back into the package root", async () => {

@@ -140,7 +140,8 @@ module-relative worker URL, and `import.meta.url` asset reference in the packed 
 against the tarball contents. Release package collection repeats this check;
 files present only in the build directory do not satisfy it.
 URL references use decoded filenames without queries or fragments; `require()`
-paths retain their literal characters. String arguments to `new Worker()` are
+paths retain their literal characters and use Node's file-extension, package
+`main`, and directory-index fallbacks. String arguments to `new Worker()` are
 relative to the consumer's working directory and are outside this package-relative check.
 
 Guest filesystem tests and package smoke also need `python3` on Linux and

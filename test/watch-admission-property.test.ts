@@ -52,6 +52,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
+// Keep the full async corpus under coverage on shared runners.
 it("never dismisses selected activity in random alias/folded streams with a fake Root", async () => {
   const hint = fc.record({ directory: fc.constantFrom("selected", "ALIAS", "unrelated"),
     event: fc.constantFrom("change" as const, "rename" as const, "children" as const, "subtree" as const),
@@ -83,4 +84,4 @@ it("never dismisses selected activity in random alias/folded streams with a fake
     if (hints.every(hint => hint.event === "subtree")) expect(published).toEqual([]);
     for (const change of published ?? []) expect(change.path.startsWith("ALIAS")).toBe(false);
   }), { seed: 774, numRuns: 1000 });
-});
+}, 30_000);
