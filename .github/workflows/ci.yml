@@ -949,7 +949,8 @@ jobs:
           retention-days: 1
 
   check:
-    name: Node ${{ matrix.node }} check (${{ matrix.os }})
+    # Preserve the required status identifier while changing the actual runner.
+    name: Node ${{ matrix.node }} check (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -961,7 +962,7 @@ jobs:
           - 26
         os:
           - ubuntu-latest
-          - macos-15
+          - xcode-27
           - windows-latest
     steps:
       - name: Check out
@@ -1014,7 +1015,7 @@ jobs:
         run: pnpm test --config scripts/slow-package-copy.config.ts
 
       - name: Prove Root sidecar unlinked snapshot handoff and replacement rejection
-        if: matrix.node == 24 && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-15')
+        if: matrix.node == 24 && (matrix.os == 'ubuntu-latest' || matrix.os == 'xcode-27')
         env:
           NODE_ENV: test
         run: node scripts/sidecar-unlinked-snapshot-proof.mjs
@@ -1030,23 +1031,28 @@ jobs:
         run: node scripts/regular-append-windows-proof.mjs
 
   native-check:
-    name: Native check (${{ matrix.os }})
+    # The arm64 status name is part of the main branch protection contract.
+    name: Native check (${{ matrix.label || (matrix.os == 'xcode-27' && 'macos-15' || matrix.os) }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.runner || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-15
-          - windows-latest
-          - ubuntu-24.04-arm
-          - macos-15-intel
-          - windows-2022
         include:
+          - os: ubuntu-latest
+          - os: xcode-27
+          - os: windows-latest
+          - os: ubuntu-24.04-arm
+          - os: xcode-27
+            label: xcode-27-x64
+            architecture: x64
+          - os: windows-2022
           - os: linux-x64-no-openat2
             runner: ubuntu-latest
             no-openat2: true
+    defaults:
+      run:
+        shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || (startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash') }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1061,6 +1067,7 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
         with:
           node-version: 24
+          architecture: ${{ matrix.architecture }}
 
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
@@ -1069,7 +1076,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # LLVM setup exports temporary paths; key its pinned toolchain source instead.
-          key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+          key: ${{ matrix.label || matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
           env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
           workspaces: |
             . -> target
@@ -1093,6 +1100,10 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Verify Darwin deployment floor and load binding
+        if: runner.os == 'macOS'
+        run: node scripts/check-darwin-minos.mjs native/fs-safe-native.darwin-${{ matrix.architecture || 'arm64' }}.node ${{ matrix.architecture || 'arm64' }}
+
       - name: Prove AppContainer private ACL isolation
         if: runner.os == 'Windows'
         id: appcontainer
@@ -1102,7 +1113,7 @@ jobs:
         if: ${{ always() && runner.os == 'Windows' && steps.appcontainer.outcome != 'skipped' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: appcontainer-${{ matrix.os }}
+          name: appcontainer-${{ matrix.label || matrix.os }}
           path: artifacts-appcontainer
           if-no-files-found: error
 
@@ -1168,7 +1179,7 @@ jobs:
         run: pnpm test test/retained-file.test.ts
 
       - name: Repeat Config sibling isolation twenty times without retries
-        if: matrix.os == 'macos-15'
+        if: matrix.os == 'xcode-27'
         env:
           FS_SAFE_TEST_WATCH_EVENTS: "1"
         run: pnpm test test/watch-selection.test.ts -t 'keeps Config entry' --maxWorkers=1 --repeats=19 --retry=0 --reporter=verbose
@@ -1176,8 +1187,14 @@ jobs:
       - name: Test guarded observation
         env:
           FS_SAFE_TEST_WATCH_EVENTS: "1"
+          TEST_ARCHITECTURE: ${{ matrix.architecture }}
         shell: bash
-        run: pnpm test test/watch*.test.ts --maxWorkers=1 --testTimeout=30000 --reporter=verbose
+        run: |
+          tests=(pnpm test test/watch*.test.ts --maxWorkers=1 --testTimeout=30000 --reporter=verbose)
+          if [[ "$TEST_ARCHITECTURE" == x64 ]]; then
+            exec arch -x86_64 "${tests[@]}"
+          fi
+          "${tests[@]}"
 
       - name: Prove native event delivery on every platform
         run: node scripts/watch-events-proof.mjs
@@ -1202,7 +1219,7 @@ jobs:
         if: always() && runner.os == 'macOS'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: watch-cleanup-allocation-reports-${{ matrix.os }}
+          name: watch-cleanup-allocation-reports-${{ matrix.label || matrix.os }}
           path: .artifacts/watch-cleanup-leaks
           if-no-files-found: ignore
 
@@ -1244,6 +1261,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+          bun-download-url: ${{ matrix.architecture == 'x64' && 'https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-x64-baseline.zip' || '' }}
 
       - name: Measure cold platform entry-point imports
         if: ${{ !matrix.no-openat2 }}
@@ -1274,7 +1292,7 @@ jobs:
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-long-path-${{ matrix.os }}
+          name: windows-long-path-${{ matrix.label || matrix.os }}
           path: |
             artifacts-windows-long-path
             artifacts-platform-imports
@@ -1304,7 +1322,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: differential-root-${{ matrix.os }}
+          name: differential-root-${{ matrix.label || matrix.os }}
           path: artifacts-differential-ci
           if-no-files-found: ignore
 
@@ -1319,7 +1337,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: differential-portable-${{ matrix.os }}
+          name: differential-portable-${{ matrix.label || matrix.os }}
           path: artifacts-differential-portable
           if-no-files-found: ignore
 
@@ -1792,7 +1810,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-15
+          - xcode-27
           - windows-latest
     steps:
       - name: Check out exact package-proof source
@@ -1851,7 +1869,8 @@ jobs:
           retention-days: 1
 
   package-smoke:
-    name: Bundled package smoke (${{ matrix.os }}, Node ${{ matrix.node }})
+    # Artifact routing still uses matrix.os; only the required status name is stable.
+    name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})
     # Required consumer checks must fail on missing artifacts, rather than
     # being skipped when any build in the producer matrix fails.
     if: ${{ !cancelled() }}
@@ -1863,7 +1882,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-15
+          - xcode-27
           - windows-latest
         node:
           - 22

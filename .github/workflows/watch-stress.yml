@@ -14,21 +14,23 @@ concurrency:
 
 jobs:
   stress:
-    name: Watch stress (${{ matrix.os }})
+    name: Watch stress (${{ matrix.label || matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
-          - macos-15
-          - macos-15-intel
-          - windows-latest
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+          - os: xcode-27
+          - os: xcode-27
+            label: xcode-27-x64
+            architecture: x64
+          - os: windows-latest
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || 'bash' }}
     env:
       FS_SAFE_NATIVE_MODE: require
       FS_SAFE_STRESS_SCALE_DIRECTORIES: "400"
@@ -51,6 +53,7 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
         with:
           node-version: 24
+          architecture: ${{ matrix.architecture }}
 
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
@@ -117,25 +120,30 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: watch-stress-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: watch-stress-${{ matrix.label || matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: watch-stress-results/*.json
           if-no-files-found: error
           retention-days: 14
 
   historical-fold:
-    name: Published watch-fold baseline (${{ matrix.os }})
+    name: Published watch-fold baseline (${{ matrix.label || matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
-          - macos-15
-          - macos-15-intel
-          - windows-latest
-          - windows-2022
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+          - os: xcode-27
+          - os: xcode-27
+            label: xcode-27-x64
+            architecture: x64
+          - os: windows-latest
+          - os: windows-2022
+    defaults:
+      run:
+        shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || (startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash') }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,10 +154,15 @@ jobs:
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
 
+      - uses: ./.github/actions/setup-macos-runtime
+        with:
+          architecture: ${{ matrix.architecture }}
+
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          architecture: ${{ matrix.architecture }}
 
       # This always installs the fixed 0.22.0 reference. Candidate fold proof
       # remains in native-check's guarded-observation tests on every change.

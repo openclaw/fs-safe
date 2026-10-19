@@ -6,7 +6,7 @@ import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { FsSafeError } from "./errors.js";
 import { getFsSafeNativeConfig } from "./native-config.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { assertRootIdentityCurrent, resolvePathInRoot, type RootContext } from "./root-context.js";
+import { createRootObservationGuard, resolvePathInRoot, type RootContext } from "./root-context.js";
 import { assertRootDirectoryObservationGuard, createRootDirectoryObservationGuard, openRootDirectoryListing, type RootDirectoryObservationGuard } from "./root-directory-list.js";
 import { lookupRootDirectoryEntry } from "./root-directory-entry.js";
 import type { WatchObservation } from "./watch-probe.js";
@@ -112,8 +112,7 @@ export async function watchRootCurrent(root: RootContext): Promise<void> {
 }
 /** An unchanged inode alone cannot detect a relocated ancestor above the Root. */
 export async function checkWatchRoot(root: RootContext): Promise<void> {
-  await assertRootIdentityCurrent(root);
-  const guard = await createRootDirectoryObservationGuard(root, root.rootReal);
+  const guard = await createRootObservationGuard(root);
   await assertRootDirectoryObservationGuard(root, guard);
 }
 export async function watchResolve(root: RootContext, name: string, options: Parameters<typeof resolvePathInRoot>[2]) {

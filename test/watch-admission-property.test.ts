@@ -14,12 +14,18 @@ const fakeRoot: RootContext = Object.freeze({ rootDir: "", rootReal: "", rootWit
   rootIdentity: Object.freeze({ dev: 1n, ino: 1n }) });
 beforeEach(() => {
   const original = {
-    assertRoot: rootContext.assertRootIdentityCurrent, resolve: rootContext.resolvePathInRoot,
+    assertRoot: rootContext.assertRootIdentityCurrent, observeRoot: rootContext.createRootObservationGuard,
+    resolve: rootContext.resolvePathInRoot,
     createGuard: listing.createRootDirectoryObservationGuard, assertGuard: listing.assertRootDirectoryObservationGuard,
     lookup: entries.lookupRootDirectoryEntry,
   };
   vi.spyOn(rootContext, "assertRootIdentityCurrent").mockImplementation(async (...args) => {
     if (args[0] !== fakeRoot) await original.assertRoot(...args);
+  });
+  vi.spyOn(rootContext, "createRootObservationGuard").mockImplementation(async context => {
+    if (context !== fakeRoot) return original.observeRoot(context);
+    return { dir: "", realPath: "", identity: fakeRoot.rootIdentity,
+      stat: { dev: 1n, ino: 1n } } as Awaited<ReturnType<typeof rootContext.createRootObservationGuard>>;
   });
   vi.spyOn(rootContext, "resolvePathInRoot").mockImplementation(async (...args) => {
     if (args[0] !== fakeRoot) return original.resolve(...args);

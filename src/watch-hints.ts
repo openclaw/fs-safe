@@ -230,8 +230,10 @@ export async function admittedNativeChanges(
           if (isNotFoundPathError(error) || (error instanceof FsSafeError && ["not-found", "path-alias", "outside-workspace", "symlink", "not-file"].includes(error.code))) break;
           // A yielded admission may race an ordinary sibling deletion. Fresh
           // admission can establish absence; persistent ambiguity still fails.
-          const failedRealpath = (error as NodeJS.ErrnoException | null)?.code === "EBADF" &&
-            (error as NodeJS.ErrnoException).syscall === "realpath";
+          // Windows also reports EPERM while an unrelated directory is delete-pending.
+          const failure = error as NodeJS.ErrnoException | null;
+          const failedRealpath = failure?.syscall === "realpath" &&
+            (failure.code === "EBADF" || failure.code === "EPERM");
           if (attempt < 2 && (failedRealpath || error instanceof FsSafeError && error.code === "path-mismatch")) continue;
           throw error;
         }

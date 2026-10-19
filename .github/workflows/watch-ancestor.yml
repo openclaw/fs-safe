@@ -20,16 +20,21 @@ concurrency:
 
 jobs:
   ancestor:
-    name: Ancestor scopes (${{ matrix.os }})
+    name: Ancestor scopes (${{ matrix.label || matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel, windows-latest]
+        include:
+          - os: xcode-27
+          - os: xcode-27
+            label: xcode-27-x64
+            architecture: x64
+          - os: windows-latest
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || 'bash' }}
     env:
       FS_SAFE_NATIVE_MODE: require
     steps:
@@ -42,14 +47,10 @@ jobs:
           ref: ff0bfa4f74f09a1bf08bd1ed9c1bce83d2fde45d
           path: baseline
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 12.10.1
-          run_install: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup-node-pnpm
         with:
           node-version: 24
-          cache: pnpm
+          architecture: ${{ matrix.architecture }}
       - uses: ./.github/actions/setup-archive-llvm
       - name: Prepare toolchain
         run: rustup target add wasm32-unknown-unknown
@@ -91,6 +92,6 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: ancestor-scopes-${{ matrix.os }}
+          name: ancestor-scopes-${{ matrix.label || matrix.os }}
           path: ancestor-results/*.json
           if-no-files-found: error

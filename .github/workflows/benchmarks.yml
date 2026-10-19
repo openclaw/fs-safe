@@ -166,6 +166,9 @@ jobs:
             echo "runner temp directory is unavailable" >&2
             exit 2
           fi
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            echo 'MACOSX_DEPLOYMENT_TARGET=11.0' >> "$GITHUB_ENV"
+          fi
           printf 'PLAN_PATH=%s/method-audit-plan/method-audit-plan.json\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'EVIDENCE_ROOT=%s/method-audit-evidence\n' "$METHOD_RUNNER_TEMP" >> "$GITHUB_ENV"
           # checkout v7 has no line-ending input; configure Git before checkout.

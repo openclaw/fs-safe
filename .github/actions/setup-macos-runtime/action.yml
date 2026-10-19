@@ -1,0 +1,32 @@
+name: Set up macOS build and execution architecture
+description: Preserve published deployment floors and enable explicit x64 execution
+inputs:
+  architecture:
+    description: Target architecture (defaults to arm64 on macOS)
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Preserve Darwin deployment target and prepare Rosetta
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        TARGET_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        set -euo pipefail
+        case "${TARGET_ARCHITECTURE:-arm64}" in
+          arm64)
+            echo 'MACOSX_DEPLOYMENT_TARGET=11.0' >> "$GITHUB_ENV"
+            ;;
+          x64)
+            if ! arch -x86_64 /usr/bin/true; then
+              sudo softwareupdate --install-rosetta --agree-to-license
+            fi
+            arch -x86_64 /usr/bin/true
+            echo 'MACOSX_DEPLOYMENT_TARGET=10.12' >> "$GITHUB_ENV"
+            echo 'CARGO_BUILD_TARGET=x86_64-apple-darwin' >> "$GITHUB_ENV"
+            echo 'CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER=arch -x86_64' >> "$GITHUB_ENV"
+            rustup target add x86_64-apple-darwin
+            ;;
+          *) echo "Unsupported Darwin architecture: $TARGET_ARCHITECTURE" >&2; exit 1 ;;
+        esac

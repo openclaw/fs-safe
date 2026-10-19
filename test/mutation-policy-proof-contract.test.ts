@@ -442,7 +442,7 @@ describe("mutation policy hosted proof contract", () => {
       ".github/workflows/mutation-policy-proof.yml",
       "utf8",
     )).replace(/\r\n?/gu, "\n");
-    expect(workflow).toContain("os: [ubuntu-latest, macos-15, windows-latest]");
+    expect(workflow).toContain("os: [ubuntu-latest, xcode-27, windows-latest]");
     expect(workflow).toContain("node-version: 24");
     expect(workflow).toContain("ref: ${{ github.event.pull_request.head.sha || github.sha }}");
     expect(workflow).toContain("fetch-depth: 1");
