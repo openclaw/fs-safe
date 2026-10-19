@@ -10,6 +10,7 @@ import { observeArrayShifts } from "./helpers/observe-array-shifts.js";
 const { tempRoot, tempDirs } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 const directoryLink = process.platform === "win32" ? "junction" : "dir";
+const itUnprivilegedPosix = it.skipIf(process.platform === "win32" || process.getuid?.() === 0);
 const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
 
 function resolveAndCountMarkedShifts(input: string, markers: readonly string[]) {
@@ -252,7 +253,7 @@ describe("resolvePathPrefixSync", () => {
       .toThrow(expect.objectContaining({ code: "ENOTDIR" }));
   });
 
-  itPosix.skipIf(process.getuid?.() === 0).each(["/.", "/..", "/../live", "/../future", "//../live", "/./.."])(
+  itUnprivilegedPosix.each(["/.", "/..", "/../live", "/../future", "//../live", "/./.."])(
     "requires directory search permission for raw traversal %s",
     async suffix => {
       const directory = await tempRoot("fs-safe-prefix-denied-traversal-");
@@ -274,7 +275,7 @@ describe("resolvePathPrefixSync", () => {
     },
   );
 
-  itPosix.skipIf(process.getuid?.() === 0).each(["/", "//", "///"])(
+  itUnprivilegedPosix.each(["/", "//", "///"])(
     "keeps the filesystem's trailing-separator behavior for %s",
     async suffix => {
       const directory = await tempRoot("fs-safe-prefix-denied-separator-");
@@ -293,7 +294,7 @@ describe("resolvePathPrefixSync", () => {
     },
   );
 
-  itPosix.skipIf(process.getuid?.() === 0)("permits dot traversal with search-only directory access", async () => {
+  itUnprivilegedPosix("permits dot traversal with search-only directory access", async () => {
     const directory = await tempRoot("fs-safe-prefix-search-only-");
     const searchOnly = path.join(directory, "search");
     const live = path.join(directory, "live");
