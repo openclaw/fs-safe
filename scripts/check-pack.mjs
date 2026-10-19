@@ -12,6 +12,7 @@ import { resolveNpmCli } from "./npm-cli.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
 import { validateArchiveWasm } from "./archive-wasm-build-tools.mjs";
 import { WINDOWS_COMMAND_ASSETS } from "./windows-command-assets.mjs";
+import { assertPackedRuntimeFiles } from "./packed-runtime-files.mjs";
 import {
   assertPublicApi,
   inspectPublicApi,
@@ -91,6 +92,7 @@ try {
   }
 
   const archive = join(workdir, filename);
+  await assertPackedRuntimeFiles(archive);
   writeFileSync(join(workdir, "package.json"), '{"private":true,"type":"module"}\n');
   runNpm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock", archive], {
     cwd: workdir,

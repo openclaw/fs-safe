@@ -135,6 +135,11 @@ Vitest. Tests live in `test/` and follow `*.test.ts`. Run a single file with:
 pnpm test test/archive.test.ts
 ```
 
+`pnpm pack:check` also checks every literal relative runtime import, re-export,
+worker path, and `import.meta.url` asset reference in the packed JavaScript
+against the tarball contents. Release package collection repeats this check;
+files present only in the build directory do not satisfy it.
+
 Guest filesystem tests and package smoke also need `python3` on Linux and
 macOS. They execute the exported source on synthetic files; Windows checks
 the import surface and leaves POSIX execution to the Linux/macOS lanes.
