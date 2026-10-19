@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostNativeTarget, nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
+import { assertPackedRuntimeFiles } from "./packed-runtime-files.mjs";
 import { resolveNpmCli } from "./npm-cli.mjs";
 import { consumerInstallSmoke, isolatedConsumerEnv, resolveConsumerCommands } from "./consumer-install-smoke.mjs";
 import { packageProofSource } from "./consumer-proof-metadata.mjs";
@@ -119,6 +120,7 @@ async function main() {
   }
 
   const rootArtifact = packPackage(process.cwd(), rootPkg.name);
+  await assertPackedRuntimeFiles(join(outputDir, rootArtifact.filename));
   if (signingManifest) await verifyWindowsPackage(signingManifest, rootPkg.name, join(outputDir, rootArtifact.filename));
   const rootPaths = new Set(rootArtifact.files.map((file) => file.path));
   for (const expected of ["dist/index.js", "dist/index.d.ts", "package.json"]) {

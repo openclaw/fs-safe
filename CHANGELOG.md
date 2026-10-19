@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Package completeness:** verify literal relative runtime imports, module-relative worker URLs, and assets against the actual npm tarball during package checks and release collection, catching files omitted by the package allowlist. Thanks @vincentkoc. ([#1008](https://github.com/openclaw/fs-safe/pull/1008))
+
 ### Fixes
 
 - **Watch errors:** consistently report `path-mismatch` if a Root disappears during identity revalidation, without adopting a replacement directory.
