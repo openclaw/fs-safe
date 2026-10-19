@@ -11,13 +11,13 @@ function isImportMetaUrl(node) {
 
 function runtimeReference(node) {
   if (["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration", "ImportExpression"]
-    .includes(node.type)) return { source: node.source, url: true };
+    .includes(node.type)) return { source: node.source, kind: "module" };
   if (node.type === "CallExpression" && node.callee.type === "Identifier" && node.callee.name === "require") {
-    return { source: node.arguments[0], url: false };
+    return { source: node.arguments[0], kind: "require" };
   }
   if (node.type === "NewExpression" && node.callee.type === "Identifier") {
     if (node.callee.name === "URL" && node.arguments[1]
-      && isImportMetaUrl(node.arguments[1])) return { source: node.arguments[0], url: true };
+      && isImportMetaUrl(node.arguments[1])) return { source: node.arguments[0], kind: "url" };
   }
 }
 
@@ -45,12 +45,20 @@ function resolveRequire(target, directoryOnly, paths, manifests) {
 /** Check the bytes in the archive, never a possibly more complete source tree. */
 export async function assertPackedRuntimeFiles(archive) {
   const paths = new Set();
+  const directories = new Set([""]);
   const sources = new Map();
   const manifests = new Map();
   await list({ file: archive, onReadEntry(entry) {
-    if (entry.type !== "File") return;
     const path = entry.path.replace(/^package\//u, "");
+    if (entry.type === "Directory") {
+      directories.add(path.replace(/\/$/u, ""));
+      return;
+    }
+    if (entry.type !== "File") return;
     paths.add(path);
+    for (let parent = posix.dirname(path); parent !== "." && parent !== "/"; parent = posix.dirname(parent)) {
+      directories.add(parent);
+    }
     const javascript = /^dist\/.*\.(?:[cm]?js)$/u.test(path);
     if (!javascript && !/(?:^|\/)package\.json$/u.test(path)) return;
     const chunks = [];
@@ -66,13 +74,20 @@ export async function assertPackedRuntimeFiles(archive) {
     function visit(node) {
       const reference = runtimeReference(node);
       const specifier = literalString(reference?.source);
-      if (specifier && /^\.\.?\//u.test(specifier)) {
+      if (specifier && (reference.kind === "url"
+        ? !/^(?:[\\/]|[a-z][a-z\d+.-]*:)/iu.test(specifier)
+        : /^\.\.?(?:\/|$)/u.test(specifier))) {
         references++;
         // URL references decode filenames and discard queries/fragments; require paths are literal.
-        const target = reference.url
-          ? posix.relative("/__package__", fileURLToPath(new URL(specifier, moduleUrl), { windows: false }))
+        const url = reference.kind !== "require";
+        const resolvedUrl = url ? new URL(specifier, moduleUrl) : undefined;
+        const target = url
+          ? posix.relative("/__package__", fileURLToPath(resolvedUrl, { windows: false }))
           : posix.normalize(posix.join(posix.dirname(path), specifier));
-        const present = reference.url ? paths.has(target)
+        const directoryUrl = resolvedUrl?.pathname.endsWith("/");
+        const present = reference.kind === "url"
+          ? directories.has(target) || (!directoryUrl && paths.has(target))
+          : url ? !directoryUrl && paths.has(target)
           : resolveRequire(target, specifier.endsWith("/") || /(?:^|\/)\.{1,2}$/u.test(specifier), paths, manifests);
         if (!present) missing.add(`${path}: ${specifier} -> ${target}`);
       }
