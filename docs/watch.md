@@ -108,6 +108,11 @@ Linux discards queued events for watches retired by fs-safe, including their
 `IN_IGNORED` echoes, without invalidating unrelated subscriptions. A genuinely
 unknown descriptor or kernel queue overflow still invalidates every subscription.
 
+Windows may briefly report `EPERM` from `realpath` while an unrelated directory
+is being deleted. Hint admission retries that observation at most twice before
+reporting uncertainty; it never ignores persistent failures or relaxes the
+identity checks on selected paths.
+
 `mode` is required. `poll` never starts or loads the watch hub; guarded scans
 may still use the existing addon. Existing `FS_SAFE_NATIVE_MODE=off` and
 `require` policies apply: `require` plus an unavailable event backend rejects

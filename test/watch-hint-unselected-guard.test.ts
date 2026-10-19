@@ -19,7 +19,11 @@ it.each([
   { selected: false, timing: "unstable" },
   { selected: false, timing: "bad-realpath" }, { selected: true, timing: "bad-realpath" },
   { selected: false, timing: "bad-realpath-persistent" }, { selected: false, timing: "bad-lstat" },
-])("fences parent churn ($timing, selected=$selected)", async ({ selected, timing }) => {
+  { selected: false, timing: "bad-realpath", code: "EPERM" },
+  { selected: true, timing: "bad-realpath", code: "EPERM" },
+  { selected: false, timing: "bad-realpath-persistent", code: "EPERM" },
+  { selected: false, timing: "bad-lstat", code: "EPERM" },
+].map(testCase => ({ code: "EBADF", ...testCase })))("fences parent churn ($timing, selected=$selected, code=$code)", async ({ selected, timing, code }) => {
   const directory = await tempRoot("watch-unselected-parent-");
   await fs.mkdir(path.join(directory, "selected"));
   await fs.writeFile(path.join(directory, "selected", "config"), "selected");
@@ -48,7 +52,7 @@ it.each([
         await fs.rm(changedParent, { recursive: true });
       }
       throw decodeWatchError(structuredClone(encodeWatchError(Object.assign(new Error("descriptor race"), {
-        code: "EBADF", syscall: timing === "bad-lstat" ? "lstat" : "realpath",
+        code, syscall: timing === "bad-lstat" ? "lstat" : "realpath",
       }))));
     }
     const guard = await capture(root, name);
@@ -66,7 +70,7 @@ it.each([
     hints: [{ directory: selected ? "selected" : "unrelated", name: "child", event: "rename" }], overflow: false,
   }, signal, 100);
   if (selected || timing === "unstable" || timing === "bad-realpath-persistent" || timing === "bad-lstat") {
-    await expect(observed).rejects.toMatchObject({ code: timing.startsWith("bad-") ? "EBADF" : "path-mismatch" });
+    await expect(observed).rejects.toMatchObject({ code: timing.startsWith("bad-") ? code : "path-mismatch" });
   }
   else await expect(observed).resolves.toEqual([]);
   if (timing === "unstable" || timing === "bad-realpath-persistent" || timing === "bad-lstat") {
