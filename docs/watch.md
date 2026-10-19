@@ -316,6 +316,8 @@ await `close()` or `[Symbol.asyncDispose]()` to join owned work.
 `health()` returns `starting`, `ready`, `reconciling`, `unavailable`, or `closed`,
 the actual mode, observed `directories`, and optional `{ operation, code, error }`
 failure. A running reconciliation reports `reconciling`, then returns to `ready`.
+A Root that disappears during identity revalidation reports `path-mismatch`; its underlying filesystem error remains available as the cause.
+
 Observation becomes `unavailable` on loss of Root authority (removed, replaced,
 or inaccessible), fatal native backend/registration failures such as `watch-limit`,
 deterministic size limits (`too-large`, operation `scan`), or callback contract

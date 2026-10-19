@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- **Watch errors:** consistently report `path-mismatch` if a Root disappears during identity revalidation, without adopting a replacement directory.
+
 - **Windows watch:** avoid spurious overflow notifications when an unrelated directory disappears during path validation, while retaining failures for persistent access errors and selected-path changes.
 
 ## 0.26.8 - 2026-10-18
