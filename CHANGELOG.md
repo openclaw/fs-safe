@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Package completeness:** verify literal relative runtime imports, worker paths, and module-relative assets against the actual npm tarball during package checks and release collection, catching files omitted by the package allowlist. Thanks @vincentkoc. ([#1008](https://github.com/openclaw/fs-safe/pull/1008))
+- **Package completeness:** verify literal relative runtime imports, module-relative worker URLs, and assets against the actual npm tarball during package checks and release collection, catching files omitted by the package allowlist. Thanks @vincentkoc. ([#1008](https://github.com/openclaw/fs-safe/pull/1008))
 
 ### Fixes
 

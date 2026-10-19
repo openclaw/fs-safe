@@ -136,9 +136,12 @@ pnpm test test/archive.test.ts
 ```
 
 `pnpm pack:check` also checks every literal relative runtime import, re-export,
-worker path, and `import.meta.url` asset reference in the packed JavaScript
+module-relative worker URL, and `import.meta.url` asset reference in the packed JavaScript
 against the tarball contents. Release package collection repeats this check;
 files present only in the build directory do not satisfy it.
+URL references use decoded filenames without queries or fragments; `require()`
+paths retain their literal characters. String arguments to `new Worker()` are
+relative to the consumer's working directory and are outside this package-relative check.
 
 Guest filesystem tests and package smoke also need `python3` on Linux and
 macOS. They execute the exported source on synthetic files; Windows checks

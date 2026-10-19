@@ -39,17 +39,69 @@ describe("packed runtime files", () => {
         export * from './export.js';
         await import('./dynamic.js');
         require('../package.json');
-        new Worker('./direct-worker.js');
         new Worker(new URL('./worker.js', import.meta.url));
         new URL('./parser.wasm', import.meta.url);
         import('node:fs'); import('external');
         const ignored = "import './not-code.js'";
         // new URL('./comment.js', import.meta.url)
       `,
-      ...Object.fromEntries(["static.js", "export.js", "dynamic.js", "direct-worker.js", "worker.js", "parser.wasm"]
+      ...Object.fromEntries(["static.js", "export.js", "dynamic.js", "worker.js", "parser.wasm"]
         .map(name => [`dist/${name}`, ""])),
     });
-    await expect(assertPackedRuntimeFiles(archive)).resolves.toEqual({ modules: 6, references: 7 });
+    await expect(assertPackedRuntimeFiles(archive)).resolves.toEqual({ modules: 5, references: 6 });
+  }, 60_000);
+
+  it("resolves URL queries, fragments and escaped names without decoding require paths", async () => {
+    const archive = pack({
+      "dist/index.js": `import './static.js?mode=isolated#part';
+        export * from './export%20file.js';
+        await import('./dynamic%23file.js?version=1');
+        new Worker(new URL('./worker.js#v2', import.meta.url));
+        new URL('./asset%20file.wasm?wasm#v1', import.meta.url);
+        require('./literal%23file.js');
+        require('./literal#file.js');
+      `,
+      ...Object.fromEntries(["static.js", "export file.js", "dynamic#file.js", "worker.js",
+        "asset file.wasm", "literal%23file.js", "literal#file.js"].map(name => [`dist/${name}`, ""])),
+    });
+    await expect(assertPackedRuntimeFiles(archive)).resolves.toEqual({ modules: 7, references: 7 });
+  }, 60_000);
+
+  it("does not treat cwd-relative Worker strings as module-relative references", async () => {
+    const archive = pack({ "dist/index.js": "new Worker('./cwd-worker.js');" });
+    await expect(assertPackedRuntimeFiles(archive)).resolves.toEqual({ modules: 1, references: 0 });
+  }, 60_000);
+
+  it("keeps require percent escapes literal", async () => {
+    const archive = pack({
+      "dist/index.js": "require('./literal%23file.js');",
+      "dist/literal#file.js": "",
+    });
+    await expect(assertPackedRuntimeFiles(archive)).rejects.toThrow(
+      "dist/index.js: ./literal%23file.js -> dist/literal%23file.js",
+    );
+  }, 60_000);
+
+  it("does not resolve an escaping URL back into the package root", async () => {
+    const archive = pack({ "dist/index.js": "import '../../package.json';" });
+    await expect(assertPackedRuntimeFiles(archive)).rejects.toThrow(
+      "dist/index.js: ../../package.json -> ../package.json",
+    );
+  }, 60_000);
+
+  it("encodes the importing module path before resolving its URLs", async () => {
+    const archive = pack({
+      "dist/space # %20/index.js": "import './worker.js';",
+      "dist/space # %20/worker.js": "",
+    });
+    await expect(assertPackedRuntimeFiles(archive)).resolves.toEqual({ modules: 2, references: 1 });
+  }, 60_000);
+
+  it("reports the decoded target of a missing module-relative URL", async () => {
+    const archive = pack({ "dist/index.js": "new URL('./missing%20worker.js?mode=isolated#part', import.meta.url);" });
+    await expect(assertPackedRuntimeFiles(archive)).rejects.toThrow(
+      "dist/index.js: ./missing%20worker.js?mode=isolated#part -> dist/missing worker.js",
+    );
   }, 60_000);
 
   it("rejects a worker omitted by the files allowlist even when it exists in the source tree", async () => {
@@ -68,7 +120,7 @@ describe("packed runtime files", () => {
       reexport: "export { value } from './reexport.js';",
       dynamic: "import(`./dynamic.js`);",
       require: "require('./require.js');",
-      worker: "new Worker('./worker.js');",
+      worker: "new Worker(new URL('./worker.js', import.meta.url));",
       asset: "new URL('./asset.js', import.meta.url);",
     };
     const result = assertPackedRuntimeFiles(pack({ "dist/index.js": Object.values(references).join("\n") }));
