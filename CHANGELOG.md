@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.26.9 - 2026-10-20
 
-- **Package completeness:** verify literal relative runtime imports, module-relative worker URLs, and assets against the actual npm tarball during package checks and release collection, catching files omitted by the package allowlist. Thanks @vincentkoc. ([#1008](https://github.com/openclaw/fs-safe/pull/1008))
+**Highlights:** Recover macOS watchers when FSEvents streams are exhausted, improve watcher error handling, and verify published package completeness.
 
 ### Fixes
 
@@ -11,6 +11,10 @@
 - **Watch errors:** consistently report `path-mismatch` if a Root disappears during identity revalidation, without adopting a replacement directory.
 
 - **Windows watch:** avoid spurious overflow notifications when an unrelated directory disappears during path validation, while retaining failures for persistent access errors and selected-path changes.
+
+### Packaging
+
+- **Package completeness:** verify literal relative runtime imports, module-relative worker URLs, and assets against the actual npm tarball during package checks and release collection, catching files omitted by the package allowlist. Thanks @vincentkoc. ([#1008](https://github.com/openclaw/fs-safe/pull/1008))
 
 ## 0.26.8 - 2026-10-18
 
