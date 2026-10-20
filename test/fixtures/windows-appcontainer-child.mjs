@@ -39,16 +39,31 @@ async function prove(thread) {
   if (operation === 'native-off') {
     assert.equal(getNativeBinding(), undefined);
     const native = fs.realpathSync.native;
-    let original;
+    let original, originalResult, calls = 0;
     fs.realpathSync.native = (...args) => {
-      try { return native(...args); } catch (error) { original = error; throw error; }
+      calls++;
+      try { return originalResult = native(...args); } catch (error) { original = error; throw error; }
     };
     const started = performance.now();
+    let actual, failure;
     try {
-      assert.throws(() => realpathSync.native(here), error =>
-        error === original && error.code === 'EPERM' && error.errno === -4048 && error.syscall === 'realpath');
+      actual = realpathSync.native(here);
+    } catch (error) {
+      failure = error;
     } finally { fs.realpathSync.native = native; }
-    assert(performance.now() - started < 1_000, 'native-off realpath must fail promptly');
+    assert.equal(calls, 1);
+    // Node can resolve this path on newer Windows runners; off mode preserves either outcome.
+    if (original) {
+      assert.equal(failure, original);
+      assert.equal(failure.code, 'EPERM');
+      assert.equal(failure.errno, -4048);
+      assert.equal(failure.syscall, 'realpath');
+    } else {
+      assert.equal(failure, undefined);
+      assert.equal(typeof actual, 'string');
+      assert.equal(actual, originalResult);
+    }
+    assert(performance.now() - started < 1_000, 'native-off realpath must settle promptly');
     return [];
   }
   if (operation === 'deny') {
