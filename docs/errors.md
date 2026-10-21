@@ -250,8 +250,10 @@ supplied directory descriptor), `operation`, and the caller's numeric `flags`.
 Their messages escape control characters in the relative path. These fields
 describe the attempted open; they do not identify the absolute parent or claim
 which syscall the selected backend used. Native file and stage creation
-also attach their known absolute `path` and `syscall: "open"`, including sidecar locks. Existing Root
-write wrappers still use `invalid-path` and retain these diagnostics in `cause`.
+also attach their known absolute `path` and `syscall: "open"`, including sidecar
+locks and copy-backed stages. Existing Root write wrappers still use
+`invalid-path`, and native copy wrappers still use `helper-failed`; both retain
+these diagnostics in `cause`.
 No read-only failure selects a less restrictive fallback or authorizes a retry.
 
 ## Specialty errors

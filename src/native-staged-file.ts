@@ -266,7 +266,7 @@ class NativeStagedFile implements StagedFile {
       if (this.#private) assertDarwinCreationAcl(this.#owner.parentFd, "file");
       // Native copying populates its new file before returning its descriptor.
       const copied = input.kind === "file" && !this.#verifyMode
-        ? await createNativeCopyFile(this.#owner.binding, input, this.#owner.parentFd, this.#owner.name, maxBytes)
+        ? await createNativeCopyFile(this.#owner.binding, input, this.#owner.parentFd, this.#owner.name, maxBytes, path.join(this.#owner.directory.realPath, this.#owner.name))
         : undefined;
       state.fileFd = copied?.fd;
       if (state.fileFd === undefined) {

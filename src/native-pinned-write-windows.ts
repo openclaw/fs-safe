@@ -108,7 +108,7 @@ export async function runPinnedWriteWindows(
     tempName = `.fs-safe-${randomUUID()}.tmp`;
     params.assertBeforeMutation?.();
     const copied = params.input.kind === "file" && !params.private
-      ? await createNativeCopyFile(binding, params.input, parentFd, tempName, params.maxBytes)
+      ? await createNativeCopyFile(binding, params.input, parentFd, tempName, params.maxBytes, path.join(parentPath, tempName))
       : undefined;
     if (params.private) {
       const parentIdentity = fsSync.fstatSync(parentFd, { bigint: true });

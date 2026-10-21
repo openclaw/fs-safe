@@ -89,3 +89,29 @@ it.runIf(native?.createStagedFile)("keeps the Root lock error contract and names
   expect(manager.heldEntries()).toEqual([]);
   expect(await fsp.readdir(directory)).toEqual([]);
 });
+
+it.runIf(native?.copyFileExclusive)("names a read-only native copy stage before wrapping its error", async () => {
+  const directory = await fsp.realpath(await tempRoot("fs-safe-readonly-copy-"));
+  const source = path.join(directory, "source");
+  await fsp.writeFile(source, "source bytes");
+  const failure = Object.assign(new Error("create copy destination: read-only"), { code: "EROFS", errno: 30 });
+  let stagePath: string | undefined;
+  let attempts = 0;
+  __setNativeLoaderForTest(() => ({
+    ...native!,
+    async copyFileExclusive(_sourceFd, _parentFd, name) {
+      attempts++;
+      stagePath = path.join(directory, name);
+      throw failure;
+    },
+  }));
+  configureFsSafeNative({ mode: "require" });
+  const scoped = await root(directory);
+  const caught = await scoped.copyIn("target", source).catch((error: unknown) => error);
+  expect(caught).toMatchObject({ code: "helper-failed", message: "native file copy failed", cause: failure });
+  expect(stagePath).toBeDefined();
+  expect(failure).toMatchObject({ code: "EROFS", errno: 30, path: stagePath, syscall: "open" });
+  expect(attempts).toBe(1);
+  expect(await fsp.readdir(directory)).toEqual(["source"]);
+  expect(await fsp.readFile(source, "utf8")).toBe("source bytes");
+});
