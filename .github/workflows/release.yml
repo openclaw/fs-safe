@@ -208,6 +208,14 @@ jobs:
         if: matrix.label == 'win32-arm64-msvc'
         run: cargo test --workspace --locked --target aarch64-pc-windows-msvc
 
+      - name: Ad-hoc sign Darwin binding
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - artifacts/fs-safe-native.${{ matrix.label }}.node
+
+      - name: Verify Darwin binding signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --strict artifacts/fs-safe-native.${{ matrix.label }}.node
+
       - name: Verify Darwin deployment floor and load binding
         if: runner.os == 'macOS'
         run: arch -${{ matrix.architecture == 'x64' && 'x86_64' || 'arm64' }} node scripts/check-darwin-minos.mjs artifacts/fs-safe-native.${{ matrix.label }}.node ${{ matrix.architecture }}
