@@ -64,7 +64,7 @@ it("preserves an immutable native read-only error", async () => {
   expect(manager.heldEntries()).toEqual([]);
 });
 
-it.runIf(native)("keeps the Root lock error contract and names its failed native stage", async () => {
+it.runIf(native?.createStagedFile)("keeps the Root lock error contract and names its failed native stage", async () => {
   const directory = await fsp.realpath(await tempRoot("fs-safe-readonly-root-lock-"));
   const failure = Object.assign(new Error("create staged child: read-only"), { code: "EROFS" });
   let stagePath: string | undefined;
