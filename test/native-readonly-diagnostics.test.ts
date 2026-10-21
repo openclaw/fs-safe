@@ -19,7 +19,7 @@ afterEach(() => {
 
 it("names a read-only native lock creation without retrying or acquiring ownership", async () => {
   const directory = await tempRoot("fs-safe-readonly-lock-");
-  const target = path.join(directory, "state\nname");
+  const target = path.join(directory, "state\nname\nlock");
   const lockPath = `${target}.lock`;
   const failure = Object.assign(new Error("openat2 beneath root: Read-only file system (os error 30)"), {
     code: "EROFS", errno: 30,
@@ -44,7 +44,7 @@ it("names a read-only native lock creation without retrying or acquiring ownersh
   expect(caught).toBe(failure);
   expect(caught).toMatchObject({
     code: "EROFS", errno: 30, path: lockPath, syscall: "open",
-    message: `EROFS: read-only filesystem, open '${lockPath.replace("\n", "\\u000a")}'`,
+    message: `EROFS: read-only filesystem, open '${lockPath.replaceAll("\n", "\\u000a")}'`,
   });
   expect(attempts).toBe(1);
   expect(manager.heldEntries()).toEqual([]);
