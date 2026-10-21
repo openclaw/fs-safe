@@ -14,6 +14,8 @@
 
 ### Packaging
 
+- **macOS addons:** ad-hoc sign both native architectures and verify their signatures before packaging, so x64 and ARM64 addons consistently pass strict code-signature checks.
+
 - **Package completeness:** verify literal relative runtime imports, module-relative worker URLs, and assets against the actual npm tarball during package checks and release collection, catching files omitted by the package allowlist. Thanks @vincentkoc. ([#1008](https://github.com/openclaw/fs-safe/pull/1008))
 
 ## 0.26.8 - 2026-10-18

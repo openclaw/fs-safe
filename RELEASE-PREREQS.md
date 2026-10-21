@@ -32,6 +32,10 @@ Each published package must have this trusted publisher configured in npm:
 
 Use the existing package and publisher configuration; do not bootstrap or reconfigure it merely to retry a release. Publishing maintainers must have 2FA enabled. Do not add `NPM_TOKEN` or an automation token to GitHub.
 
+## macOS addon signing
+
+Every Darwin addon is ad-hoc signed with `codesign --force --sign -` after the native build, then checked with `codesign --verify --strict` before loading or packaging it. This applies to both architectures in dry runs and tag releases, without changing their deployment targets. These npm libraries do not require Developer ID signing or notarization; consumers that embed them in signed applications, such as Electron apps, apply their own distribution signing policy. No Developer ID credentials are used by this workflow.
+
 ## Windows Authenticode signing (one-time maintainer setup)
 
 Release Windows addons (`win32-x64-msvc` and `win32-arm64-msvc`) and the main
