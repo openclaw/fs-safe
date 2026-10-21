@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants } from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
@@ -50,6 +51,25 @@ async function fixture(bindingOverride?: NativeBinding) {
   Object.defineProperty(process, "platform", { value: "win32" });
   return { ...native, rootPath, source, safe: await root(rootPath) };
 }
+
+it("names a read-only failure at Windows native stage creation", async () => {
+  const f = await fixture();
+  const open = f.calls.openBeneath.getMockImplementation()!;
+  const failure = Object.assign(new Error("native creation: read-only"), { code: "EROFS" });
+  let stagePath: string | undefined;
+  f.calls.openBeneath.mockImplementation(function (parent, name, flags) {
+    if (flags & constants.O_CREAT) {
+      stagePath = path.join(f.rootPath, name);
+      throw failure;
+    }
+    return open.call(f.binding, parent, name, flags);
+  });
+  const caught = await f.safe.create("target", "bytes").catch((error: unknown) => error);
+  expect(caught).toMatchObject({ code: "invalid-path", cause: failure });
+  expect(stagePath).toBeDefined();
+  expect(failure).toMatchObject({ path: stagePath, syscall: "open" });
+  expect(await fs.readdir(f.rootPath)).toEqual([]);
+});
 
 it.each(operations.flatMap(operation => ["one", "one/two"].map(denied => ({ operation, denied }))))(
   "$operation rejects missing $denied before native creation",

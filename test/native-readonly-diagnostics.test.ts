@@ -8,6 +8,7 @@ import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/nat
 import { useRealTempDirs } from "./helpers/vitest.js";
 import { loadTestNative } from "./helpers/native-probe.js";
 import { root } from "../src/root.js";
+import { copyRootFileSync, createRootFileCopyBatchSync } from "../src/copy-root-file-sync.js";
 
 const { tempRoot } = useRealTempDirs();
 const native = loadTestNative("required-env");
@@ -115,3 +116,37 @@ it.runIf(native?.copyFileExclusive)("names a read-only native copy stage before 
   expect(await fsp.readdir(directory)).toEqual(["source"]);
   expect(await fsp.readFile(source, "utf8")).toBe("source bytes");
 });
+
+it.runIf(process.platform !== "win32" && native?.copyFileExclusiveSync && native?.removeStagedFile)
+  .each(["single", "batch"] as const)("names a read-only synchronous native copy destination (%s)", async shape => {
+    const directory = await fsp.realpath(await tempRoot("fs-safe-readonly-sync-copy-"));
+    const source = path.join(directory, "source");
+    const target = path.join(directory, "target");
+    await fsp.writeFile(source, "source bytes");
+    const failure = Object.assign(new Error("create copy destination: read-only"), { code: "EROFS", errno: 30 });
+    let attempts = 0;
+    __setNativeLoaderForTest(() => ({
+      ...native!,
+      copyFileExclusiveSync(_sourceFd, _parentFd, name) {
+        attempts++;
+        expect(name).toBe("target");
+        throw failure;
+      },
+    }));
+    configureFsSafeNative({ mode: "require" });
+    using batch = createRootFileCopyBatchSync();
+    const copy = shape === "single" ? copyRootFileSync : batch.copyFile;
+    let caught: unknown;
+    try {
+      copy({
+        source: { rootPath: directory, absolutePath: source },
+        destination: { rootPath: directory, absolutePath: target },
+      });
+    } catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: "helper-failed", message: "guarded synchronous file copy failed" });
+    expect((caught as Error).cause).toBe(failure);
+    expect(failure).toMatchObject({ code: "EROFS", errno: 30, path: target, syscall: "open" });
+    expect(attempts).toBe(1);
+    expect(await fsp.readdir(directory)).toEqual(["source"]);
+    expect(await fsp.readFile(source, "utf8")).toBe("source bytes");
+  });

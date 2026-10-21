@@ -10,6 +10,7 @@ import { creationAdmissionFromParent, removeRecordedCreationFileSync } from "./c
 import { FsSafeError } from "./errors.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { copyFileDescriptorSync } from "./file-handle-transfer.js";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { captureNativeFdClose, type NativeFileCopyResult } from "./native-binding.js";
 import { getNativeBinding } from "./native.js";
 import { openRootFileSync } from "./root-file.js";
@@ -145,8 +146,13 @@ function copyRootFileWithAdmissionSync(
       parentOpen = true;
       inspectFileIdentitySync(() => fs.fstatSync(parent.fd, { bigint: true }), { dev: BigInt(target.parent.stat.dev), ino: BigInt(target.parent.stat.ino) });
       target.assertCurrent();
-      copied = nativeCopy(opened.fd, parent.fd, path.basename(target.path), clone,
-        maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined);
+      try {
+        copied = nativeCopy(opened.fd, parent.fd, path.basename(target.path), clone,
+          maxBytes !== undefined && Number.isFinite(maxBytes) ? maxBytes : undefined);
+      } catch (error) {
+        annotateReadOnlyOpenError(error, target.path);
+        throw error;
+      }
       targetOwner = ownFileDescriptorSync(copied.fd, closeNative);
     } else {
       if (clone === "always") throw new FsSafeError("unsupported-platform", "synchronous native file cloning is unavailable");
