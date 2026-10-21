@@ -7,6 +7,7 @@ import { captureNativeFdClose, type NativeFileCopyResult } from "./native-bindin
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { transferFileHandle } from "./file-handle-transfer.js";
 import type { CopyMetadata } from "./copy-metadata.js";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 
 export type CopyFileInput = {
   kind: "file";
@@ -57,6 +58,7 @@ export async function createNativeCopyFile(
   parentFd: number,
   basename: string,
   maxBytes: number | undefined,
+  targetPath: string,
 ): Promise<NativeFileCopyResult | undefined> {
   input.signal?.throwIfAborted();
   const copier = selectNativeBinding(native, "copyFileExclusive");
@@ -76,6 +78,7 @@ export async function createNativeCopyFile(
       nativeSignal,
     );
   } catch (error) {
+    annotateReadOnlyOpenError(error, targetPath);
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "Cancelled" || code === "ABORT_ERR") input.signal?.throwIfAborted();
     if (code === "too-large") {

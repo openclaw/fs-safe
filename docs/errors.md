@@ -244,6 +244,19 @@ inspection has its own failure surface. Older fs-safe versions could report
 `EACCES` for the same root/open condition, so consumers spanning versions
 should accept both codes.
 
+Read-only filesystem failures retain `EROFS` on native I/O errors. Native
+`openBeneath` and `openCreateBeneath` failures include `path` (relative to the
+supplied directory descriptor), `operation`, and the caller's numeric `flags`.
+Their messages escape control characters in the relative path. These fields
+describe the attempted open; they do not identify the absolute parent or claim
+which syscall the selected backend used. JavaScript owners of native file
+creation attach their known absolute `path` and `syscall: "open"`, including
+sidecar locks, writable opens, staged writes, and synchronous/asynchronous copies.
+Existing Root write wrappers still use
+`invalid-path`, and native copy wrappers still use `helper-failed`; both retain
+these diagnostics in `cause`.
+No read-only failure selects a less restrictive fallback or authorizes a retry.
+
 ## Specialty errors
 
 A handful of helpers throw their own typed errors instead of `FsSafeError`:

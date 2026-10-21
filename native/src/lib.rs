@@ -24,7 +24,7 @@ pub(crate) use native_failure::NativeError;
 pub(crate) type NativeResult<T> = std::result::Result<T, NativeError>;
 
 pub(crate) fn native_error(code: impl Into<String>, message: impl ToString) -> NativeError {
-    NativeError { status: code.into(), reason: message.to_string(), errno: None }
+    NativeError { status: code.into(), reason: message.to_string(), errno: None, open: None }
 }
 
 pub(crate) fn into_napi<T>(env: napi::Env, result: NativeResult<T>) -> napi::Result<T> {

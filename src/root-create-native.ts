@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { randomUUID } from "node:crypto";
 import fsAsync from "node:fs/promises";
 import path from "node:path";
@@ -378,6 +379,7 @@ export async function tryOpenCreateRootNative(params: Creation & {
       fd = binding.openCreateBeneath!(parent, path.basename(params.target), params.flags, params.mode & 0o7777);
     } catch (error) {
       if (hasNodeErrorCode(error, "EEXIST") && typeof error === "object" && error !== null) nativeCreateCollisions.add(error);
+      annotateReadOnlyOpenError(error, params.target);
       throw error;
     }
     let rawOpen = true;

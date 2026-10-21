@@ -8,6 +8,7 @@ import { createFileHandle } from "./create.js";
 import { hasPreservedCreationArtifacts } from "./creation-boundary.js";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import type { FileIdentityStat } from "./file-identity.js";
 import {
   nativeOpenFlags,
@@ -108,7 +109,7 @@ export async function runPinnedWriteWindows(
     tempName = `.fs-safe-${randomUUID()}.tmp`;
     params.assertBeforeMutation?.();
     const copied = params.input.kind === "file" && !params.private
-      ? await createNativeCopyFile(binding, params.input, parentFd, tempName, params.maxBytes)
+      ? await createNativeCopyFile(binding, params.input, parentFd, tempName, params.maxBytes, path.join(parentPath, tempName))
       : undefined;
     if (params.private) {
       const parentIdentity = fsSync.fstatSync(parentFd, { bigint: true });
@@ -125,13 +126,18 @@ export async function runPinnedWriteWindows(
     } else if (copied) {
       tempFd = copied.fd;
     } else {
-      tempFd = binding.openBeneath(
-        parentFd,
-        tempName,
-        nativeOpenFlags(
-          fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
-        ),
-      ).fd;
+      try {
+        tempFd = binding.openBeneath(
+          parentFd,
+          tempName,
+          nativeOpenFlags(
+            fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL,
+          ),
+        ).fd;
+      } catch (error) {
+        annotateReadOnlyOpenError(error, path.join(parentPath, tempName));
+        throw error;
+      }
     }
     const verificationIdentity = inspectFileIdentitySync(() => fsSync.fstatSync(tempFd!, { bigint: true }));
     tempIdentity = verificationIdentity;
