@@ -34,7 +34,9 @@ Use the existing package and publisher configuration; do not bootstrap or reconf
 
 ## macOS addon signing
 
-Every Darwin addon is ad-hoc signed with `codesign --force --sign -` after the native build, then checked with `codesign --verify --strict` before loading or packaging it. This applies to both architectures in dry runs and tag releases, without changing their deployment targets. These npm libraries do not require Developer ID signing or notarization; consumers that embed them in signed applications, such as Electron apps, apply their own distribution signing policy. No Developer ID credentials are used by this workflow.
+Every Darwin addon must be signed with the OpenClaw Foundation Developer ID Application identity (`FWJYW4S8P8`), a secure timestamp, and hardened runtime, then accepted by Apple notarization before loading or packaging. This applies to both architectures in dry runs and tag releases, without changing their deployment targets. The build imports the certificate into a temporary keychain and removes it and the temporary credentials on exit. Missing credentials, a different signing identity, or failed notarization stops the build; there is no ad-hoc or unsigned fallback.
+
+Configure per-repository secrets `MACOS_SIGNING_P12`, `MACOS_SIGNING_P12_PASSWORD`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_PRIVATE_KEY_P8`. Each Darwin binding artifact includes its accepted submission ID, addon SHA-256, and Apple's notarization log. Strict `codesign` verification checks the Foundation identity, team, runtime flag, and timestamp after notarization. Bare `.node` libraries cannot be stapled; notarization tickets are available online. `spctl` app assessment is not used for these libraries. Applications embedding the libraries still apply their own distribution signing policy.
 
 ## Windows Authenticode signing (one-time maintainer setup)
 
@@ -58,7 +60,7 @@ them as part of a code update. Missing configuration or failed signature
 validation stops the release with a pointer to this section. Setup completion
 does not substitute for signed runtime proof during a real tag release.
 
-### Release dry run (unsigned, no publication)
+### Release dry run (notarized Darwin, unsigned Windows, no publication)
 
 Run the current package version from merged `main` without changing environment
 policies, creating a tag, or publishing:
@@ -67,7 +69,7 @@ policies, creating a tag, or publishing:
 gh workflow run release.yml --repo openclaw/fs-safe --ref main -f dry_run=true
 ```
 
-Dry runs never request `release-signing`, signing credentials, or OIDC access.
+Dry runs sign and notarize Darwin addons using the repository secrets above. They never request the Windows `release-signing` environment, Windows signing credentials, or OIDC access.
 They build every target, compare Ubuntu/Windows helper hashes, and load-test the
 unsigned Windows addons and helper on x64 and ARM64. The final dry-run job
 assembles all bindings and runs unsigned host-package installation smoke tests;
@@ -79,7 +81,7 @@ and Authenticode verification remain exclusive to protected tag releases.
 Every manual dispatch is publication-disabled, even on a release tag.
 `dry_run=false` skips the run; it does not enable publication. Inspect both
 `Load unsigned Windows binaries` jobs and `Assemble unsigned binaries and smoke
-test host packages`. Signing, signed runtime tests, release collection, and all
+test host packages`. Windows signing, signed Windows runtime tests, release collection, and all
 publication jobs must be skipped. No deployment branch exception is needed.
 
 The helper build targets .NET Framework 4.6.2 (`net462`) and includes
