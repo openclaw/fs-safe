@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build, verify and load-test unsigned binaries without signing or publishing
+        description: Build and notarize Darwin addons; test unsigned Windows binaries without publishing
         required: true
         type: boolean
         default: true
@@ -208,13 +208,15 @@ jobs:
         if: matrix.label == 'win32-arm64-msvc'
         run: cargo test --workspace --locked --target aarch64-pc-windows-msvc
 
-      - name: Ad-hoc sign Darwin binding
+      - name: Sign and notarize Darwin binding
         if: runner.os == 'macOS'
-        run: codesign --force --sign - artifacts/fs-safe-native.${{ matrix.label }}.node
-
-      - name: Verify Darwin binding signature
-        if: runner.os == 'macOS'
-        run: codesign --verify --strict artifacts/fs-safe-native.${{ matrix.label }}.node
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+        run: bash scripts/sign-darwin-addon.sh artifacts/fs-safe-native.${{ matrix.label }}.node
 
       - name: Verify Darwin deployment floor and load binding
         if: runner.os == 'macOS'
@@ -231,6 +233,7 @@ jobs:
           path: |
             artifacts/*.node
             artifacts/*.sha256
+            artifacts/*.notarization*.json
           if-no-files-found: error
           retention-days: 1
 
