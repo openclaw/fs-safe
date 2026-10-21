@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Read-only filesystems:** include the failed path in native file, stage, and sidecar creation `EROFS` diagnostics, with operation and flags for beneath opens, while preserving existing error codes. Thanks @eliasbogordos for [openclaw#178322](https://github.com/openclaw/openclaw/issues/178322).
+
 ## 0.26.9 - 2026-10-20
 
 **Highlights:** Recover macOS watchers when FSEvents streams are exhausted, improve watcher error handling, and verify published package completeness.

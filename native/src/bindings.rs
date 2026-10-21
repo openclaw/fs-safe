@@ -280,6 +280,7 @@ pub fn open_beneath(
 ) -> Result<OpenBeneathResult> {
     let result = validate_relative_path(&rel_path, true)
         .and_then(|()| platform::open_beneath(root_fd, &rel_path, flags))
+        .map_err(|error| error.with_open_context(&rel_path, "openBeneath", flags))
         .map(|fd| OpenBeneathResult {
             fd,
             containment: {
@@ -296,7 +297,8 @@ pub fn open_beneath(
 #[napi(js_name = "openCreateBeneath")]
 pub fn open_create_beneath(env: Env, parent_fd: i32, basename: String, flags: i32, mode: u32) -> Result<i32> {
     into_napi(env, validate_child_basename(&basename)
-        .and_then(|()| platform::open_create_beneath(parent_fd, &basename, flags, mode & 0o7777)))
+        .and_then(|()| platform::open_create_beneath(parent_fd, &basename, flags, mode & 0o7777))
+        .map_err(|error| error.with_open_context(&basename, "openCreateBeneath", flags)))
 }
 
 #[napi(js_name = "mkdirBeneath")]

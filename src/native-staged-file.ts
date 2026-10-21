@@ -29,6 +29,7 @@ import { createStagedFileReceipt, stagedFailure } from "./staged-file-settlement
 import { noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-noreplace.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
@@ -271,7 +272,12 @@ class NativeStagedFile implements StagedFile {
       if (state.fileFd === undefined) {
         this.#assertBeforeMutation?.();
         if (this.#private) assertDarwinCreationAcl(this.#owner.parentFd, "file");
-        state.fileFd = this.#owner.binding.createStagedFile(this.#owner.parentFd, this.#owner.name);
+        try {
+          state.fileFd = this.#owner.binding.createStagedFile(this.#owner.parentFd, this.#owner.name);
+        } catch (error) {
+          annotateReadOnlyOpenError(error, path.join(this.#owner.directory.realPath, this.#owner.name));
+          throw error;
+        }
       }
       const fd = state.fileFd;
       if (input.kind === "file") assertNativeCopyCompleted(input, copied);

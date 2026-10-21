@@ -3,6 +3,7 @@ import path from "node:path";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { getNativeBinding, type NativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 
 export type NativeFileHandle = {
   readonly fd: number;
@@ -83,6 +84,7 @@ export async function createNativeExclusiveFile(
       if (process.platform === "win32" && openError.code === "EPERM") {
         openError.path = targetPath;
       }
+      annotateReadOnlyOpenError(error, targetPath);
       throw error;
     }
     fd = opened.fd;

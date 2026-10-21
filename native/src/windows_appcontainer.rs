@@ -33,6 +33,7 @@ pub(crate) fn is_app_container() -> NativeResult<bool> {
     static MEMBERSHIP: OnceLock<NativeResult<bool>> = OnceLock::new();
     MEMBERSHIP.get_or_init(probe).as_ref().copied().map_err(|error| NativeError {
         status: error.status.clone(), reason: error.reason.clone(), errno: error.errno,
+        open: error.open.clone(),
     })
 }
 
