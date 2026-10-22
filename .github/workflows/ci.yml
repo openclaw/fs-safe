@@ -981,7 +981,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Cache Rust build dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # LLVM setup exports temporary paths; key its pinned toolchain source instead.
           key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
@@ -1073,7 +1073,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Cache Rust build dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # LLVM setup exports temporary paths; key its pinned toolchain source instead.
           key: ${{ matrix.label || matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
@@ -1586,7 +1586,7 @@ jobs:
         run: rustup target add ${{ matrix.target }} wasm32-unknown-unknown
 
       - name: Cache cargo-zigbuild
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}-cargo-zigbuild-0.23.4
           cache-targets: "false"
@@ -1685,7 +1685,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Cache Cargo and cargo-audit
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: cargo-audit-0.22.2
 
@@ -1729,7 +1729,7 @@ jobs:
           rustup override set stable-${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}-pc-windows-msvc
 
       - name: Cache Rust build dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # The ARM64 host runs separate native and emulated Rust toolchains.
           # Restore before LLVM exports temporary compiler paths into the environment.
@@ -1833,7 +1833,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Cache Rust build dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # LLVM setup exports temporary paths; key its pinned toolchain source instead.
           key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
