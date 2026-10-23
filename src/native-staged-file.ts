@@ -299,10 +299,7 @@ class NativeStagedFile implements StagedFile {
       if (!copied) await writePinnedInput(fd, input, maxBytes, assertBeforeMutation);
       if (input.kind === "file") restoreCopyMetadata(fd, input.metadata);
       if (this.#verifyMode) this.#assertStagePermissions(fd);
-      if (this.#owner.sync !== false) {
-        if (this.#owner.strictFileSync) await syncFile(fd);
-        else await syncFileBestEffort(fd);
-      }
+      if (this.#owner.sync !== false) await (this.#owner.strictFileSync ? syncFile(fd) : syncFileBestEffort(fd));
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = createStagedFileReceipt(this.#owner.directory, this.#owner.name, stat);
       this.#assertCurrent();
@@ -322,7 +319,6 @@ class NativeStagedFile implements StagedFile {
     }
   }
 
-  // Name mutations remain synchronous; cleanup joins any publication durability wait.
   async assertCurrent(): Promise<void> {
     this.#assertCurrent();
   }
@@ -395,13 +391,10 @@ class NativeStagedFile implements StagedFile {
     // Content was synced during preparation. A lost chmod leaves 0600, no wider
     // than modes retaining owner rw; restrictive modes still need a durable correction.
     this.#publicationFlush = Promise.resolve().then(async () => {
-      if (this.#owner.sync !== false) {
-        if ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0) {
-          if (this.#owner.strictFileSync) await syncFile(fd);
-          else await syncFileBestEffort(fd);
-        }
-        await syncFileBestEffort(this.#owner.parentFd);
+      if (this.#owner.sync !== false && ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0)) {
+        await (this.#owner.strictFileSync ? syncFile(fd) : syncFileBestEffort(fd));
       }
+      if (this.#owner.sync !== false) await syncFileBestEffort(this.#owner.parentFd);
       this.#assertNamed(basename, this.#owner.mode);
       this.#assertDirectory();
       return receipt;
