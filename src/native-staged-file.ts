@@ -134,8 +134,7 @@ class NativeStagedFile implements StagedFile {
     fallback: (input: PinnedWriteInput) => Promise<FileIdentityStat>,
   ): Promise<FileIdentityStat> {
     const exclusive = params.overwrite === false && params.input.kind === "buffer" && params.input.stageBeforePublish === false;
-    // This owner never escapes. Only the internal verifier borrows its fd;
-    // publication retains its descriptors until asynchronous durability settles.
+    // This owner never escapes; only the internal verifier borrows its fd.
     await using staged = await NativeStagedFile.create({
       binding, parentFd, closeParentFd, directory, mode: params.mode, sync: params.sync,
       // Public staging uses portable names; existing POSIX writes accept literal names.
@@ -152,9 +151,10 @@ class NativeStagedFile implements StagedFile {
     }
     let published: PublishedFileReceipt;
     try {
-      published = exclusive
-        ? await staged.#completePublication(params.basename, false, params.onPublished)
-        : await staged.publish(params.basename, { overwrite: params.overwrite !== false }, params.onPublished);
+      const publication = exclusive
+        ? staged.#completePublication(params.basename, false, params.onPublished)
+        : staged.publish(params.basename, { overwrite: params.overwrite !== false }, params.onPublished);
+      published = publication instanceof Promise ? await publication : publication;
     } catch (error) {
       if (!staged.#unsupportedNoReplace || isFsSafeNativeRequired() ||
         (params.input.kind === "file" && params.input.clone === "always")) throw error;
@@ -305,15 +305,10 @@ class NativeStagedFile implements StagedFile {
       this.#assertCurrent();
     } catch (error) {
       const { receipt: cleanup, error: cleanupError } = this.#finalize();
-      if (cleanupError) {
-        throw stagedFailure(
-          "file",
-          new AggregateError([error, cleanupError], "preparation and cleanup failed"),
-          { phase: "prepare", publication: cleanup.publication, cleanup },
-        );
-      }
-      if (cleanup.status === "preserved") {
-        throw stagedFailure("file", error, { phase: "prepare", publication: cleanup.publication, cleanup });
+      if (cleanupError || cleanup.status === "preserved") {
+        throw stagedFailure("file", cleanupError
+          ? new AggregateError([error, cleanupError], "preparation and cleanup failed") : error,
+        { phase: "prepare", publication: cleanup.publication, cleanup });
       }
       throw error;
     }
@@ -366,7 +361,8 @@ class NativeStagedFile implements StagedFile {
         }
         throw error;
       }
-      return await this.#completePublication(basename, overwrite, onPublished);
+      const publication = this.#completePublication(basename, overwrite, onPublished);
+      return publication instanceof Promise ? await publication : publication;
     } catch (error) {
       if (isMutationAuthorityError(error)) throw error;
       // Closure rejects further use, not the recorded outcome of an earlier publication.
@@ -377,7 +373,7 @@ class NativeStagedFile implements StagedFile {
     }
   }
 
-  #completePublication(basename: string, overwrite: boolean, onPublished?: PinnedWriteParams["onPublished"]): Promise<PublishedFileReceipt> {
+  #completePublication(basename: string, overwrite: boolean, onPublished?: PinnedWriteParams["onPublished"]): PublishedFileReceipt | Promise<PublishedFileReceipt> {
     // Record complete content before fallible post-publication verification.
     const receipt: PublishedFileReceipt = Object.freeze({ status: "published", staged: this.receipt, basename, overwrite });
     this.#open().publication = receipt;
@@ -390,14 +386,18 @@ class NativeStagedFile implements StagedFile {
     if (this.#owner.mode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#owner.mode);
     // Content was synced during preparation. A lost chmod leaves 0600, no wider
     // than modes retaining owner rw; restrictive modes still need a durable correction.
-    this.#publicationFlush = Promise.resolve().then(async () => {
-      if (this.#owner.sync !== false && ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0)) {
-        await (this.#owner.strictFileSync ? syncFile(fd) : syncFileBestEffort(fd));
-      }
-      if (this.#owner.sync !== false) await syncFileBestEffort(this.#owner.parentFd);
+    const verify = () => {
       this.#assertNamed(basename, this.#owner.mode);
       this.#assertDirectory();
       return receipt;
+    };
+    if (this.#owner.sync === false) return verify();
+    this.#publicationFlush = Promise.resolve().then(async () => {
+      if ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0) {
+        await (this.#owner.strictFileSync ? syncFile(fd) : syncFileBestEffort(fd));
+      }
+      await syncFileBestEffort(this.#owner.parentFd);
+      return verify();
     }).finally(() => { this.#publicationFlush = undefined; });
     return this.#publicationFlush;
   }
