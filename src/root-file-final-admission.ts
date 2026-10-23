@@ -50,9 +50,9 @@ export function observeCanonicalRoot(
     const stat = inspectCanonicalRoot(ioFs, rootPath);
     const identity = Object.freeze({ dev: stat.dev, ino: stat.ino });
     let observedPath = rootPath;
-    if (process.platform === "win32" && ioFs === fs) {
-      // Native leaf resolution expands Windows short names. Bind that root
-      // spelling before traversal without replacing the observed identity.
+    if (ioFs === fs) {
+      // Match native leaf resolution (including case and Windows short names)
+      // without replacing the already observed root identity.
       observedPath = realpathSync.native(pathForWindowsFilesystem(rootPath));
       if (observedPath !== rootPath) inspectCanonicalRoot(ioFs, observedPath, identity);
     }
