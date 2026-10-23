@@ -1,7 +1,7 @@
 import type { DirectoryReceipt } from "./directory-durability.js";
 import { assertDarwinCreationAcl, assertPrivateCreationFile } from "./creation-boundary.js";
 import { requireNativeBinding } from "./native.js";
-import { syncFileBestEffortSync } from "./file-sync.js";
+import { syncFile, syncFileBestEffort } from "./file-sync.js";
 import { randomUUID } from "node:crypto";
 import fs, { type BigIntStats, type Stats } from "node:fs";
 import path from "node:path";
@@ -86,6 +86,7 @@ class NativeStagedFile implements StagedFile {
   readonly #verifyMode: boolean;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
+  #publicationFlush?: Promise<PublishedFileReceipt>;
   #rejectFinalSymlink = false;
   #unsupportedNoReplace?: FsSafeError;
   #fallbackCleanup?: StagedFileCleanupReceipt["status"];
@@ -134,7 +135,7 @@ class NativeStagedFile implements StagedFile {
   ): Promise<FileIdentityStat> {
     const exclusive = params.overwrite === false && params.input.kind === "buffer" && params.input.stageBeforePublish === false;
     // This owner never escapes. Only the internal verifier borrows its fd;
-    // public descriptor methods remain await-free and cannot race disposal.
+    // publication retains its descriptors until asynchronous durability settles.
     await using staged = await NativeStagedFile.create({
       binding, parentFd, closeParentFd, directory, mode: params.mode, sync: params.sync,
       // Public staging uses portable names; existing POSIX writes accept literal names.
@@ -152,7 +153,7 @@ class NativeStagedFile implements StagedFile {
     let published: PublishedFileReceipt;
     try {
       published = exclusive
-        ? staged.#completePublication(params.basename, false, params.onPublished)
+        ? await staged.#completePublication(params.basename, false, params.onPublished)
         : await staged.publish(params.basename, { overwrite: params.overwrite !== false }, params.onPublished);
     } catch (error) {
       if (!staged.#unsupportedNoReplace || isFsSafeNativeRequired() ||
@@ -299,8 +300,8 @@ class NativeStagedFile implements StagedFile {
       if (input.kind === "file") restoreCopyMetadata(fd, input.metadata);
       if (this.#verifyMode) this.#assertStagePermissions(fd);
       if (this.#owner.sync !== false) {
-        if (this.#owner.strictFileSync) fs.fsyncSync(fd);
-        else syncFileBestEffortSync(fd);
+        if (this.#owner.strictFileSync) await syncFile(fd);
+        else await syncFileBestEffort(fd);
       }
       const stat = fs.fstatSync(fd, { bigint: true });
       this.#receipt = createStagedFileReceipt(this.#owner.directory, this.#owner.name, stat);
@@ -321,8 +322,7 @@ class NativeStagedFile implements StagedFile {
     }
   }
 
-  // Keep public descriptor work await-free: each call completes its mutations
-  // before the next invocation, including closure and cached cleanup failures.
+  // Name mutations remain synchronous; cleanup joins any publication durability wait.
   async assertCurrent(): Promise<void> {
     this.#assertCurrent();
   }
@@ -370,7 +370,7 @@ class NativeStagedFile implements StagedFile {
         }
         throw error;
       }
-      return this.#completePublication(basename, overwrite, onPublished);
+      return await this.#completePublication(basename, overwrite, onPublished);
     } catch (error) {
       if (isMutationAuthorityError(error)) throw error;
       // Closure rejects further use, not the recorded outcome of an earlier publication.
@@ -381,7 +381,7 @@ class NativeStagedFile implements StagedFile {
     }
   }
 
-  #completePublication(basename: string, overwrite: boolean, onPublished?: PinnedWriteParams["onPublished"]): PublishedFileReceipt {
+  #completePublication(basename: string, overwrite: boolean, onPublished?: PinnedWriteParams["onPublished"]): Promise<PublishedFileReceipt> {
     // Record complete content before fallible post-publication verification.
     const receipt: PublishedFileReceipt = Object.freeze({ status: "published", staged: this.receipt, basename, overwrite });
     this.#open().publication = receipt;
@@ -394,14 +394,19 @@ class NativeStagedFile implements StagedFile {
     if (this.#owner.mode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#owner.mode);
     // Content was synced during preparation. A lost chmod leaves 0600, no wider
     // than modes retaining owner rw; restrictive modes still need a durable correction.
-    if (this.#owner.sync !== false && ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0)) {
-      if (this.#owner.strictFileSync) fs.fsyncSync(fd);
-      else syncFileBestEffortSync(fd);
-    }
-    if (this.#owner.sync !== false) syncFileBestEffortSync(this.#owner.parentFd);
-    this.#assertNamed(basename, this.#owner.mode);
-    this.#assertDirectory();
-    return receipt;
+    this.#publicationFlush = Promise.resolve().then(async () => {
+      if (this.#owner.sync !== false) {
+        if ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0) {
+          if (this.#owner.strictFileSync) await syncFile(fd);
+          else await syncFileBestEffort(fd);
+        }
+        await syncFileBestEffort(this.#owner.parentFd);
+      }
+      this.#assertNamed(basename, this.#owner.mode);
+      this.#assertDirectory();
+      return receipt;
+    }).finally(() => { this.#publicationFlush = undefined; });
+    return this.#publicationFlush;
   }
 
   #finalize(): Extract<State, { status: "closed" }> {
@@ -457,6 +462,8 @@ class NativeStagedFile implements StagedFile {
   }
 
   async cleanup(): Promise<StagedFileCleanupReceipt> {
+    // Native descriptors cannot close or be recycled while libuv is synchronizing them.
+    if (this.#publicationFlush) await this.#publicationFlush.catch(() => {});
     const closed = this.#finalize();
     if (closed.error) {
       throw closed.error;
