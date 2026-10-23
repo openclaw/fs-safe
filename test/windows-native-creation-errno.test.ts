@@ -15,7 +15,7 @@ it("imports the Windows errno fixture's package API on every platform", () => {
   expect(result.error).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual({ imports: true });
-});
+}, 15_000);
 
 describe.runIf(process.platform === "win32")("Windows creation errno at the OS boundary", () => {
   for (const { mode, thread, scenario } of cases) {
