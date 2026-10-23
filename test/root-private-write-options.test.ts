@@ -38,6 +38,11 @@ function denyFileSync(failure: Error) {
     if (fsSync.fstatSync(fd).isFile()) throw failure;
     sync(fd);
   });
+  const syncDescriptor = fsSync.fsync;
+  vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+    if (fsSync.fstatSync(fd).isFile()) { callback(failure); return; }
+    syncDescriptor(fd, callback);
+  });
   const open = fs.open.bind(fs);
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await open(...args);

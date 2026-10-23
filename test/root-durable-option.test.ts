@@ -35,12 +35,17 @@ async function observeSyncs(directory: string) {
     record(this.fd);
     await asyncSync.call(this);
   });
-  // Native writers share this sync helper's fs.fsyncSync path.
+  // Windows native writes retain the synchronous descriptor path.
   const syncSpy = vi.spyOn(fsSync, "fsyncSync").mockImplementation((fd) => {
     record(fd);
     syncSync(fd);
   });
-  return { events, asyncSpy, syncSpy };
+  const syncDescriptor = fsSync.fsync;
+  const descriptorSpy = vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+    record(fd);
+    syncDescriptor(fd, callback);
+  });
+  return { events, asyncSpy, syncSpy, descriptorSpy };
 }
 
 const policies: { name: string; rootDefault?: boolean; options?: RootWriteOptions; sync: boolean }[] = [
@@ -65,7 +70,7 @@ for (const backend of ["auto", "off"] as const) {
           expect(safe.defaults.durable).toBe(rootDefault);
           const source = path.join(await tempRoot("fs-safe-copy-source-"), "source");
           if (method === "copyIn") await fs.writeFile(source, "payload");
-          const { events, asyncSpy, syncSpy } = await observeSyncs(directory);
+          const { events, asyncSpy, syncSpy, descriptorSpy } = await observeSyncs(directory);
           const isJson = method === "writeJson" || method === "createJson";
           if (isJson) {
             await safe[method]("target", { value: "payload" }, { ...options, mode });
@@ -77,13 +82,15 @@ for (const backend of ["auto", "off"] as const) {
           if (!sync) {
             expect(asyncSpy).not.toHaveBeenCalled();
             expect(syncSpy).not.toHaveBeenCalled();
+            expect(descriptorSpy).not.toHaveBeenCalled();
           } else if (process.platform === "win32") {
             // Windows directory sync may be unavailable; the file sync is observable.
             expect(events).toContain("file");
           } else {
             expect(events).toEqual(backend === "auto" && method !== "append" && mode === 0o400
               ? ["file", "file", "parent"] : ["file", "parent"]);
-            expect(backend === "auto" && method !== "append" ? syncSpy : asyncSpy).toHaveBeenCalled();
+            expect(backend === "auto" && method !== "append" ? descriptorSpy : asyncSpy).toHaveBeenCalled();
+            expect(syncSpy).not.toHaveBeenCalled();
           }
           const target = path.join(directory, "target");
           if (process.platform !== "win32") {

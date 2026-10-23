@@ -38,10 +38,15 @@ async function observeSyncs(directory: string) {
     record(this.fd);
     await asyncSync.call(this);
   });
-  // The native pinned writer also synchronizes through this Node helper.
+  // Synchronous stores and Windows native writes use this descriptor path.
   vi.spyOn(fsSync, "fsyncSync").mockImplementation((fd) => {
     record(fd);
     syncSync(fd);
+  });
+  const syncDescriptor = fsSync.fsync;
+  vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+    record(fd);
+    syncDescriptor(fd, callback);
   });
   return events;
 }
