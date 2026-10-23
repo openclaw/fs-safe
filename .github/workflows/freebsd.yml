@@ -118,7 +118,7 @@ jobs:
           set -eu
           export FS_SAFE_EXPECTED_SOURCE_COMMIT='${{ github.event.pull_request.head.sha || github.sha }}'
           export FS_SAFE_FREEBSD_TARGET='${{ matrix.label }}'
-          npm install --global pnpm@12.10.1 --ignore-scripts
+          npm install --global pnpm@12.15.0 --ignore-scripts
           pnpm --version
           pnpm install --frozen-lockfile
           pnpm package:smoke
