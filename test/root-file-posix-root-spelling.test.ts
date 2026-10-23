@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRootFileFinalAdmission, observeCanonicalRoot } from "../src/root-file-final-admission.js";
+import { safeRealpathSync } from "../src/path.js";
 import { openRootFile, openRootFileSync } from "../src/root-file.js";
 import { realpathSync } from "../src/realpath.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
@@ -72,6 +73,24 @@ it.runIf(process.platform === "darwin").for(
   } finally {
     fsSync.closeSync(opened.fd);
   }
+});
+
+it.runIf(process.platform === "darwin")("resolves a mixed-case APFS path to the spelling guarded opens return", async context => {
+  const container = await tempRoot("fs-safe-case-realpath-");
+  const physical = path.join(container, "Clawd");
+  const configured = path.join(container, "clawd");
+  await fs.mkdir(physical);
+  if (!fsSync.existsSync(configured)) context.skip();
+  await fs.writeFile(path.join(physical, "SKILL.md"), "inside");
+  const opened = openRootFileSync({
+    rootPath: configured, absolutePath: path.join(configured, "SKILL.md"), boundaryLabel: "skill root",
+  });
+  expect(opened.ok).toBe(true);
+  if (!opened.ok) throw opened.error;
+  fsSync.closeSync(opened.fd);
+
+  expect(safeRealpathSync(configured)).toBe(opened.rootRealPath);
+  expect(safeRealpathSync(path.join(configured, "SKILL.md"))).toBe(opened.path);
 });
 
 itPosix("keeps differently cased directories distinct on a case-sensitive filesystem", async context => {
