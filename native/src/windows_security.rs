@@ -730,6 +730,28 @@ mod windows {
         })
     }
 
+    fn is_volume_root_path(path: &[u16], inspected: HANDLE) -> bool {
+        if !is_volume_root_handle(inspected) {
+            return false;
+        }
+        let verified = (|| -> NativeResult<bool> {
+            // ACL reporting follows links for compatibility, but a replaceable
+            // mount/junction entry must never inherit its target's root status.
+            let named = open_existing_handle(
+                path,
+                FILE_READ_ATTRIBUTES,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                |code| win_error(code, "open volume root entry"),
+            )?;
+            let attributes = handle_attributes(named.0)?;
+            Ok(attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+                && handle_file_identity(named.0)? == handle_file_identity(inspected)?
+                && is_volume_root_handle(named.0))
+        })();
+        verified.unwrap_or(false)
+    }
+
     fn is_local_handle_with_queries<VolumeGuidQuery, NormalizedDosQuery>(
         handle: HANDLE,
         volume_guid_query: VolumeGuidQuery,
@@ -913,7 +935,7 @@ mod windows {
                     fallback_required: !local,
                     dacl_present: !dacl.is_null(),
                     is_local: local,
-                    is_volume_root: local && is_volume_root_handle(handle),
+                    is_volume_root: false,
                     ace_list_complete: true,
                     unsupported_ace_types: Vec::new(),
                     aces: Vec::new(),
@@ -1007,7 +1029,9 @@ mod windows {
         // The pathname API preserves its historical structured fallback when
         // locality cannot be established. Secure reads use the stricter fd API.
         let local = is_local_handle(handle.0).unwrap_or(false);
-        security_facts(handle.0, local)
+        let mut facts = security_facts(handle.0, local)?;
+        facts.is_volume_root = local && is_volume_root_path(&path, handle.0);
+        Ok(facts)
     }
 
     fn verify_private_directory_association<FinalLocality>(

@@ -125,6 +125,17 @@ public static partial class FsSafeWindowsBridge {
       return path.Length==49 && IsVolumeGuidPath(path);
     } catch(Failure) { return false; }
   }
+  static bool IsVolumeRootPath(string path, SafeFileHandle inspected) {
+    if(!IsVolumeRoot(inspected)) return false;
+    try {
+      // Preserve link-following ACL reporting but verify the namespace entry.
+      using(var named=Open(path,0x80,true)) {
+        var info=Information(named);
+        return (info.Attributes&0x400)==0 && (info.Attributes&0x10)!=0 &&
+          FullIdentity(named)==FullIdentity(inspected) && IsVolumeRoot(named);
+      }
+    } catch(Failure) { return false; }
+  }
   static bool IsLocalFinalPath(string path) {
     return !path.StartsWith(@"\\?\UNC\",StringComparison.Ordinal) &&
       (!path.StartsWith(@"\\",StringComparison.Ordinal) || path.StartsWith(@"\\?\",StringComparison.Ordinal));
@@ -213,7 +224,7 @@ public static partial class FsSafeWindowsBridge {
       return Row("ownerSid",ownerSid,"currentUserSid",currentSid,"daclPresent",raw.DiscretionaryAcl!=null,
         "currentAppContainerSid",current.AppContainer==null ? null : Sid(current.AppContainer),
         "daclProtected",(raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0,
-        "isLocal",isLocal,"isVolumeRoot",isLocal && IsVolumeRoot(handle),"aceListComplete",unsupported.Count==0,"unsupportedAceTypes",unsupported.ToArray(),"aces",aces.ToArray());
+        "isLocal",isLocal,"isVolumeRoot",false,"aceListComplete",unsupported.Count==0,"unsupportedAceTypes",unsupported.ToArray(),"aces",aces.ToArray());
     } finally { if(descriptor!=IntPtr.Zero) LocalFree(descriptor); }
   }
   static byte[] PrivateSecurity(bool inherit=true) {
@@ -367,7 +378,11 @@ public static partial class FsSafeWindowsBridge {
   }
   static object InspectPath(string path) {
     // Raw reporting retains ACL facts when locality is unknown; admission remains strict.
-    using(var handle=Open(path,0x00020080,false)) return Security(handle,false);
+    using(var handle=Open(path,0x00020080,false)) {
+      var facts=Security(handle,false);
+      facts["isVolumeRoot"]=(bool)facts["isLocal"] && IsVolumeRootPath(path,handle);
+      return facts;
+    }
   }
   public static object Execute(string operation,string path) {
     try {

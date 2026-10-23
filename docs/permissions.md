@@ -220,15 +220,18 @@ retains the raw byte and decoded
 lowercase Windows SID notation. `daclPresent: false` represents a null DACL,
 which grants unrestricted access; it must not be mistaken for an empty DACL.
 
-The optional `isVolumeRoot` fact is true only when Windows resolves that same
-opened handle to an exact normalized local volume GUID root. This recognizes
-volume roots independently of drive letters and mounted-folder spellings;
-ordinary directories, including drive aliases pointing at a subdirectory, are
-false. Failed normalization and remote/UNC paths are false. Older native
-helpers omit the fact, so consumers must require `isVolumeRoot === true` before
-using it. This metadata does not relax reparse-point or ACL admission policy:
-consumers still decide which rights are acceptable, and all ACE masks are
-returned unchanged.
+The optional `isVolumeRoot` fact is true only when Windows resolves the inspected
+handle to an exact normalized local volume GUID root and a second no-follow
+handle proves the named directory is the same object without a reparse point.
+This distinguishes the volume-root object from a replaceable mounted-folder or
+junction entry pointing at it. Those reparse entries remain false; inspect a
+canonical non-reparse volume-root path to obtain a positive result. Ordinary
+directories, drive aliases pointing at a subdirectory, failed identity or
+normalization queries, and remote/UNC paths are also false. Older native helpers
+omit the fact, so consumers must require `isVolumeRoot === true` before using it.
+This metadata does not relax reparse-point or ACL admission policy: consumers
+still decide which rights are acceptable, and all ACE masks are returned
+unchanged.
 
 Object-specific and other ACE layouts are not guessed: they are omitted,
 `complete` becomes false, and their numeric types appear in

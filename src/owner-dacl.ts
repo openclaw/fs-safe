@@ -31,7 +31,7 @@ export type OwnerAndDaclResult =
       currentUserSid: string;
       daclPresent: boolean;
       isLocal: boolean;
-      /** Verified local volume root; omitted by older native helpers. */
+      /** Verified local volume root with a matching non-reparse entry; omitted by older helpers. */
       isVolumeRoot?: boolean;
       complete: boolean;
       unsupportedAceTypes: number[];
