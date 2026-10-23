@@ -34,6 +34,23 @@ describe("release signing isolation", () => {
     expect(job("sign-windows")).not.toContain("continue-on-error");
   });
 
+  it("sets up the pinned SDK before Windows signing and helper builds", () => {
+    for (const [name, consumer] of [
+      ["sign-windows", "uses: azure/artifact-signing-action@"],
+      ["prebuild-helper", "run: pnpm build:windows-helper"],
+      ["test-signed-windows", "run: pnpm build"],
+      ["test-unsigned-windows", "run: pnpm build"],
+    ]) {
+      const steps = job(name);
+      const setup = steps.indexOf("uses: ./.github/actions/setup-windows-helper");
+      expect(setup, name).toBeGreaterThan(steps.indexOf("uses: actions/checkout@"));
+      expect(setup, name).toBeLessThan(steps.indexOf(consumer));
+    }
+    const setup = readFileSync(".github/actions/setup-windows-helper/action.yml", "utf8");
+    expect(setup).toMatch(/uses: actions\/setup-dotnet@[a-f0-9]{40}/);
+    expect(setup).toContain("global-json-file: ${{ steps.sdk.outputs.sdk_file }}");
+  });
+
   it("runs unsigned dry-run proof without signing credentials or release artifacts", () => {
     for (const name of ["test-unsigned-windows", "collect-dry-run"]) {
       const dryRun = job(name);
