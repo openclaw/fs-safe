@@ -256,11 +256,12 @@ describe("synchronous copy admission budgets", () => {
         copied.close();
         const detail = `${nested ? "nested" : "direct"} ${batched ? "batch" : "single"}: ${JSON.stringify([...counts])}`;
         const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
-        // Windows exclusive creation adds two leaf checks and one canonical check.
+        // POSIX now binds the source root's native spelling too. Windows already
+        // did so; its exclusive creation adds two leaf checks and one canonical check.
         const windows = process.platform === "win32";
         const totalBudget = nested ? (batched ? 122 : 149) : (batched ? 101 : 122);
         const lstatBudget = nested ? (batched ? 61 : 75) : (batched ? 50 : 60);
-        expect.soft(total, detail).toBe(totalBudget + (windows ? 3 : 0));
+        expect.soft(total, detail).toBe(totalBudget + (windows ? 3 : 1));
         expect.soft(counts.get("s.lstatSync"), detail).toBe(lstatBudget + (windows ? 2 : 0));
         expect.soft([...counts].filter(([key]) => key.startsWith("p.")), detail).toEqual([]);
       }

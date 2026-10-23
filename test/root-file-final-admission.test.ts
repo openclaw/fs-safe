@@ -213,9 +213,7 @@ it("uses the native realpath wrapper for the built-in adapter's final check", as
   expect(opened.ok).toBe(true);
   if (!opened.ok) throw opened.error;
   fsSync.closeSync(opened.fd);
-  expect(observed.mock.calls.map(([candidate]) => candidate)).toEqual(
-    process.platform === "win32" ? [boundary, target] : [target],
-  );
+  expect(observed.mock.calls.map(([candidate]) => candidate)).toEqual([boundary, target]);
 });
 
 it.each(["async", "sync"] as const)(
