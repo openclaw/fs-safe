@@ -38,7 +38,7 @@ verify_identity() {
   printf '%s\n' "$details"
   printf '%s\n' "$details" | grep -Fx "Authority=$identity"
   printf '%s\n' "$details" | grep -Fx "TeamIdentifier=$team"
-  printf '%s\n' "$details" | grep -Eq '^CodeDirectory .*flags=.*\(.*runtime.*\)'
+  printf '%s\n' "$details" | grep -E '^CodeDirectory .*flags=.*\(.*runtime.*\)' >/dev/null
   printf '%s\n' "$details" | grep -E '^Timestamp='
 }
 verify_identity

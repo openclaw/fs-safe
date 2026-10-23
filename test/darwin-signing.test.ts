@@ -24,6 +24,7 @@ if (command === 'codesign' && args[0] === '-dv') {
   console.error('TeamIdentifier=' + (process.env.WRONG_TEAM ? 'WRONG' : 'FWJYW4S8P8'));
   console.error('CodeDirectory v=20500 flags=' + (process.env.AD_HOC ? '0x2(adhoc)' : '0x10000(runtime)'));
   if (!process.env.NO_TIMESTAMP) console.error('Timestamp=Oct 21, 2026');
+  if (process.env.LARGE_DETAILS) console.error('AdditionalDetails=' + 'x'.repeat(256 * 1024));
 }
 if (command === 'ditto') fs.writeFileSync(args.at(-1), 'synthetic ZIP');
 if (command === 'xcrun' && args[1] === 'submit') {
@@ -63,6 +64,11 @@ describe.skipIf(process.platform === "win32")("Darwin release signing", () => {
     expect(proof.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect((await fs.readdir(directory)).filter(name => name.startsWith("fs-safe-sign."))).toEqual([]);
     expect(await fs.readFile(path.join(directory, "calls"), "utf8")).toContain("security:delete-keychain");
+  }, 30_000);
+
+  it("drains verbose signing details without a pipefail SIGPIPE", () => {
+    const result = run({ LARGE_DETAILS: "1" });
+    expect(result.status, result.stderr).toBe(0);
   }, 30_000);
 
   it.each(["WRONG_TEAM", "AD_HOC", "NO_TIMESTAMP", "REJECTED", "WRONG_HASH"])("refuses %s and cleans credentials", async (failure) => {
