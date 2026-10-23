@@ -117,8 +117,11 @@ is a validation failure and triggers one descriptor-close attempt. If cleanup al
 fails, the selected admission failure result is preserved. Successful opens transfer
 descriptor ownership to the caller. A custom `ioFs` supplies
 these observations; the built-in adapter uses fs-safe's native realpath wrapper.
-On Windows, the built-in adapter binds native root spelling before traversal,
-including supplied `rootRealPath`, and returns that spelling in its root receipt.
+The built-in adapter binds native root spelling before traversal, including
+supplied `rootRealPath`, and returns that spelling in its root receipt. If native
+resolution changes the spelling (for example, case on macOS or short names on
+Windows), the resolved directory must retain the captured identity. Differently
+cased directories on case-sensitive filesystems remain distinct.
 This is an operation-local detection fence, not atomic confinement against a peer
 that can keep racing pathname bindings.
 

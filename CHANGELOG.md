@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **macOS guarded reads:** accept differently cased root paths on case-insensitive filesystems by binding native root spelling to the same directory identity. Thanks @0xtc23 for [openclaw#181107](https://github.com/openclaw/openclaw/issues/181107).
+
 ## 0.26.10 - 2026-10-21
 
 ### Fixes
