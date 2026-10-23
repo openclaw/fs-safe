@@ -118,6 +118,13 @@ public static partial class FsSafeWindowsBridge {
       path[47]=='}' && path[48]=='\\' &&
       System.Text.RegularExpressions.Regex.IsMatch(path.Substring(11,36),@"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
   }
+  static bool IsVolumeRoot(SafeFileHandle handle) {
+    try {
+      // VOLUME_NAME_GUID with normalized naming, never FILE_NAME_OPENED.
+      string path=FinalPath(handle,1);
+      return path.Length==49 && IsVolumeGuidPath(path);
+    } catch(Failure) { return false; }
+  }
   static bool IsLocalFinalPath(string path) {
     return !path.StartsWith(@"\\?\UNC\",StringComparison.Ordinal) &&
       (!path.StartsWith(@"\\",StringComparison.Ordinal) || path.StartsWith(@"\\?\",StringComparison.Ordinal));
@@ -206,7 +213,7 @@ public static partial class FsSafeWindowsBridge {
       return Row("ownerSid",ownerSid,"currentUserSid",currentSid,"daclPresent",raw.DiscretionaryAcl!=null,
         "currentAppContainerSid",current.AppContainer==null ? null : Sid(current.AppContainer),
         "daclProtected",(raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0,
-        "isLocal",isLocal,"aceListComplete",unsupported.Count==0,"unsupportedAceTypes",unsupported.ToArray(),"aces",aces.ToArray());
+        "isLocal",isLocal,"isVolumeRoot",isLocal && IsVolumeRoot(handle),"aceListComplete",unsupported.Count==0,"unsupportedAceTypes",unsupported.ToArray(),"aces",aces.ToArray());
     } finally { if(descriptor!=IntPtr.Zero) LocalFree(descriptor); }
   }
   static byte[] PrivateSecurity(bool inherit=true) {

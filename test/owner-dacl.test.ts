@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { itPosix } from "./helpers/vitest.js";
-import { readOwnerAndDacl } from "../src/owner-dacl.js";
+import { projectOwnerAndDacl, readOwnerAndDacl } from "../src/owner-dacl.js";
 import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import {
   __resetNativeLoaderForTest,
@@ -91,3 +91,19 @@ describe("readOwnerAndDacl", () => {
     });
   });
 });
+
+for (const isVolumeRoot of [true, false, undefined]) {
+  it(`preserves optional volume-root facts (${isVolumeRoot}) without changing ACL rights`, () => {
+    const facts = {
+      ownerSid: "s-1-5-21-42", currentUserSid: "s-1-5-21-42", daclPresent: true,
+      isLocal: true, aceListComplete: true, unsupportedAceTypes: [], aces: [],
+      ...(isVolumeRoot === undefined ? {} : { isVolumeRoot }),
+    };
+    const result = projectOwnerAndDacl(facts);
+    expect(result).toEqual({
+      status: "supported", ownerSid: facts.ownerSid, currentUserSid: facts.currentUserSid,
+      daclPresent: true, isLocal: true, complete: true, unsupportedAceTypes: [], aces: [],
+      ...(isVolumeRoot === undefined ? {} : { isVolumeRoot }),
+    });
+  });
+}

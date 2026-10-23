@@ -93,6 +93,23 @@ describe("readOwnerAndDaclBatch", () => {
     expect(args).not.toContain(secondPath);
   });
 
+  it.each([true, false, undefined])("preserves optional volume-root facts across batch transport (%s)", async isVolumeRoot => {
+    const child = commandChild();
+    const pending = readOwnerAndDaclBatch([firstPath]);
+    const facts = { ...security(), ...(isVolumeRoot === undefined ? {} : { isVolumeRoot }) };
+    child.finish({ ok: true, result: [{ path: firstPath, security: facts }] });
+    const [result] = await pending;
+    expect(result).toMatchObject({ status: "supported", ...(isVolumeRoot === undefined ? {} : { isVolumeRoot }) });
+    if (isVolumeRoot === undefined) expect(result).not.toHaveProperty("isVolumeRoot");
+  });
+
+  it.each(["true", 1, null])("rejects malformed volume-root facts (%s)", async isVolumeRoot => {
+    const child = commandChild();
+    const pending = readOwnerAndDaclBatch([firstPath]);
+    child.finish({ ok: true, result: [{ path: firstPath, security: { ...security(), isVolumeRoot } }] });
+    await expect(pending).rejects.toMatchObject({ code: "permission-unverified" });
+  });
+
   it("isolates native queries and captures paths, timeout and configured mode before awaiting", async () => {
     const nativeQuery = vi.fn(() => { throw new Error("parent must not query"); });
     __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl: nativeQuery }) as unknown as NativeBinding);

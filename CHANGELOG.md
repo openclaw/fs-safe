@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Windows ACL facts:** identify OS-verified local volume roots so consumers can distinguish ineffective DELETE-self grants from replaceable directory permissions, while retaining all ACL rights and fail-closed unknown/remote results. Thanks @WG-Mojo for [openclaw#180892](https://github.com/openclaw/openclaw/issues/180892).
+
 ## 0.26.10 - 2026-10-21
 
 ### Fixes

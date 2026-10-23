@@ -31,6 +31,8 @@ export type OwnerAndDaclResult =
       currentUserSid: string;
       daclPresent: boolean;
       isLocal: boolean;
+      /** Verified local volume root; omitted by older native helpers. */
+      isVolumeRoot?: boolean;
       complete: boolean;
       unsupportedAceTypes: number[];
       aces: WindowsAccessControlEntry[];
@@ -70,6 +72,7 @@ export function projectOwnerAndDacl(facts: DescriptorFacts): OwnerAndDaclResult 
     currentUserSid: facts.currentUserSid,
     daclPresent: facts.daclPresent,
     isLocal: facts.isLocal,
+    ...(facts.isVolumeRoot === undefined ? {} : { isVolumeRoot: facts.isVolumeRoot }),
     complete: facts.aceListComplete,
     unsupportedAceTypes: [...facts.unsupportedAceTypes],
     aces: facts.aces.map((entry) => ({

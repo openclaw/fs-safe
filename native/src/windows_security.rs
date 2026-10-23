@@ -42,6 +42,7 @@ pub struct WindowsSecurityFacts {
     pub fallback_required: bool,
     pub dacl_present: bool,
     pub is_local: bool,
+    pub is_volume_root: bool,
     pub ace_list_complete: bool,
     pub unsupported_ace_types: Vec<u32>,
     pub aces: Vec<WindowsAccessControlEntry>,
@@ -702,6 +703,33 @@ mod windows {
         })
     }
 
+    fn is_volume_root_handle_with_query<Query>(handle: HANDLE, query: Query) -> bool
+    where
+        Query: FnMut(HANDLE, &mut [u16]) -> NativeResult<usize>,
+    {
+        final_path_with_query(handle, query)
+            .is_ok_and(|path| path.len() == 49 && is_volume_guid_path(&path))
+    }
+
+    fn is_volume_root_handle(handle: HANDLE) -> bool {
+        is_volume_root_handle_with_query(handle, |handle, buffer| {
+            // Normalize the same handle whose ACL is inspected. FILE_NAME_OPENED
+            // can retain drive/junction aliases and cannot prove a volume root.
+            let written = unsafe {
+                GetFinalPathNameByHandleW(
+                    handle,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    VOLUME_NAME_GUID,
+                )
+            };
+            if written == 0 {
+                return Err(win_error(unsafe { GetLastError() }, "resolve volume root"));
+            }
+            Ok(written as usize)
+        })
+    }
+
     fn is_local_handle_with_queries<VolumeGuidQuery, NormalizedDosQuery>(
         handle: HANDLE,
         volume_guid_query: VolumeGuidQuery,
@@ -885,6 +913,7 @@ mod windows {
                     fallback_required: !local,
                     dacl_present: !dacl.is_null(),
                     is_local: local,
+                    is_volume_root: local && is_volume_root_handle(handle),
                     ace_list_complete: true,
                     unsupported_ace_types: Vec::new(),
                     aces: Vec::new(),
@@ -1621,6 +1650,34 @@ mod windows {
             let zero = final_path_with_query(handle, |_, _| Ok(0)).unwrap_err();
             assert_eq!(zero.status, "EIO");
             assert_eq!(zero.reason, "final Windows path query returned zero");
+        }
+
+        #[test]
+        fn volume_root_requires_a_normalized_exact_guid_root() {
+            let handle = 1usize as HANDLE;
+            let root = r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\";
+            // A mounted folder resolves to the same exact volume root; a SUBST
+            // drive or junction targeting an ordinary directory retains a suffix.
+            for path in [root, r"\\?\VOLUME{ABCDEF01-2345-6789-ABCD-EF0123456789}\"] {
+                assert!(is_volume_root_handle_with_query(handle, |queried, buffer| {
+                    assert_eq!(queried, handle);
+                    Ok(write_final_path_result(path, buffer))
+                }));
+            }
+            for path in [
+                format!("{root}ordinary"),
+                format!("{root}ordinary\\.."),
+                r"\\?\C:\".to_owned(),
+                r"\\?\UNC\server\share\".to_owned(),
+                r"\\?\Volume{not-a-guid}\".to_owned(),
+            ] {
+                assert!(!is_volume_root_handle_with_query(handle, |_, buffer| {
+                    Ok(write_final_path_result(&path, buffer))
+                }), "accepted {path}");
+            }
+            assert!(!is_volume_root_handle_with_query(handle, |_, _| {
+                Err(native_error("EACCES", "normalization unavailable"))
+            }));
         }
 
         #[test]

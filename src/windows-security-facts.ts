@@ -11,7 +11,7 @@ const WORLD_SIDS = new Set([
 ]);
 
 export type DescriptorFacts = Pick<NativeWindowsSecurityFacts,
-  "ownerSid" | "currentUserSid" | "currentAppContainerSid" | "daclPresent" | "isLocal" |
+  "ownerSid" | "currentUserSid" | "currentAppContainerSid" | "daclPresent" | "isLocal" | "isVolumeRoot" |
   "aceListComplete" | "unsupportedAceTypes" | "aces">;
 
 export function unverified(message: string, cause?: unknown): never {
@@ -47,6 +47,7 @@ function validateDescriptor(value: unknown, allowUnknownFlags: boolean): Descrip
       typeof value.currentUserSid !== "string" || !SID_RE.test(value.currentUserSid) ||
       (value.currentAppContainerSid != null && (typeof value.currentAppContainerSid !== "string" || !APP_CONTAINER_SID_RE.test(value.currentAppContainerSid))) ||
       typeof value.daclPresent !== "boolean" || typeof value.isLocal !== "boolean" ||
+      (value.isVolumeRoot !== undefined && typeof value.isVolumeRoot !== "boolean") ||
       typeof value.aceListComplete !== "boolean" || !Array.isArray(value.unsupportedAceTypes) ||
       !value.unsupportedAceTypes.every(uint32) || !Array.isArray(value.aces) ||
       !value.aces.every(ace => validateAce(ace, allowUnknownFlags))) {

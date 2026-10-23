@@ -16,10 +16,11 @@ itWin32("inspects Unicode paths through each configured batch backend", async ()
   const directory = await tempRoot("fs-safe-owner-dacl-batch-");
   const child = path.join(directory, "é-🦀");
   await fs.mkdir(child);
-  const paths = [child, directory, child];
+  const paths = [child, directory, path.parse(directory).root, child];
   try {
     configureFsSafeNative({ mode: modes[0] });
     const expected = paths.map(readOwnerAndDacl);
+    expect(expected.map(facts => facts.status === "supported" && facts.isVolumeRoot)).toEqual([false, false, true, false]);
     for (const mode of modes) {
       configureFsSafeNative({ mode });
       const facts = await readOwnerAndDaclBatch(paths, { timeoutMs: 60_000 });

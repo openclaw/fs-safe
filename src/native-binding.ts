@@ -116,6 +116,7 @@ export interface NativeWindowsSecurityFacts {
   fallbackRequired: boolean;
   daclPresent: boolean;
   isLocal: boolean;
+  isVolumeRoot?: boolean;
   aceListComplete: boolean;
   unsupportedAceTypes: number[];
   aces: NativeWindowsAccessControlEntry[];
