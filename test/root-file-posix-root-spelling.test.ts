@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { observeCanonicalRoot } from "../src/root-file-final-admission.js";
+import { createRootFileFinalAdmission, observeCanonicalRoot } from "../src/root-file-final-admission.js";
 import { openRootFile, openRootFileSync } from "../src/root-file.js";
 import { realpathSync } from "../src/realpath.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
@@ -48,7 +48,7 @@ itPosix.each(["replacement", "symlink", "missing"] as const)(
   },
 );
 
-it.runIf(process.platform === "darwin").each(
+it.runIf(process.platform === "darwin").for(
   (["async", "sync"] as const).flatMap(mode => [false, true].map(explicit => ({ mode, explicit }))),
 )("opens a mixed-case APFS root ($mode, rootRealPath=$explicit)", async ({ mode, explicit }, context) => {
   const container = await tempRoot("fs-safe-case-root-");
@@ -82,7 +82,16 @@ itPosix("keeps differently cased directories distinct on a case-sensitive filesy
   if (fsSync.existsSync(outside)) context.skip();
   await fs.mkdir(outside);
   await fs.writeFile(path.join(outside, "SKILL.md"), "outside");
+  const target = path.join(outside, "SKILL.md");
   expect(openRootFileSync({
-    rootPath: trusted, absolutePath: path.join(outside, "SKILL.md"), boundaryLabel: "skill root",
-  })).toMatchObject({ ok: false, error: { code: "outside-workspace" } });
+    rootPath: trusted, absolutePath: target, boundaryLabel: "skill root",
+  })).toMatchObject({
+    ok: false, reason: "validation", error: { message: expect.stringContaining("Path escapes skill root") },
+  });
+  const observed = observeCanonicalRoot(fsSync, trusted);
+  expect(observed.ok).toBe(true);
+  if (!observed.ok) throw observed.error;
+  const admit = createRootFileFinalAdmission(fsSync, observed, "skill root");
+  expect(() => admit({ path: target, descriptorIdentity: fsSync.statSync(target, { bigint: true }) }))
+    .toThrow(expect.objectContaining({ code: "outside-workspace" }));
 });
