@@ -153,11 +153,11 @@ export function safeRealpathSync(targetPath: string, cache?: Map<string, string>
     return cached;
   }
   try {
-    // POSIX uses the on-disk spelling that root admission compares against, so a
-    // differently cased path on a case-insensitive volume keeps one identity.
-    // Windows keeps Node's resolver; root admission reconciles its aliases.
-    const resolve = process.platform === "win32" ? realpathSync : realpathSync.native;
-    const resolved = resolve(pathForWindowsFilesystem(targetPath));
+    const ordinary = realpathSync(pathForWindowsFilesystem(targetPath));
+    // Ordinary resolution keeps the caller's letter case. Its result has no symlinks or
+    // dot segments left, so native resolution on POSIX only adopts the on-disk spelling
+    // that root admission compares against. Windows root admission reconciles aliases.
+    const resolved = process.platform === "win32" ? ordinary : realpathSync.native(ordinary);
     cache?.set(targetPath, resolved);
     cache?.set(resolved, resolved);
     return resolved;

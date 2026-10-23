@@ -86,10 +86,11 @@ if (real === null) return notFound();
 ```
 
 All `realpath` failures collapse to `null` — there is no distinction between `ENOENT`, `EACCES`, and other I/O errors. Use `fs.realpathSync` directly if you need to branch on the error code.
-On POSIX it returns the on-disk spelling (`realpath.native`), so a path typed
-with different letter case on a case-insensitive volume resolves to the same
-string that root admission uses. Windows keeps Node's default `realpath`. This
-convenience wrapper is not a caller-path admission boundary on its own.
+It keeps Node's ordinary `realpath` handling of dot segments and symlinks. On
+POSIX it then returns the on-disk spelling, so a path typed with different
+letter case on a case-insensitive volume resolves to the same string that root
+admission uses. This convenience wrapper is not a caller-path admission boundary
+on its own.
 
 ### `safeStatSync(targetPath)`
 
