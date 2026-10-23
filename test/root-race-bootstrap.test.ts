@@ -30,26 +30,35 @@ function pnpmFixture(version: string) {
 else printf 'pnpm ${version} %s\\n' "$*" >> "$BOOTSTRAP_LOG"; fi`;
 }
 
-it.skipIf(process.platform === "win32").each([
-  { label: "replaces installed vulnerable tools", node: "24.21.0", pnpm: "12.10.1", installs: true },
-  { label: "reuses the selected fixed tools", node: "24.22.1", pnpm: "12.15.0", installs: false },
-])("root-race bootstrap $label", ({ node, pnpm, installs }) => {
+const platforms = [
+  { system: "Linux", machine: "x86_64", target: "linux-x64" },
+  { system: "Linux", machine: "aarch64", target: "linux-arm64" },
+  { system: "Darwin", machine: "arm64", target: "darwin-arm64" },
+  { system: "Darwin", machine: "x86_64", target: "darwin-x64" },
+];
+
+it.skipIf(process.platform === "win32").each(
+  platforms.flatMap((platform) => [
+    { ...platform, label: "replaces installed vulnerable tools", node: "24.21.0", pnpm: "12.10.1", installs: true },
+    { ...platform, label: "reuses the selected fixed tools", node: "24.22.1", pnpm: "12.15.0", installs: false },
+  ]),
+)("root-race bootstrap $system/$machine $label", ({ node, pnpm, installs, system, machine, target }) => {
   const directory = mkdtempSync(join(tmpdir(), "fs-safe bootstrap-"));
   directories.push(directory);
   const home = join(directory, "home");
   const bin = join(home, ".local", "bin");
-  const archiveRoot = join(directory, "node-v24.22.1-linux-x64");
+  const archiveRoot = join(directory, `node-v24.22.1-${target}`);
   for (const path of [bin, home, join(archiveRoot, "bin")]) mkdirSync(path, { recursive: true });
   executable(join(bin, "node"), nodeFixture(node));
   executable(join(bin, "pnpm"), pnpmFixture(pnpm));
   executable(join(archiveRoot, "bin", "node"), nodeFixture("24.22.1"));
   const fixedPnpm = join(directory, "fixed-pnpm");
   executable(fixedPnpm, pnpmFixture("12.15.0"));
-  const archive = "node-v24.22.1-linux-x64.tar.gz";
-  execFileSync("tar", ["-czf", join(directory, archive), "-C", directory, "node-v24.22.1-linux-x64"]);
+  const archive = `node-v24.22.1-${target}.tar.gz`;
+  execFileSync("tar", ["-czf", join(directory, archive), "-C", directory, `node-v24.22.1-${target}`]);
   const digest = createHash("sha256").update(readFileSync(join(directory, archive))).digest("hex");
   writeFileSync(join(directory, "SHASUMS256.txt"), `${digest}  ${archive}\n`);
-  executable(join(bin, "uname"), 'if [ "$1" = -s ]; then echo Linux; else echo x86_64; fi');
+  executable(join(bin, "uname"), `if [ "$1" = -s ]; then echo ${system}; else echo ${machine}; fi`);
   executable(join(bin, "curl"), `
 printf 'curl %s\\n' "$*" >> "$BOOTSTRAP_LOG"
 case "\${@: -1}" in

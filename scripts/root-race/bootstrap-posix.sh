@@ -4,7 +4,9 @@ export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
 if ! command -v node >/dev/null || ! test "$(node --version)" = v24.22.1; then
   case "$(uname -s)/$(uname -m)" in
     Darwin/arm64) target=darwin-arm64 ;;
+    Darwin/x86_64) target=darwin-x64 ;;
     Linux/x86_64) target=linux-x64 ;;
+    Linux/aarch64) target=linux-arm64 ;;
     *) exit 2 ;;
   esac
   mkdir -p "$HOME/.local/node"

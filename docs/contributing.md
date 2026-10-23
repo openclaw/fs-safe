@@ -120,8 +120,8 @@ release addon build compile it for `aarch64-pc-windows-msvc`. Bzip2 uses
 The portable WASM build uses the checksum-pinned x64 WASI SDK under Windows
 emulation because that SDK has no Windows ARM64 host archive. Its compiler and
 archiver produce wasm32 only; the addon still uses MSVC for the selected target.
-Bun 1.4.2 has no Windows ARM64 artifact; the existing Windows x64 Bun lanes remain
-the Bun runtime proof. Native Windows ARM64 support is qualified with Node.
+The existing Windows x64 Bun lanes provide the Bun runtime proof. Native Windows
+ARM64 support is qualified with Node.
 
 ## Test
 
@@ -154,7 +154,7 @@ After building on Linux, `node scripts/check-pack.mjs --guest-cross-device`
 also proves an installed-package directory move from temporary storage to
 `/dev/shm`; the command requires those locations to be different filesystems.
 
-With Bun 1.4.2 installed, build the host addon and run the native compatibility
+With Bun 1.4.4 installed, build the host addon and run the native compatibility
 lane in real Bun workers, then exercise the built package with JIT disabled:
 
 ```bash
@@ -325,20 +325,20 @@ codecs and their dependencies are packed from the installed dependency graph.
 PR CI builds and executes all eight shipped bindings. The existing check names
 stay stable; extra runner/runtime combinations add checks without changing the
 repository ruleset. Native lanes run Node 24; the GNU host lanes also exercise
-Bun 1.4.2 (as do macOS and Windows).
+Bun 1.4.4 (as do macOS and Windows).
 
 | Lane | Runner | Architecture / libc | Runtime |
 | --- | --- | --- | --- |
 | JavaScript check | `ubuntu-latest` | x64 / glibc | Node 22, 24, 26 |
 | JavaScript check | `xcode-27` | arm64 | Node 22, 24, 26 |
 | JavaScript check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 22, 24, 26 |
-| Native check | `ubuntu-latest` | x64 / glibc | Node 24, Bun 1.4.2 |
+| Native check | `ubuntu-latest` | x64 / glibc | Node 24, Bun 1.4.4 |
 | Native check (forced no-openat2) | `ubuntu-latest` | x64 / glibc | Node 24 |
-| Native check | `ubuntu-24.04-arm` | arm64 / glibc | Node 24, Bun 1.4.2 |
-| Native check | `xcode-27` | arm64 | Node 24, Bun 1.4.2 |
-| Native check | `xcode-27` under Rosetta (`x64`) | x64 | Node 24, Bun 1.4.2 |
-| Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.2 |
-| Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.2 |
+| Native check | `ubuntu-24.04-arm` | arm64 / glibc | Node 24, Bun 1.4.4 |
+| Native check | `xcode-27` | arm64 | Node 24, Bun 1.4.4 |
+| Native check | `xcode-27` under Rosetta (`x64`) | x64 | Node 24, Bun 1.4.4 |
+| Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.4 |
+| Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.4 |
 | Windows ARM64 host | `windows-11-arm` | arm64 native and x64 emulated | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-latest` | x64 / musl | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-24.04-arm` | arm64 / musl | Node 24 |
