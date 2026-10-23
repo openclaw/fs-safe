@@ -50,7 +50,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Cache Rust build dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # LLVM setup exports temporary paths; key its pinned toolchain source instead.
           key: ${{ matrix.os }}-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
@@ -156,7 +156,7 @@ jobs:
           rustup toolchain install nightly-2026-09-25 --profile minimal --component llvm-tools-preview
 
       - name: Cache cargo-llvm-cov
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: cargo-llvm-cov-0.9.1
           cache-targets: "false"
