@@ -273,7 +273,7 @@ function identity(file) {
 }
 function publicFacts(raw) {
   const { daclProtected: _, ...facts } = raw;
-  return { status: "supported", isLocal: true, ...facts };
+  return { status: "supported", isLocal: true, isVolumeRoot: false, ...facts };
 }
 function assertPrivate(raw, inherited) {
   if (inherited) assert.ok([raw.currentUserSid, "s-1-5-18", "s-1-5-32-544"].includes(raw.ownerSid));

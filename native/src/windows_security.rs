@@ -42,6 +42,7 @@ pub struct WindowsSecurityFacts {
     pub fallback_required: bool,
     pub dacl_present: bool,
     pub is_local: bool,
+    pub is_volume_root: bool,
     pub ace_list_complete: bool,
     pub unsupported_ace_types: Vec<u32>,
     pub aces: Vec<WindowsAccessControlEntry>,
@@ -702,6 +703,76 @@ mod windows {
         })
     }
 
+    fn is_volume_root_handle_with_query<Query>(handle: HANDLE, query: Query) -> bool
+    where
+        Query: FnMut(HANDLE, &mut [u16]) -> NativeResult<usize>,
+    {
+        final_path_with_query(handle, query)
+            .is_ok_and(|path| path.len() == 49 && is_volume_guid_path(&path))
+    }
+
+    fn is_volume_root_handle(handle: HANDLE) -> bool {
+        is_volume_root_handle_with_query(handle, |handle, buffer| {
+            // Normalize the same handle whose ACL is inspected. FILE_NAME_OPENED
+            // can retain drive/junction aliases and cannot prove a volume root.
+            let written = unsafe {
+                GetFinalPathNameByHandleW(
+                    handle,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    VOLUME_NAME_GUID,
+                )
+            };
+            if written == 0 {
+                return Err(win_error(unsafe { GetLastError() }, "resolve volume root"));
+            }
+            Ok(written as usize)
+        })
+    }
+
+    fn volume_root_entry_path(path: &str) -> NativeResult<Vec<u16>> {
+        // Namespace-entry normalization is separate from link-following ACL
+        // lookup. Parent traversal is ambiguous, so it cannot assert a root.
+        if Path::new(path).components().any(|part| {
+            matches!(part, std::path::Component::ParentDir) || part.as_os_str() == ".."
+        }) {
+            return Err(native_error("EINVAL", "volume root entry contains parent traversal"));
+        }
+        // Windows absolute() uses GetFullPathNameW for ordinary paths. Collect
+        // standard components to remove trailing separators/dots even for
+        // verbatim spellings, while retaining their parsed root separator.
+        let absolute = std::path::absolute(path)
+            .map_err(|error| native_error("EINVAL", format!("resolve volume root entry: {error}")))?;
+        let entry: PathBuf = absolute.components()
+            .filter(|part| !matches!(part, std::path::Component::CurDir) && part.as_os_str() != ".")
+            .collect();
+        Ok(crate::windows::wide_absolute_path(entry.to_str()
+            .ok_or_else(|| native_error("EINVAL", "volume root entry is not valid UTF-8"))?))
+    }
+
+    fn is_volume_root_path(path: &str, inspected: HANDLE) -> bool {
+        if !is_volume_root_handle(inspected) {
+            return false;
+        }
+        let verified = (|| -> NativeResult<bool> {
+            // ACL reporting follows links for compatibility. Normalize only the
+            // second lookup so a trailing separator/dot cannot follow its link.
+            let entry = volume_root_entry_path(path)?;
+            let named = open_existing_handle(
+                &entry,
+                FILE_READ_ATTRIBUTES,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                |code| win_error(code, "open volume root entry"),
+            )?;
+            let attributes = handle_attributes(named.0)?;
+            Ok(attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+                && handle_file_identity(named.0)? == handle_file_identity(inspected)?
+                && is_volume_root_handle(named.0))
+        })();
+        verified.unwrap_or(false)
+    }
+
     fn is_local_handle_with_queries<VolumeGuidQuery, NormalizedDosQuery>(
         handle: HANDLE,
         volume_guid_query: VolumeGuidQuery,
@@ -885,6 +956,7 @@ mod windows {
                     fallback_required: !local,
                     dacl_present: !dacl.is_null(),
                     is_local: local,
+                    is_volume_root: false,
                     ace_list_complete: true,
                     unsupported_ace_types: Vec::new(),
                     aces: Vec::new(),
@@ -973,12 +1045,15 @@ mod windows {
     }
 
     pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
+        let input_path = path;
         let path = wide(path)?;
         let handle = open_security_handle(&path)?;
         // The pathname API preserves its historical structured fallback when
         // locality cannot be established. Secure reads use the stricter fd API.
         let local = is_local_handle(handle.0).unwrap_or(false);
-        security_facts(handle.0, local)
+        let mut facts = security_facts(handle.0, local)?;
+        facts.is_volume_root = local && is_volume_root_path(input_path, handle.0);
+        Ok(facts)
     }
 
     fn verify_private_directory_association<FinalLocality>(
@@ -1621,6 +1696,44 @@ mod windows {
             let zero = final_path_with_query(handle, |_, _| Ok(0)).unwrap_err();
             assert_eq!(zero.status, "EIO");
             assert_eq!(zero.reason, "final Windows path query returned zero");
+        }
+
+        #[test]
+        fn volume_root_entry_normalization_preserves_roots_and_exposes_links() {
+            for path in [r"C:\mount\", r"C:\mount\.", r"\\?\C:\mount\", r"\\?\C:\mount\."] {
+                assert_eq!(volume_root_entry_path(path).unwrap(), crate::windows::wide_absolute_path(r"C:\mount"));
+            }
+            assert_eq!(volume_root_entry_path(r"C:\").unwrap(), crate::windows::wide_absolute_path(r"C:\"));
+            assert!(volume_root_entry_path(r"C:\mount\..").is_err());
+            assert!(volume_root_entry_path(r"\\?\C:\mount\..").is_err());
+        }
+
+        #[test]
+        fn volume_root_requires_a_normalized_exact_guid_root() {
+            let handle = 1usize as HANDLE;
+            let root = r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\";
+            // A mounted folder resolves to the same exact volume root; a SUBST
+            // drive or junction targeting an ordinary directory retains a suffix.
+            for path in [root, r"\\?\VOLUME{ABCDEF01-2345-6789-ABCD-EF0123456789}\"] {
+                assert!(is_volume_root_handle_with_query(handle, |queried, buffer| {
+                    assert_eq!(queried, handle);
+                    Ok(write_final_path_result(path, buffer))
+                }));
+            }
+            for path in [
+                format!("{root}ordinary"),
+                format!("{root}ordinary\\.."),
+                r"\\?\C:\".to_owned(),
+                r"\\?\UNC\server\share\".to_owned(),
+                r"\\?\Volume{not-a-guid}\".to_owned(),
+            ] {
+                assert!(!is_volume_root_handle_with_query(handle, |_, buffer| {
+                    Ok(write_final_path_result(&path, buffer))
+                }), "accepted {path}");
+            }
+            assert!(!is_volume_root_handle_with_query(handle, |_, _| {
+                Err(native_error("EACCES", "normalization unavailable"))
+            }));
         }
 
         #[test]
