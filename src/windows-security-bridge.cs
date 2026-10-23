@@ -128,13 +128,25 @@ public static partial class FsSafeWindowsBridge {
   static bool IsVolumeRootPath(string path, SafeFileHandle inspected) {
     if(!IsVolumeRoot(inspected)) return false;
     try {
-      // Preserve link-following ACL reporting but verify the namespace entry.
-      using(var named=Open(path,0x80,true)) {
+      // Normalize only the entry lookup: trailing separators/dots must not
+      // cause OPEN_REPARSE_POINT to inspect the target instead of the link.
+      foreach(string part in path.Split(new char[]{System.IO.Path.DirectorySeparatorChar,System.IO.Path.AltDirectorySeparatorChar}))
+        if(part=="..") return false;
+      string entry=System.IO.Path.GetFullPath(path);
+      string root=System.IO.Path.GetPathRoot(entry);
+      while(entry.Length>root.Length &&
+        (entry[entry.Length-1]==System.IO.Path.DirectorySeparatorChar || entry[entry.Length-1]==System.IO.Path.AltDirectorySeparatorChar))
+        entry=entry.Substring(0,entry.Length-1);
+      if(System.IO.Path.GetFileName(entry)==".") return false;
+      using(var named=Open(entry,0x80,true)) {
         var info=Information(named);
         return (info.Attributes&0x400)==0 && (info.Attributes&0x10)!=0 &&
           FullIdentity(named)==FullIdentity(inspected) && IsVolumeRoot(named);
       }
     } catch(Failure) { return false; }
+      catch(ArgumentException) { return false; }
+      catch(NotSupportedException) { return false; }
+      catch(System.IO.IOException) { return false; }
   }
   static bool IsLocalFinalPath(string path) {
     return !path.StartsWith(@"\\?\UNC\",StringComparison.Ordinal) &&

@@ -730,15 +730,36 @@ mod windows {
         })
     }
 
-    fn is_volume_root_path(path: &[u16], inspected: HANDLE) -> bool {
+    fn volume_root_entry_path(path: &str) -> NativeResult<Vec<u16>> {
+        // Namespace-entry normalization is separate from link-following ACL
+        // lookup. Parent traversal is ambiguous, so it cannot assert a root.
+        if Path::new(path).components().any(|part| {
+            matches!(part, std::path::Component::ParentDir) || part.as_os_str() == ".."
+        }) {
+            return Err(native_error("EINVAL", "volume root entry contains parent traversal"));
+        }
+        // Windows absolute() uses GetFullPathNameW for ordinary paths. Collect
+        // standard components to remove trailing separators/dots even for
+        // verbatim spellings, while retaining their parsed root separator.
+        let absolute = std::path::absolute(path)
+            .map_err(|error| native_error("EINVAL", format!("resolve volume root entry: {error}")))?;
+        let entry: PathBuf = absolute.components()
+            .filter(|part| !matches!(part, std::path::Component::CurDir) && part.as_os_str() != ".")
+            .collect();
+        Ok(crate::windows::wide_absolute_path(entry.to_str()
+            .ok_or_else(|| native_error("EINVAL", "volume root entry is not valid UTF-8"))?))
+    }
+
+    fn is_volume_root_path(path: &str, inspected: HANDLE) -> bool {
         if !is_volume_root_handle(inspected) {
             return false;
         }
         let verified = (|| -> NativeResult<bool> {
-            // ACL reporting follows links for compatibility, but a replaceable
-            // mount/junction entry must never inherit its target's root status.
+            // ACL reporting follows links for compatibility. Normalize only the
+            // second lookup so a trailing separator/dot cannot follow its link.
+            let entry = volume_root_entry_path(path)?;
             let named = open_existing_handle(
-                path,
+                &entry,
                 FILE_READ_ATTRIBUTES,
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
                 |code| win_error(code, "open volume root entry"),
@@ -1024,13 +1045,14 @@ mod windows {
     }
 
     pub fn read_owner_and_dacl(path: &str) -> NativeResult<WindowsSecurityFacts> {
+        let input_path = path;
         let path = wide(path)?;
         let handle = open_security_handle(&path)?;
         // The pathname API preserves its historical structured fallback when
         // locality cannot be established. Secure reads use the stricter fd API.
         let local = is_local_handle(handle.0).unwrap_or(false);
         let mut facts = security_facts(handle.0, local)?;
-        facts.is_volume_root = local && is_volume_root_path(&path, handle.0);
+        facts.is_volume_root = local && is_volume_root_path(input_path, handle.0);
         Ok(facts)
     }
 
@@ -1674,6 +1696,16 @@ mod windows {
             let zero = final_path_with_query(handle, |_, _| Ok(0)).unwrap_err();
             assert_eq!(zero.status, "EIO");
             assert_eq!(zero.reason, "final Windows path query returned zero");
+        }
+
+        #[test]
+        fn volume_root_entry_normalization_preserves_roots_and_exposes_links() {
+            for path in [r"C:\mount\", r"C:\mount\.", r"\\?\C:\mount\", r"\\?\C:\mount\."] {
+                assert_eq!(volume_root_entry_path(path).unwrap(), crate::windows::wide_absolute_path(r"C:\mount"));
+            }
+            assert_eq!(volume_root_entry_path(r"C:\").unwrap(), crate::windows::wide_absolute_path(r"C:\"));
+            assert!(volume_root_entry_path(r"C:\mount\..").is_err());
+            assert!(volume_root_entry_path(r"\\?\C:\mount\..").is_err());
         }
 
         #[test]

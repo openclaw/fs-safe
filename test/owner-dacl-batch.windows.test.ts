@@ -19,11 +19,14 @@ itWin32("inspects Unicode paths through each configured batch backend", async ()
   const volumeRoot = path.parse(directory).root;
   const rootJunction = path.join(directory, "root-junction");
   await fs.symlink(volumeRoot, rootJunction, "junction");
-  const paths = [child, directory, volumeRoot, rootJunction, child];
+  const paths = [
+    child, directory, volumeRoot, rootJunction,
+    `${rootJunction}${path.sep}`, `${rootJunction}${path.sep}.`, child,
+  ];
   try {
     configureFsSafeNative({ mode: modes[0] });
     const expected = paths.map(readOwnerAndDacl);
-    expect(expected.map(facts => facts.status === "supported" && facts.isVolumeRoot)).toEqual([false, false, true, false, false]);
+    expect(expected.map(facts => facts.status === "supported" && facts.isVolumeRoot)).toEqual([false, false, true, false, false, false, false]);
     for (const mode of modes) {
       configureFsSafeNative({ mode });
       const facts = await readOwnerAndDaclBatch(paths, { timeoutMs: 60_000 });
