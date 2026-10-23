@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Async native writes:** synchronize staged files and publication directories asynchronously, retaining durability and descriptor ownership without blocking the JavaScript thread.
+
 ## 0.26.11 - 2026-10-23
 
 ### Highlights

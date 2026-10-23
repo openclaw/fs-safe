@@ -18,7 +18,8 @@ async function observeSyncs(directory: string) {
   await fs.unlink(path.join(directory, "probe"));
   const sync = vi.spyOn(prototype, "sync");
   const syncSync = vi.spyOn(fsSync, "fsyncSync");
-  return () => sync.mock.calls.length + syncSync.mock.calls.length;
+  const syncDescriptor = vi.spyOn(fsSync, "fsync");
+  return () => sync.mock.calls.length + syncSync.mock.calls.length + syncDescriptor.mock.calls.length;
 }
 
 function mutablePolicy() {

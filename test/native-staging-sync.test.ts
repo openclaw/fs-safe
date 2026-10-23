@@ -23,11 +23,12 @@ describe.runIf(nativeAvailable)("native staged publication durability", () => {
     const binding = __loadBundledNativeForTest();
     assertNativeStaging(binding);
     const parent = openStagedDirectory(directory);
-    const sync = fsSync.fsyncSync;
+    const sync = fsSync.fsync;
+    const syncBlocking = vi.spyOn(fsSync, "fsyncSync");
     const events: string[] = [];
-    vi.spyOn(fsSync, "fsyncSync").mockImplementation((fd) => {
+    vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
       events.push(fsSync.fstatSync(fd).isFile() ? "file" : "parent");
-      sync(fd);
+      sync(fd, callback);
     });
     const chmod = vi.spyOn(fsSync, "fchmodSync");
     await using staged = await createNativeStage(
@@ -37,6 +38,7 @@ describe.runIf(nativeAvailable)("native staged publication durability", () => {
     expect(events).toEqual(["file"]);
     chmod.mockClear();
     await staged.publish("target", { overwrite: true });
+    expect(syncBlocking).not.toHaveBeenCalled();
     expect(events).toEqual((mode & 0o600) === 0o600 ? ["file", "parent"] : ["file", "file", "parent"]);
     expect(chmod).toHaveBeenCalledTimes(mode === 0o600 ? 0 : 1);
     const target = path.join(directory, "target");
@@ -57,11 +59,44 @@ describe.runIf(nativeAvailable)("native staged publication durability", () => {
         { kind: "buffer", data: "payload" },
       );
       await fs.chmod(path.join(directory, staged.receipt.temporaryBasename), changedMode);
-      const sync = vi.spyOn(fsSync, "fsyncSync");
+      const sync = vi.spyOn(fsSync, "fsync");
       await staged.publish("target", { overwrite: true });
       expect(sync).toHaveBeenCalledTimes(changedMode === 0o666 ? 2 : 1);
       expect((await fs.stat(path.join(directory, "target"))).mode & 0o777).toBe(mode);
       expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("payload");
     },
   );
+
+  it("retains file and parent descriptors until publication synchronization settles", async () => {
+    const directory = await tempRoot("fs-safe-staged-sync-cleanup-");
+    const binding = __loadBundledNativeForTest();
+    assertNativeStaging(binding);
+    const parent = openStagedDirectory(directory);
+    const closeParent = vi.fn(fsSync.closeSync);
+    const closeFile = vi.fn(binding.closeOwnedFd);
+    await using staged = await createNativeStage(
+      { binding: { ...binding, closeOwnedFd: closeFile }, parentFd: parent.fd,
+        closeParentFd: closeParent, directory: parent.receipt, mode: 0o600 },
+      { kind: "buffer", data: "payload" },
+    );
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const sync = fsSync.fsync;
+    vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+      entered.resolve();
+      void release.promise.then(() => sync(fd, callback));
+    });
+    const publishing = staged.publish("target", { overwrite: true });
+    await entered.promise;
+    const cleanup = staged.cleanup();
+    expect(closeFile).not.toHaveBeenCalled();
+    expect(closeParent).not.toHaveBeenCalled();
+    expect(fsSync.fstatSync(parent.fd).isDirectory()).toBe(true);
+    release.resolve();
+    await expect(publishing).resolves.toMatchObject({ status: "published" });
+    await expect(cleanup).resolves.toMatchObject({ status: "not-needed", resources: "closed" });
+    expect(closeFile).toHaveBeenCalledOnce();
+    expect(closeParent).toHaveBeenCalledOnce();
+    expect(await fs.readFile(path.join(directory, "target"), "utf8")).toBe("payload");
+  });
 });
