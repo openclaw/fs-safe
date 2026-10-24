@@ -401,7 +401,7 @@ export async function publishFileExclusive(params: {
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;
-      if (process.platform !== "win32") {
+      if (failure.fallback) {
         renamedTarget = await openPublicationHandle(targetPath, sourceExactIdentity);
         await source.close();
       }

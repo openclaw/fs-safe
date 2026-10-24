@@ -227,7 +227,7 @@ Success still returns `method: "rename-noreplace"`, with the additive
 `fallback: "link-unlink"` field identifying this weaker mechanism. Atomic rename
 and the other strategies omit `fallback`.
 
-On POSIX, publication pins the destination before closing the source descriptor.
+The link/unlink fallback pins the destination before closing the source descriptor.
 If NFS deferred unlink made the native fallback's final check fail, publication
 can complete only after this handoff verifies the exact destination identity,
 one remaining link, and the absence of the source. Unverified or substituted
