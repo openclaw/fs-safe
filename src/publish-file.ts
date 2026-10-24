@@ -39,7 +39,8 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
-import { openPublicationHandle } from "./publication-handle.js";
+import { publishRenameFallback } from "./publish-rename-fallback.js";
+import { isNoReplaceUnavailable } from "./native-noreplace.js";
 export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
 export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "rename-noreplace";
@@ -367,28 +368,17 @@ export async function publishFileExclusive(params: {
     if (strategy === "rename-noreplace") {
       const binding = requireNativeBinding("renameNoReplace");
       try {
-        const fallback = nativeMoveNoReplace(binding, [
+        nativeMoveNoReplace(binding, [
           sourceNativeParent!.handle.fd, sourceNativeParent!.basename,
           targetNativeParent!.handle.fd, targetNativeParent!.basename,
-        ], sourceExactIdentity, getFsSafeNativeConfig().mode === "auto", "file publication");
-        if (fallback) {
-          failure.fallback = fallback;
-          failure.sourceRemoval = "removed";
-        }
+        ], sourceExactIdentity, false, "file publication");
       } catch (error) {
-        if (error instanceof FsSafeError) {
-          if (error.details?.publication === "published") {
-            failure.targetCreated = true;
-            failure.preserveTarget = true;
-            failure.phase = "rename-verify";
-            failure.fallback = "link-unlink";
-            failure.sourceRemoval = error.details.sourceRemoval as PublishFailureState["sourceRemoval"];
-            // Changed/unverified pairs cannot establish which inode was published.
-            if (failure.sourceRemoval === "still-linked") rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
-          }
-          // Unlink completed, but NFS may still count the open source dentry.
-          // Only the exact published inode, pinned below, can recover this case.
-          if (failure.sourceRemoval !== "removed") throw error;
+        if (isNoReplaceUnavailable(error) && getFsSafeNativeConfig().mode === "auto" && process.platform === "linux") {
+          renamedTarget = await publishRenameFallback({
+            binding, source, sourcePath, targetPath, identity: sourceExactIdentity, failure,
+            sourceParent: { fd: sourceNativeParent!.handle.fd, basename: sourceNativeParent!.basename },
+            targetParent: { fd: targetNativeParent!.handle.fd, basename: targetNativeParent!.basename },
+          });
         } else {
           const code = (error as NodeJS.ErrnoException | undefined)?.code;
           if (code === "path-mismatch" || code === "hardlink") {
@@ -401,17 +391,6 @@ export async function publishFileExclusive(params: {
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;
-      if (failure.fallback) {
-        renamedTarget = await openPublicationHandle(targetPath, sourceExactIdentity);
-        await source.close();
-      }
-      if (failure.fallback) {
-        const opened = fsSync.fstatSync(renamedTarget!.fd, { bigint: true });
-        const named = fsSync.lstatSync(targetPath, { bigint: true });
-        if (opened.nlink !== 1n || named.nlink !== 1n) {
-          throw new FsSafeError("hardlink", "no-replace publication link count changed");
-        }
-      }
       await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
         "rename-noreplace",
         targetPath,

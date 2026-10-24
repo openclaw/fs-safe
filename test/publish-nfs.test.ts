@@ -17,7 +17,7 @@ afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
 });
 
-function deferOpenUnlinks() {
+function deferOpenUnlinks(removeOnClose = true) {
   const open = fs.open.bind(fs);
   const unlink = fsSync.unlinkSync.bind(fsSync);
   const openPaths = new Set<string>();
@@ -31,7 +31,7 @@ function deferOpenUnlinks() {
       openPaths.delete(filename);
       await close();
       const hidden = deferred.get(filename);
-      if (hidden) { unlink(hidden); deferred.delete(filename); }
+      if (hidden && removeOnClose) { unlink(hidden); deferred.delete(filename); }
     };
     return handle;
   });
@@ -74,36 +74,50 @@ describe.skipIf(process.platform === "win32")("NFS publication descriptor lifeti
     expect(await fs.readdir(directory)).toEqual(["target"]);
   });
 
-  it.each(["deferred", "replaced", "third-link"])("verifies %s native fallback publication after settling the source", async fault => {
+  it.each(["deferred", "unlink-stale-after", "replaced", "third-link", "collision", "unlink-failure"])("verifies %s native fallback publication after settling the source", async fault => {
     const directory = await tempRoot("fs-safe-nfs-publish-");
     const sourcePath = path.join(directory, "source");
     const targetPath = path.join(directory, "target");
     await fs.writeFile(sourcePath, "complete payload");
+    if (fault === "collision") await fs.writeFile(targetPath, "winner");
     const expected = await fs.stat(sourcePath, { bigint: true });
-    deferOpenUnlinks();
+    // NFS cleanup need not finish when close returns: avoid creating the hidden link.
+    deferOpenUnlinks(false);
     Object.defineProperty(process, "platform", { value: "linux" });
+    const publishLink = () => {
+      fsSync.linkSync(sourcePath, targetPath);
+      if (fault === "replaced") {
+        fsSync.unlinkSync(targetPath);
+        fsSync.writeFileSync(targetPath, "replacement");
+      }
+      if (fault === "third-link") fsSync.linkSync(targetPath, path.join(directory, "third"));
+    };
     __setNativeLoaderForTest(() => ({
       closeOwnedFd: fsSync.closeSync,
       renameNoReplace() { throw Object.assign(new Error("unsupported"), { code: "EINVAL" }); },
-      moveNoReplaceFallback() {
-        fsSync.linkSync(sourcePath, targetPath);
+      linkBeneath: publishLink,
+      removeStagedFile() {
+        if (fault === "unlink-failure") throw Object.assign(new Error("unlink denied"), { code: "EACCES" });
         fsSync.unlinkSync(sourcePath);
-        if (fault === "replaced") {
-          fsSync.unlinkSync(targetPath);
-          fsSync.writeFileSync(targetPath, "replacement");
-        }
-        if (fault === "third-link") fsSync.linkSync(targetPath, path.join(directory, "third"));
+        if (fault === "unlink-stale-after") throw Object.assign(new Error("stale after unlink"), { code: "ESTALE" });
+        return "removed";
+      },
+      moveNoReplaceFallback() {
+        publishLink();
+        fsSync.unlinkSync(sourcePath);
         throw Object.assign(new Error("target link count changed after unlink"), { code: "FS_SAFE_INTERNAL_MOVE_PUBLISHED" });
       },
     }));
     const result = publishFileExclusive({ sourcePath, targetPath, strategy: "rename-noreplace", expectedSourceIdentity: expected });
-    if (fault !== "deferred") {
+    if (fault === "collision") {
+      await expect(result).rejects.toMatchObject({ code: "already-exists" });
+    } else if (fault !== "deferred" && fault !== "unlink-stale-after") {
       await expect(result).rejects.toMatchObject({ details: { publication: "published", cleanup: "preserved" } });
     } else {
       await expect(result).resolves.toMatchObject({ method: "rename-noreplace", fallback: "link-unlink", exactIdentity: { dev: expected.dev, ino: expected.ino } });
       expect((await fs.stat(targetPath)).nlink).toBe(1);
       expect(await fs.readdir(directory)).toEqual(["target"]);
     }
-    expect(await fs.readFile(targetPath, "utf8")).toBe(fault === "replaced" ? "replacement" : "complete payload");
+    expect(await fs.readFile(targetPath, "utf8")).toBe(fault === "collision" ? "winner" : fault === "replaced" ? "replacement" : "complete payload");
   });
 });
