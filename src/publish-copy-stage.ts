@@ -9,8 +9,8 @@ import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import type { PublishedWriteIdentity } from "./pinned-write-types.js";
 
 // Node has no portable no-replace rename. Publish the completed stage by link,
-// then remove its verified temporary name without yielding.
-export function publishCopyStage(params: {
+// then remove its verified temporary name after any descriptor handoff.
+export async function publishCopyStage(params: {
   temporaryPath: string;
   targetPath: string;
   fd: number;
@@ -19,7 +19,8 @@ export function publishCopyStage(params: {
   assertBeforeMutation?: () => void;
   onPublicationAttempt?: () => void;
   onPublished?: (identity: PublishedWriteIdentity) => void;
-}): void {
+  beforeTemporaryUnlink?: () => Promise<void>;
+}): Promise<void> {
   const { identity, temporaryPath, targetPath } = params;
   const assertCurrent = () => {
     assertSyncDirectoryGuard(params.parentGuard);
@@ -68,13 +69,23 @@ export function publishCopyStage(params: {
         throw new FsSafeError("path-mismatch", "renamed copy target changed after publication");
       }
     } else {
-      const parent = fs.lstatSync(path.dirname(temporaryPath), { bigint: true });
-      const current = fs.lstatSync(temporaryPath, { bigint: true });
-      if (parent.isSymbolicLink() || !parent.isDirectory() ||
-        !sameFileIdentityForCleanup(parent, params.parentGuard.stat) ||
-        current.isSymbolicLink() || !current.isFile() ||
-        !sameFileIdentityForCleanup(current, identity)) {
-        throw new FsSafeError("path-mismatch", "published copy temporary name changed before cleanup");
+      const verifyPair = () => {
+        assertSyncDirectoryGuard(params.parentGuard);
+        const parent = fs.lstatSync(path.dirname(temporaryPath), { bigint: true });
+        const current = fs.lstatSync(temporaryPath, { bigint: true });
+        const target = fs.lstatSync(targetPath, { bigint: true });
+        if (parent.isSymbolicLink() || !parent.isDirectory() ||
+          !sameFileIdentityForCleanup(parent, params.parentGuard.stat) ||
+          current.isSymbolicLink() || !current.isFile() || current.nlink !== 2n ||
+          target.isSymbolicLink() || !target.isFile() || target.nlink !== 2n ||
+          !sameFileIdentityForCleanup(current, identity) || !sameFileIdentityForCleanup(target, identity)) {
+          throw new FsSafeError("path-mismatch", "published copy temporary name changed before cleanup");
+        }
+      };
+      verifyPair();
+      if (params.beforeTemporaryUnlink) {
+        await params.beforeTemporaryUnlink();
+        verifyPair();
       }
       // This removes the stage's name, never the published destination or source.
       fs.unlinkSync(temporaryPath);

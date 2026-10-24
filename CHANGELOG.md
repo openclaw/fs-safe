@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Guest creation on NFS:** close the synced payload before publication so deferred unlink cannot report `ESTALE` after creating the destination. Thanks @bsteiner98.
+- **NFS publication:** retain the destination descriptor while settling staged creates, copies, and no-replace file publication, preventing open temporary names from causing false post-publication failures while retaining exact identity and link-count checks. Thanks @bsteiner98.
 
 ## 0.26.12 - 2026-10-23
 

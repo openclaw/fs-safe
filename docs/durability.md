@@ -217,15 +217,21 @@ try {
 
 `rename-noreplace` normally uses atomic native rename. On Linux in native `auto`
 mode, a definitively unsupported `RENAME_NOREPLACE` result (`EINVAL`, `ENOSYS`,
-or unsupported-operation errno) permits the existing native file-move fallback.
+or unsupported-operation errno) permits the descriptor-relative file-publication fallback.
 It requires a regular source with one link, retains both parents, creates the
 target with `linkat` without following symlinks, verifies both names against the
-staged identity with exactly two links, then unlinks the source and verifies the
-target has one link. Fallback collisions report `already-exists` without clobbering;
+staged identity with exactly two links, pins the destination, and closes the
+source descriptor before identity-bound unlink. It then verifies the target has
+one link. Fallback collisions report `already-exists` without clobbering;
 the atomic rename path retains its existing `EEXIST` error.
 Success still returns `method: "rename-noreplace"`, with the additive
 `fallback: "link-unlink"` field identifying this weaker mechanism. Atomic rename
 and the other strategies omit `fallback`.
+
+The handoff precedes unlink so NFS need not create or finish deleting a hidden
+name for an open source. Success still requires the exact destination identity,
+one remaining link, and source absence. Missing native link or identity-bound
+unlink support fails closed. Unverified or substituted destinations are preserved.
 
 **Link/unlink is not crash-atomic.** A crash between those syscalls can leave both
 names on the same complete inode. Callers must recognize that interrupted pair
