@@ -74,7 +74,7 @@ describe.skipIf(process.platform === "win32")("NFS publication descriptor lifeti
     expect(await fs.readdir(directory)).toEqual(["target"]);
   });
 
-  it.each(["deferred", "unlink-stale-after", "replaced", "third-link", "collision", "unlink-failure"])("verifies %s native fallback publication after settling the source", async fault => {
+  it.each(["deferred", "unlink-stale-after", "replaced", "third-link", "collision", "link-unsupported", "unlink-failure"])("verifies %s native fallback publication after settling the source", async fault => {
     const directory = await tempRoot("fs-safe-nfs-publish-");
     const sourcePath = path.join(directory, "source");
     const targetPath = path.join(directory, "target");
@@ -95,7 +95,10 @@ describe.skipIf(process.platform === "win32")("NFS publication descriptor lifeti
     __setNativeLoaderForTest(() => ({
       closeOwnedFd: fsSync.closeSync,
       renameNoReplace() { throw Object.assign(new Error("unsupported"), { code: "EINVAL" }); },
-      linkBeneath: publishLink,
+      linkBeneath() {
+        if (fault === "link-unsupported") throw Object.assign(new Error("link denied"), { code: "EPERM" });
+        publishLink();
+      },
       removeStagedFile() {
         if (fault === "unlink-failure") throw Object.assign(new Error("unlink denied"), { code: "EACCES" });
         fsSync.unlinkSync(sourcePath);
@@ -109,8 +112,16 @@ describe.skipIf(process.platform === "win32")("NFS publication descriptor lifeti
       },
     }));
     const result = publishFileExclusive({ sourcePath, targetPath, strategy: "rename-noreplace", expectedSourceIdentity: expected });
+    if (fault === "link-unsupported") {
+      await expect(result).rejects.toMatchObject({ code: "helper-unavailable", message: expect.stringMatching(/RENAME_NOREPLACE.*linkat/), details: { fallbackCapability: "linkat" } });
+      expect(await fs.readFile(sourcePath, "utf8")).toBe("complete payload");
+      await expect(fs.lstat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+      return;
+    }
     if (fault === "collision") {
       await expect(result).rejects.toMatchObject({ code: "already-exists" });
+    } else if (fault === "unlink-failure") {
+      await expect(result).rejects.toMatchObject({ code: "helper-failed", message: expect.stringContaining("source still linked"), details: { publication: "published", cleanup: "preserved", sourceRemoval: "still-linked" } });
     } else if (fault !== "deferred" && fault !== "unlink-stale-after") {
       await expect(result).rejects.toMatchObject({ details: { publication: "published", cleanup: "preserved" } });
     } else {

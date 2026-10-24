@@ -38,7 +38,7 @@ export async function publishRenameFallback(params: {
       throw new FsSafeError("already-exists", "no-replace fallback destination exists", { cause: error });
     }
     if (["EPERM", "ENOTSUP", "EOPNOTSUPP", "EMLINK", "EXDEV", "ENOSYS"].includes((error as NodeJS.ErrnoException)?.code ?? "")) {
-      throw new FsSafeError("helper-unavailable", "native no-replace publication link fallback is unavailable", {
+      throw new FsSafeError("helper-unavailable", "renameat2 RENAME_NOREPLACE unavailable; linkat file publication fallback is unavailable", {
         cause: error, details: { capability: "rename-noreplace", fallback: "link-unlink", fallbackCapability: "linkat" },
       });
     }
@@ -77,7 +77,8 @@ export async function publishRenameFallback(params: {
         removed = "name-absent";
       } catch {
         try { verifyPair(); } catch { failure.sourceRemoval = "unverified"; }
-        throw error;
+        const detail = failure.sourceRemoval === "still-linked" ? "source still linked" : "source removal unverified";
+        throw new FsSafeError("helper-failed", `linkat file publication fallback published target; ${detail}`, { cause: error });
       }
     }
     if (removed !== "removed" && removed !== "name-absent") {
