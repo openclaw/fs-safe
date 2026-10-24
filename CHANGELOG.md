@@ -2,8 +2,14 @@
 
 ## Unreleased
 
-- **Guest creation on NFS:** close the synced payload before publication so deferred unlink cannot report `ESTALE` after creating the destination. Thanks @bsteiner98.
-- **NFS publication:** retain the destination descriptor while settling staged creates, copies, and no-replace file publication, preventing open temporary names from causing false post-publication failures while retaining exact identity and link-count checks. Thanks @bsteiner98.
+## 0.26.13 - 2026-10-24
+
+**Highlights:** Reliable file publication on NFS mounts.
+
+### Fixes
+
+- **Guest creation on NFS:** close the synced payload before publication so deferred unlink cannot report `ESTALE` after creating the destination. Thanks @bsteiner98 for [openclaw/fs-safe#1024](https://github.com/openclaw/fs-safe/issues/1024). ([#1033](https://github.com/openclaw/fs-safe/pull/1033))
+- **NFS publication:** retain the destination descriptor while settling staged creates, copies, and no-replace file publication, preventing open temporary names from causing false post-publication failures while retaining exact identity and link-count checks. Thanks @bsteiner98 for [openclaw/fs-safe#1024](https://github.com/openclaw/fs-safe/issues/1024). ([#1034](https://github.com/openclaw/fs-safe/pull/1034))
 
 ## 0.26.12 - 2026-10-23
 
