@@ -204,6 +204,10 @@ describe.each(modes)("streamed Root.create authority snapshot (native %s)", (mod
     };
     const sync = fsSync.fsyncSync;
     vi.spyOn(fsSync, "fsyncSync").mockImplementation(fd => { sync(fd); revoke(fd); });
+    const syncDescriptor = fsSync.fsync;
+    vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+      syncDescriptor(fd, error => { revoke(fd); callback(error); });
+    });
     const open = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
       const handle = await open(...args);

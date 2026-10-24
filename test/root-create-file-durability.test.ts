@@ -63,6 +63,11 @@ function failSync(kind: "file" | "directory", failure: Error, beforeFailure?: ()
     if (matches(fd)) { beforeFailure?.(); throw failure; }
     sync(fd);
   });
+  const syncDescriptor = fsSync.fsync;
+  vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+    if (matches(fd)) { beforeFailure?.(); callback(failure); return; }
+    syncDescriptor(fd, callback);
+  });
   const open = fs.open.bind(fs);
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await open(...args);
@@ -131,6 +136,14 @@ it.skipIf(!nativeAvailable).each(["stream", "atomic-buffer", "atomic-json"] as c
   vi.spyOn(fsSync, "fsyncSync").mockImplementation(fd => {
     if (fsSync.fstatSync(fd).isFile() && fsSync.existsSync(path.join(directory, "target"))) throw failure;
     sync(fd);
+  });
+  const syncDescriptor = fsSync.fsync;
+  vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
+    if (fsSync.fstatSync(fd).isFile() && fsSync.existsSync(path.join(directory, "target"))) {
+      callback(failure);
+      return;
+    }
+    syncDescriptor(fd, callback);
   });
   await expect(create(scoped, input, { mode: 0o400, durable: "file" })).rejects.toMatchObject({
     cause: failure,

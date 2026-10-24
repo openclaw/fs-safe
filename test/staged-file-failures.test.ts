@@ -65,7 +65,7 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const moved = `${directory}-moved`;
     const failure = Object.assign(new Error(`injected ${operation}`), { code: "EIO" });
     const method = {
-      fstat: "fstatSync", chmod: "fchmodSync", write: "write", sync: "fsyncSync",
+      fstat: "fstatSync", chmod: "fchmodSync", write: "write", sync: "fsync",
     }[operation] as "fstatSync";
     const original = fsSync[method];
     let createdFd: number | undefined;
@@ -138,15 +138,16 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
         throw failure;
       });
     } else if (fault === "file-sync" || fault === "directory-sync") {
-      const sync = fsSync.fsyncSync;
-      vi.spyOn(fsSync, "fsyncSync").mockImplementation((fd) => {
+      const sync = fsSync.fsync;
+      vi.spyOn(fsSync, "fsync").mockImplementation((fd, callback) => {
         const matchesFault = fault === "file-sync"
           ? fsSync.fstatSync(fd).isFile()
           : fsSync.fstatSync(fd).isDirectory();
         if (matchesFault) {
-          throw failure;
+          callback(failure);
+          return;
         }
-        sync(fd);
+        sync(fd, callback);
       });
     }
     const parentMoved = fault.startsWith("move-");

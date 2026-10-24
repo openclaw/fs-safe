@@ -1,9 +1,15 @@
 import fs from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
-export async function syncFileBestEffort(handle: Pick<FileHandle, "sync">): Promise<void> {
+export function syncFile(handle: Pick<FileHandle, "sync"> | number): Promise<void> {
+  return typeof handle === "number"
+    ? new Promise((resolve, reject) => fs.fsync(handle, error => error ? reject(error) : resolve()))
+    : handle.sync();
+}
+
+export async function syncFileBestEffort(handle: Pick<FileHandle, "sync"> | number): Promise<void> {
   try {
-    await handle.sync();
+    await syncFile(handle);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") throw error;
   }
