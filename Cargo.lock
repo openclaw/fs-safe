@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "fs-safe-native"
-version = "0.26.10"
+version = "0.26.12"
 dependencies = [
  "bzip2",
  "flate2",

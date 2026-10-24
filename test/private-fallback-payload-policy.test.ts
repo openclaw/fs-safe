@@ -185,7 +185,9 @@ describe.skipIf(process.platform === "win32")("private POSIX fallback payload po
   });
 
   for (const mode of [0, 0o400, 0o600, 0o700]) {
-    it.each([false, true])(`preserves private final mode ${mode} (atomic=%s)`, async (atomic) => {
+    for (const atomic of [false, true]) {
+      // O_PATH is a real Linux syscall flag; changing process.platform cannot emulate it.
+      it.skipIf(atomic && mode === 0 && platform.value !== "linux")(`preserves private final mode ${mode} (atomic=${atomic})`, async () => {
       const directory = await tempRoot("fs-safe-private-fallback-mode-");
       const scoped = await root(directory);
       const target = path.join(directory, "target");
@@ -194,6 +196,7 @@ describe.skipIf(process.platform === "win32")("private POSIX fallback payload po
       fs.chmodSync(target, 0o600);
       expect(fs.readFileSync(target, "utf8")).toBe("private payload");
       expect(fs.readdirSync(directory)).toEqual(["target"]);
-    });
+      });
+    }
   }
 });

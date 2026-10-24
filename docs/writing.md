@@ -225,7 +225,12 @@ await fs.create("config/flushed.json", initial, { atomic: true, durable: "file" 
 
 `atomic: true` finishes all bytes in a sibling stage before publication.
 The native backend uses its no-replace rename; the JavaScript fallback hardlinks
-the completed stage and unlinks its temporary name in the same JavaScript turn.
+the completed stage and removes its verified temporary name. On POSIX it pins
+the destination before closing the stage descriptor, preventing NFS deferred
+unlink from retaining an extra link. Identity and link counts are rechecked
+after this handoff.
+Unreadable final modes retain the original descriptor on platforms without a
+read-free file open; strict post-publication checks still apply there.
 When the OS refuses hardlinks, it uses the [placeholder-rename fallback](#publication-without-hardlinks).
 Other processes can briefly observe both linked names, or an empty placeholder
 before the atomic replacement. Entries present at the exclusive claim are preserved, including dangling symlinks;

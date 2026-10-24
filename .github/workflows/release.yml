@@ -296,6 +296,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           pnpm-version: ${{ env.PNPM_VERSION }}
+      - name: Set up pinned .NET SDK
+        uses: ./.github/actions/setup-windows-helper
       - name: Download unsigned x64 binding
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -390,6 +392,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           pnpm-version: ${{ env.PNPM_VERSION }}
           architecture: ${{ matrix.arch }}
+      - name: Set up pinned .NET SDK
+        uses: ./.github/actions/setup-windows-helper
       - run: rustup target add wasm32-unknown-unknown
       - uses: ./.github/actions/setup-archive-llvm
       - run: pnpm install --frozen-lockfile
@@ -448,6 +452,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           pnpm-version: ${{ env.PNPM_VERSION }}
           architecture: ${{ matrix.arch }}
+      - name: Set up pinned .NET SDK
+        uses: ./.github/actions/setup-windows-helper
       - run: rustup target add wasm32-unknown-unknown
       - uses: ./.github/actions/setup-archive-llvm
       - run: pnpm install --frozen-lockfile

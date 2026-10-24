@@ -25,8 +25,8 @@ async function fixture() {
   const params = { temporaryPath, targetPath, fd,
     identity: fs.fstatSync(fd, { bigint: true }),
     parentGuard: await createAsyncDirectoryGuard(directory, { bigint: true }) };
-  return { ...params, directory, run: (callbacks: Partial<Parameters<typeof publishCopyStage>[0]> = {}) => {
-    try { publishCopyStage({ ...params, ...callbacks }); } finally { fs.closeSync(fd); }
+  return { ...params, directory, run: async (callbacks: Partial<Parameters<typeof publishCopyStage>[0]> = {}) => {
+    try { await publishCopyStage({ ...params, ...callbacks }); } finally { fs.closeSync(fd); }
   } };
 }
 
@@ -81,9 +81,9 @@ it.each(["pre-existing", "raced"])("preserves a %s destination", async when => {
   const f = await fixture();
   refuse();
   if (when === "pre-existing") fs.writeFileSync(f.targetPath, "winner");
-  expect(() => f.run({ onPublicationAttempt() {
+  await expect(f.run({ onPublicationAttempt() {
     if (when === "raced") fs.writeFileSync(f.targetPath, "winner");
-  } })).toThrow(expect.objectContaining({ code: "already-exists" }));
+  } })).rejects.toMatchObject({ code: "already-exists" });
   expect(fs.readFileSync(f.targetPath, "utf8")).toBe("winner");
   expect(fs.readFileSync(f.temporaryPath, "utf8")).toBe("complete bytes");
 });
@@ -100,7 +100,7 @@ it.each(["file", "symlink", "directory", "modified", "missing"])("rejects a plac
     if (kind === "symlink") fs.symlinkSync(foreign, f.targetPath);
     if (kind === "directory") fs.mkdirSync(f.targetPath);
   });
-  expect(() => f.run()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+  await expect(f.run()).rejects.toMatchObject({ code: "path-mismatch" });
   if (kind === "directory") expect(fs.lstatSync(f.targetPath).isDirectory()).toBe(true);
   else if (kind === "missing") expect(fs.existsSync(f.targetPath)).toBe(false);
   else expect(fs.readFileSync(f.targetPath, "utf8")).toBe("foreign bytes");
@@ -112,7 +112,7 @@ it("removes only its empty placeholder when rename fails", async () => {
   const f = await fixture();
   refuse();
   vi.spyOn(fs, "renameSync").mockImplementation(() => { throw errno("EIO"); });
-  expect(() => f.run()).toThrow(expect.objectContaining({ code: "EIO" }));
+  await expect(f.run()).rejects.toMatchObject({ code: "EIO" });
   expect(fs.readdirSync(f.directory)).toEqual(["stage"]);
 });
 
@@ -122,9 +122,9 @@ it("reports both operation and placeholder cleanup errors", async () => {
   const operation = errno("EIO"), cleanup = errno("EACCES");
   vi.spyOn(fs, "renameSync").mockImplementation(() => { throw operation; });
   vi.spyOn(fs, "unlinkSync").mockImplementation(() => { throw cleanup; });
-  expect(() => f.run()).toThrow(expect.objectContaining({ code: "helper-failed",
+  await expect(f.run()).rejects.toMatchObject({ code: "helper-failed",
     details: expect.objectContaining({ publication: "not-published", cleanup: "failed", path: f.targetPath }),
-    cause: expect.objectContaining({ errors: [operation, cleanup] }) }));
+    cause: expect.objectContaining({ errors: [operation, cleanup] }) });
   expect(fs.statSync(f.targetPath).size).toBe(0);
 });
 
@@ -133,7 +133,7 @@ it("fails closed when exclusive creation itself is denied", async () => {
   refuse();
   vi.spyOn(fs, "openSync").mockImplementation(() => { throw errno("EACCES"); });
   const rename = vi.spyOn(fs, "renameSync");
-  expect(() => f.run()).toThrow(expect.objectContaining({ code: "EACCES" }));
+  await expect(f.run()).rejects.toMatchObject({ code: "EACCES" });
   expect(rename).not.toHaveBeenCalled();
   expect(fs.existsSync(f.targetPath)).toBe(false);
 });
@@ -155,7 +155,7 @@ it.each(["EACCES", "EPERM"])("preserves a dangling Windows leaf introduced by li
   // Exercise the preflight on every host; Windows CI also proves real O_EXCL behavior.
   Object.defineProperty(process, "platform", { value: "win32" });
   try {
-    expect(() => f.run()).toThrow(expect.objectContaining({ code: "already-exists" }));
+    await expect(f.run()).rejects.toMatchObject({ code: "already-exists" });
   } finally {
     Object.defineProperty(process, "platform", platform);
   }
@@ -169,7 +169,7 @@ it.each(["EIO", "EEXIST"])("does not fall back after link %s", async code => {
   const f = await fixture();
   refuse(code);
   const open = vi.spyOn(fs, "openSync");
-  expect(() => f.run()).toThrow(expect.objectContaining({ code }));
+  await expect(f.run()).rejects.toMatchObject({ code });
   expect(open).not.toHaveBeenCalled();
   expect(fs.existsSync(f.targetPath)).toBe(false);
 });
@@ -178,14 +178,14 @@ it("orders observers around publication and retains published content on observe
   const f = await fixture();
   refuse();
   const observer = new Error("observer");
-  expect(() => f.run({
+  await expect(f.run({
     onPublicationAttempt() { expect(fs.existsSync(f.targetPath)).toBe(false); },
     onPublished(identity) {
       expect(fs.existsSync(f.temporaryPath)).toBe(false);
       expect(fs.lstatSync(f.targetPath, { bigint: true }).ino).toBe(identity.ino);
       throw observer;
     },
-  })).toThrow(observer);
+  })).rejects.toThrow(observer);
   expect(fs.readFileSync(f.targetPath, "utf8")).toBe("complete bytes");
 });
 
@@ -194,7 +194,7 @@ it.each(["target", "stage"])("aggregates observer and post-rename %s verificatio
   refuse();
   const observer = new Error("observer");
   let failure: unknown;
-  try { f.run({ onPublished() {
+  try { await f.run({ onPublished() {
     if (changed === "target") fs.renameSync(f.targetPath, path.join(f.directory, "published"));
     fs.writeFileSync(changed === "target" ? f.targetPath : f.temporaryPath, "foreign bytes");
     throw observer;
@@ -212,7 +212,7 @@ it("revalidates the staged identity after claiming the placeholder", async () =>
     fs.renameSync(f.temporaryPath, path.join(f.directory, "held-stage"));
     fs.writeFileSync(f.temporaryPath, "foreign stage");
   });
-  expect(() => f.run()).toThrow(expect.objectContaining({ code: "path-mismatch" }));
+  await expect(f.run()).rejects.toMatchObject({ code: "path-mismatch" });
   expect(fs.existsSync(f.targetPath)).toBe(false);
   expect(fs.readFileSync(f.temporaryPath, "utf8")).toBe("foreign stage");
 });
@@ -225,8 +225,8 @@ it("reports unverifiable placeholder cleanup when its initial fstat fails", asyn
     if (fd !== f.fd) throw errno("EIO");
     return fstat(fd, options);
   }) as typeof fs.fstatSync);
-  expect(() => f.run()).toThrow(expect.objectContaining({ code: "helper-failed",
-    details: { publication: "not-published", path: f.targetPath, cleanup: "failed" } }));
+  await expect(f.run()).rejects.toMatchObject({ code: "helper-failed",
+    details: { publication: "not-published", path: f.targetPath, cleanup: "failed" } });
   expect(fs.statSync(f.targetPath).size).toBe(0);
   expect(fs.readFileSync(f.temporaryPath, "utf8")).toBe("complete bytes");
 });

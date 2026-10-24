@@ -2,11 +2,29 @@
 
 ## Unreleased
 
+- **Guest creation on NFS:** close the synced payload before publication so deferred unlink cannot report `ESTALE` after creating the destination. Thanks @bsteiner98.
+- **NFS publication:** retain the destination descriptor while settling staged creates, copies, and no-replace file publication, preventing open temporary names from causing false post-publication failures while retaining exact identity and link-count checks. Thanks @bsteiner98.
+
+## 0.26.12 - 2026-10-23
+
+**Highlights:** Keep durable native writes responsive by synchronizing staged files and publication directories asynchronously.
+
 ### Fixes
 
-- **macOS guarded reads:** accept differently cased root paths on case-insensitive filesystems by binding native root spelling to the same directory identity. Thanks @0xtc23 for [openclaw#181107](https://github.com/openclaw/openclaw/issues/181107).
-- **macOS realpath spelling:** `safeRealpathSync` returns the on-disk spelling on POSIX, so differently cased paths resolve to the same identity that guarded opens use instead of looking like root escapes.
-- **Windows ACL facts:** identify OS-verified local volume roots so consumers can distinguish ineffective DELETE-self grants from replaceable directory permissions, while retaining all ACL rights and fail-closed unknown/remote results. Thanks @WG-Mojo for [openclaw#180892](https://github.com/openclaw/openclaw/issues/180892).
+- **Async native writes:** synchronize staged files and publication directories asynchronously, retaining durability and descriptor ownership without blocking the JavaScript thread.
+
+## 0.26.11 - 2026-10-23
+
+### Highlights
+
+- **macOS root paths:** accept differently cased root paths on case-insensitive filesystems and return consistent on-disk spelling. ([#1022](https://github.com/openclaw/fs-safe/pull/1022), [#1025](https://github.com/openclaw/fs-safe/pull/1025))
+- **Windows volume-root ACLs:** expose verified local volume-root facts so consumers can distinguish ineffective DELETE-self grants from replaceable directory permissions. ([#1023](https://github.com/openclaw/fs-safe/pull/1023))
+
+### Fixes
+
+- **macOS guarded reads:** accept differently cased root paths on case-insensitive filesystems by binding native root spelling to the same directory identity. Thanks @0xtc23 for [openclaw#181107](https://github.com/openclaw/openclaw/issues/181107). ([#1022](https://github.com/openclaw/fs-safe/pull/1022))
+- **macOS realpath spelling:** `safeRealpathSync` returns the on-disk spelling on POSIX, so differently cased paths resolve to the same identity that guarded opens use instead of looking like root escapes. Thanks @obviyus. ([#1025](https://github.com/openclaw/fs-safe/pull/1025))
+- **Windows ACL facts:** identify OS-verified local volume roots so consumers can distinguish ineffective DELETE-self grants from replaceable directory permissions, while retaining all ACL rights and fail-closed unknown/remote results. Thanks @WG-Mojo for [openclaw#180892](https://github.com/openclaw/openclaw/issues/180892). ([#1023](https://github.com/openclaw/fs-safe/pull/1023))
 
 ## 0.26.10 - 2026-10-21
 
