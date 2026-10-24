@@ -194,7 +194,7 @@
   },
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-beta.2",
-    "@napi-rs/cli": "3.10.8",
+    "@napi-rs/cli": "3.10.9",
     "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "5.0.5",
     "acorn": "8.19.0",
@@ -205,7 +205,7 @@
     "sigstore": "5.0.0",
     "tar": "7.5.22",
     "typescript": "^7.0.2",
-    "vite": "8.3.4",
+    "vite": "8.3.5",
     "vitest": "^5.0.3"
   },
   "engines": {
