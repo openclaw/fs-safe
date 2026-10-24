@@ -96,7 +96,7 @@ export async function runPinnedStagedWrite(
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
     // Keep unreadable modes supported where Node has no read-free file open.
     const canHandoff = process.platform !== "win32" &&
-      ((expectedTempStat.mode & 0o400n) !== 0n ||
+      ((params.mode & 0o400) !== 0 ||
         (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")));
     phase = "publish";
     await withAsyncDirectoryGuards([parentGuard], async () => {
