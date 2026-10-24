@@ -39,6 +39,7 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
+import { openPublicationHandle } from "./publication-handle.js";
 export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
 export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "rename-noreplace";
@@ -313,6 +314,7 @@ export async function publishFileExclusive(params: {
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let copiedTarget: FileHandle | undefined;
+  let renamedTarget: FileHandle | undefined;
   const strategy = params.strategy;
   const failure: PublishFailureState = {
     phase: strategy === "rename-noreplace" ? "rename-create" : "hardlink-create",
@@ -346,6 +348,9 @@ export async function publishFileExclusive(params: {
       assertPublishedTargetCurrent(targetPath, identity, "publication target changed during directory sync");
       const observed = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!sameFileIdentity(observed, identity)) throw new FsSafeError("path-mismatch", "publication descriptor changed");
+      if (failure.fallback && (observed.nlink !== 1n || fsSync.lstatSync(targetPath, { bigint: true }).nlink !== 1n)) {
+        throw new FsSafeError("hardlink", "no-replace publication link count changed");
+      }
       return { method, ...(failure.fallback ? { fallback: failure.fallback } : {}), identity: numberStats(observed), exactIdentity: exactFileIdentity(observed), directorySync };
     };
     await parent.assertCurrent();
@@ -381,18 +386,32 @@ export async function publishFileExclusive(params: {
             // Changed/unverified pairs cannot establish which inode was published.
             if (failure.sourceRemoval === "still-linked") rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
           }
+          // Unlink completed, but NFS may still count the open source dentry.
+          // Only the exact published inode, pinned below, can recover this case.
+          if (failure.sourceRemoval !== "removed") throw error;
+        } else {
+          const code = (error as NodeJS.ErrnoException | undefined)?.code;
+          if (code === "path-mismatch" || code === "hardlink") {
+            throw new FsSafeError(code, "publication source changed before fallback", { cause: error });
+          }
+          if (code === "ELOOP") throw new FsSafeError("symlink", "publication source became a symlink", { cause: error });
           throw error;
         }
-        const code = (error as NodeJS.ErrnoException | undefined)?.code;
-        if (code === "path-mismatch" || code === "hardlink") {
-          throw new FsSafeError(code, "publication source changed before fallback", { cause: error });
-        }
-        if (code === "ELOOP") throw new FsSafeError("symlink", "publication source became a symlink", { cause: error });
-        throw error;
       }
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
       failure.preserveTarget = true;
+      if (process.platform !== "win32") {
+        renamedTarget = await openPublicationHandle(targetPath, sourceExactIdentity);
+        await source.close();
+      }
+      if (failure.fallback) {
+        const opened = fsSync.fstatSync(renamedTarget!.fd, { bigint: true });
+        const named = fsSync.lstatSync(targetPath, { bigint: true });
+        if (opened.nlink !== 1n || named.nlink !== 1n) {
+          throw new FsSafeError("hardlink", "no-replace publication link count changed");
+        }
+      }
       await getFsSafeTestHooks()?.afterPublishTargetCreated?.(
         "rename-noreplace",
         targetPath,
@@ -401,7 +420,7 @@ export async function publishFileExclusive(params: {
       assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
       assertRenamedSourceAbsent(sourcePath);
       syncFileBestEffortSync(sourceNativeParent!.handle.fd);
-      return await finishPublication("rename-noreplace", source, sourceExactIdentity);
+      return await finishPublication("rename-noreplace", renamedTarget ?? source, sourceExactIdentity);
     }
 
     try {
@@ -459,6 +478,7 @@ export async function publishFileExclusive(params: {
       : await removeCreatedTargetIfUnchanged(targetPath, failure.targetCleanupIdentity);
     throw publicationFailure(error, failure, cleanup);
   } finally {
+    await renamedTarget?.close().catch(() => undefined);
     await copiedTarget?.close().catch(() => undefined);
     await sourceNativeParent?.handle.close().catch(() => undefined);
     await targetNativeParent?.handle.close().catch(() => undefined);

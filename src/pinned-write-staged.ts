@@ -16,6 +16,7 @@ import { writePinnedInput } from "./pinned-write-input.js";
 import { assertPinnedWriteMode, pinnedWriteModeAssertion, preparePinnedWriteMode } from "./pinned-write-mode.js";
 import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
+import { openPublicationHandle } from "./publication-handle.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
@@ -44,6 +45,7 @@ export async function runPinnedStagedWrite(
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
   let tempIdentity: BigIntStats | undefined;
   let readHandle: FileHandle | undefined;
+  let handoffCloseFailure: { error: unknown } | undefined;
   let renamed = false;
   const completeCreate = params.overwrite === false && params.input.kind !== "file" && params.input.stageBeforePublish === true;
   let receipt: StagedFileReceipt | undefined;
@@ -92,11 +94,15 @@ export async function runPinnedStagedWrite(
       }), path.basename(tempPath), fsSync.fstatSync(handle.fd, { bigint: true }));
     }
     let verifiedIdentity: FileIdentityStat = expectedTempStat;
+    // Keep unreadable modes supported where Node has no read-free file open.
+    const canHandoff = process.platform !== "win32" &&
+      ((expectedTempStat.mode & 0o400n) !== 0n ||
+        (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")));
     phase = "publish";
     await withAsyncDirectoryGuards([parentGuard], async () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
       if (params.overwrite === false) {
-        publishCopyStage({
+        await publishCopyStage({
           temporaryPath: tempPath, targetPath, fd: handle!.fd,
           identity: tempIdentity!, parentGuard,
           assertBeforeMutation,
@@ -107,6 +113,14 @@ export async function runPinnedStagedWrite(
             renamed = true;
             if (receipt) publication = Object.freeze({ status: "published", staged: receipt, basename: params.basename, overwrite: false });
             params.onPublished?.(identity);
+          },
+          beforeTemporaryUnlink: !canHandoff ? undefined : async () => {
+            readHandle = await openPublicationHandle(targetPath, expectedTempStat);
+            // Keep the destination pinned while closing the stage's NFS dentry.
+            const stagedHandle = handle!;
+            handle = undefined;
+            try { await stagedHandle.close(); }
+            catch (error) { handoffCloseFailure = { error }; }
           },
         });
       } else {
@@ -133,6 +147,7 @@ export async function runPinnedStagedWrite(
           throw new FsSafeError("path-mismatch", "fallback target changed during write");
         }
         const expectedHash = sha256Hex(params.input.data, params.input.encoding);
+        await readHandle?.close();
         readHandle = await fs.open(targetPath, resolveReadOpenFlags());
         const readHandleStat = fsSync.fstatSync(readHandle.fd, { bigint: true });
         const actualHash = sha256Hex(await readFileHandleBounded(readHandle, Infinity));
@@ -144,8 +159,8 @@ export async function runPinnedStagedWrite(
         verifiedIdentity = readHandleStat;
       }
     });
-    await params.verifyPublished?.((readHandle ?? handle).fd, verificationIdentity, parentGuard);
-    if (verifyPosixMode) assertPinnedWriteMode((readHandle ?? handle).fd, params.mode, params.private);
+    await params.verifyPublished?.((readHandle ?? handle)!.fd, verificationIdentity, parentGuard);
+    if (verifyPosixMode) assertPinnedWriteMode((readHandle ?? handle)!.fd, params.mode, params.private);
     return { dev: verifiedIdentity.dev, ino: verifiedIdentity.ino };
   } catch (error) {
     failure = { error };
@@ -166,7 +181,10 @@ export async function runPinnedStagedWrite(
             pathname: tempPath, handle, identity: tempIdentity, parentGuard, throwOnCleanupError: true,
           }) : "not-needed";
         },
-        close: [async () => { await readHandle?.close(); }, async () => { await handle?.close(); }],
+        close: [async () => { await readHandle?.close(); }, async () => {
+          await handle?.close();
+          if (handoffCloseFailure) throw handoffCloseFailure.error;
+        }],
       });
     } else try {
       if (!renamed && handle) {

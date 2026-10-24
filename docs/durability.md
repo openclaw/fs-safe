@@ -227,6 +227,12 @@ Success still returns `method: "rename-noreplace"`, with the additive
 `fallback: "link-unlink"` field identifying this weaker mechanism. Atomic rename
 and the other strategies omit `fallback`.
 
+On POSIX, publication pins the destination before closing the source descriptor.
+If NFS deferred unlink made the native fallback's final check fail, publication
+can complete only after this handoff verifies the exact destination identity,
+one remaining link, and the absence of the source. Unverified or substituted
+destinations still fail closed and are preserved.
+
 **Link/unlink is not crash-atomic.** A crash between those syscalls can leave both
 names on the same complete inode. Callers must recognize that interrupted pair
 as incomplete evidence or recover it under their own identity/ownership rules
