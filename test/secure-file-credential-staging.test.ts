@@ -6,8 +6,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const ARCHIVES = [
-  ["22.23.3", "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"],
-  ["24.21.0", "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"],
+  ["22.23.4", "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce"],
+  ["24.22.1", "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6"],
 ] as const;
 const temporaryDirectories: string[] = [];
 let workflowPromise: Promise<string> | undefined;
@@ -102,7 +102,7 @@ describe.skipIf(process.platform !== "linux")("credential-proof shell policies",
     expect(result.stdout).toBe(`https://nodejs.org/dist/v${version}/node-v${version}-linux-x64.tar.xz\n${digest}\n`);
   });
 
-  it.each(["22", "v22.23.3", "24.21.0/../other", "22.23.3\nextra"])("rejects unsupported archive selector %j", async (version) => {
+  it.each(["22", "v22.23.4", "24.22.1/../other", "22.23.4\nextra"])("rejects unsupported archive selector %j", async (version) => {
     const result = runPolicy(await policy(), 'node_version="$1"; select_node_archive; printf executed', [version]);
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("executed");
@@ -150,7 +150,7 @@ describe.skipIf(process.platform !== "linux")("credential-proof shell policies",
     // Replace only the parser at the test boundary. No network, root ownership or Node execution.
     const source = (await policy()).replaceAll("/usr/bin/tar", "fixture_tar");
     const result = runPolicy(source, `
-stage_root="$1"; defect="$2"; archive=fixture; node_version=22.23.3
+stage_root="$1"; defect="$2"; archive=fixture; node_version=22.23.4
 select_node_archive
 reads=0
 inspect_file() {

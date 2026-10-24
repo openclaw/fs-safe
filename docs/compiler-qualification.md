@@ -323,7 +323,7 @@ Keep compiler adoption separate from these qualification tools.
 ## Platform and clean-output campaign
 
 `compiler-qualification.yml` runs the published tsc-ts 0.0.2 native package on
-Linux, macOS, and Windows with Node 24.19.0. It records npm lockfile integrity,
+Linux, macOS, and Windows with Node 24.22.1. It records npm lockfile integrity,
 native executable hashes, the exact checkout commit, and toolchain versions.
 Windows uses the existing x64 CI runner; upstream 0.0.2 has no Windows ARM64
 package. The npm launcher gets a separate smoke check using its default libraries.
