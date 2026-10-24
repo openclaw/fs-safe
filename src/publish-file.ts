@@ -39,6 +39,8 @@ import { getFsSafeTestHooks } from "./test-hooks.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
+import { publishRenameFallback } from "./publish-rename-fallback.js";
+import { isNoReplaceUnavailable } from "./native-noreplace.js";
 export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
 export type PublishFileExclusiveStrategy = "link-or-copy" | "link-required" | "rename-noreplace";
@@ -313,6 +315,7 @@ export async function publishFileExclusive(params: {
   let sourceNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let targetNativeParent: Awaited<ReturnType<typeof openNativeParent>> | undefined;
   let copiedTarget: FileHandle | undefined;
+  let renamedTarget: FileHandle | undefined;
   const strategy = params.strategy;
   const failure: PublishFailureState = {
     phase: strategy === "rename-noreplace" ? "rename-create" : "hardlink-create",
@@ -346,6 +349,9 @@ export async function publishFileExclusive(params: {
       assertPublishedTargetCurrent(targetPath, identity, "publication target changed during directory sync");
       const observed = fsSync.fstatSync(handle.fd, { bigint: true });
       if (!sameFileIdentity(observed, identity)) throw new FsSafeError("path-mismatch", "publication descriptor changed");
+      if (failure.fallback && (observed.nlink !== 1n || fsSync.lstatSync(targetPath, { bigint: true }).nlink !== 1n)) {
+        throw new FsSafeError("hardlink", "no-replace publication link count changed");
+      }
       return { method, ...(failure.fallback ? { fallback: failure.fallback } : {}), identity: numberStats(observed), exactIdentity: exactFileIdentity(observed), directorySync };
     };
     await parent.assertCurrent();
@@ -362,33 +368,25 @@ export async function publishFileExclusive(params: {
     if (strategy === "rename-noreplace") {
       const binding = requireNativeBinding("renameNoReplace");
       try {
-        const fallback = nativeMoveNoReplace(binding, [
+        nativeMoveNoReplace(binding, [
           sourceNativeParent!.handle.fd, sourceNativeParent!.basename,
           targetNativeParent!.handle.fd, targetNativeParent!.basename,
-        ], sourceExactIdentity, getFsSafeNativeConfig().mode === "auto", "file publication");
-        if (fallback) {
-          failure.fallback = fallback;
-          failure.sourceRemoval = "removed";
-        }
+        ], sourceExactIdentity, false, "file publication");
       } catch (error) {
-        if (error instanceof FsSafeError) {
-          if (error.details?.publication === "published") {
-            failure.targetCreated = true;
-            failure.preserveTarget = true;
-            failure.phase = "rename-verify";
-            failure.fallback = "link-unlink";
-            failure.sourceRemoval = error.details.sourceRemoval as PublishFailureState["sourceRemoval"];
-            // Changed/unverified pairs cannot establish which inode was published.
-            if (failure.sourceRemoval === "still-linked") rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
+        if (isNoReplaceUnavailable(error) && getFsSafeNativeConfig().mode === "auto" && process.platform === "linux") {
+          renamedTarget = await publishRenameFallback({
+            binding, source, sourcePath, targetPath, identity: sourceExactIdentity, failure,
+            sourceParent: { fd: sourceNativeParent!.handle.fd, basename: sourceNativeParent!.basename },
+            targetParent: { fd: targetNativeParent!.handle.fd, basename: targetNativeParent!.basename },
+          });
+        } else {
+          const code = (error as NodeJS.ErrnoException | undefined)?.code;
+          if (code === "path-mismatch" || code === "hardlink") {
+            throw new FsSafeError(code, "publication source changed before fallback", { cause: error });
           }
+          if (code === "ELOOP") throw new FsSafeError("symlink", "publication source became a symlink", { cause: error });
           throw error;
         }
-        const code = (error as NodeJS.ErrnoException | undefined)?.code;
-        if (code === "path-mismatch" || code === "hardlink") {
-          throw new FsSafeError(code, "publication source changed before fallback", { cause: error });
-        }
-        if (code === "ELOOP") throw new FsSafeError("symlink", "publication source became a symlink", { cause: error });
-        throw error;
       }
       rememberCreatedTarget(failure, sourceExactIdentity, "rename-verify");
       // A failed post-rename fence must not delete the only remaining name.
@@ -401,7 +399,7 @@ export async function publishFileExclusive(params: {
       assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
       assertRenamedSourceAbsent(sourcePath);
       syncFileBestEffortSync(sourceNativeParent!.handle.fd);
-      return await finishPublication("rename-noreplace", source, sourceExactIdentity);
+      return await finishPublication("rename-noreplace", renamedTarget ?? source, sourceExactIdentity);
     }
 
     try {
@@ -459,6 +457,7 @@ export async function publishFileExclusive(params: {
       : await removeCreatedTargetIfUnchanged(targetPath, failure.targetCleanupIdentity);
     throw publicationFailure(error, failure, cleanup);
   } finally {
+    await renamedTarget?.close().catch(() => undefined);
     await copiedTarget?.close().catch(() => undefined);
     await sourceNativeParent?.handle.close().catch(() => undefined);
     await targetNativeParent?.handle.close().catch(() => undefined);
