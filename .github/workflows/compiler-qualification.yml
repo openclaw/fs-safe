@@ -42,7 +42,7 @@ jobs:
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
-          node-version: 24.19.0
+          node-version: 24.22.1
 
       - name: Add portable archive target
         run: rustup target add wasm32-unknown-unknown

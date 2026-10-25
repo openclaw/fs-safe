@@ -9,7 +9,7 @@ inputs:
     default: ""
   pnpm-version:
     description: pnpm version to install
-    default: "12.10.1"
+    default: "12.15.0"
 runs:
   using: composite
   steps:

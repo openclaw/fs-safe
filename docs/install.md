@@ -33,7 +33,7 @@ node --version
 
 ## Bun runtime
 
-Bun 1.4.2 can run the same public APIs and load the matching native package.
+Bun 1.4.4 can run the same public APIs and load the matching native package.
 On macOS and Linux, fs-safe uses its Rust N-API addon to call the system
 `realpath` implementation for native resolution. Ordinary resolution follows
 Node's component walk, including lexical normalization of expanded symlink
