@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
-import { defaultSyncShouldReclaim } from "./file-lock-sync-admission.js";
 import type { SyncLockAcquisition } from "./file-lock-sync-acquisition.js";
 import {
   parseSidecarLockSnapshot,
@@ -10,7 +9,7 @@ import {
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockStaleRecovery } from "./sidecar-lock-types.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
-import { sidecarLockStale } from "./sidecar-lock-policy.js";
+import { defaultSidecarLockShouldReclaim, sidecarLockStale } from "./sidecar-lock-policy.js";
 
 export type SyncStaleOptionsState<TPayload extends Record<string, unknown>> = {
   shouldReclaimObserved?: boolean;
@@ -119,7 +118,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
             nowMs,
             heldByThisProcess: false,
           }])
-        : defaultSyncShouldReclaim(snapshot, params.staleMs, nowMs);
+        : defaultSidecarLockShouldReclaim(snapshot, params.staleMs, nowMs);
       assertSynchronousCallbackResult(reclaim, "shouldReclaim");
     } finally {
       assertUnheld();

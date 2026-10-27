@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { sidecarLockPayloadCreatedAtMs, sidecarLockTimeout } from "./sidecar-lock-policy.js";
+import { sidecarLockTimeout } from "./sidecar-lock-policy.js";
 import type { SidecarLockSnapshot } from "./sidecar-lock-reclaim.js";
 import { ensureSidecarLockCleanupRegistered } from "./sidecar-lock-registration.js";
 
@@ -49,19 +49,6 @@ export function getSyncLockAdmissions(): Map<string, object> {
     globalWithState[SYNC_ADMISSIONS_KEY] = new Map();
   }
   return globalWithState[SYNC_ADMISSIONS_KEY];
-}
-
-export function defaultSyncShouldReclaim(
-  snapshot: SidecarLockSnapshot,
-  staleMs: number,
-  nowMs: number,
-): boolean {
-  const createdAtMs = sidecarLockPayloadCreatedAtMs(snapshot.payload);
-  if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
-  if (!snapshot.stat) return true;
-  const mtimeMs = "mtimeNs" in snapshot.stat
-    ? Number(snapshot.stat.mtimeNs) / 1e6 : snapshot.stat.mtimeMs;
-  return nowMs - mtimeMs > staleMs;
 }
 
 export function syncReclaimGuardExists(reclaimGuardPath: string): boolean {

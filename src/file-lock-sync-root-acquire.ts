@@ -6,9 +6,9 @@ import type {
   FileLockSyncHandle,
 } from "./file-lock-sync.js";
 import { captureRootSyncAcquireOptions } from "./file-lock-sync-root-options.js";
-import { defaultSyncShouldReclaim, foreignSyncHeldLock } from "./file-lock-sync-admission.js";
+import { foreignSyncHeldLock } from "./file-lock-sync-admission.js";
 import type { Root } from "./root-impl.js";
-import { isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
+import { defaultSidecarLockShouldReclaim, isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
 import {
   serializeSidecarLockPayload,
   type SidecarLockSnapshot,
@@ -325,7 +325,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             throw new FsSafeError("path-mismatch", "sidecar changed during reclaim policy callback");
           }
         } else {
-          reclaim = defaultSyncShouldReclaim(snapshot, options.staleMs, nowMs);
+          reclaim = defaultSidecarLockShouldReclaim(snapshot, options.staleMs, nowMs);
         }
         if (reclaim) {
           if (

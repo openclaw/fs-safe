@@ -330,6 +330,10 @@ target-leaf symlink. Non-Root acquisition retains its existing parent-creation
 behavior.
 
 An owner can finish releasing while another async acquirer inspects its record.
+Default stale detection uses the admitted record's `createdAt` or captured
+modification time, without looking up its pathname again after reading it.
+Retiring that record therefore does not turn a fresh lock into a stale one or
+authorize recovery of its successor.
 Create-only Root writes do not open an existing record merely to inherit its
 mode. Once a pathname sample and opened descriptor agree, a failed acquisition
 snapshot can be discarded only when the original descriptor has exact identity,

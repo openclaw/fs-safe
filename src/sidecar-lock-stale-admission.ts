@@ -140,12 +140,13 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     if (await retryChangedBoundary()) return;
     throw error;
   }
-  const shouldReclaim = staleOptions.shouldReclaim ?? defaultSidecarLockShouldReclaim;
+  const shouldReclaim = staleOptions.shouldReclaim;
   let reclaim: boolean;
   try {
     reclaim = await admission.run(async () => {
       assertUnheld();
       try {
+        if (!shouldReclaim) return defaultSidecarLockShouldReclaim(snapshot, params.staleMs, Date.now());
         return await Reflect.apply(shouldReclaim, undefined, [{
           lockPath,
           normalizedTargetPath,
