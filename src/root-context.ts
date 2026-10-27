@@ -18,7 +18,7 @@ import {
 } from "./path.js";
 import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
-import { errorCauseOptions, outsideWorkspaceError, rootPathChangedError } from "./root-errors.js";
+import { errorCauseOptions, outsideWorkspaceError, pathTraversalPermissionError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
 import { realpathSync } from "./realpath.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
@@ -255,6 +255,8 @@ export async function resolvePathInRoot(
       resolved = admitted.path;
     }
   } catch (error) {
+    const permissionError = pathTraversalPermissionError(error, rawAbsolutePath);
+    if (permissionError) throw permissionError;
     if (error instanceof FsSafeError && error.code === "symlink") {
       throw error;
     }

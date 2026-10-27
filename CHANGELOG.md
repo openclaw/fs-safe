@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Root errors:** report denied path traversal as operational `permission-denied`, preserving the original errno and path instead of implying a path-alias violation. Thanks @LiuwqGit.
+
 ### Security
 
 - **Archive dependencies:** update zstd to 0.14.3, zstd-safe to 8.2.0, and zstd-sys to 2.1.2 for native and WASM archive builds, retaining the custom WASM allocator and allocation-failure checks.
