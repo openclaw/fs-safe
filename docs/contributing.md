@@ -322,7 +322,7 @@ require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standa
 direct `node` invocation without lifecycle metadata is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
-CI's bundled-package producer runs `pnpm package:collect --allow-host-only --pack-only --output package-smoke-pack`
+CI's bundled-package producer runs `pnpm package:collect --allow-host-only --pack-only --output release-artifacts-package-smoke`
 after building. Node 22/24 consumers use `pnpm package:smoke --packed-input <directory>`
 to verify and install those same root and host tarballs. The input includes the
 manifest and its clean source/host receipt; missing or mismatched input fails

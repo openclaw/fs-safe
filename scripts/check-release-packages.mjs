@@ -48,7 +48,9 @@ async function verifyArchive(file, pkg, rootName) {
   const paths = new Set();
   const metadata = [];
   const entries = [];
-  await list({ file, onReadEntry(entry) {
+  // Tar otherwise tolerates truncated entry bodies with a warning, even when
+  // its advertised size still agrees with a resealed input manifest.
+  await list({ file, strict: true, onReadEntry(entry) {
     if (entry.type === "Directory") return;
     entries.push({ path: entry.path, type: entry.type, size: entry.size });
     if (entry.path === "package/package.json") entry.on("data", chunk => metadata.push(chunk));

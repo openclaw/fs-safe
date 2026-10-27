@@ -10,13 +10,13 @@ const runnerCheck = readFileSync(new URL("../.github/actions/verify-windows-ci-r
 
 describe("required package consumer proof", () => {
   it("packs once in the existing producer and reuses those bytes in every consumer", () => {
-    expect(producer).toContain("run: pnpm package:collect --allow-host-only --pack-only --output package-smoke-pack");
-    expect(producer).toContain("            package-smoke-pack/\n");
+    expect(producer).toContain("run: pnpm package:collect --allow-host-only --pack-only --output release-artifacts-package-smoke");
+    expect(producer).toContain("            release-artifacts-package-smoke/\n");
     expect(producer!.indexOf("Build and stage host binding"))
       .toBeLessThan(producer!.indexOf("Pack exact-source root and host artifacts once"));
     expect(producer!.indexOf("Pack exact-source root and host artifacts once"))
       .toBeLessThan(producer!.indexOf("Upload exact-source package build"));
-    expect(consumer).toContain("run: pnpm package:smoke --packed-input package-smoke-pack");
+    expect(consumer).toContain("run: pnpm package:smoke --packed-input release-artifacts-package-smoke");
     expect(consumer).toContain("            release-artifacts/package-build-proof.json\n");
     expect(workflow.match(/--pack-only/gu)).toHaveLength(1);
     expect(workflow.match(/--packed-input/gu)).toHaveLength(1);

@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { create as createTar } from "tar";
 import { afterEach, expect, it, vi } from "vitest";
 import { verifyPackedInput } from "../scripts/check-release-packages.mjs";
+import { packageProofSource } from "../scripts/consumer-proof-metadata.mjs";
 
 const directories: string[] = [];
 const source = { commit: "a".repeat(40), tree: "b".repeat(40), dirty: false };
@@ -72,6 +74,62 @@ it("accepts complete source-bound root and host tarballs without repacking", asy
   await expect(input.verify()).resolves.toEqual(input.manifest);
 });
 
+it("keeps actual Git source identity clean when producing and restoring the workflow bundle", async () => {
+  const workflow = (await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"))
+    .replace(/\r\n?/gu, "\n");
+  const producer = workflow.match(/^  package-smoke-build:\n((?: {4,}[^\n]*\n|\n)*)/mu)?.[1];
+  const consumer = workflow.match(/^  package-smoke:\n((?: {4,}[^\n]*\n|\n)*)/mu)?.[1];
+  const output = producer?.match(/run: pnpm package:collect --allow-host-only --pack-only --output (\S+)/u)?.[1];
+  const restored = consumer?.match(/run: pnpm package:smoke --packed-input (\S+)/u)?.[1];
+  expect(output).toBeDefined();
+  expect(restored).toBe(output);
+  expect(producer).toContain(`            ${output}/\n`);
+
+  const directory = await mkdtemp(join(tmpdir(), "fs-safe-pack-source-"));
+  directories.push(directory);
+  const producerRoot = join(directory, "producer");
+  const consumerRoot = join(directory, "consumer");
+  await mkdir(producerRoot);
+  await copyFile(new URL("../.gitignore", import.meta.url), join(producerRoot, ".gitignore"));
+  await writeFile(join(producerRoot, "source.txt"), "source identity fixture\n");
+  const git = (cwd: string, args: string[]) => execFileSync("git", args, {
+    cwd, encoding: "utf8", stdio: "pipe", timeout: 10_000,
+  });
+  git(producerRoot, ["init"]);
+  git(producerRoot, ["add", ".gitignore", "source.txt"]);
+  git(producerRoot, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+    "-c", "commit.gpgsign=false", "commit", "--no-verify", "-m", "source fixture"]);
+  const actualSource = packageProofSource(producerRoot);
+  if ("unavailable" in actualSource) throw new Error("Git fixture source must be available");
+  expect(actualSource.dirty).toBe(false);
+  vi.stubEnv("FS_SAFE_EXPECTED_SOURCE_COMMIT", actualSource.commit);
+  const input = await fixture();
+  input.receipt.source = actualSource;
+  await input.save();
+  const restoreBundle = async (root: string, relative: string) => {
+    const bundle = join(root, relative);
+    await mkdir(bundle);
+    for (const filename of ["manifest.json", "package-build-proof.json", ...input.manifest.map(entry => entry.filename)]) {
+      await copyFile(join(input.directory, filename), join(bundle, filename));
+    }
+    return bundle;
+  };
+  const verify = (bundle: string, root: string) => verifyPackedInput({ directory: bundle,
+    rootPkg, hostPkg: nativePkg, source: packageProofSource(root), host });
+  const producerBundle = await restoreBundle(producerRoot, output!);
+  expect(packageProofSource(producerRoot)).toEqual(actualSource);
+  await expect(verify(producerBundle, producerRoot)).resolves.toEqual(input.manifest);
+  git(directory, ["clone", "--local", "--no-hardlinks", producerRoot, consumerRoot]);
+  expect(packageProofSource(consumerRoot)).toEqual(actualSource);
+  const consumerBundle = await restoreBundle(consumerRoot, restored!);
+  expect(packageProofSource(consumerRoot)).toEqual(actualSource);
+  await expect(verify(consumerBundle, consumerRoot)).resolves.toEqual(input.manifest);
+
+  await writeFile(join(consumerRoot, "unknown-output.json"), "{}\n");
+  expect(packageProofSource(consumerRoot)).toEqual({ ...actualSource, dirty: true });
+  await expect(verify(consumerBundle, consumerRoot)).rejects.toThrow("clean source checkout");
+});
+
 it.each(["commit", "tree", "dirty"] as const)("rejects a different or dirty consumer %s", async key => {
   const input = await fixture();
   const actual = { ...source, [key]: key === "dirty" ? true : "c".repeat(40) };
@@ -122,6 +180,31 @@ it("rejects modified bytes even when the filename and source are unchanged", asy
   bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;
   await writeFile(file, bytes);
   await expect(input.verify()).rejects.toThrow("artifact integrity");
+});
+
+it("rejects a truncated archive body even when its outer integrity and receipt are resealed", async () => {
+  const input = await fixture();
+  const entry = input.manifest[0]!;
+  const file = join(input.directory, entry.filename);
+  const archive = gunzipSync(await readFile(file));
+  let truncated: Buffer | undefined;
+  for (let offset = 0; offset < archive.length; ) {
+    const header = archive.subarray(offset, offset + 512);
+    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/u, "");
+    const size = Number.parseInt(header.subarray(124, 136).toString("utf8").replace(/\0.*$/u, "").trim(), 8);
+    if (name === "package/fs-safe-native.node") {
+      truncated = gzipSync(archive.subarray(0, offset + 512 + size - 1));
+      break;
+    }
+    if (!name) break;
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  expect(truncated).toBeDefined();
+  await writeFile(file, truncated!);
+  entry.size = truncated!.length;
+  entry.integrity = `sha512-${createHash("sha512").update(truncated!).digest("base64")}`;
+  await input.save();
+  await expect(input.verify()).rejects.toThrow("TAR_BAD_ARCHIVE: Truncated input");
 });
 
 it.skipIf(process.platform === "win32")("rejects tarball symlinks", async () => {
