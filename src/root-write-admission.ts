@@ -19,7 +19,7 @@ import type { PinnedWriteMutationAdmission } from "./pinned-write-types.js";
 import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { resolvePathInRoot } from "./root-context.js";
-import { errorCauseOptions, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
+import { errorCauseOptions, hardlinkedPathNotAllowedError, outsideWorkspaceError, pathTraversalPermissionError } from "./root-errors.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import {
   mutationSymlinkResolution,
@@ -305,6 +305,8 @@ export async function resolveGuardedWritePathInRoot(
         boundaryLabel: "root",
       });
     } catch (error) {
+      const permissionError = pathTraversalPermissionError(error, resolvedPath.resolved);
+      if (permissionError) throw permissionError;
       throw new FsSafeError("path-alias", "path alias escape blocked", errorCauseOptions(error));
     }
   }

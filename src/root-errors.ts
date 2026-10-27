@@ -19,6 +19,14 @@ export function outsideWorkspaceError(): FsSafeError {
   return new FsSafeError("outside-workspace", "file is outside workspace root");
 }
 
+/** Classify raw traversal denials without disguising an established policy failure. */
+export function pathTraversalPermissionError(error: unknown, targetPath: string): FsSafeError | undefined {
+  if (error instanceof FsSafeError) return error.code === "permission-denied" ? error : undefined;
+  if (!hasNodeErrorCode(error, "EACCES") && !hasNodeErrorCode(error, "EPERM")) return;
+  const deniedPath = isNodeError(error) && typeof error.path === "string" ? error.path : targetPath;
+  return new FsSafeError("permission-denied", `permission denied while resolving ${deniedPath}`, errorCauseOptions(error));
+}
+
 export function rootPathChangedError(cause?: Error): FsSafeError {
   return new FsSafeError("path-mismatch", "root path changed during operation", { cause });
 }

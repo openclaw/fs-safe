@@ -67,6 +67,7 @@ import {
   normalizePinnedPathError,
   normalizePinnedWriteError,
   outsideWorkspaceError,
+  pathTraversalPermissionError,
 } from "./root-errors.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { stringifyJsonDocument } from "./json-stringify.js";
@@ -1282,6 +1283,8 @@ async function resolvePinnedRootPathInRoot(
     };
     resolved = await (params.removalReceipts ? resolveRootPathForRemoval(resolution, params.removalReceipts) : resolveRootPath(resolution));
   } catch (err) {
+    const permissionError = pathTraversalPermissionError(err, params.relativePath);
+    if (permissionError) throw permissionError;
     if (err instanceof FsSafeError && err.code === "symlink") throw err;
     throw new FsSafeError("path-alias", "path alias escape blocked", { cause: err });
   }
