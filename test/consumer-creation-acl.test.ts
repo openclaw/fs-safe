@@ -68,7 +68,7 @@ it.skipIf(process.platform !== "win32")("queries literal paths through native Po
   ];
   // One driver sets distinguishable raw DACLs and exercises decoder failures.
   // Positive queries below use the actual native -File scalar argument route.
-  const setup = JSON.parse(runWindowsSecurityScript("public static class CreationAclFixture {}", [
+  const setup = JSON.parse(runWindowsSecurityScript("", [
     "$fixture=Microsoft.PowerShell.Utility\\ConvertFrom-Json -InputObject $env:FS_SAFE_CREATION_ACL_FIXTURE",
     "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
     "for($i=0;$i -lt $fixture.targets.Count;$i++) {",

@@ -13,7 +13,7 @@ export function runWindowsSecurityScript(
 ): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-win-test-script-"));
   try {
-    fs.writeFileSync(path.join(directory, "windows-security-bridge.cs"), source, "utf8");
+    if (source) fs.writeFileSync(path.join(directory, "windows-security-bridge.cs"), source, "utf8");
     // Transport fixtures replace the security bridge and never query owners.
     // Keep the unused dispatch arm fail-fast without importing real ACL code.
     if (helperSource) fs.writeFileSync(path.join(directory, "windows-owner-query.cs"),
@@ -24,9 +24,11 @@ export function runWindowsSecurityScript(
       "$ErrorActionPreference='Stop'",
       "$env:PSModulePath=[IO.Path]::Combine($PSHOME, 'Modules')",
       "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
-      helperSource
+      // PowerShell-only fixtures do not need a compiled bridge. Keep their
+      // structured stdout free of Add-Type warnings for placeholder types.
+      ...(source ? [helperSource
         ? "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath @(([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs')),([IO.Path]::Combine($PSScriptRoot, 'windows-security-helper.cs')),([IO.Path]::Combine($PSScriptRoot, 'windows-owner-query.cs')))"
-        : "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))",
+        : "Microsoft.PowerShell.Utility\\Add-Type -LiteralPath ([IO.Path]::Combine($PSScriptRoot, 'windows-security-bridge.cs'))"] : []),
       ...body,
       "",
     ].join("\n"), "utf8");
