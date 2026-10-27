@@ -39,7 +39,7 @@ on:
       - src/write-file-handle.ts
       - src/replace-file-temp-owner.ts
       - .github/workflows/mutation-policy-proof.yml
-      - .github/actions/verify-windows-ci-runner/action.yml
+      - .github/actions/verify-windows-ci-runner/**
       - package.json
       - pnpm-lock.yaml
   push:

@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      windows_package_capacity_proof:
+        description: Compare package consumers on standard Windows and the 16-core control using the same build
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -1870,11 +1875,11 @@ jobs:
 
   package-smoke:
     # Artifact routing still uses matrix.os; only the required status name is stable.
-    name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})
+    name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})${{ matrix.capacity == 'control' && ' [16-core control]' || '' }}
     # Required consumer checks must fail on missing artifacts, rather than
     # being skipped when any build in the producer matrix fails.
     if: ${{ !cancelled() }}
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && (matrix.capacity == 'control' && 'fs-safe-windows-16core' || 'windows-latest') || matrix.os }}
     timeout-minutes: 30
     needs: package-smoke-build
     strategy:
@@ -1887,6 +1892,14 @@ jobs:
         node:
           - 22
           - 24
+        # Manual controls consume the same immutable artifact as standard rows.
+        # Ordinary PR/main runs keep exactly the six required consumer checks.
+        capacity: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && '["standard","control"]' || '["standard"]') }}
+        exclude:
+          - os: ubuntu-latest
+            capacity: control
+          - os: xcode-27
+            capacity: control
     steps:
       - name: Check out exact package-proof source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1898,6 +1911,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: ${{ matrix.capacity == 'control' && '16' || '4' }}
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1947,7 +1962,7 @@ jobs:
       - name: Upload behavior proof
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: platform-package-proof-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node }}
+          name: platform-package-proof-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node }}${{ matrix.capacity == 'control' && '-16-core-control' || '' }}
           path: |
             release-artifacts/manifest.json
             release-artifacts/consumer-proof.json
