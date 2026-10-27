@@ -7,13 +7,13 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      windows_package_capacity_proof:
-        description: Compare package consumers on standard Windows and the 16-core control using the same build
+      secure_file_credential_proof:
+        description: Run the manual Linux split-credential secure-file proof
         required: false
         default: false
         type: boolean
-      secure_file_credential_proof:
-        description: Run the manual Linux split-credential secure-file proof
+      windows_package_capacity_proof:
+        description: Compare package consumers on standard Windows and the 16-core control using the same build
         required: false
         default: false
         type: boolean
