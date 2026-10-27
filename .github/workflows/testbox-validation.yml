@@ -60,7 +60,7 @@ jobs:
 
       - name: Run Testbox
         if: always()
-        uses: useblacksmith/run-testbox@3f60ff9ceb2c10c3feefa87dc0c6490cffae059d # post-v2: idle timeout and hydration failure reporting
+        uses: useblacksmith/run-testbox@9b976c32aa3bcbffb348889673585a5deee1b2f3 # post-v2: idle timeout and hydration failure reporting
 
       - name: Close Testbox SSH sessions
         if: always()
