@@ -1,5 +1,9 @@
 name: Verify Windows CI runner
-description: Require native Windows x64 with at least 16 logical processors and a Windows runner context
+description: Require native Windows x64, a Windows runner context, and the selected processor floor
+inputs:
+  minimum-logical-processors:
+    description: Processor floor (16 by default; 4 only for qualified package consumers)
+    default: "16"
 runs:
   using: composite
   steps:
@@ -7,15 +11,13 @@ runs:
       shell: pwsh
       env:
         FS_SAFE_RUNNER_OS: ${{ runner.os }}
+        FS_SAFE_MINIMUM_LOGICAL_PROCESSORS: ${{ inputs.minimum-logical-processors }}
+        FS_SAFE_RUNNER_CHECK_DIRECTORY: ${{ github.action_path }}
       run: |
         $ErrorActionPreference = "Stop"
+        . (Join-Path $env:FS_SAFE_RUNNER_CHECK_DIRECTORY "verify-runner.ps1")
         $windows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
         $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-        if (-not $windows -or $architecture -ne "X64" -or $env:FS_SAFE_RUNNER_OS -ne "Windows") {
-          throw "Windows CI requires native Windows x64 and runner.os=Windows."
-        }
-        $logicalProcessors = [int](Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors
+        $logicalProcessors = if ($windows) { [int](Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors } else { 0 }
+        Assert-FsSafeWindowsCiRunner -Windows $windows -Architecture $architecture -RunnerOS $env:FS_SAFE_RUNNER_OS -LogicalProcessors $logicalProcessors -MinimumLogicalProcessors $env:FS_SAFE_MINIMUM_LOGICAL_PROCESSORS
         Write-Host "Windows CI runner: arch=$architecture logical_processors=$logicalProcessors runner_os=$env:FS_SAFE_RUNNER_OS"
-        if ($logicalProcessors -lt 16) {
-          throw "Windows CI requires at least 16 logical processors; found $logicalProcessors."
-        }
