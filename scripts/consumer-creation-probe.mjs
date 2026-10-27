@@ -5,7 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { bindCreationConsumer } from "./consumer-creation-contract.mjs";
+import { bindCreationConsumer, decodeCreationAclBatch, encodeCreationAclBatch } from "./consumer-creation-contract.mjs";
 
 const mode = process.argv[2];
 assert.ok(["off", "auto", "require"].includes(mode));
@@ -34,36 +34,46 @@ function darwinAclEntries(file) {
     .split("\n").filter((line) => /^\s*\d+:/.test(line));
 }
 
-function creationPermissions(file, directory, expectedMode = directory ? 0o700 : 0o600, privatePath = true) {
-  const stat = fs.lstatSync(file);
-  assert.equal(stat.isSymbolicLink(), false);
-  assert.equal(stat.isDirectory(), directory);
-  assert.equal(stat.isFile(), !directory);
-  if (process.platform !== "win32") {
-    assert.equal(stat.mode & 0o777, expectedMode);
-    assert.equal(stat.uid, process.getuid());
-    if (process.platform === "darwin" && privatePath) {
-      assert.deepEqual(darwinAclEntries(file), [], "private creation retained a Darwin ACL");
-      return { kind: "darwin-mode-no-acl", mode: stat.mode & 0o777, currentOwner: true, aclEntries: 0 };
+function creationPermissionsBatch(requests) {
+  const portable = requests.map(([file, directory, expectedMode = directory ? 0o700 : 0o600, privatePath = true]) => {
+    const stat = fs.lstatSync(file);
+    assert.equal(stat.isSymbolicLink(), false);
+    assert.equal(stat.isDirectory(), directory);
+    assert.equal(stat.isFile(), !directory);
+    if (process.platform !== "win32") {
+      assert.equal(stat.mode & 0o777, expectedMode);
+      assert.equal(stat.uid, process.getuid());
+      if (process.platform === "darwin" && privatePath) {
+        assert.deepEqual(darwinAclEntries(file), [], "private creation retained a Darwin ACL");
+        return { kind: "darwin-mode-no-acl", mode: stat.mode & 0o777, currentOwner: true, aclEntries: 0 };
+      }
+      return { kind: "posix-mode", mode: stat.mode & 0o777, currentOwner: true };
     }
-    return { kind: "posix-mode", mode: stat.mode & 0o777, currentOwner: true };
-  }
-  if (!directory) assert.equal(stat.mode & 0o200, expectedMode & 0o200);
+    if (!directory) assert.equal(stat.mode & 0o200, expectedMode & 0o200);
+  });
+  if (process.platform !== "win32") return portable;
+  const files = requests.map(([file]) => file);
   const powershell = path.join(process.env.SystemRoot ?? process.env.SYSTEMROOT,
     "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const raw = JSON.parse(execFileSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-    fileURLToPath(new URL("./consumer-creation-acl.ps1", import.meta.url)), file],
+  const observations = decodeCreationAclBatch(files, execFileSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+    fileURLToPath(new URL("./consumer-creation-acl.ps1", import.meta.url)), "-EncodedTargets", encodeCreationAclBatch(files)],
   { encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 }));
-  assert.equal(raw.owner, raw.current);
-  assert.equal(raw.present, true);
-  assert.equal(raw.protected, true);
-  assert.deepEqual(raw.aces.map((ace) => ace.sid).sort(), [raw.current, "s-1-5-18", "s-1-5-32-544"].sort());
-  for (const ace of raw.aces) {
-    assert.equal(ace.type, "AccessAllowed");
-    assert.equal(ace.mask, 0x1f01ff);
-    assert.equal(ace.flags & ~3, 0);
-  }
-  return { kind: "windows-protected-dacl", currentOwner: true, expectedPrincipalsOnly: true };
+  return observations.map((raw) => {
+    assert.equal(raw.owner, raw.current);
+    assert.equal(raw.present, true);
+    assert.equal(raw.protected, true);
+    assert.deepEqual(raw.aces.map((ace) => ace.sid).sort(), [raw.current, "s-1-5-18", "s-1-5-32-544"].sort());
+    for (const ace of raw.aces) {
+      assert.equal(ace.type, "AccessAllowed");
+      assert.equal(ace.mask, 0x1f01ff);
+      assert.equal(ace.flags & ~3, 0);
+    }
+    return { kind: "windows-protected-dacl", currentOwner: true, expectedPrincipalsOnly: true };
+  });
+}
+
+function creationPermissions(file, directory, expectedMode = directory ? 0o700 : 0o600, privatePath = true) {
+  return creationPermissionsBatch([[file, directory, expectedMode, privatePath]])[0];
 }
 
 async function collision(operation, target) {
@@ -121,8 +131,9 @@ async function observeBufferedCreation(target, content, create) {
 async function proveCreation(capability) {
   if (!missingRequired) {
     await capability.mkdir("private/nested", { private: privateCreation });
-    rows.push({ scenario: `root-${privateCreation ? "private" : "ordinary"}-directory`, parents: ["private", "private/nested"].map((name) =>
-      creationPermissions(path.join(sandbox, name), true, privateCreation ? 0o700 : 0o777, privateCreation)) });
+    // Only adjacent observations with no intervening mutation share an oracle.
+    rows.push({ scenario: `root-${privateCreation ? "private" : "ordinary"}-directory`, parents: creationPermissionsBatch(
+      ["private", "private/nested"].map((name) => [path.join(sandbox, name), true, privateCreation ? 0o700 : 0o777, privateCreation])) });
   }
   if (missingRequired) {
     for (const [scenario, relative, operation] of [
@@ -153,9 +164,11 @@ async function proveCreation(capability) {
         : capability.create(relative, content, { private: privateCreation, atomic: true, mode: requestedMode, durable: "file" });
       await create();
       assert.equal(fs.readFileSync(target, "utf8"), content);
-      const permissions = creationPermissions(target, false, requestedMode, privateCreation);
-      const parents = [path.dirname(target), path.dirname(path.dirname(target))]
-        .map((parent) => creationPermissions(parent, true, privateCreation ? 0o700 : 0o777, privateCreation));
+      const [permissions, ...parents] = creationPermissionsBatch([
+        [target, false, requestedMode, privateCreation],
+        ...[path.dirname(target), path.dirname(path.dirname(target))]
+          .map((parent) => [parent, true, privateCreation ? 0o700 : 0o777, privateCreation]),
+      ]);
       await collision(create, target);
       assert.deepEqual(creationPermissions(target, false, requestedMode, privateCreation), permissions);
       rows.push({ scenario: `root-${privateCreation ? "private" : "ordinary"}-${json ? "json" : "file"}`, bytes: Buffer.byteLength(content),
