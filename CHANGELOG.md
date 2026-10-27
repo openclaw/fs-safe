@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Root errors:** report denied path traversal as operational `permission-denied`, preserving the original errno and path instead of implying a path-alias violation. Thanks @LiuwqGit.
 - **File lock contention:** use the admitted record's timestamp for async stale detection so ordinary owner release and re-creation do not trigger spurious `path-mismatch` failures.
 
 ### Security
