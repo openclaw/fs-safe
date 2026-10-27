@@ -1,5 +1,5 @@
-import fsSync from "node:fs";
-import type { SidecarLockReclaimParams, SidecarLockRetryOptions } from "./sidecar-lock-types.js";
+import type { SidecarLockSnapshot } from "./sidecar-lock-reclaim.js";
+import type { SidecarLockRetryOptions } from "./sidecar-lock-types.js";
 
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
@@ -122,14 +122,16 @@ export function sidecarLockPayloadCreatedAtMs(payload: unknown): number | null {
   return Number.isFinite(createdAtMs) ? createdAtMs : null;
 }
 
-export async function defaultSidecarLockShouldReclaim(
-  params: Pick<SidecarLockReclaimParams, "lockPath" | "payload" | "staleMs" | "nowMs">,
-): Promise<boolean> {
-  const createdAtMs = sidecarLockPayloadCreatedAtMs(params.payload);
-  if (createdAtMs !== null) return params.nowMs - createdAtMs > params.staleMs;
-  try {
-    return params.nowMs - fsSync.statSync(params.lockPath).mtimeMs > params.staleMs;
-  } catch {
-    return true;
-  }
+export function defaultSidecarLockShouldReclaim(
+  snapshot: SidecarLockSnapshot,
+  staleMs: number,
+  nowMs: number,
+): boolean {
+  const createdAtMs = sidecarLockPayloadCreatedAtMs(snapshot.payload);
+  if (createdAtMs !== null) return nowMs - createdAtMs > staleMs;
+  if (!snapshot.stat) return true;
+  // A released pathname may already name another owner; age only the admitted record.
+  const mtimeMs = "mtimeNs" in snapshot.stat
+    ? Number(snapshot.stat.mtimeNs) / 1e6 : snapshot.stat.mtimeMs;
+  return nowMs - mtimeMs > staleMs;
 }
