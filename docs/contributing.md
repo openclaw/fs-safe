@@ -307,14 +307,14 @@ OS/CPU/libc selection, a native-required SHA-256 operation, and fresh-process
 optionals. Omitted-optionals installs also verify that all public subpaths can
 be imported, without implying every operation remains available.
 
-Host-only smoke supplies the seven foreign packages using their unchanged real
-manifests and clearly marked synthetic, non-executable payloads. Every foreign
+Host-only smoke supplies foreign packages from the native target map using
+their unchanged real manifests and clearly marked synthetic, non-executable payloads. Every foreign
 metadata/tarball endpoint is checked before installation, so a missing fixture
 cannot masquerade as successful platform filtering. These temporary fixtures
 never enter `packages/`, release artifacts, or the publish manifest. They prove
 installer filtering, not foreign native compilation or execution. Full release
-collection uses the actual eight collected native tarballs instead. Run it with
-`pnpm package:collect` after assembling all eight real bindings; missing targets
+collection uses all actual collected native tarballs instead. Run it with
+`pnpm package:collect` after assembling every mapped native binding; missing targets
 fail collection. `pnpm package:collect --allow-host-only` exercises the same
 lifecycle boundary locally but proves only the host. Both collection commands
 require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standalone
@@ -322,7 +322,15 @@ require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standa
 direct `node` invocation without lifecycle metadata is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
-PR CI builds and executes all eight shipped bindings. The existing check names
+CI's bundled-package producer runs `pnpm package:collect --allow-host-only --pack-only --output package-smoke-pack`
+after building. Node 22/24 consumers use `pnpm package:smoke --packed-input <directory>`
+to verify and install those same root and host tarballs. The input includes the
+manifest and its clean source/host receipt; missing or mismatched input fails
+without repacking. Consumer proof still goes to `--output` (default `release-artifacts`).
+Both reuse modes require host-only collection; default release collection and
+Windows signing continue to pack and verify their own artifacts.
+
+PR CI builds and executes every mapped native binding. The existing check names
 stay stable; extra runner/runtime combinations add checks without changing the
 repository ruleset. Native lanes run Node 24; the GNU host lanes also exercise
 Bun 1.4.4 (as do macOS and Windows).

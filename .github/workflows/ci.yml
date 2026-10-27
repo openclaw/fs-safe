@@ -1866,6 +1866,11 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
+      - name: Pack exact-source root and host artifacts once
+        env:
+          FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: pnpm package:collect --allow-host-only --pack-only --output package-smoke-pack
+
       # The ES2022 output and napi8 binding are shared across Node 22/24.
       # Each consumer checks out this same PR head; merge-ref builds stay separate.
       - name: Upload exact-source package build
@@ -1877,6 +1882,7 @@ jobs:
             src/windows-security-helper.exe
             native/*.node
             packages/*/fs-safe-native.node
+            package-smoke-pack/
           if-no-files-found: error
           retention-days: 1
 
@@ -1939,7 +1945,7 @@ jobs:
       - name: Verify root-only npm and pnpm consumer installs
         env:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: pnpm package:smoke
+        run: pnpm package:smoke --packed-input package-smoke-pack
 
       - name: Verify Windows native PE imports
         if: runner.os == 'Windows'
@@ -1971,4 +1977,5 @@ jobs:
             release-artifacts/manifest.json
             release-artifacts/consumer-proof.json
             release-artifacts/windows-native-pe.json
+            release-artifacts/package-build-proof.json
           if-no-files-found: error
