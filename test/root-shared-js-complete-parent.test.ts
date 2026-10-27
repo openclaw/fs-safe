@@ -290,7 +290,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   },
   {
     name: "complete-parent observation loses permission",
-    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "EACCES" },
+    expectedReceipt: { name: "FsSafeError", code: "permission-denied", causeCode: "EACCES" },
     async setup({ parent }) {
       await fs.mkdir(parent, { recursive: true });
     },
@@ -300,7 +300,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   },
   {
     name: "target observation loses permission",
-    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "EPERM" },
+    expectedReceipt: { name: "FsSafeError", code: "permission-denied", causeCode: "EPERM" },
     async setup({ parent, target }) {
       await fs.mkdir(parent, { recursive: true });
       await fs.writeFile(target, "original");
