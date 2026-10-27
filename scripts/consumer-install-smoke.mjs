@@ -154,15 +154,16 @@ const hashScript = `
   }
 `;
 
-export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, npmCli, consumerCommands, allowHostOnly, source }) {
+export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, artifactDir = outputDir, npmCli, consumerCommands, allowHostOnly, source }) {
   const temporary = mkdtempSync(join(tmpdir(), "fs-safe-consumer-proof-"));
   let server;
   try {
     const fixtureDir = join(temporary, "registry-artifacts");
     mkdirSync(fixtureDir);
     const packingEnv = isolatedConsumerEnv(join(temporary, "packing-config"));
+    // Reused tarballs stay in the producer input; behavior receipts belong to this run's output.
     const { artifacts, synthetic } = await consumerFixtureArtifacts({
-      rootPkg, manifest, outputDir, fixtureDir, allowHostOnly,
+      rootPkg, manifest, outputDir: artifactDir, fixtureDir, allowHostOnly,
       runNpm: (args, cwd) => run([process.execPath, npmCli], args, cwd, packingEnv),
     });
     server = await startConsumerRegistry(artifacts);
