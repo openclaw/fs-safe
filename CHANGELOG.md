@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-### Packaging
-
-- **CI package consumers:** install the same source-bound root and host tarballs across Node versions, verifying their source, metadata, and integrity before consumer checks.
-
 ### Security
 
 - **Archive dependencies:** update zstd to 0.14.3, zstd-safe to 8.2.0, and zstd-sys to 2.1.2 for native and WASM archive builds, retaining the custom WASM allocator and allocation-failure checks.
