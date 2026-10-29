@@ -15,6 +15,10 @@
 
 - **Archive dependencies:** update zstd to 0.14.3, zstd-safe to 8.2.0, and zstd-sys to 2.1.2 for native and WASM archive builds, retaining the custom WASM allocator and allocation-failure checks. ([#1039](https://github.com/openclaw/fs-safe/pull/1039))
 
+### Performance
+
+- **Watch hint admission:** avoid repeated parent resolution and guard acquisition for unrelated canonical directories within one reconciliation pass, retaining per-hint identity checks and conservative namespace scans.
+
 ## 0.26.13 - 2026-10-24
 
 **Highlights:** Reliable file publication on NFS mounts.
