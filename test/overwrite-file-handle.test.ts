@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { overwriteFileHandle, type OverwriteFileHandleOptions } from "../src/advanced.js";
+import { overwriteFileHandle, overwriteFileHandleWithAuthority, type OverwriteFileHandleOptions } from "../src/advanced.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -60,6 +60,16 @@ describe("borrowed FileHandle overwrite", () => {
     await expect(overwriteFileHandle(f.handle, Buffer.from("changed!")))
       .rejects.toMatchObject({ code: expected.code, syscall: expected.syscall });
     expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
+  });
+
+  it("prepares the awaited authority path without synchronous metadata reads", async () => {
+    const f = await fixture();
+    const syncStat = vi.spyOn(fsSync, "fstatSync").mockImplementation(() => {
+      throw new Error("synchronous metadata read");
+    });
+    await overwriteFileHandleWithAuthority(f.handle, Buffer.from("changed!"), async () => () => {});
+    expect(syncStat).not.toHaveBeenCalled();
+    expect(await fs.readFile(f.file, "utf8")).toBe("changed!");
   });
 
   it("completes positive short prefix reads and writes", async () => {
@@ -182,15 +192,103 @@ describe("borrowed FileHandle overwrite", () => {
     expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
   });
 
-  it("rejects an asynchronous beforeWrite callback before mutation", async () => {
+  it.each([
+    async () => { throw new Error("late refusal"); },
+    function* () { throw new Error("lazy refusal"); },
+  ])("rejects a non-synchronous beforeWrite callback before mutation (%#)", async (beforeWrite) => {
     const f = await fixture();
     const write = vi.spyOn(f.handle, "write");
     const truncate = vi.spyOn(f.handle, "truncate");
     await expect(overwriteFileHandle(f.handle, Buffer.from("new"), {
-      beforeWrite: async () => { throw new Error("late refusal"); },
+      beforeWrite,
     })).rejects.toThrow("beforeWrite must be synchronous");
     expect(write).not.toHaveBeenCalled();
     expect(truncate).not.toHaveBeenCalled();
+    expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
+  });
+
+  it.each([false, true])("awaits prepared authority and checks live revocation (%s) before mutation", async (revoke) => {
+    const f = await fixture();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const read = vi.spyOn(f.handle, "read");
+    const write = vi.spyOn(f.handle, "write");
+    const truncate = vi.spyOn(f.handle, "truncate");
+    const reason = new Error("authority retired during validation");
+    let active = true;
+    const assertCurrent = vi.fn(() => { if (!active) throw reason; });
+    const prepare = vi.fn(async () => {
+      expect(read).toHaveBeenCalledOnce();
+      entered.resolve();
+      await release.promise;
+      return assertCurrent;
+    });
+    const pending = overwriteFileHandleWithAuthority(f.handle, Buffer.from("replacement"), prepare)
+      .catch((error: unknown) => error);
+    try {
+      await entered.promise;
+      expect(write).not.toHaveBeenCalled();
+      expect(truncate).not.toHaveBeenCalled();
+      expect(assertCurrent).not.toHaveBeenCalled();
+      active = !revoke;
+    } finally {
+      release.resolve();
+    }
+    expect(await pending).toBe(revoke ? reason : undefined);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+    expect(await fs.readFile(f.file, "utf8")).toBe(revoke ? f.original : "replacement");
+    if (revoke) {
+      expect(write).not.toHaveBeenCalled();
+      expect(truncate).not.toHaveBeenCalled();
+    }
+  });
+
+  it("dispatches prepared empty-write truncation before a queued revocation", async () => {
+    const f = await fixture();
+    const truncate = f.handle.truncate.bind(f.handle);
+    let active = true;
+    const effect = vi.spyOn(f.handle, "truncate").mockImplementation(length => {
+      expect(active).toBe(true);
+      return truncate(length);
+    });
+    await overwriteFileHandleWithAuthority(f.handle, Buffer.alloc(0), async () => () => {
+      queueMicrotask(() => { active = false; });
+    });
+    expect(effect).toHaveBeenCalledExactlyOnceWith(0);
+    expect(active).toBe(false);
+    expect(await fs.readFile(f.file, "utf8")).toBe("");
+  });
+
+  it.each(["preparation", "async assertion", "generator assertion", "missing assertion"])(
+    "refuses invalid authority from %s without mutation",
+    async (phase) => {
+      const f = await fixture();
+      const reason = new Error("preparation refused");
+      const write = vi.spyOn(f.handle, "write");
+      const truncate = vi.spyOn(f.handle, "truncate");
+      const prepare = async () => {
+        if (phase === "preparation") throw reason;
+        if (phase === "async assertion") return async () => { throw reason; };
+        if (phase === "generator assertion") return function* () { throw reason; };
+        // Exercise the runtime contract used by JavaScript consumers.
+        return undefined;
+      };
+      // @ts-expect-error JavaScript consumers can omit the required final assertion.
+      const failure = overwriteFileHandleWithAuthority(f.handle, Buffer.from("new"), prepare);
+      if (phase === "preparation") await expect(failure).rejects.toBe(reason);
+      else await expect(failure).rejects.toThrow(/synchronous assertion|must be synchronous/);
+      expect(write).not.toHaveBeenCalled();
+      expect(truncate).not.toHaveBeenCalled();
+      expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
+    },
+  );
+
+  it("requires an authority preparer even for JavaScript callers", async () => {
+    const f = await fixture();
+    // @ts-expect-error Exercise the required runtime argument at the public boundary.
+    await expect(overwriteFileHandleWithAuthority(f.handle, Buffer.from("new")))
+      .rejects.toThrow("prepareAuthority must be a function");
     expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
   });
 
@@ -209,7 +307,7 @@ describe("borrowed FileHandle overwrite", () => {
     expect(await fs.readFile(f.file, "utf8")).toBe("replacement with a longer tail");
   });
 
-  it.each(["tail", "prefix", "shrink"])("restores original bytes and size after a %s failure", async (phase) => {
+  it.each(["tail", "prefix", "shrink"].flatMap(phase => [false, true].map(prepared => ({ phase, prepared }))))("restores original bytes and size after a $phase failure (prepared=$prepared)", async ({ phase, prepared }) => {
     const f = await fixture();
     const payload = Buffer.from(phase === "shrink" ? "new" : "replacement with a longer tail");
     const originalSize = Buffer.byteLength(f.original);
@@ -233,7 +331,9 @@ describe("borrowed FileHandle overwrite", () => {
       await truncate(length);
     });
     await f.handle.read(Buffer.alloc(2), 0, 2, null);
-    await expect(overwriteFileHandle(f.handle, payload)).rejects.toBe(reason);
+    await expect(prepared
+      ? overwriteFileHandleWithAuthority(f.handle, payload, async () => () => {})
+      : overwriteFileHandle(f.handle, payload)).rejects.toBe(reason);
     expect(failed).toBe(true);
     expect(await fs.readFile(f.file, "utf8")).toBe(f.original);
     expect((await f.handle.stat()).size).toBe(originalSize);

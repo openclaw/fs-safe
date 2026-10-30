@@ -279,6 +279,7 @@
         "openRootFile",
         "openRootFileSync",
         "overwriteFileHandle",
+        "overwriteFileHandleWithAuthority",
         "parseIcaclsOutput",
         "pathExists",
         "pathExistsSync",

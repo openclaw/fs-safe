@@ -63,6 +63,37 @@ calling `beforeWrite` again. This callback is a whole-operation admission point,
 not the per-mutation `assertBeforeMutation` callback used by Root operations.
 It must not change the file, handle, or payload. There is no cancellation option.
 
+## Awaited authority preparation
+
+Use `overwriteFileHandleWithAuthority()` from `@openclaw/fs-safe/advanced` when
+source validation requires awaited work immediately before admission:
+
+```ts
+overwriteFileHandleWithAuthority(
+  handle: FileHandle,
+  data: Uint8Array,
+  prepareAuthority: () => Promise<() => void>,
+): Promise<void>;
+```
+
+It reads handle metadata asynchronously, performs rollback-prefix preparation, then awaits
+`prepareAuthority()` once. The preparer must return a synchronous assertion of
+current authority. That assertion runs immediately before the first mutation,
+with no intervening await. Missing assertions and Promise, thenable, or generator
+assertion results reject before any write. Preparation or assertion failures
+propagate unchanged. Once admitted, writing and recovery finish without another
+authority check, exactly as for `overwriteFileHandle()`.
+
+The caller owns off-thread validation: this helper does **not** move the preparer
+or assertion to another worker. Use the preparer for worker-backed storage or
+identity validation and the final assertion for current in-memory revocation or
+revision checks. Do not call blocking storage work inside either callback and
+assume that `await` offloads it. The handle, file, and payload ownership restrictions
+above also apply while preparation is pending. This API does not alter Root's
+per-mutation hooks or make the existing `beforeWrite` callback asynchronous.
+
+## Writing and recovery
+
 For growth, additional tail bytes are written before the existing prefix is
 touched. The prefix is then overwritten, completing partial writes. For shrinkage,
 truncation is last. If a write or truncation fails, the helper attempts to restore
