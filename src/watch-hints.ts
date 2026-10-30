@@ -156,8 +156,11 @@ export async function admittedNativeChanges(
     }
   }
   const guards = new Map<string, RootDirectoryObservationGuard>();
+  // These guards have no published dependants. Reuse acquisition only within
+  // this pass, with a fresh physical-path/identity fence for every hint.
+  const unselectedGuards = new Map<string, RootDirectoryObservationGuard>();
   const admittedParent = async (parent: string) => {
-    let guard = guards.get(parent);
+    let guard = guards.get(parent) ?? unselectedGuards.get(parent);
     if (!guard) {
       const resolved = await resolvePathInRoot(root, parent ? "./" + parent : ".", { rejectSymlinks: true });
       guard = await createRootDirectoryObservationGuard(root, resolved.resolved);
@@ -227,6 +230,7 @@ export async function admittedNativeChanges(
           // An earlier hint may already depend on this selected-alias guard.
           if (scheduling || retained) throw error;
           guards.delete(parent);
+          unselectedGuards.delete(parent);
           if (isNotFoundPathError(error) || (error instanceof FsSafeError && ["not-found", "path-alias", "outside-workspace", "symlink", "not-file"].includes(error.code))) break;
           // A yielded admission may race an ordinary sibling deletion. Fresh
           // admission can establish absence; persistent ambiguity still fails.
@@ -247,9 +251,13 @@ export async function admittedNativeChanges(
       if (!admitted) {
         // A newly created directory may contain selected entries absent from the baseline.
         if (scheduling) return undefined;
-        // The guarded observation proved this parent is not a selected alias.
-        // No result depends on it; do not extend its lifetime through sibling churn.
+        // No result depends on this parent. Later hints must revalidate it,
+        // and a failed fence gets fresh admission rather than becoming a stale
+        // selected-alias dependency. Do not retain it in the final result fence.
         guards.delete(hint.directory);
+        // An alias spelling may be redirected while its old canonical referent
+        // survives. Only the original canonical route can be fenced by this guard.
+        if (guard.dir === path.join(root.rootReal, hint.directory)) unselectedGuards.set(hint.directory, guard);
         continue;
       }
       [parent, expected] = admitted;
