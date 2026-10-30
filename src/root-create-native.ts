@@ -5,7 +5,7 @@ import fsAsync from "node:fs/promises";
 import path from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import { assertSyncDirectoryGuard, inspectDirectoryIdentitySync, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
-import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
+import { finalizeCreatedDirectoryModeSync, nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { assertDarwinCreationAcl, assertPrivateDirectory } from "./creation-boundary.js";
 import { assertMutationNotDenied } from "./deny-mutations.js";
 import { FsSafeError } from "./errors.js";
@@ -230,7 +230,7 @@ async function withNativeDirectory<T>(
 }
 
 /** Admit only an ordinary direct child; aliases keep the full resolver. */
-export function tryMkdirNativeDirectChild(root: RootContext, relativePath: string): boolean {
+export function tryMkdirNativeDirectChild(root: RootContext, relativePath: string, mode?: number): boolean {
   if (!isSafePathSegment(relativePath, { allowDotPrefix: true }) || relativePath.endsWith(".") ||
     getFsSafeTestHooks()?.beforeRootFallbackMutation) return false;
   assertRootIdentityCurrentSync(root);
@@ -243,7 +243,7 @@ export function tryMkdirNativeDirectChild(root: RootContext, relativePath: strin
     return false;
   }
   try {
-    mkdirNativeRootChild({ root, target });
+    mkdirNativeRootChild({ root, target }, mode);
     return true;
   } catch (error) {
     if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
@@ -325,26 +325,35 @@ function ensureNativeRootCurrentLegacy(root: RootContext, binding: NativeBinding
   assertRootIdentityCurrentSync(root);
 }
 
-function mkdirNativeRootChild(params: Pick<Creation, "root" | "target">): void {
+function mkdirNativeRootChild(params: Pick<Creation, "root" | "target">, mode?: number): void {
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
   if (!binding?.openBeneath || !binding.mkdirChildBeneath) return unavailable();
   using rootOwner = openExactNativeRootSync(binding, {
     rootPath: params.root.rootReal, rootIdentity: params.root.rootIdentity,
   });
   verifyMkdirDirectory(binding, rootOwner.fd, params.root.rootReal);
-  const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |
+  const flags = (mode === undefined ? nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY : fs.constants.O_RDONLY) |
     (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
   const name = path.basename(params.target);
   // The admitted Root is already this operation's immediate parent. Retain
   // both handles through the same fresh pathname and canonical identity fences.
   const child = binding.mkdirOpenChildBeneath
-    ? binding.mkdirOpenChildBeneath(rootOwner.fd, name, 0o777, flags).fd
-    : (binding.mkdirChildBeneath(rootOwner.fd, name, 0o777), binding.openBeneath(rootOwner.fd, name, flags).fd);
+    ? binding.mkdirOpenChildBeneath(rootOwner.fd, name, mode ?? 0o777, flags)
+    : {
+      created: binding.mkdirChildBeneath(rootOwner.fd, name, mode ?? 0o777),
+      fd: binding.openBeneath(rootOwner.fd, name, flags).fd,
+    };
   const close = captureNativeFdClose(binding);
-  using childOwner = { [Symbol.dispose]() { close(child); } };
+  using childOwner = { [Symbol.dispose]() { close(child.fd); } };
   assertRootIdentityCurrentSync(params.root);
-  verifyMkdirDirectory(binding, child, params.target);
+  verifyMkdirDirectory(binding, child.fd, params.target);
   verifyMkdirDirectory(binding, rootOwner.fd, params.root.rootReal);
+  if (mode !== undefined && child.created) {
+    finalizeCreatedDirectoryModeSync(child, mode);
+    verifyMkdirDirectory(binding, child.fd, params.target);
+    verifyMkdirDirectory(binding, rootOwner.fd, params.root.rootReal);
+    assertRootIdentityCurrentSync(params.root);
+  }
 }
 
 export async function tryOpenCreateRootNative(params: Creation & {

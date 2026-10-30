@@ -323,7 +323,7 @@ Manage the lifetime with `try/finally` and inspect the cleanup result, as in the
 type TempWorkspaceOptions = {
   rootDir: string;          // parent directory for workspaces
   prefix: string;           // dir prefix (sanitized)
-  dirMode?: number;         // new workspace mode; default 0o700; no POSIX group/world write
+  dirMode?: number | "preserve"; // new workspace mode; preserve means default 0o700
   mode?: number;            // file write mode; default 0o600
   cleanupSafety?: "compatible" | "require-bounded"; // default compatible
 };
@@ -560,6 +560,14 @@ directory-mode behavior. Directory lstat, open, type, identity, and close errors
 still propagate; there is no pathname chmod fallback. Windows only passes the
 directory mode to `mkdir`. Pass
 `chmodDir: false` when an existing staging/output directory mode must be preserved.
+
+Prefer `dirMode: "preserve"` to keep the existing parent verified without any
+chmod and finalize every directory created by the operation at `0o700` on POSIX.
+This explicit policy also applies with `chmodDir: false`. Concurrent mkdir
+winners are verified as existing directories. Windows uses mkdir's default
+handling. For `tempWorkspace`, `tempWorkspaceSync`, and their scoped wrappers,
+`"preserve"` means the new workspace's default `0o700` mode; existing supplied
+roots are already left untouched by these factories.
 
 ### `writeViaSiblingTempPath`
 

@@ -132,7 +132,7 @@ Options:
 ```ts
 type WriteJsonOptions = {
   mode?: number;             // file mode (default 0o600)
-  dirMode?: number;          // mode for parent dirs created on demand
+  dirMode?: number | "preserve"; // parent policy; see atomic writes
   trailingNewline?: boolean; // append "\n" if missing (default false)
   durable?: boolean;         // default true; false skips temp/parent fsync
 };
@@ -141,6 +141,10 @@ type WriteJsonOptions = {
 `durable: false` preserves atomic temp-file replacement but skips the temp-file
 and parent-directory `fsync` calls. Use it only for reconstructible JSON state
 where lower latency matters more than crash-durability.
+
+`dirMode: "preserve"` follows the [atomic parent policy](atomic.md): existing
+parents are verified without chmod; new directories finish at `0o700` on POSIX.
+`writeJsonSync` has no `dirMode` option and is unaffected.
 
 ### `writeJsonSync(pathname, data)`
 

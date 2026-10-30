@@ -43,7 +43,7 @@ For ad-hoc read/write of multiple JSON files, use the standalone helpers in
 ```ts
 type JsonStoreOptions<T> = {
   filePath: string;
-  dirMode?: number;                                // default 0o700
+  dirMode?: number | "preserve";                   // default 0o700; preserve is rejected for private stores
   mode?: number;                                   // default 0o600
   durable?: boolean;                              // default true
   trailingNewline?: boolean;                       // default true
@@ -119,6 +119,11 @@ const state = await store.readRequired();
 ## `write(value)`
 
 Atomic JSON write at `mode` (default `0o600`), creating parent dirs at `dirMode` (default `0o700`) if needed. When `lock: true` is set, takes the sidecar lock for the duration of the write.
+
+`jsonStore` uses a private store and rejects `dirMode: "preserve"` with
+`FsSafeError("invalid-path")`. Existing directories must match its numeric
+permission policy. For shared directories, use `fileStore({ private: false,
+dirMode: "preserve", ... }).json(...)` or standalone `writeJson`.
 
 ```ts
 await store.write({ ...state, lastSeen: Date.now() });

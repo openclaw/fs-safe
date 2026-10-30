@@ -646,6 +646,7 @@
         "writeTextAtomic"
       ],
       "types": [
+        "DirectoryMode",
         "MovePathPublicationReceipt",
         "MovePathWithCopyFallbackOptions",
         "RenameIdentityPolicy",
@@ -822,6 +823,7 @@
       "types": [
         "BasePathOptions",
         "DirEntry",
+        "DirectoryMode",
         "ExactFileIdentity",
         "FastPathMode",
         "PathStat",

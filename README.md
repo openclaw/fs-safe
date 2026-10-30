@@ -221,6 +221,10 @@ mutation authority, and publication receipts. Retained lifecycles have separate
 contracts: [staged files](docs/staged-file.md), [entry publication](docs/entry-publication.md),
 and [staged symlinks](docs/staged-symlink.md).
 
+For a shared parent, pass `dirMode: "preserve"`: verified existing directories
+keep their permissions without chmod, while directories created by the write
+finish at `0o700`. Omission retains the existing parent-tightening default.
+
 ## External outputs
 
 Use `writeExternalFileWithinRoot()` when a browser download, renderer, media

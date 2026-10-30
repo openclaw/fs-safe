@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Directory modes:** add `dirMode: "preserve"` to keep verified existing write parents unchanged while creating new directories at `0700`. Thanks @rbartoli for the OpenClaw PR motivated by [openclaw/openclaw#184867](https://github.com/openclaw/openclaw/issues/184867).
+
 ## 0.26.15 - 2026-10-30
 
 **Highlights:** Awaited authority checks for borrowed-handle overwrites, so callers can move currentness checks off the main thread. ([#1049](https://github.com/openclaw/fs-safe/pull/1049))
