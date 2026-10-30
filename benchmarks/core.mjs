@@ -503,6 +503,31 @@ export async function registerCore({ api: a, workspace: w, binding, measuredFeat
       after: (_, handle) => handle.close(),
       verify: () => assert.deepEqual(fs.readFileSync(overwritePath), payload),
     });
+    const authorizedOverwritePath = path.join(w, `handle-overwrite-authority-${size}`);
+    let preparations = 0;
+    let assertions = 0;
+    const prepareAuthority = async () => {
+      preparations += 1;
+      return () => { assertions += 1; };
+    };
+    add(`overwriteFileHandleWithAuthority/${size}`, (handle) =>
+      a.overwriteFileHandleWithAuthority(handle, payload, prepareAuthority), {
+      divisor,
+      skip: typeof a.overwriteFileHandleWithAuthority !== "function"
+        ? "Not exported by this explicitly selected older comparison build." : undefined,
+      before: async () => {
+        preparations = 0;
+        assertions = 0;
+        await fsp.writeFile(authorizedOverwritePath, "original", { mode: 0o600 });
+        return await fsp.open(authorizedOverwritePath, "r+");
+      },
+      after: (_, handle) => handle.close(),
+      verify: () => {
+        assert.equal(preparations, 1);
+        assert.equal(assertions, 1);
+        assert.deepEqual(fs.readFileSync(authorizedOverwritePath), payload);
+      },
+    });
     const rootCopyName = `root-copy-${size}`;
     add(`Root.copyIn/${size}/clone=never/durable=false`, () => safe.copyIn(rootCopyName, filePath, {
       clone: "never", durable: false, maxBytes: size,
