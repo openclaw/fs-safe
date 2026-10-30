@@ -11,6 +11,8 @@ const jobs = Object.fromEntries([...workflow.slice(workflow.indexOf("jobs:\n")).
 type Context = {
   event: string;
   capacity?: boolean;
+  buildStandard?: boolean;
+  os?: string;
   secure?: boolean;
   cancelled?: boolean;
   producerResult?: "success" | "failure" | "skipped";
@@ -21,7 +23,8 @@ type Context = {
 function evaluate(expression: string, context: Context): unknown {
   return runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/gu, ""), {
     github: { event_name: context.event },
-    inputs: { windows_package_capacity_proof: context.capacity, secure_file_credential_proof: context.secure },
+    inputs: { windows_package_capacity_proof: context.capacity, windows_package_build_standard: context.buildStandard, secure_file_credential_proof: context.secure },
+    matrix: { os: context.os ?? "windows-latest" },
     fromJSON: JSON.parse,
     cancelled: () => context.cancelled ?? false,
     always: () => true,
@@ -74,6 +77,20 @@ const credential = [
 
 describe("manual Windows package capacity closure", () => {
   it.each([
+    ["pull_request", true, true, "windows-latest", "fs-safe-windows-16core", "16"],
+    ["push", true, true, "windows-latest", "fs-safe-windows-16core", "16"],
+    ["workflow_dispatch", false, true, "windows-latest", "fs-safe-windows-16core", "16"],
+    ["workflow_dispatch", true, false, "windows-latest", "fs-safe-windows-16core", "16"],
+    ["workflow_dispatch", true, true, "windows-latest", "windows-latest", "4"],
+    ["workflow_dispatch", true, true, "ubuntu-latest", "ubuntu-latest", "4"],
+  ] as const)("isolates producer capacity: %s / %s / %s / %s", (event, capacity, buildStandard, os, runner, floor) => {
+    const context = { event, capacity, buildStandard, os };
+    const producer = jobs["package-smoke-build"]!;
+    expect(evaluate(producer.match(/^    runs-on: (.+)$/mu)![1]!, context)).toBe(runner);
+    expect(evaluate(producer.match(/^          minimum-logical-processors: (.+)$/mu)![1]!, context)).toBe(floor);
+  });
+
+  it.each([
     ["ordinary PR", "pull_request", true, true, 36],
     ["main push", "push", true, true, 36],
     ["manual defaults", "workflow_dispatch", undefined, undefined, 36],
@@ -123,6 +140,7 @@ describe("manual Windows package capacity closure", () => {
 
   it("keeps both proof inputs opt-in and secure-file admission independent", () => {
     expect(workflow).toMatch(/inputs:\n      secure_file_credential_proof:\n(?: {8}[^\n]*\n)*?        default: false\n        type: boolean\n      windows_package_capacity_proof:/u);
+    expect(workflow).toMatch(/windows_package_build_standard:\n        description:[^\n]+\n        required: false\n        default: false\n        type: boolean/u);
     for (const name of credential) {
       expect(jobs[name]).not.toContain("windows_package_capacity_proof");
       expect(jobs[name]).toMatch(/node:\n          - 22\.23\.4\n          - 24\.22\.1/u);

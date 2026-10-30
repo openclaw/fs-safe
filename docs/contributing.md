@@ -367,6 +367,28 @@ Both musl lanes also run root-only package smoke with the real host binding.
 The eight-target source build matrix still runs on release tags. The smoke writes manager versions,
 cases, and synthetic-fixture scope to `release-artifacts/consumer-proof.json`.
 
+### Windows package-build capacity qualification
+
+The package consumers already use standard Windows runners. The producer and
+the native, fallback, coverage, and stress lanes retain their existing capacity.
+For a Windows-only producer experiment, dispatch `ci.yml` at an exact candidate
+commit with both `windows_package_capacity_proof=true` and
+`windows_package_build_standard=true`. The second input alone has no effect.
+The existing producer commands, 30-minute deadline, native runner admission,
+exact-source artifacts, and Node 22/24 consumers remain in force. Both standard
+and 16-core consumer controls run against that producer's identical artifacts.
+
+Before promoting the smaller producer, run at least five matched pairs at the
+same source commit, alternating standard and 16-core producers. For the control,
+keep `windows_package_capacity_proof=true` and set
+`windows_package_build_standard=false`. Record observed CPUs/RAM, cold and warm
+cache state separately, complete producer time, consumer outcomes, and billed
+cost. Accept only complete native/package proof with lower total billed cost;
+a 20% regression in median or p95 complete producer time stops promotion. Any
+correctness failure or timeout also stops promotion. Do not retry for green,
+raise deadlines, weaken assertions, or increase test concurrency. Other Windows
+workload classes require their own qualification.
+
 ## Docs
 
 `pnpm docs:check` runs examples against the built package and compiles every

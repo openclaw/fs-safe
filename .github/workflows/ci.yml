@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      windows_package_build_standard:
+        description: Qualify the package producer on standard Windows (requires windows_package_capacity_proof)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -1818,7 +1823,8 @@ jobs:
 
   package-smoke-build:
     name: Bundled package build (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    # Smaller build capacity is opt-in until matched producer/consumer proof qualifies it.
+    runs-on: ${{ matrix.os == 'windows-latest' && (github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && inputs.windows_package_build_standard && 'windows-latest' || 'fs-safe-windows-16core') || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1835,6 +1841,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && inputs.windows_package_build_standard && '4' || '16' }}
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
