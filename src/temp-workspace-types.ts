@@ -1,4 +1,5 @@
 import type { ExactFileIdentity } from "./exact-identity.js";
+import type { DirectoryMode } from "./directory-mode-options.js";
 import type { FileStore, FileStoreSync } from "./file-store.js";
 import type { TempPathIdentityReceipt } from "./temp-cleanup.js";
 import type { TempWorkspaceCleanupResult, TempWorkspaceCleanupSafety } from "./temp-workspace-owner.js";
@@ -6,7 +7,7 @@ import type { TempWorkspaceCleanupResult, TempWorkspaceCleanupSafety } from "./t
 export type TempWorkspaceOptions = {
   rootDir: string;
   prefix: string;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   mode?: number;
   cleanupSafety?: TempWorkspaceCleanupSafety;
 };

@@ -1,4 +1,5 @@
 import syncFs from "node:fs";
+import { rejectPrivateDirectoryPreservation, type DirectoryMode } from "./directory-mode-options.js";
 import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
@@ -35,7 +36,7 @@ export type FileStoreOptions = {
   private?: boolean;
   /** Default for writes, streams, and copies; true syncs file and parent where supported. */
   durable?: boolean;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   mode?: number;
   maxBytes?: number;
 };
@@ -149,7 +150,7 @@ async function copyIntoRoot(params: {
   relativePath: string;
   sourcePath: string;
   durable: boolean;
-  dirMode: number;
+  dirMode: number | "preserve";
   maxBytes?: number;
   mode: number;
   tempPrefix?: string;
@@ -184,6 +185,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
+  if (privateMode) rejectPrivateDirectoryPreservation(dirMode);
   const mode = options.mode ?? 0o600;
   const durable = options.durable ?? true;
   const maxBytes = normalizeMaxBytes(options.maxBytes);
@@ -414,6 +416,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
   const dirMode = options.dirMode ?? 0o700;
+  if (privateMode) rejectPrivateDirectoryPreservation(dirMode);
   const mode = options.mode ?? 0o600;
   const durable = options.durable ?? true;
   const maxBytes = normalizeMaxBytes(options.maxBytes);

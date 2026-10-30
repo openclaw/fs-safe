@@ -16,6 +16,10 @@ import { rootFromDirectoryGuard } from "./root-impl.js";
 import { prepareSecretFileWrite } from "./secret-file.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { AtomicIo, runAsync } from "./atomic-io.js";
+import { prepareDirectoryMode } from "./prepare-directory-mode.js";
+import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
+import { rootHandleContext } from "./root-handle-context.js";
 import { readRegularFile } from "./regular-file.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { errorCauseOptions } from "./root-errors.js";
@@ -26,24 +30,37 @@ export type SyncParentGuard = SyncStoreDirectoryReceipt;
 export async function ensureParentInRoot(
   scopedRoot: Root,
   relativePath: string,
-  mode: number,
+  mode: number | "preserve",
 ): Promise<void> {
   const parent = literalStoreRootPath(path.posix.dirname(relativePath));
   if (parent === ".") {
     return;
   }
-  await scopedRoot.mkdir(parent);
-  await chmodDirectoryInRootBestEffort(scopedRoot, parent, mode).catch(() => undefined);
+  if (mode === "preserve") {
+    const context = rootHandleContext(scopedRoot);
+    await mkdirPathComponentsWithGuards({
+      rootReal: context.rootReal, rootIdentity: context.rootIdentity,
+      targetPath: path.join(context.rootReal, parent),
+      mode: 0o700, finalizeCreatedMode: true, rejectSymlinks: true,
+    });
+  } else {
+    await scopedRoot.mkdir(parent);
+    await chmodDirectoryInRootBestEffort(scopedRoot, parent, mode).catch(() => undefined);
+  }
 }
 
 export async function openWritableStoreRoot(params: {
   rootDir: string;
-  dirMode: number;
+  dirMode: number | "preserve";
   maxBytes?: number;
 }): Promise<Root> {
   assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
-  await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
-  await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
+  if (params.dirMode === "preserve") {
+    await runAsync(prepareDirectoryMode(AtomicIo.async(fs), { dirPath: params.rootDir, mode: "preserve" }));
+  } else {
+    await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
+    await fs.chmod(params.rootDir, params.dirMode).catch(() => undefined);
+  }
   return await root(params.rootDir, { hardlinks: "reject", maxBytes: params.maxBytes });
 }
 
@@ -133,7 +150,7 @@ export async function writeStreamToTempSource(params: {
 export function ensureParentSync(params: {
   rootDir: string;
   filePath: string;
-  mode: number;
+  mode: number | "preserve";
 }): SyncParentGuard {
   assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   assertNoWindowsPathAlias(params.filePath, "filesystem", "store path uses a Windows filesystem namespace alias");

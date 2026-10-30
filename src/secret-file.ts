@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { rejectPrivateDirectoryPreservation, type DirectoryMode } from "./directory-mode-options.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
@@ -242,7 +243,7 @@ type SecretFileWriteParams = {
   filePath: string;
   content: string | Uint8Array;
   mode?: number;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   durable?: boolean;
 };
 
@@ -300,6 +301,7 @@ export async function prepareSecretFileWrite(
   assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;
   const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;
+  rejectPrivateDirectoryPreservation(dirMode);
   const resolvedRoot = resolvePathPreservingWindowsRoot(rootDir);
   const resolvedFile = path.resolve(filePath);
   assertNoWindowsPathAlias(resolvedRoot, "filesystem", "private secret root uses a Windows filesystem namespace alias");

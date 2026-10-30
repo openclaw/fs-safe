@@ -4,6 +4,9 @@ import { FsSafeError } from "./errors.js";
 import { isPathInside, isPathRelativeEscape } from "./path.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { AtomicIo, runSync } from "./atomic-io.js";
+import { prepareDirectoryMode } from "./prepare-directory-mode.js";
+import { applyDirectoryMode } from "./replace-file-descriptor.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import {
@@ -264,6 +267,15 @@ class StoreDirectoryChain {
     }
   }
 
+  preserveMode(): void {
+    const receipt = this.receipts.at(-1)!;
+    this.assertEdge();
+    runSync(applyDirectoryMode(AtomicIo.sync(fs), {
+      dirPath: pathForWindowsFilesystem(receipt.dir), mode: "preserve", expectedIdentity: receipt.stat,
+    }));
+    this.assertEdge();
+  }
+
   finalizeMode(mode: number): void {
     const receipt = this.receipts.at(-1)!;
     const requestedMode = BigInt(mode & 0o7777);
@@ -324,7 +336,7 @@ class StoreDirectoryChain {
 export function ensureSyncStoreDirectory(params: {
   rootDir: string;
   targetDir: string;
-  mode: number;
+  mode: number | "preserve";
   messagePrefix: StoreMessagePrefix;
 }): SyncStoreDirectoryReceipt {
   assertNoWindowsPathAlias(params.rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
@@ -338,9 +350,14 @@ export function ensureSyncStoreDirectory(params: {
     throw new FsSafeError("outside-workspace", "file path escapes store root");
   }
 
-  fs.mkdirSync(recursiveMkdirPath(pathForWindowsFilesystem(rootDir)), { recursive: true, mode: params.mode });
+  const preserve = (directory: string) => runSync(prepareDirectoryMode(AtomicIo.sync(fs, fs.fchmodSync), {
+    dirPath: pathForWindowsFilesystem(directory), mode: "preserve",
+  }));
+  if (params.mode === "preserve") preserve(rootDir);
+  else fs.mkdirSync(recursiveMkdirPath(pathForWindowsFilesystem(rootDir)), { recursive: true, mode: params.mode });
   const chain = new StoreDirectoryChain(rootDir, params.messagePrefix);
-  chain.finalizeMode(params.mode);
+  if (params.mode === "preserve") chain.preserveMode();
+  else chain.finalizeMode(params.mode);
   let current = rootDir;
   for (const segment of relative.split(path.sep).filter(Boolean)) {
     current = path.join(current, segment);
@@ -348,10 +365,12 @@ export function ensureSyncStoreDirectory(params: {
       chain.observe(current);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      fs.mkdirSync(pathForWindowsFilesystem(current), { mode: params.mode });
+      if (params.mode === "preserve") preserve(current);
+      else fs.mkdirSync(pathForWindowsFilesystem(current), { mode: params.mode });
       chain.observe(current);
     }
-    chain.finalizeMode(params.mode);
+    if (params.mode === "preserve") chain.preserveMode();
+    else chain.finalizeMode(params.mode);
   }
   return chain.finish(dir);
 }

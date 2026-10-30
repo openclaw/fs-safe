@@ -5,7 +5,8 @@ import path from "node:path";
 import type { RenameIdentityPolicy } from "./pinned-write-types.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertDestinationHardlinkPolicy, copyFallbackReplace } from "./replace-file-copy-fallback.js";
-import { applyDirectoryMode, syncDirectoryBestEffort, writeTempFile } from "./replace-file-descriptor.js";
+import { syncDirectoryBestEffort, writeTempFile } from "./replace-file-descriptor.js";
+import { prepareDirectoryMode } from "./prepare-directory-mode.js";
 import { inheritedRegularFileMode } from "./replace-file-mode.js";
 import {
   atomicExpectedContentHash,
@@ -142,9 +143,10 @@ export async function replaceFileAtomicWithDirectorySync(
     const fsModule = options.fileSystem?.promises ?? fs;
     const dir = path.dirname(filePath);
     mutation.assert();
-    await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
-      recursive: true,
-      mode: options.dirMode ?? 0o700,
+    if (options.dirMode === "preserve") {
+      await runAsync(prepareDirectoryMode(AtomicIo.async(fsModule), { dirPath: dir, mode: "preserve", mutation }));
+    } else await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
+      recursive: true, mode: options.dirMode ?? 0o700,
     });
     mutation.assert();
     return await withAtomicRenameIdentityLock(filePath, () =>
@@ -175,9 +177,10 @@ export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): Re
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   mutation.assert();
-  fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
-    recursive: true,
-    mode: options.dirMode ?? 0o700,
+  if (options.dirMode === "preserve") {
+    runSync(prepareDirectoryMode(AtomicIo.sync(fsModule, fsModule.fchmodSync), { dirPath: dir, mode: "preserve", mutation }));
+  } else fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
+    recursive: true, mode: options.dirMode ?? 0o700,
   });
   mutation.assert();
   return withAtomicRenameIdentityLockSync(filePath, () =>
@@ -212,7 +215,7 @@ function* replace(
       syncOptions.fileSystem === undefined ? syncFs.fchmodSync : undefined
     );
     if (!io.fchmodSync && (options.mode !== undefined || options.preserveExistingMode === true ||
-      (process.platform !== "win32" && options.dirMode !== undefined))) {
+      (process.platform !== "win32" && typeof options.dirMode === "number"))) {
       throw new TypeError("fileSystem.fchmodSync is required when mode, dirMode, or preserveExistingMode is specified");
     }
   }
@@ -220,9 +223,7 @@ function* replace(
   const tempOwner = new AtomicTempOwner(tempPath, io);
   let originalFailure: AtomicTempFailure | undefined;
   try {
-    mutation.assert();
-    yield* io.mkdir(dir, dirMode);
-    yield* applyDirectoryMode(io, { dirPath: dir, mode: dirMode, mutation });
+    yield* prepareDirectoryMode(io, { dirPath: dir, mode: dirMode, mutation });
     tempOwner.start();
     tempOwner.adopt(yield* writeTempFile(io, {
       tempPath,

@@ -175,7 +175,7 @@ function throwTempWorkspaceOpenFailure(failure: RootFileOpenFailure): never {
 function tempWorkspaceSettings(options: TempWorkspaceOptions) {
   const rootDir = options.rootDir;
   assertNoWindowsPathAlias(rootDir, "filesystem", "temp workspace root uses a Windows filesystem namespace alias");
-  const dirMode = options.dirMode ?? 0o700;
+  const dirMode = options.dirMode === "preserve" ? 0o700 : options.dirMode ?? 0o700;
   validateTempWorkspaceDirMode(dirMode);
   const mode = options.mode ?? 0o600;
   const cleanupSafety = resolveTempWorkspaceCleanupSafety(options.cleanupSafety);

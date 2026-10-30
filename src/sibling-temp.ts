@@ -1,9 +1,10 @@
 import crypto, { randomUUID } from "node:crypto";
+import type { DirectoryMode } from "./directory-mode-options.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertAsyncDirectoryGuard, createAsyncDirectoryGuard } from "./directory-guard.js";
 import { fitFileNameToPortableComponent, sanitizeUntrustedFileName } from "./filename.js";
-import { applyDirectoryMode } from "./replace-file-descriptor.js";
+import { prepareDirectoryMode } from "./prepare-directory-mode.js";
 import { AtomicIo, runAsync } from "./atomic-io.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
@@ -26,7 +27,7 @@ export type WriteSiblingTempFileOptions<T> = {
   producerIsolation?: "private-directory";
   resolveFinalPath: (result: T) => string;
   tempPrefix?: string;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   chmodDir?: boolean;
   /** Final file mode; omitted preserves the producer's mode. Applied through the retained descriptor. */
   mode?: number;
@@ -64,14 +65,13 @@ export async function writeSiblingTempFile<T>(
   const mode = options.mode;
   const syncTempFile = options.syncTempFile === true;
   const syncParentDir = options.syncParentDir === true;
-  await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: dirMode });
-  if (chmodDir) {
-    await runAsync(applyDirectoryMode(AtomicIo.async(fs), {
+  if (dirMode === "preserve" || chmodDir) {
+    await runAsync(prepareDirectoryMode(AtomicIo.async(fs), {
       dirPath: dir,
       mode: dirMode,
       ignoreChmodError: true,
     }));
-  }
+  } else await fs.mkdir(recursiveMkdirPath(dir), { recursive: true, mode: dirMode });
   return await writeCallbackSibling({
     tempDir: dir,
     tempName: buildTempName(tempPrefix),

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
+import { rejectPrivateDirectoryPreservation } from "./directory-mode-options.js";
 import { syncDirectorySync } from "./directory-durability.js";
 import { createDirectoryReceiptFromIdentity } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
@@ -54,7 +55,7 @@ export function writeFileSyncAtomic(params: {
   content: string | Uint8Array;
   privateMode: boolean;
   durable: boolean;
-  dirMode: number;
+  dirMode: number | "preserve";
   mode: number;
 }): string {
   const filePath = path.resolve(params.filePath);
@@ -63,6 +64,7 @@ export function writeFileSyncAtomic(params: {
   }
   let parentGuard: SyncParentGuard;
   if (params.privateMode) {
+    rejectPrivateDirectoryPreservation(params.dirMode);
     parentGuard = ensureStoreDirectorySync({
       rootDir: params.rootDir,
       targetDir: path.dirname(filePath),

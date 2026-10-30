@@ -196,7 +196,7 @@ type WriteSecretFileParams = {
   filePath: string;             // absolute path; must be inside rootDir
   content: string | Uint8Array;
   mode?: number;                // file mode for the new file (default PRIVATE_SECRET_FILE_MODE = 0o600)
-  dirMode?: number;             // mode for the root and intermediate dirs (default PRIVATE_SECRET_DIR_MODE = 0o700)
+  dirMode?: number | "preserve"; // numeric mode required; preserve is rejected (default 0o700)
   durable?: boolean;            // default true; false skips file and parent fsync
 };
 ```
@@ -207,6 +207,10 @@ data where lower latency matters more than crash-durability; private and JSON
 stores forward their durability policy here.
 
 The full POSIX directory mode is asserted on each component along the path: `rootDir`, then any intermediate dirs, then the parent. Existing directories, including another creator's `EEXIST` winner, must already match `dirMode` exactly or the write fails with `insecure-permissions`; they are never chmod-repaired. An explicitly requested directory mode such as `0o2750` preserves its setgid bit. Audit and adjust existing secret directories yourself. The admitted directory guards are retained through traversal and the final writer/lock handoff; a fresh pathname lookup cannot silently authorize a replacement. The caller must still trust the selected root and its owners; matching permission bits alone do not establish that trust.
+
+Both `writeSecretFileAtomic` and `createSecretFileAtomic` reject
+`dirMode: "preserve"` with `FsSafeError("invalid-path")`. This keeps the explicit
+private-directory mode assertion intact rather than accepting shared parents.
 
 Directory admission and its retained guards use lossless bigint identities, including through private locks and native writes. On Windows, an unknown zero device or inode gets one reinspection that retains known components; a definite mismatch or persistent ambiguity fails with `path-mismatch` rather than authorizing a replacement.
 
