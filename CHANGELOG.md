@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.26.15 - 2026-10-30
+
+**Highlights:** Awaited authority checks for borrowed-handle overwrites, so callers can move currentness checks off the main thread. ([#1049](https://github.com/openclaw/fs-safe/pull/1049))
+
 ### Features
 
-- **In-place writes:** add `overwriteFileHandleWithAuthority` for awaited authority preparation followed by a synchronous final assertion before writing a borrowed handle. Existing `overwriteFileHandle` behavior is unchanged.
+- **In-place writes:** add `overwriteFileHandleWithAuthority` for awaited authority preparation followed by a synchronous final assertion before writing a borrowed handle. Existing `overwriteFileHandle` behavior is unchanged. ([#1049](https://github.com/openclaw/fs-safe/pull/1049))
 
 ### Performance
 
