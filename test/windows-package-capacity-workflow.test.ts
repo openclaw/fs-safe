@@ -102,7 +102,7 @@ describe("manual Windows package capacity closure", () => {
   it("runs all four required consumers after a failed producer and fails missing artifacts", () => {
     const context = { event: "workflow_dispatch", capacity: true, producerResult: "failure" as const };
     expect(jobs["package-smoke"]).toMatch(/^    needs: package-smoke-build$/mu);
-    expect(jobs["package-smoke"]).toMatch(/^    if: \$\{\{ !cancelled\(\) \}\}$/mu);
+    expect(jobs["package-smoke"]).toContain("if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none')) }}");
     // No success()/needs-result gate may hide the required artifact failure.
     expect(admitted("package-smoke", context)).toBe(true);
     expect(admitted("package-smoke", { ...context, producerResult: "skipped" })).toBe(true);

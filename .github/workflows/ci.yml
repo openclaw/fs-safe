@@ -17,24 +17,35 @@ on:
         required: false
         default: false
         type: boolean
+      windows_workload_capacity_proof:
+        description: Qualify one complete Windows workload with its existing checks and deadline
+        required: false
+        default: none
+        type: choice
+        options: [none, fallback, native]
+      windows_workload_standard_runner:
+        description: Use standard four-core Windows for the selected workload proof (otherwise 16-core control)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof && inputs.windows_workload_capacity_proof != 'none' && format('-{0}-{1}', inputs.windows_workload_capacity_proof, inputs.windows_workload_standard_runner && 'standard' || 'control') || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Capacity dispatch proves only the Windows producer/consumer closure.
+  # Capacity dispatches select one complete workload or the package closure.
   # Ordinary CI and the independently opted-in credential proof keep their owners.
   freebsd-native:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none'))
     name: FreeBSD targets
     uses: ./.github/workflows/freebsd.yml
 
   lint-workflows:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof || (inputs.windows_workload_capacity_proof && inputs.windows_workload_capacity_proof != 'none')
     name: Lint workflows
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -50,6 +61,20 @@ jobs:
         with:
           node-version: 24
 
+      - name: Validate workload qualification request
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof && inputs.windows_workload_capacity_proof != 'none'
+        env:
+          FS_SAFE_WORKLOAD: ${{ inputs.windows_workload_capacity_proof }}
+          FS_SAFE_PACKAGE_PROOF: ${{ inputs.windows_package_capacity_proof }}
+          FS_SAFE_CREDENTIAL_PROOF: ${{ inputs.secure_file_credential_proof }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          assert.ok(['fallback', 'native'].includes(process.env.FS_SAFE_WORKLOAD), 'Unknown workload qualification');
+          assert.equal(process.env.FS_SAFE_PACKAGE_PROOF, 'false', 'Workload and package proof must be isolated');
+          assert.equal(process.env.FS_SAFE_CREDENTIAL_PROOF, 'false', 'Workload and credential proof must be isolated');
+          NODE
+
       # These inspect source text; the runtime matrix below still builds and
       # checks documentation, tests, and packed imports on every Node/OS pair.
       - name: Lint source
@@ -59,7 +84,7 @@ jobs:
 
   secure-file-credential-candidate-build:
     name: Secure-file candidate bundle (Node ${{ matrix.node }})
-    if: github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true
+    if: github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -185,7 +210,7 @@ jobs:
 
   secure-file-credential-historical-build:
     name: Secure-file historical bundle (Node ${{ matrix.node }})
-    if: github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true
+    if: github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -309,7 +334,7 @@ jobs:
 
   secure-file-credential-proof:
     name: Secure-file credential proof (Node ${{ matrix.node }})
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.secure_file_credential_proof == true && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none')
     needs:
       - secure-file-credential-candidate-build
       - secure-file-credential-historical-build
@@ -958,10 +983,10 @@ jobs:
           retention-days: 1
 
   check:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none' || inputs.windows_workload_capacity_proof == 'fallback'))
     # Preserve the required status identifier while changing the actual runner.
-    name: Node ${{ matrix.node }} check (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    name: Node ${{ matrix.node }} check (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})${{ github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'fallback' && (inputs.windows_workload_standard_runner && ' [4-core candidate]' || ' [16-core control]') || '' }}
+    runs-on: ${{ matrix.os == 'windows-latest' && (github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'fallback' && inputs.windows_workload_standard_runner && 'windows-latest' || 'fs-safe-windows-16core') || matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -970,10 +995,7 @@ jobs:
           - 22
           - 24
           - 26
-        os:
-          - ubuntu-latest
-          - xcode-27
-          - windows-latest
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'fallback' && '["windows-latest"]' || '["ubuntu-latest","xcode-27","windows-latest"]') }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -981,6 +1003,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'fallback' && inputs.windows_workload_standard_runner && '4' || '16' }}
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1006,6 +1030,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Record exact-source workload admission
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'fallback'
+        env:
+          FS_SAFE_CAPACITY_WORKLOAD: fallback
+          FS_SAFE_CAPACITY_STANDARD: ${{ inputs.windows_workload_standard_runner }}
+          FS_SAFE_CAPACITY_EXPECTED_COMMIT: ${{ github.sha }}
+          FS_SAFE_CAPACITY_NODE: ${{ matrix.node }}
+        run: node scripts/windows-capacity-proof.mjs
 
       # Deliberately do not build a host binding here. On Windows this exercises
       # the shipping command fallback; native-check covers the platform binding.
@@ -1040,27 +1073,25 @@ jobs:
           NODE_ENV: test
         run: node scripts/regular-append-windows-proof.mjs
 
+      - name: Upload workload admission proof
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'fallback'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-fallback-admission-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/fs-safe-windows-capacity-proof.json
+          if-no-files-found: error
+          retention-days: 7
+
   native-check:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none' || inputs.windows_workload_capacity_proof == 'native'))
     # The arm64 status name is part of the main branch protection contract.
-    name: Native check (${{ matrix.label || (matrix.os == 'xcode-27' && 'macos-15' || matrix.os) }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.runner || matrix.os }}
+    name: Native check (${{ matrix.label || (matrix.os == 'xcode-27' && 'macos-15' || matrix.os) }})${{ github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'native' && (inputs.windows_workload_standard_runner && ' [4-core candidate]' || ' [16-core control]') || '' }}
+    runs-on: ${{ matrix.os == 'windows-latest' && (github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'native' && inputs.windows_workload_standard_runner && 'windows-latest' || 'fs-safe-windows-16core') || matrix.runner || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-          - os: xcode-27
-          - os: windows-latest
-          - os: ubuntu-24.04-arm
-          - os: xcode-27
-            label: xcode-27-x64
-            architecture: x64
-          - os: windows-2022
-          - os: linux-x64-no-openat2
-            runner: ubuntu-latest
-            no-openat2: true
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'native' && '[{"os":"windows-latest"}]' || '[{"os":"ubuntu-latest"},{"os":"xcode-27"},{"os":"windows-latest"},{"os":"ubuntu-24.04-arm"},{"os":"xcode-27","label":"xcode-27-x64","architecture":"x64"},{"os":"windows-2022"},{"os":"linux-x64-no-openat2","runner":"ubuntu-latest","no-openat2":true}]') }}
     defaults:
       run:
         shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || (startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash') }}
@@ -1073,6 +1104,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'native' && inputs.windows_workload_standard_runner && '4' || '16' }}
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1098,6 +1131,24 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Record exact-source workload admission
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'native'
+        env:
+          FS_SAFE_CAPACITY_WORKLOAD: native
+          FS_SAFE_CAPACITY_STANDARD: ${{ inputs.windows_workload_standard_runner }}
+          FS_SAFE_CAPACITY_EXPECTED_COMMIT: ${{ github.sha }}
+          FS_SAFE_CAPACITY_NODE: "24"
+        run: node scripts/windows-capacity-proof.mjs
+
+      - name: Upload workload admission proof
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.windows_workload_capacity_proof == 'native'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-native-admission
+          path: ${{ runner.temp }}/fs-safe-windows-capacity-proof.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Test native crate
         run: cargo test --workspace --locked
@@ -1566,7 +1617,7 @@ jobs:
         run: pnpm test test/archive-zip-admission.test.ts test/archive-zip-metadata.test.ts test/archive-zip-integrity.test.ts
 
   native-gnu-floor:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none'))
     name: Native glibc 2.28 (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
@@ -1625,7 +1676,7 @@ jobs:
         run: bash scripts/test-linux-glibc-floor.sh
 
   native-musl:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none'))
     name: Native check (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -1690,7 +1741,7 @@ jobs:
           if-no-files-found: error
 
   cargo-quality:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none'))
     name: Cargo clippy and audit
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1713,7 +1764,7 @@ jobs:
         run: cargo audit --deny warnings
 
   windows-arm64:
-    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_package_capacity_proof && (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none'))
     name: Windows ARM64 host (Node ${{ matrix.arch }})
     runs-on: windows-11-arm
     timeout-minutes: 35
@@ -1817,6 +1868,7 @@ jobs:
           if-no-files-found: error
 
   package-smoke-build:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none')
     name: Bundled package build (${{ matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     timeout-minutes: 30
@@ -1891,7 +1943,7 @@ jobs:
     name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})${{ matrix.capacity == 'control' && ' [16-core control]' || '' }}
     # Required consumer checks must fail on missing artifacts, rather than
     # being skipped when any build in the producer matrix fails.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || (!inputs.windows_workload_capacity_proof || inputs.windows_workload_capacity_proof == 'none')) }}
     runs-on: ${{ matrix.os == 'windows-latest' && (matrix.capacity == 'control' && 'fs-safe-windows-16core' || 'windows-latest') || matrix.os }}
     timeout-minutes: 30
     needs: package-smoke-build

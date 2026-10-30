@@ -2,7 +2,7 @@ name: Verify Windows CI runner
 description: Require native Windows x64, a Windows runner context, and the selected processor floor
 inputs:
   minimum-logical-processors:
-    description: Processor floor (16 by default; 4 only for qualified package consumers)
+    description: Processor floor (16 by default; 4 for package consumers or isolated workload qualification)
     default: "16"
 runs:
   using: composite
@@ -21,3 +21,4 @@ runs:
         $logicalProcessors = if ($windows) { [int](Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors } else { 0 }
         Assert-FsSafeWindowsCiRunner -Windows $windows -Architecture $architecture -RunnerOS $env:FS_SAFE_RUNNER_OS -LogicalProcessors $logicalProcessors -MinimumLogicalProcessors $env:FS_SAFE_MINIMUM_LOGICAL_PROCESSORS
         Write-Host "Windows CI runner: arch=$architecture logical_processors=$logicalProcessors runner_os=$env:FS_SAFE_RUNNER_OS"
+        Write-Host "Windows CI memory: total_physical_bytes=$((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory) free_physical_kib=$((Get-CimInstance -ClassName Win32_OperatingSystem).FreePhysicalMemory)"

@@ -8,19 +8,30 @@ on:
   schedule:
     - cron: "43 3 * * *"
   workflow_dispatch:
+    inputs:
+      windows_capacity_proof:
+        description: Qualify Windows coverage capacity while preserving all platform inputs and merged thresholds
+        required: false
+        default: false
+        type: boolean
+      windows_standard_runner:
+        description: Use standard four-core Windows for coverage qualification (otherwise 16-core control)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: coverage-${{ github.event.pull_request.number || github.ref }}
+  group: coverage-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.windows_capacity_proof && (inputs.windows_standard_runner && '-standard' || '-control') || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   coverage:
     # Keep the required status identifier; runs-on uses the current matrix runner.
-    name: Node 22 coverage (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    name: Node 22 coverage (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})${{ matrix.os == 'windows-latest' && github.event_name == 'workflow_dispatch' && inputs.windows_capacity_proof && (inputs.windows_standard_runner && ' [4-core candidate]' || ' [16-core control]') || '' }}
+    runs-on: ${{ matrix.os == 'windows-latest' && (github.event_name == 'workflow_dispatch' && inputs.windows_capacity_proof && inputs.windows_standard_runner && 'windows-latest' || 'fs-safe-windows-16core') || matrix.os }}
     # Windows includes native/WASM builds and serial instrumented filesystem tests.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}
     strategy:
@@ -40,6 +51,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_capacity_proof && inputs.windows_standard_runner && '4' || '16' }}
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -68,6 +81,15 @@ jobs:
       - name: Build host binding
         run: pnpm native:build
 
+      - name: Record exact-source workload admission
+        if: matrix.os == 'windows-latest' && github.event_name == 'workflow_dispatch' && inputs.windows_capacity_proof
+        env:
+          FS_SAFE_CAPACITY_WORKLOAD: coverage
+          FS_SAFE_CAPACITY_STANDARD: ${{ inputs.windows_standard_runner }}
+          FS_SAFE_CAPACITY_EXPECTED_COMMIT: ${{ github.sha }}
+          FS_SAFE_CAPACITY_NODE: "22"
+        run: node scripts/windows-capacity-proof.mjs
+
       - name: Coverage
         run: pnpm test:coverage:collect
 
@@ -77,6 +99,15 @@ jobs:
           name: coverage-${{ runner.os }}
           path: coverage/coverage-final.json
           if-no-files-found: error
+
+      - name: Upload workload admission proof
+        if: always() && matrix.os == 'windows-latest' && github.event_name == 'workflow_dispatch' && inputs.windows_capacity_proof
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-coverage-admission
+          path: ${{ runner.temp }}/fs-safe-windows-capacity-proof.json
+          if-no-files-found: error
+          retention-days: 7
 
   report:
     name: Merged coverage
