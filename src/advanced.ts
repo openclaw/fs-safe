@@ -9,7 +9,7 @@ export {
 } from "./create.js";
 export { copyFileHandle, copyFileDescriptorSync, type CopyFileHandleOptions } from "./file-handle-transfer.js";
 export { sameFileContentsSync, type SameFileContentsOptions } from "./file-contents.js";
-export { overwriteFileHandle, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
+export { overwriteFileHandle, overwriteFileHandleWithAuthority, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
 export { probePathCaseInsensitiveSync, type ProbePathCaseOptions } from "./path-case.js";
 export { resolvePathPrefixSync, type ResolvedPathPrefix } from "./path-prefix.js";
 export { probePathSuffixAliasesSync, type ProbePathSuffixAliasesOptions } from "./path-suffix-aliases.js";

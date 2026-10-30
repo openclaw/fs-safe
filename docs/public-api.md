@@ -65,7 +65,9 @@ see [directory identity](directory-identity.md).
 `overwriteFileHandle` and `OverwriteFileHandleOptions` provide in-place byte
 replacement through a borrowed regular-file handle. Its once-only `beforeWrite`
 callback admits the complete write and any required best-effort rollback after
-prefix preparation. See [in-place writes](in-place-write.md).
+prefix preparation. `overwriteFileHandleWithAuthority` instead awaits a required
+authority preparer and runs its synchronous final assertion immediately before
+mutation. See [in-place writes](in-place-write.md).
 
 `probePathCaseInsensitiveSync` and `ProbePathCaseOptions` are advanced exports
 for local ASCII-case observations. An unavailable answer remains `undefined`;
