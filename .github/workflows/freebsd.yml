@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-node-pnpm
         with:
-          node-version: 24
+          node-version: 24.22.1
       - run: rustup target add wasm32-unknown-unknown
       - uses: ./.github/actions/setup-archive-llvm
       - run: pnpm install --frozen-lockfile
@@ -59,7 +59,7 @@ jobs:
       - uses: ./.github/actions/setup-node-pnpm
         if: matrix.label == 'freebsd-arm64'
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Prepare ARM64 proof harness dependencies on Linux for VM sync
         if: matrix.label == 'freebsd-arm64'
         run: pnpm install --frozen-lockfile --ignore-scripts
@@ -81,7 +81,7 @@ jobs:
             case "$(freebsd-version -u)" in 14.4-RELEASE*) ;; *) exit 1 ;; esac
             uname -m
             node --version
-            node -e 'if (`freebsd-${process.arch}` !== process.env.FS_SAFE_FREEBSD_TARGET) process.exit(1)'
+            node scripts/check-ci-runtime.mjs freebsd "${FS_SAFE_FREEBSD_TARGET#freebsd-}" 24.22.1
             rustc --version
             cargo --version
             git --version
