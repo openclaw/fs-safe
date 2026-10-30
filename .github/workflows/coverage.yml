@@ -20,7 +20,7 @@ jobs:
   coverage:
     # Keep the required status identifier; runs-on uses the current matrix runner.
     name: Node 22 coverage (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
     # Windows includes native/WASM builds and serial instrumented filesystem tests.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 20 || 15 }}
     strategy:
@@ -40,8 +40,6 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
-        with:
-          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm

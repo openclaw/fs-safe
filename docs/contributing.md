@@ -354,7 +354,7 @@ Bun 1.4.4 (as do macOS and Windows).
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-24.04-arm` | arm64 / glibc | Node 24 |
 | Bundled package build | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 24 |
 | Bundled package smoke (artifact consumers) | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 22, 24 |
-| Coverage | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 22 |
+| Coverage | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22 |
 
 All macOS jobs use the arm64 `xcode-27` image. Required status-check names
 retain their historical `macos-15` identifiers to preserve branch protection;

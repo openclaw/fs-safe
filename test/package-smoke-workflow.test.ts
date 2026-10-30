@@ -71,8 +71,8 @@ describe("required package consumer proof", () => {
     }
     expect(workflow.match(/minimum-logical-processors:/gu)).toHaveLength(4);
     const coverage = readFileSync(new URL("../.github/workflows/coverage.yml", import.meta.url), "utf8");
-    expect(coverage).toContain('minimum-logical-processors: "4"');
-    expect(coverage).toContain("runs-on: ${{ matrix.os }}");
+    expect(coverage).toContain("'fs-safe-windows-16core'");
+    expect(coverage).not.toContain("minimum-logical-processors:");
     for (const file of ["mutation-policy-proof", "watch-stress", "compiler-qualification"]) {
       const sibling = readFileSync(new URL(`../.github/workflows/${file}.yml`, import.meta.url), "utf8");
       expect(sibling, file).toContain("'fs-safe-windows-16core'");
