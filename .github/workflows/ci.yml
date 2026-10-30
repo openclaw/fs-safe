@@ -1150,8 +1150,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Keep the existing 16-core Windows test concurrency when qualifying smaller hardware.
       - name: Test native crate
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked${{ matrix.os == 'windows-latest' && ' -- --test-threads=16' || '' }}
 
       - name: Build package
         run: pnpm build

@@ -84,6 +84,17 @@ describe("isolated Windows workload qualification", () => {
     expect(ciJobs[selected]).not.toContain("continue-on-error");
   });
 
+  it("preserves sixteen Rust test threads on both Windows capacities", () => {
+    const expression = ciJobs["native-check"]!.match(/run: cargo test --workspace --locked(\$\{\{[^\n]+\}\})/u)![1]!;
+    for (const standard of [false, true]) {
+      expect(evaluate(expression, { workload: "native", standard })).toBe(" -- --test-threads=16");
+    }
+    expect(evaluate(expression, { event: "pull_request" })).toBe(" -- --test-threads=16");
+    for (const os of ["ubuntu-latest", "xcode-27", "windows-2022"]) {
+      expect(evaluate(expression, { os })).toBe("");
+    }
+  });
+
   it("denies unknown or mixed workload requests instead of producing an empty green proof", () => {
     const code = ciJobs["lint-workflows"]!.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\n          NODE/u)![1]!
       .replace(/^\s*import assert[^\n]*\n/u, "");
