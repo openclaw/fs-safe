@@ -23,6 +23,28 @@ beforeEach(() => { expect(getFsSafeNativeConfig().mode).toBe(nativeModeAtStart);
 afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); });
 
 const writers = ["text", "json", "sibling", "store", "store-sync", "stream", "copy", "prune"] as const;
+itPosix.runIf(nativeAvailable)("keeps required-native store parent creation handle-relative", async () => {
+  const rootDir = await tempRoot("fs-safe-preserve-native-parent-");
+  await fs.chmod(rootDir, 0o2770);
+  configureFsSafeNative({ mode: "require" });
+  const pathnameMkdir = vi.spyOn(fs, "mkdir").mockRejectedValue(new Error("pathname mkdir is forbidden"));
+  const chmod = fsSync.fchmodSync.bind(fsSync);
+  let directoryModes = 0;
+  vi.spyOn(fsSync, "fchmodSync").mockImplementation((fd, mode) => {
+    if (fsSync.fstatSync(fd).isDirectory()) directoryModes++;
+    chmod(fd, mode);
+  });
+  const store = fileStore({ rootDir, dirMode: "preserve", durable: false });
+  await store.write("one/two/state", "first");
+  expect(directoryModes).toBe(2);
+  await store.write("one/two/state", "second");
+  expect(directoryModes).toBe(2);
+  expect(pathnameMkdir).not.toHaveBeenCalled();
+  expect((await fs.stat(rootDir)).mode & 0o7777).toBe(0o2770);
+  expect((await fs.stat(path.join(rootDir, "one"))).mode & 0o7777).toBe(0o700);
+  expect((await fs.stat(path.join(rootDir, "one/two"))).mode & 0o7777).toBe(0o700);
+});
+
 itPosix.each(writers)("%s keeps existing parents and creates new parents at 0700", async (writer) => {
   const dir = await tempRoot("fs-safe-preserve-api-");
   await fs.chmod(dir, 0o2770);

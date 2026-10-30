@@ -20,6 +20,9 @@ import { AtomicIo, runAsync } from "./atomic-io.js";
 import { prepareDirectoryMode } from "./prepare-directory-mode.js";
 import { mkdirPathComponentsWithGuards } from "./guarded-mkdir.js";
 import { rootHandleContext } from "./root-handle-context.js";
+import { isFsSafeNativeRequired } from "./native-config.js";
+import { tryMkdirNativeDirectChild } from "./root-create-native.js";
+import { tryMkdirNativeParents } from "./root-mkdir-native.js";
 import { readRegularFile } from "./regular-file.js";
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { errorCauseOptions } from "./root-errors.js";
@@ -38,6 +41,11 @@ export async function ensureParentInRoot(
   }
   if (mode === "preserve") {
     const context = rootHandleContext(scopedRoot);
+    const relativeParent = path.posix.dirname(relativePath);
+    if (isFsSafeNativeRequired() && (
+      tryMkdirNativeDirectChild(context, relativeParent, 0o700) ||
+      tryMkdirNativeParents(context, relativeParent, 0o700)
+    )) return;
     await mkdirPathComponentsWithGuards({
       rootReal: context.rootReal, rootIdentity: context.rootIdentity,
       targetPath: path.join(context.rootReal, parent),

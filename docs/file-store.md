@@ -151,6 +151,9 @@ directories are never chmoded; each exclusively created directory finishes at
 `0o700` on POSIX, including intermediate directories. Concurrent mkdir winners
 are verified and preserved. The same policy applies when pruning creates a
 missing store root. On Windows this uses mkdir's default handling.
+Required-native stores retain handle-relative parent creation and finalize only
+directories reported as exclusively created through their retained descriptors.
+The TypeScript backend uses the guarded root walk with the same mode policy.
 Private stores reject `"preserve"` with `FsSafeError("invalid-path")`, including
 per-write overrides: their explicit permission policy must remain numeric.
 
