@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- **Watch hint admission:** reduce repeated admission of unrelated canonical parents within a batch while retaining per-hint identity checks and conservative alias reconciliation. Thanks @wr-web for reporting [openclaw#186752](https://github.com/openclaw/openclaw/issues/186752) and @DonnieFi for [#1046](https://github.com/openclaw/fs-safe/pull/1046).
+
 ## 0.26.14 - 2026-10-30
 
 **Highlights:** Clearer errors for denied Root traversal and reliable async file-lock contention. ([#1044](https://github.com/openclaw/fs-safe/pull/1044), [#1045](https://github.com/openclaw/fs-safe/pull/1045))
@@ -14,10 +18,6 @@
 ### Security
 
 - **Archive dependencies:** update zstd to 0.14.3, zstd-safe to 8.2.0, and zstd-sys to 2.1.2 for native and WASM archive builds, retaining the custom WASM allocator and allocation-failure checks. ([#1039](https://github.com/openclaw/fs-safe/pull/1039))
-
-### Performance
-
-- **Watch hint admission:** reduce repeated admission of unrelated canonical parents within a batch while retaining per-hint identity checks and conservative alias reconciliation. Thanks @wr-web for reporting [openclaw#186752](https://github.com/openclaw/openclaw/issues/186752) and @DonnieFi for [#1046](https://github.com/openclaw/fs-safe/pull/1046).
 
 ## 0.26.13 - 2026-10-24
 
