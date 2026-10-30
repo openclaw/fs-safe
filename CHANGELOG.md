@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.27.0 - 2026-10-30
+
+**Highlights:** Use `dirMode: "preserve"` for shared workspaces to keep verified existing write parents unchanged while creating new directories at `0700`. ([#1050](https://github.com/openclaw/fs-safe/pull/1050))
+
 ### Features
 
-- **Directory modes:** add `dirMode: "preserve"` to keep verified existing write parents unchanged while creating new directories at `0700`. Thanks @rbartoli for the OpenClaw PR motivated by [openclaw/openclaw#184867](https://github.com/openclaw/openclaw/issues/184867).
+- **Directory modes:** add `dirMode: "preserve"` to keep verified existing write parents unchanged while creating new directories at `0700`. Thanks @rbartoli for the OpenClaw PR motivated by [openclaw/openclaw#184867](https://github.com/openclaw/openclaw/issues/184867). ([#1050](https://github.com/openclaw/fs-safe/pull/1050))
 
 ## 0.26.15 - 2026-10-30
 
