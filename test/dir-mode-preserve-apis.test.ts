@@ -101,3 +101,24 @@ itPosix.each([false, true])("store preservation rejects a symlink parent (sync=%
   })()).rejects.toThrow();
   expect(await fs.readdir(outside)).toEqual([]);
 });
+
+itPosix.each([false, true])("snapshots numeric workspace dirMode once (sync=%s)", async sync => {
+  const rootDir = await tempRoot("fs-safe-workspace-mode-snapshot-");
+  let reads = 0;
+  const options = { rootDir, prefix: "workspace", get dirMode() { reads++; return 0o700; } };
+  const workspace = sync ? tempWorkspaceSync(options) : await tempWorkspace(options);
+  try { expect(reads).toBe(1); }
+  finally { await workspace.cleanup(); }
+});
+
+itPosix.each([false, true])("retains numeric dirMode reads for locked atomic writes (sync=%s)", async sync => {
+  const dir = await tempRoot("fs-safe-atomic-mode-snapshot-");
+  let reads = 0;
+  const options = {
+    filePath: path.join(dir, "state"), content: "new", renameIdentity: "verify-content-with-lock" as const,
+    get dirMode() { reads++; return 0o700; },
+  };
+  if (sync) replaceFileAtomicSync(options);
+  else await replaceFileAtomic(options);
+  expect(reads).toBe(2);
+});

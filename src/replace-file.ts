@@ -143,10 +143,11 @@ export async function replaceFileAtomicWithDirectorySync(
     const fsModule = options.fileSystem?.promises ?? fs;
     const dir = path.dirname(filePath);
     mutation.assert();
-    if (options.dirMode === "preserve") {
+    const dirMode = options.dirMode ?? 0o700;
+    if (dirMode === "preserve") {
       await runAsync(prepareDirectoryMode(AtomicIo.async(fsModule), { dirPath: dir, mode: "preserve", mutation }));
     } else await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
-      recursive: true, mode: options.dirMode ?? 0o700,
+      recursive: true, mode: dirMode,
     });
     mutation.assert();
     return await withAtomicRenameIdentityLock(filePath, () =>
@@ -177,10 +178,11 @@ export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): Re
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   mutation.assert();
-  if (options.dirMode === "preserve") {
+  const dirMode = options.dirMode ?? 0o700;
+  if (dirMode === "preserve") {
     runSync(prepareDirectoryMode(AtomicIo.sync(fsModule, fsModule.fchmodSync), { dirPath: dir, mode: "preserve", mutation }));
   } else fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
-    recursive: true, mode: options.dirMode ?? 0o700,
+    recursive: true, mode: dirMode,
   });
   mutation.assert();
   return withAtomicRenameIdentityLockSync(filePath, () =>
