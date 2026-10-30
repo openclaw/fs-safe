@@ -23,7 +23,7 @@ beforeEach(() => { expect(getFsSafeNativeConfig().mode).toBe(nativeModeAtStart);
 afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); });
 
 const writers = ["text", "json", "sibling", "store", "store-sync", "stream", "copy", "prune"] as const;
-itPosix.runIf(nativeAvailable)("keeps required-native store parent creation handle-relative", async () => {
+it.runIf(nativeAvailable)("keeps required-native store parent creation handle-relative", async () => {
   const rootDir = await tempRoot("fs-safe-preserve-native-parent-");
   await fs.chmod(rootDir, 0o2770);
   configureFsSafeNative({ mode: "require" });
@@ -35,14 +35,18 @@ itPosix.runIf(nativeAvailable)("keeps required-native store parent creation hand
     chmod(fd, mode);
   });
   const store = fileStore({ rootDir, dirMode: "preserve", durable: false });
+  const expectedDirectoryModes = process.platform === "win32" ? 0 : 2;
   await store.write("one/two/state", "first");
-  expect(directoryModes).toBe(2);
+  expect(directoryModes).toBe(expectedDirectoryModes);
   await store.write("one/two/state", "second");
-  expect(directoryModes).toBe(2);
+  expect(directoryModes).toBe(expectedDirectoryModes);
   expect(pathnameMkdir).not.toHaveBeenCalled();
-  expect((await fs.stat(rootDir)).mode & 0o7777).toBe(0o2770);
-  expect((await fs.stat(path.join(rootDir, "one"))).mode & 0o7777).toBe(0o700);
-  expect((await fs.stat(path.join(rootDir, "one/two"))).mode & 0o7777).toBe(0o700);
+  expect(await fs.readFile(path.join(rootDir, "one/two/state"), "utf8")).toBe("second");
+  if (process.platform !== "win32") {
+    expect((await fs.stat(rootDir)).mode & 0o7777).toBe(0o2770);
+    expect((await fs.stat(path.join(rootDir, "one"))).mode & 0o7777).toBe(0o700);
+    expect((await fs.stat(path.join(rootDir, "one/two"))).mode & 0o7777).toBe(0o700);
+  }
 });
 
 itPosix.each(writers)("%s keeps existing parents and creates new parents at 0700", async (writer) => {
