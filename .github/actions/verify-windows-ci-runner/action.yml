@@ -21,3 +21,4 @@ runs:
         $logicalProcessors = if ($windows) { [int](Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors } else { 0 }
         Assert-FsSafeWindowsCiRunner -Windows $windows -Architecture $architecture -RunnerOS $env:FS_SAFE_RUNNER_OS -LogicalProcessors $logicalProcessors -MinimumLogicalProcessors $env:FS_SAFE_MINIMUM_LOGICAL_PROCESSORS
         Write-Host "Windows CI runner: arch=$architecture logical_processors=$logicalProcessors runner_os=$env:FS_SAFE_RUNNER_OS"
+        Write-Host "Windows CI memory: total_physical_bytes=$((Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory) free_physical_kib=$((Get-CimInstance -ClassName Win32_OperatingSystem).FreePhysicalMemory)"

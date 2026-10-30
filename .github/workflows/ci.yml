@@ -22,6 +22,11 @@ on:
         required: false
         default: false
         type: boolean
+      windows_package_build_cold:
+        description: Skip the Rust build cache for producer qualification (requires windows_package_capacity_proof)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -1852,7 +1857,14 @@ jobs:
       - name: Add portable TAR parser target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Verify cold Rust build directory
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && inputs.windows_package_build_cold
+        shell: pwsh
+        run: |
+          if (Test-Path target) { throw "Cold producer qualification requires an empty Rust build directory." }
+
       - name: Cache Rust build dependencies
+        if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof || !inputs.windows_package_build_cold
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # LLVM setup exports temporary paths; key its pinned toolchain source instead.

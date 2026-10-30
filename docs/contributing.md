@@ -381,7 +381,13 @@ and 16-core consumer controls run against that producer's identical artifacts.
 Before promoting the smaller producer, run at least five matched pairs at the
 same source commit, alternating standard and 16-core producers. For the control,
 keep `windows_package_capacity_proof=true` and set
-`windows_package_build_standard=false`. Record observed CPUs/RAM, cold and warm
+`windows_package_build_standard=false`. Include two cold Rust-build pairs with
+`windows_package_build_cold=true` and three cache-enabled pairs with it false.
+Cold mode requires an empty `target` directory and skips Rust cache restoration
+and saving; normal dependency/LLVM caches remain enabled. The cold flag alone
+has no effect outside capacity qualification. Record actual cache hits and
+compare both cohorts separately as well as the complete five-pair set.
+Record observed CPUs/RAM, cold and warm
 cache state separately, complete producer time, consumer outcomes, and billed
 cost. Accept only complete native/package proof with lower total billed cost;
 a 20% regression in median or p95 complete producer time stops promotion. Any

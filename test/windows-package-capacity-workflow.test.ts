@@ -12,6 +12,7 @@ type Context = {
   event: string;
   capacity?: boolean;
   buildStandard?: boolean;
+  buildCold?: boolean;
   os?: string;
   secure?: boolean;
   cancelled?: boolean;
@@ -23,7 +24,7 @@ type Context = {
 function evaluate(expression: string, context: Context): unknown {
   return runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/gu, ""), {
     github: { event_name: context.event },
-    inputs: { windows_package_capacity_proof: context.capacity, windows_package_build_standard: context.buildStandard, secure_file_credential_proof: context.secure },
+    inputs: { windows_package_capacity_proof: context.capacity, windows_package_build_standard: context.buildStandard, windows_package_build_cold: context.buildCold, secure_file_credential_proof: context.secure },
     matrix: { os: context.os ?? "windows-latest" },
     fromJSON: JSON.parse,
     cancelled: () => context.cancelled ?? false,
@@ -76,6 +77,22 @@ const credential = [
 ];
 
 describe("manual Windows package capacity closure", () => {
+  it.each([
+    ["pull_request", true, true, true, false],
+    ["push", true, true, true, false],
+    ["workflow_dispatch", false, true, true, false],
+    ["workflow_dispatch", true, false, true, false],
+    ["workflow_dispatch", true, true, false, true],
+  ] as const)("isolates cold producer compilation: %s / %s / %s", (event, capacity, buildCold, cache, coldGuard) => {
+    const producer = jobs["package-smoke-build"]!;
+    const context = { event, capacity, buildCold };
+    expect(evaluate(producer.match(/- name: Cache Rust build dependencies\n        if: (.+)/u)![1]!, context)).toBe(cache);
+    expect(evaluate(producer.match(/- name: Verify cold Rust build directory\n        if: (.+)/u)![1]!, context)).toBe(coldGuard);
+    for (const name of Object.keys(unrelated)) {
+      expect(jobs[name]).not.toContain("windows_package_build_cold");
+    }
+  });
+
   it.each([
     ["pull_request", true, true, "windows-latest", "fs-safe-windows-16core", "16"],
     ["push", true, true, "windows-latest", "fs-safe-windows-16core", "16"],
@@ -138,9 +155,10 @@ describe("manual Windows package capacity closure", () => {
     expect(download).not.toMatch(/\n        (?:if|continue-on-error):/u);
   });
 
-  it("keeps both proof inputs opt-in and secure-file admission independent", () => {
+  it("keeps proof inputs opt-in and secure-file admission independent", () => {
     expect(workflow).toMatch(/inputs:\n      secure_file_credential_proof:\n(?: {8}[^\n]*\n)*?        default: false\n        type: boolean\n      windows_package_capacity_proof:/u);
     expect(workflow).toMatch(/windows_package_build_standard:\n        description:[^\n]+\n        required: false\n        default: false\n        type: boolean/u);
+    expect(workflow).toMatch(/windows_package_build_cold:\n        description:[^\n]+\n        required: false\n        default: false\n        type: boolean/u);
     for (const name of credential) {
       expect(jobs[name]).not.toContain("windows_package_capacity_proof");
       expect(jobs[name]).toMatch(/node:\n          - 22\.23\.4\n          - 24\.22\.1/u);
