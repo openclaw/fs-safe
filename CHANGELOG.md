@@ -17,7 +17,7 @@
 
 ### Performance
 
-- **Watch hint admission:** avoid repeated parent resolution and guard acquisition for unrelated canonical directories within one reconciliation pass, retaining per-hint identity checks and conservative namespace scans.
+- **Watch hint admission:** reduce repeated admission of unrelated canonical parents within a batch while retaining per-hint identity checks and conservative alias reconciliation. Thanks @wr-web for reporting [openclaw#186752](https://github.com/openclaw/openclaw/issues/186752) and @DonnieFi for [#1046](https://github.com/openclaw/fs-safe/pull/1046).
 
 ## 0.26.13 - 2026-10-24
 
