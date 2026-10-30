@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { replaceFileAtomic, replaceFileAtomicSync, writeTextAtomic } from "../src/atomic.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { writeJson } from "../src/json.js";
@@ -10,14 +10,17 @@ import { jsonStore } from "../src/json-store.js";
 import { tempWorkspace, tempWorkspaceSync } from "../src/private-temp-workspace.js";
 import { createSecretFileAtomic, writeSecretFileAtomic } from "../src/secret.js";
 import { writeSiblingTempFile } from "../src/sibling-temp.js";
-import { configureFsSafeNative } from "../src/config.js";
+import { configureFsSafeNative, getFsSafeNativeConfig } from "../src/config.js";
+import { __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { getNativeBinding } from "../src/native.js";
 import { loadTestNative } from "./helpers/native-probe.js";
 import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 const nativeAvailable = Boolean(loadTestNative("required-env"));
-afterEach(() => { vi.restoreAllMocks(); configureFsSafeNative({ mode: "auto" }); });
+const nativeModeAtStart = getFsSafeNativeConfig().mode;
+beforeEach(() => { expect(getFsSafeNativeConfig().mode).toBe(nativeModeAtStart); });
+afterEach(() => { vi.restoreAllMocks(); __resetFsSafeNativeConfigForTest(); });
 
 const writers = ["text", "json", "sibling", "store", "store-sync", "stream", "copy", "prune"] as const;
 itPosix.each(writers)("%s keeps existing parents and creates new parents at 0700", async (writer) => {
