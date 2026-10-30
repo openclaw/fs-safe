@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")
@@ -53,7 +54,7 @@ describe("required package consumer proof", () => {
       .toBeLessThan(consumer!.indexOf("run: pnpm package:smoke"));
   });
 
-  it("keeps the smaller Windows admission at the artifact-fed consumer boundary", () => {
+  it("keeps explicit four-core admission in qualified jobs and sixteen-core defaults elsewhere", () => {
     expect(consumer).toContain("runs-on: ${{ matrix.os == 'windows-latest' && (matrix.capacity == 'control' && 'fs-safe-windows-16core' || 'windows-latest') || matrix.os }}");
     expect(consumer).toContain("minimum-logical-processors: ${{ matrix.capacity == 'control' && '16' || '4' }}");
     expect(consumer).not.toMatch(/run: pnpm (?:build|native:build)/u);
@@ -62,18 +63,33 @@ describe("required package consumer proof", () => {
     expect(runnerCheck).toContain("[System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform");
     expect(runnerCheck).toContain("Get-CimInstance -ClassName Win32_ComputerSystem");
     expect(runnerCheck).toContain("-Windows $windows -Architecture $architecture -RunnerOS $env:FS_SAFE_RUNNER_OS -LogicalProcessors $logicalProcessors -MinimumLogicalProcessors $env:FS_SAFE_MINIMUM_LOGICAL_PROCESSORS");
-    // Other workloads keep the original default and cannot inherit the consumer override.
-    for (const job of [producer, workflow.match(/^  native-check:\n((?: {4,}[^\n]*\n|\n)*)/mu)?.[1]]) {
-      expect(job).toContain("'fs-safe-windows-16core'");
-      expect(job).toContain("uses: ./.github/actions/verify-windows-ci-runner");
-      expect(job).not.toContain("minimum-logical-processors:");
+    for (const name of ["check", "native-check", "package-smoke-build"]) {
+      const job = workflow.match(new RegExp(`^  ${name}:\\n((?: {4,}[^\\n]*\\n|\\n)*)`, "mu"))?.[1];
+      expect(job, name).toContain('minimum-logical-processors: "4"');
+      expect(job, name).not.toContain("'fs-safe-windows-16core'");
+      expect(job, name).toContain("uses: ./.github/actions/verify-windows-ci-runner");
     }
-    expect(workflow.match(/minimum-logical-processors:/gu)).toHaveLength(1);
-    for (const file of ["coverage", "mutation-policy-proof", "watch-stress", "compiler-qualification"]) {
+    expect(workflow.match(/minimum-logical-processors:/gu)).toHaveLength(4);
+    const coverage = readFileSync(new URL("../.github/workflows/coverage.yml", import.meta.url), "utf8");
+    expect(coverage).toContain('minimum-logical-processors: "4"');
+    expect(coverage).toContain("runs-on: ${{ matrix.os }}");
+    for (const file of ["mutation-policy-proof", "watch-stress", "compiler-qualification"]) {
       const sibling = readFileSync(new URL(`../.github/workflows/${file}.yml`, import.meta.url), "utf8");
       expect(sibling, file).toContain("'fs-safe-windows-16core'");
       expect(sibling, file).not.toContain("minimum-logical-processors:");
     }
+  });
+
+  it("preserves sixteen Rust test threads on standard Windows without changing other native lanes", () => {
+    const native = workflow.match(/^  native-check:\n((?: {4,}[^\n]*\n|\n)*)/mu)?.[1];
+    const expression = native?.match(/run: cargo test --workspace --locked(\$\{\{[^\n]+\}\})/u)?.[1];
+    expect(expression).toBeDefined();
+    const evaluate = (os: string) => runInNewContext(expression!.slice(3, -2), { matrix: { os } });
+    expect(evaluate("windows-latest")).toBe(" -- --test-threads=16");
+    for (const os of ["windows-2022", "ubuntu-latest", "xcode-27", "ubuntu-24.04-arm", "linux-x64-no-openat2"]) {
+      expect(evaluate(os), os).toBe("");
+    }
+    expect(native).toContain("timeout-minutes: 30");
   });
 
   it("makes the identical-artifact control opt-in without changing ordinary proof names", () => {

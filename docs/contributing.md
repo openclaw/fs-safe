@@ -339,21 +339,22 @@ Bun 1.4.4 (as do macOS and Windows).
 | --- | --- | --- | --- |
 | JavaScript check | `ubuntu-latest` | x64 / glibc | Node 22, 24, 26 |
 | JavaScript check | `xcode-27` | arm64 | Node 22, 24, 26 |
-| JavaScript check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 22, 24, 26 |
+| JavaScript check | `windows-latest` (standard hosted) | x64 | Node 22, 24, 26 |
 | Native check | `ubuntu-latest` | x64 / glibc | Node 24, Bun 1.4.4 |
 | Native check (forced no-openat2) | `ubuntu-latest` | x64 / glibc | Node 24 |
 | Native check | `ubuntu-24.04-arm` | arm64 / glibc | Node 24, Bun 1.4.4 |
 | Native check | `xcode-27` | arm64 | Node 24, Bun 1.4.4 |
 | Native check | `xcode-27` under Rosetta (`x64`) | x64 | Node 24, Bun 1.4.4 |
-| Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.4 |
+| Native check | `windows-latest` (standard hosted) | x64 | Node 24, Bun 1.4.4 |
 | Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.4 |
 | Windows ARM64 host | `windows-11-arm` | arm64 native and x64 emulated | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-latest` | x64 / musl | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-24.04-arm` | arm64 / musl | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-latest` | x64 / glibc | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-24.04-arm` | arm64 / glibc | Node 24 |
+| Bundled package build | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 24 |
 | Bundled package smoke (artifact consumers) | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 22, 24 |
-| Coverage | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22 |
+| Coverage | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 22 |
 
 All macOS jobs use the arm64 `xcode-27` image. Required status-check names
 retain their historical `macos-15` identifiers to preserve branch protection;

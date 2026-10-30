@@ -2,7 +2,7 @@ name: Verify Windows CI runner
 description: Require native Windows x64, a Windows runner context, and the selected processor floor
 inputs:
   minimum-logical-processors:
-    description: Processor floor (16 by default; 4 only for qualified package consumers)
+    description: Processor floor (16 by default; explicit 4 for qualified Windows workloads)
     default: "16"
 runs:
   using: composite

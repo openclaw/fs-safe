@@ -961,7 +961,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     # Preserve the required status identifier while changing the actual runner.
     name: Node ${{ matrix.node }} check (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -981,6 +981,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1044,7 +1046,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     # The arm64 status name is part of the main branch protection contract.
     name: Native check (${{ matrix.label || (matrix.os == 'xcode-27' && 'macos-15' || matrix.os) }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.runner || matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1073,6 +1075,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1099,8 +1103,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Preserve the former 16-core lane's Rust test concurrency on smaller hardware.
       - name: Test native crate
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked${{ matrix.os == 'windows-latest' && ' -- --test-threads=16' || '' }}
 
       - name: Build package
         run: pnpm build
@@ -1818,7 +1823,7 @@ jobs:
 
   package-smoke-build:
     name: Bundled package build (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1835,6 +1840,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
