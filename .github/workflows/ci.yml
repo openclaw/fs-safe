@@ -1070,8 +1070,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The 16-core contract belongs to the custom latest runner. Server 2022
-      # deliberately uses the standard hosted image to exercise its OS behavior.
+      # Both Windows versions use standard hosted images. Keep latest's explicit
+      # admission separate from Server 2022's existing OS compatibility lane.
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
