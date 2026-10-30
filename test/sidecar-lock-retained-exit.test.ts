@@ -18,9 +18,13 @@ const cases = process.platform === "win32"
   ? ["control", "root-replaced", "root-moved"] as const
   : ["control", "parent-symlink", "root-replaced", "root-moved"] as const;
 async function child(base: string, kind: string, action: string) {
+  const start = performance.now();
+  const tracePath = path.join(base, `trace-${kind}-${action}.jsonl`);
   const result = await exec(process.execPath, [
+    "--require", fileURLToPath(new URL("./helpers/retained-child-trace.cjs", import.meta.url)),
     fileURLToPath(new URL("./fixtures/sidecar-retained-child.mjs", import.meta.url)), base, kind, action,
-  ], { env: { ...process.env, FS_SAFE_NATIVE_MODE: "require" }, timeout: 10_000 });
+  ], { env: { ...process.env, FS_SAFE_NATIVE_MODE: "require", FS_SAFE_SIDECAR_TRACE_PATH: tracePath }, timeout: 10_000 });
+  console.log(JSON.stringify({ diagnostic: "retained-child", kind, action, elapsedMs: performance.now() - start, trace: (await fs.readFile(tracePath, "utf8")).trim().split("\n").map(line => JSON.parse(line)) }));
   expect(result.stderr).toBe("");
   return result.stdout.trim();
 }

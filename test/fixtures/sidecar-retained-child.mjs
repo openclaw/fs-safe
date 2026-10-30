@@ -5,10 +5,12 @@ import { root } from "../../dist/root.js";
 import { acquireFileLock, createFileLockManager } from "../../dist/file-lock.js";
 import { getNativeBinding, __setNativeLoaderForTest, __resetNativeLoaderForTest } from "../../dist/native.js";
 
+globalThis.__fsSafeTrace?.("imports-complete");
 const [base, kind, action] = process.argv.slice(2);
 const parent = path.join(base, "parent"), directory = path.join(parent, "data");
 fs.mkdirSync(directory, { recursive: true });
 const capability = await root(directory);
+globalThis.__fsSafeTrace?.("root-opened");
 const target = path.join(directory, "state");
 const options = { lockRoot: capability, payload: () => ({ owner: "child" }), timeoutMs: 1000 };
 if (action === "leaks") {
@@ -58,6 +60,7 @@ if (action === "leaks") {
   console.log("no-leaks");
 } else {
   const lock = await acquireFileLock(target, { ...options, retainOnExit: action === "retain" });
+  globalThis.__fsSafeTrace?.("acquired");
   if (kind === "ancestor-pinned") {
     assert.throws(() => fs.renameSync(parent, `${parent}-moved`), error =>
       ["EPERM", "EACCES", "EBUSY"].includes(error.code));
@@ -71,7 +74,9 @@ if (action === "leaks") {
   }
   if (action === "release" || action === "reacquire") {
     await lock.release();
+    globalThis.__fsSafeTrace?.("released-first");
     await lock.release();
+    globalThis.__fsSafeTrace?.("released-second");
   }
   console.log("acquired");
   if (action === "explicit") process.exit(0);
