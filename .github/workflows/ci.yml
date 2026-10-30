@@ -38,6 +38,8 @@ jobs:
           - os: xcode-27
             label: xcode-27-x64
             architecture: x64
+            runner: xcode-27
+            no-openat2: false
     defaults:
       run:
         shell: ${{ matrix.architecture == 'x64' && 'arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}' || (startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash') }}
