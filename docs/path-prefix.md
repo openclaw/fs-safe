@@ -67,9 +67,11 @@ input-size limits: both helpers retain the raw suffix and
 performs filesystem work for each non-empty existing component.
 
 The async form uses asynchronous component `lstat` and `readlink`, and native
-Node `realpath`. On Node POSIX, fully existing paths use a kernel `stat` traversal
-and canonicalization without separately inspecting each ancestor. Failed probes
-fall through to the component walker, retaining its missing-suffix and error contract. The synchronous form retains its existing contract. Bun POSIX
+Node `realpath`. On Node POSIX, fully existing paths use a kernel `lstat` traversal
+and canonicalization without separately inspecting each ancestor. A final symlink
+also checks target search permissions before canonicalization. For a clean missing path, it probes parents only until the nearest existing directory.
+Raw dot/separator forms, dangling links, and uncertain failures fall through to the
+component walker, retaining its missing-suffix and error contract. The synchronous form retains its existing contract. Bun POSIX
 canonicalization and Windows AppContainer fallback still use fs-safe's
 synchronous native-realpath owner to preserve its platform guarantees; these
 fallbacks are not a promise of nonblocking filesystem work on those runtimes.

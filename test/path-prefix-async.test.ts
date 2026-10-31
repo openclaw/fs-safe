@@ -2,7 +2,7 @@ import fs from "node:fs";
 import asyncFs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { resolveAbsolutePathForRead, resolvePathPrefix } from "../src/advanced.js";
+import { resolveAbsolutePathForRead, resolvePathPrefix, resolvePathPrefixSync } from "../src/advanced.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -76,6 +76,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     const locked = path.join(directory, "locked");
     const alias = path.join(directory, "alias");
     await asyncFs.mkdir(locked);
+    await asyncFs.mkdir(path.join(directory, "future"));
     await asyncFs.symlink(`${locked}/../future`, alias);
     await asyncFs.chmod(locked, 0);
     try {
@@ -104,4 +105,43 @@ it.runIf(!process.versions.bun)("resolves absolute reads asynchronously while re
       .rejects.toMatchObject({ code: "symlink" });
   }
   expect(synchronous).not.toHaveBeenCalled();
+});
+
+it("matches physical prefix resolution for clean missing paths and link targets", async () => {
+  const directory = await tempRoot("fs-safe-prefix-async-missing-");
+  const target = path.join(directory, "target");
+  await asyncFs.mkdir(path.join(target, "child"), { recursive: true });
+  const forms = [
+    { name: "plain", prefix: target, existing: target, suffix: ["future", "leaf"] },
+  ];
+  if (process.platform !== "win32") {
+    for (const [name, destination] of [
+      ["absolute", target], ["relative", "target"], ["parent", "target/child/.."],
+      ["dangling", "target/future/.."],
+    ]) {
+      const alias = path.join(directory, name!);
+      await asyncFs.symlink(destination!, alias);
+      forms.push({ name: name!, prefix: alias, existing: target,
+        suffix: name === "dangling" ? ["future", "..", "future", "leaf"] : ["future", "leaf"] });
+    }
+  }
+  if (process.platform !== "win32") {
+    const alias = path.join(directory, "outside-alias");
+    const outsideName = `${path.basename(directory)}-outside-future`;
+    const outside = path.join(path.dirname(directory), outsideName);
+    await asyncFs.symlink(outside, alias);
+    for (const tail of [[], ["child"]]) {
+      const input = path.join(alias, ...tail);
+      const expected = { absolutePath: input, existingPath: path.dirname(directory),
+        unresolvedSegments: [outsideName, ...tail] };
+      expect(resolvePathPrefixSync(input)).toEqual(expected);
+      await expect(resolvePathPrefix(input)).resolves.toEqual(expected);
+    }
+  }
+  for (const { prefix, existing, suffix } of forms) {
+    const input = path.join(prefix, "future", "leaf");
+    const expected = { absolutePath: input, existingPath: existing, unresolvedSegments: suffix };
+    expect(resolvePathPrefixSync(input)).toEqual(expected);
+    await expect(resolvePathPrefix(input)).resolves.toEqual(expected);
+  }
 });

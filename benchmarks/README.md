@@ -712,3 +712,18 @@ frozen baseline built from another revision. Each JSON line records actual
 transport, tree size, process CPU, wall time, load, and instrumented filesystem
 API calls per idle tick, excluding creation and initial admission. These call
 counts are not kernel syscall counts; use `strace` on Linux for that distinction.
+
+### Synchronous path-prefix control
+
+After building both revisions, run:
+
+```sh
+node benchmarks/path-prefix-comparison.mjs /absolute/baseline/dist /absolute/candidate/dist /absolute/temporary-parent 1000
+```
+
+This compares the retained synchronous API across five interleaved A1/B/A2
+batches on the same existing/missing synthetic paths. JSON records elapsed,
+main-thread and process CPU per operation, with filesystem call counts measured
+separately. Use Node with `process.threadCpuUsage` support. The caller supplies
+the temporary parent; the script removes only its own fixture. This is a shared
+owner microbenchmark, not whole-application or storage-pressure evidence.
