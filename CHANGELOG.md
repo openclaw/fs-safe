@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.27.1 - 2026-10-31
+
+**Highlights:** Native POSIX staged file creation, atomic publication, and small-buffer writes no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052))
+
 ### Fixes
 
-- **Async writes:** keep native POSIX staged creation, atomic publication, and small-buffer writes off the JavaScript thread so slow storage does not stall the event loop.
+- **Async writes:** keep native POSIX staged creation, atomic publication, and small-buffer writes off the JavaScript thread so slow storage does not stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052))
 
 ## 0.27.0 - 2026-10-30
 
