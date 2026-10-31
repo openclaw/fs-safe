@@ -13,6 +13,7 @@ import {
 } from "../src/absolute-path.js";
 import { fileStore, fileStoreSync } from "../src/file-store.js";
 import { realpathSync } from "../src/realpath.js";
+import * as realpath from "../src/realpath.js";
 import {
   ensureDirectoryWithinRoot,
   pathScope,
@@ -76,7 +77,7 @@ describe("absolute path failure coverage", () => {
       });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(realpathSync, "native").mockImplementationOnce(() => { throw denied; });
+    vi.spyOn(realpath, "realpathNative").mockRejectedValueOnce(denied);
     await expect(resolveAbsolutePathForRead(path.join(root, "value.txt"))).rejects.toBe(denied);
   });
 

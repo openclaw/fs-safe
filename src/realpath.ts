@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import asyncFs from "node:fs/promises";
 import { platform } from "node:os";
 import { getSystemErrorName } from "node:util";
 import { FsSafeError } from "./errors.js";
@@ -63,3 +64,15 @@ function resolve(input: string, native: boolean): string {
 export const realpathSync = Object.assign((input: string) => resolve(input, false), {
   native: (input: string) => resolve(input, true),
 });
+
+/** Async on Node; retain runtime-specific native canonicalization guarantees. */
+export async function realpathNative(input: string): Promise<string> {
+  if (bunPosix) return realpathSync.native(input);
+  try { return await asyncFs.realpath(input); }
+  catch (error) {
+    if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM" ||
+        (error as NodeJS.ErrnoException).syscall !== "realpath") throw error;
+    // AppContainer DOS-name translation still belongs to the native sync owner.
+    return realpathSync.native(input);
+  }
+}

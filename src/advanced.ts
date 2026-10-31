@@ -11,7 +11,7 @@ export { copyFileHandle, copyFileDescriptorSync, type CopyFileHandleOptions } fr
 export { sameFileContentsSync, type SameFileContentsOptions } from "./file-contents.js";
 export { overwriteFileHandle, overwriteFileHandleWithAuthority, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
 export { probePathCaseInsensitiveSync, type ProbePathCaseOptions } from "./path-case.js";
-export { resolvePathPrefixSync, type ResolvedPathPrefix } from "./path-prefix.js";
+export { resolvePathPrefix, resolvePathPrefixSync, type ResolvedPathPrefix } from "./path-prefix.js";
 export { probePathSuffixAliasesSync, type ProbePathSuffixAliasesOptions } from "./path-suffix-aliases.js";
 export {
   readDirectoryIdentity,

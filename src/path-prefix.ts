@@ -1,8 +1,9 @@
 import fs from "node:fs";
+import asyncFs from "node:fs/promises";
 import path from "node:path";
 import { formatErrorDetail } from "./error-detail.js";
 import { assertNoNulPathInput, hasNodeErrorCode } from "./path.js";
-import { realpathSync } from "./realpath.js";
+import { realpathNative, realpathSync } from "./realpath.js";
 import { absolutePathWithRawSegments } from "./root-path-existing.js";
 import { pathForWindowsFilesystem } from "./windows-path-alias.js";
 
@@ -33,7 +34,23 @@ function resolutionError(code: "ELOOP" | "ENOTDIR", absolutePath: string): Error
 // positions per constructed queue; longer queues use a forward cursor instead.
 const SHIFT_QUEUE_COMPONENT_LIMIT = 32;
 
-export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
+type PathRead = { sync: () => void; async: () => Promise<void> };
+
+function* read<T>(sync: () => T, async: () => Promise<T>): Generator<PathRead, T> {
+  let value!: T;
+  yield { sync: () => { value = sync(); }, async: async () => { value = await async(); } };
+  return value;
+}
+
+function* lstat(input: string) {
+  return yield* read(() => fs.lstatSync(input, { bigint: true }), () => asyncFs.lstat(input, { bigint: true }));
+}
+
+function* canonicalize(input: string) {
+  return yield* read(() => realpathSync.native(input), () => realpathNative(input));
+}
+
+function* resolvePrefix(input: string): Generator<PathRead, ResolvedPathPrefix> {
   assertNoNulPathInput(input);
   const absolutePath = absolutePathWithRawSegments(input);
   let resolved = rawRoot(absolutePath);
@@ -53,19 +70,19 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
       const lookup = segment === ".." && atRoot ? "." : segment;
       // lstat(dir) does not test search permission, and realpath may erase dots.
       const operationBase = pathForWindowsFilesystem(resolved);
-      fs.lstatSync(`${operationBase}${operationBase.endsWith(path.sep) ? "" : path.sep}${lookup}`, { bigint: true });
+      yield* lstat(`${operationBase}${operationBase.endsWith(path.sep) ? "" : path.sep}${lookup}`);
       if (segment === ".." && !atRoot) resolved = path.dirname(resolved);
       continue;
     }
     const candidate = path.join(resolved, segment);
     let stat: fs.BigIntStats;
     try {
-      stat = fs.lstatSync(candidate, { bigint: true });
+      stat = yield* lstat(candidate);
     } catch (error) {
       if (!hasNodeErrorCode(error, "ENOENT")) throw error;
       return {
         absolutePath,
-        existingPath: realpathSync.native(pathForWindowsFilesystem(resolved)),
+        existingPath: yield* canonicalize(pathForWindowsFilesystem(resolved)),
         unresolvedSegments: shiftQueue ? [segment, ...remaining] : remaining.slice(nextSegment - 1),
       };
     }
@@ -79,7 +96,7 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
     if (symlinkHops >= 64 || visitedStates.has(state)) throw resolutionError("ELOOP", absolutePath);
     visitedStates.add(state);
     symlinkHops++;
-    const target = fs.readlinkSync(candidate);
+    const target = yield* read(() => fs.readlinkSync(candidate), () => asyncFs.readlink(candidate));
     const rawTarget = path.sep === "\\" ? target.replaceAll("/", "\\") : target;
     let targetSegments: string[];
     if (path.isAbsolute(rawTarget)) {
@@ -103,5 +120,38 @@ export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
     shiftQueue = remainingCount <= SHIFT_QUEUE_COMPONENT_LIMIT;
     nextSegment = 0;
   }
-  return { absolutePath, existingPath: realpathSync.native(pathForWindowsFilesystem(resolved)), unresolvedSegments: [] };
+  return { absolutePath, existingPath: yield* canonicalize(pathForWindowsFilesystem(resolved)), unresolvedSegments: [] };
+}
+
+export function resolvePathPrefixSync(input: string): ResolvedPathPrefix {
+  const reads = resolvePrefix(input);
+  let step = reads.next();
+  while (!step.done) {
+    try { step.value.sync(); }
+    catch (error) { step = reads.throw(error); continue; }
+    step = reads.next();
+  }
+  return step.value;
+}
+
+export async function resolvePathPrefix(input: string): Promise<ResolvedPathPrefix> {
+  if (process.platform !== "win32" && !process.versions.bun) {
+    assertNoNulPathInput(input);
+    const absolutePath = absolutePathWithRawSegments(input);
+    try {
+      // Kernel traversal preserves search permissions and raw symlink/.. order.
+      await asyncFs.stat(absolutePath);
+      return { absolutePath, existingPath: await realpathNative(absolutePath), unresolvedSegments: [] };
+    } catch {
+      // Missing prefixes, long link chains and errors retain the walker's contract.
+    }
+  }
+  const reads = resolvePrefix(input);
+  let step = reads.next();
+  while (!step.done) {
+    try { await step.value.async(); }
+    catch (error) { step = reads.throw(error); continue; }
+    step = reads.next();
+  }
+  return step.value;
 }
