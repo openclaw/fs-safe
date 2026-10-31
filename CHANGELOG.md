@@ -2,11 +2,13 @@
 
 ## Unreleased
 
-- **Path prefixes:** add `resolvePathPrefix` for asynchronous component traversal and make `resolveAbsolutePathForRead` use asynchronous Node canonicalization, keeping filesystem waits off the JavaScript thread while preserving physical symlink and missing-suffix semantics.
-
 ## 0.27.1 - 2026-10-31
 
-**Highlights:** Native POSIX staged file creation, atomic publication, and small-buffer writes no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052))
+**Highlights:** Native POSIX staged file creation, atomic publication, small-buffer writes, and path-prefix canonicalization no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052), [#1053](https://github.com/openclaw/fs-safe/pull/1053))
+
+### Features
+
+- **Path prefixes:** add `resolvePathPrefix` for asynchronous component traversal and make `resolveAbsolutePathForRead` use asynchronous Node canonicalization, keeping filesystem waits off the JavaScript thread while preserving physical symlink and missing-suffix semantics. ([#1053](https://github.com/openclaw/fs-safe/pull/1053))
 
 ### Fixes
 
