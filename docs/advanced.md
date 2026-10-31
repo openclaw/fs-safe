@@ -33,7 +33,7 @@ The exports group into a handful of themes. Documented helpers link to their con
 | `resolveWritablePathWithinRoot` | – | Resolve a write target inside a root. |
 | `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. |
 | `resolvePathViaExistingAncestorSync` | – | Walk to an existing ancestor for paths whose tail does not yet exist. |
-| `resolvePathPrefixSync`, `ResolvedPathPrefix` | [path-prefix.md](path-prefix.md) | Follow physical symlink targets and return a canonical existing prefix with the raw missing suffix; propagate uncertain resolution failures. |
+| `resolvePathPrefix`, `resolvePathPrefixSync`, `ResolvedPathPrefix` | [path-prefix.md](path-prefix.md) | Follow physical symlink targets and return a canonical existing prefix with the raw missing suffix; propagate uncertain resolution failures. |
 | `probePathCaseInsensitiveSync`, `ProbePathCaseOptions` | [path-case.md](path-case.md) | Observe local ASCII-case behavior with explicit read-only mode and owned temporary-probe cleanup. |
 | `probePathSuffixAliasesSync`, `ProbePathSuffixAliasesOptions` | [path-suffix-aliases.md](path-suffix-aliases.md) | Observe selected missing suffix aliases with bounded temporary directory probes; ambiguity, dynamic budget exhaustion, or incomplete cleanup returns `undefined`. |
 
