@@ -9,6 +9,7 @@ use crate::unix::{
     remove_matching_child as remove, validate_child_basename,
 };
 use crate::{NativeResult, into_napi};
+use crate::task::NativeTask;
 
 fn create(parent_fd: i32, name: &str) -> NativeResult<i32> {
     validate_child_basename(name)?;
@@ -29,8 +30,34 @@ fn create(parent_fd: i32, name: &str) -> NativeResult<i32> {
 }
 
 #[napi(js_name = "createStagedFile")]
-pub fn create_staged_file(env: Env, parent_fd: i32, basename: String) -> Result<i32> {
-    into_napi(env, create(parent_fd, &basename))
+pub fn create_staged_file(parent_fd: i32, basename: String) -> AsyncTask<NativeTask<i32>> {
+    // No early cancellation: the caller owns parent_fd until settlement and must
+    // receive the created descriptor before any fallible inspection or cleanup.
+    AsyncTask::new(NativeTask::new(move || create(parent_fd, &basename)))
+}
+
+fn rename_async(source_fd: i32, source: String, target_fd: i32, target: String, overwrite: bool) -> AsyncTask<NativeTask<()>> {
+    // Borrow the admitted parents for the entire task, just like native copying.
+    // Reuse the synchronous primitives so syscall flags and error provenance agree.
+    AsyncTask::new(NativeTask::new(move || {
+        crate::validate_relative_path(&source, false)?;
+        crate::validate_relative_path(&target, false)?;
+        if overwrite {
+            crate::unix::rename_replace(source_fd, &source, target_fd, &target)
+        } else {
+            crate::unix::rename_no_replace(source_fd, &source, target_fd, &target)
+        }
+    }))
+}
+
+#[napi(js_name = "renameReplaceAsync")]
+pub fn rename_replace_async(source_fd: i32, source: String, target_fd: i32, target: String) -> AsyncTask<NativeTask<()>> {
+    rename_async(source_fd, source, target_fd, target, true)
+}
+
+#[napi(js_name = "renameNoReplaceAsync")]
+pub fn rename_no_replace_async(source_fd: i32, source: String, target_fd: i32, target: String) -> AsyncTask<NativeTask<()>> {
+    rename_async(source_fd, source, target_fd, target, false)
 }
 
 #[napi(js_name = "stagedFileMatches")]

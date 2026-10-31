@@ -71,7 +71,7 @@ it.runIf(native?.createStagedFile)("keeps the Root lock error contract and names
   let stagePath: string | undefined;
   __setNativeLoaderForTest(() => ({
     ...native!,
-    createStagedFile(_fd, name) {
+    async createStagedFile(_fd, name) {
       stagePath = path.join(directory, name);
       throw failure;
     },

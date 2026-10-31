@@ -71,8 +71,8 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     let createdFd: number | undefined;
     __setNativeLoaderForTest(() => ({
       ...native!,
-      createStagedFile(...args) {
-        createdFd = native!.createStagedFile!(...args);
+      async createStagedFile(...args) {
+        createdFd = await native!.createStagedFile!(...args);
         return createdFd;
       },
     }));
@@ -98,9 +98,9 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const directory = await tempRoot("fs-safe-stage-exclusive-");
     __setNativeLoaderForTest(() => ({
       ...native!,
-      createStagedFile(fd, name) {
+      async createStagedFile(fd, name) {
         fsSync.writeFileSync(path.join(directory, name), "collision");
-        return native!.createStagedFile!(fd, name);
+        return await native!.createStagedFile!(fd, name);
       },
     }));
     await expect(stageFileInDirectory({ directory, content: "owned" })).rejects.toBeTruthy();
@@ -117,13 +117,13 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const failure = Object.assign(new Error(`injected ${fault}`), { code: "EIO" });
     __setNativeLoaderForTest(() => ({
       ...native!,
-      renameReplace(...args) {
+      async renameReplaceAsync(...args) {
         if (fault === "move-before-rename") {
           fsSync.renameSync(directory, moved);
           fsSync.mkdirSync(directory);
           fsSync.writeFileSync(path.join(directory, "final"), "sentinel");
         }
-        native!.renameReplace(...args);
+        await native!.renameReplaceAsync!(...args);
         if (fault === "move-after-rename") {
           fsSync.renameSync(directory, moved);
           fsSync.mkdirSync(directory);
@@ -178,8 +178,8 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
     const original = path.join(directory, "original");
     __setNativeLoaderForTest(() => ({
       ...native!,
-      renameReplace(...args) {
-        native!.renameReplace(...args);
+      async renameReplaceAsync(...args) {
+        await native!.renameReplaceAsync!(...args);
         fsSync.renameSync(final, original);
         fsSync.writeFileSync(final, "substitute", { mode: 0o600 });
       },
@@ -266,9 +266,9 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
           throw cleanupFailure;
         }
       },
-      renameReplace(...args) {
+      async renameReplaceAsync(...args) {
         if (fault === "close") {
-          native!.renameReplace(...args);
+          await native!.renameReplaceAsync!(...args);
           failClose = true;
           vi.spyOn(fsSync, "fchmodSync").mockImplementationOnce(() => {
             throw writeFailure;
@@ -312,8 +312,8 @@ describe.runIf(native)("staged ownership failure boundaries", () => {
       ...native!,
       removeStagedFile: remove,
       closeOwnedFd: close,
-      renameNoReplace(...args) {
-        native!.renameNoReplace(...args);
+      async renameNoReplaceAsync(...args) {
+        await native!.renameNoReplaceAsync!(...args);
         throw code === undefined ? undefined : Object.assign(new Error("reply lost after rename"), { code });
       },
     }));

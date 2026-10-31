@@ -70,8 +70,8 @@ function observeFiles(
     const native = __loadBundledNativeForTest();
     __setNativeLoaderForTest(() => ({
       ...native,
-      createStagedFile(parentFd, basename) {
-        const fd = native.createStagedFile!(parentFd, basename);
+      async createStagedFile(parentFd, basename) {
+        const fd = await native.createStagedFile!(parentFd, basename);
         opened.set(fd, { pathname: path.join(rootDir, basename), close: 0 });
         if (fault !== "none") chmod(fd, 0o777);
         return fd;

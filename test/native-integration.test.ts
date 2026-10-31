@@ -189,11 +189,12 @@ describe.runIf(native)("native filesystem primitives", () => {
 
   it("uses native no-replace commits for create-only pinned writes", async () => {
     let renameCalls = 0;
+    const rename = process.platform === "win32" ? "renameNoReplace" : "renameNoReplaceAsync";
     __setNativeLoaderForTest(() => ({
       ...native!,
-      renameNoReplace(...args) {
+      [rename](...args: Parameters<NonNullable<typeof native>["renameNoReplace"]>) {
         renameCalls += 1;
-        return native!.renameNoReplace(...args);
+        return native![rename]!(...args);
       },
     }));
     configureFsSafeNative({ mode: "require" });
@@ -316,11 +317,12 @@ describe.runIf(native)("native filesystem primitives", () => {
 
   it("uses native replace commits for overwrite pinned writes", async () => {
     let replaceCalls = 0;
+    const rename = process.platform === "win32" ? "renameReplace" : "renameReplaceAsync";
     __setNativeLoaderForTest(() => ({
       ...native!,
-      renameReplace(...args) {
+      [rename](...args: Parameters<NonNullable<typeof native>["renameReplace"]>) {
         replaceCalls += 1;
-        return native!.renameReplace(...args);
+        return native![rename]!(...args);
       },
     }));
     configureFsSafeNative({ mode: "require" });

@@ -58,8 +58,8 @@ describe.skipIf(!native)("failed retained-sidecar admission", () => {
       } else {
         let created = false;
         __setNativeLoaderForTest(() => ({ ...native!,
-          createStagedFile(parent, name) {
-            const fd = native!.createStagedFile!(parent, name);
+          async createStagedFile(parent, name) {
+            const fd = await native!.createStagedFile!(parent, name);
             created = true;
             return fd;
           },

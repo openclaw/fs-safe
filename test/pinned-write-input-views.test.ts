@@ -15,66 +15,41 @@ async function file() {
   return { target, handle: await fs.open(target, "wx+") };
 }
 
-describe("small owned-descriptor buffers", () => {
-  it("handles positive short writes and advances the existing cursor", async () => {
+describe("owned-descriptor buffers", () => {
+  it.each([undefined, false, true])("writes asynchronously with staging=%s and handles short writes", async stageBeforePublish => {
     const { target, handle } = await file();
     await handle.writeFile("prefix");
-    const write = fsSync.writeSync.bind(fsSync);
-    const short = vi.spyOn(fsSync, "writeSync").mockImplementation(((fd, data, offset, length, position) =>
-      write(fd, data, offset, Math.min(length, 3), position)) as typeof fsSync.writeSync);
-    try { await writePinnedInput(handle.fd, { kind: "buffer", data: "payload" }); }
+    const write = fsSync.write.bind(fsSync);
+    const short = vi.spyOn(fsSync, "write").mockImplementation(((fd, data, offset, length, position, callback) =>
+      write(fd, data, offset, Math.min(length, 3), position, callback)) as typeof fsSync.write);
+    const sync = vi.spyOn(fsSync, "writeSync");
+    try { await writePinnedInput(handle.fd, { kind: "buffer", data: "payload", stageBeforePublish }); }
     finally { await handle.close(); }
     expect(short).toHaveBeenCalledTimes(3);
+    expect(sync).not.toHaveBeenCalled();
     expect(await fs.readFile(target, "utf8")).toBe("prefixpayload");
   });
 
-  it("rejects an oversized buffer before writing and retains caller ownership", async () => {
+  it("rejects oversized buffers and zero progress without closing the caller's descriptor", async () => {
     const { target, handle } = await file();
-    const write = vi.spyOn(fsSync, "writeSync");
+    const write = vi.spyOn(fsSync, "write").mockImplementation(((...args) => args.at(-1)!(null, 0)) as typeof fsSync.write);
     try {
       await expect(writePinnedInput(handle.fd, { kind: "buffer", data: "payload" }, 2)).rejects.toMatchObject({ code: "too-large" });
       expect(write).not.toHaveBeenCalled();
+      await expect(writePinnedInput(handle.fd, { kind: "buffer", data: "payload" })).rejects.toMatchObject({ code: "helper-failed" });
       expect((await handle.stat()).size).toBe(0);
     } finally { await handle.close(); }
     expect(await fs.readFile(target, "utf8")).toBe("");
   });
 
-  it("rejects zero progress without closing the caller's descriptor", async () => {
-    const { handle } = await file();
-    vi.spyOn(fsSync, "writeSync").mockReturnValue(0);
-    try {
-      await expect(writePinnedInput(handle.fd, { kind: "buffer", data: "payload" })).rejects.toMatchObject({ code: "helper-failed" });
-      expect((await handle.stat()).isFile()).toBe(true);
-    } finally { await handle.close(); }
-  });
-
-  it("keeps direct-publication buffers on their existing asynchronous write path", async () => {
+  it.each([7, 64 * 1024, 64 * 1024 + 1])("checks authority on asynchronous %s-byte writes", async size => {
     const { target, handle } = await file();
-    const write = vi.spyOn(fsSync, "writeSync");
-    try { await writePinnedInput(handle.fd, { kind: "buffer", data: "payload", stageBeforePublish: false }); }
-    finally { await handle.close(); }
-    expect(write).not.toHaveBeenCalled();
-    expect(await fs.readFile(target, "utf8")).toBe("payload");
-  });
-
-  it("keeps authority callbacks on the existing asynchronous write path", async () => {
-    const { target, handle } = await file();
-    const write = vi.spyOn(fsSync, "writeSync");
-    const before = vi.fn();
-    try { await writePinnedInput(handle.fd, { kind: "buffer", data: "payload" }, undefined, before); }
+    const write = vi.spyOn(fsSync, "writeSync"), before = vi.fn();
+    const content = Buffer.alloc(size, 0x5a);
+    try { await writePinnedInput(handle.fd, { kind: "buffer", data: content }, undefined, before); }
     finally { await handle.close(); }
     expect(before).toHaveBeenCalledOnce();
     expect(write).not.toHaveBeenCalled();
-    expect(await fs.readFile(target, "utf8")).toBe("payload");
-  });
-
-  it.each([64 * 1024, 64 * 1024 + 1])("bounds synchronous writes for %s-byte buffers", async size => {
-    const { target, handle } = await file();
-    const write = vi.spyOn(fsSync, "writeSync");
-    const content = Buffer.alloc(size, 0x5a);
-    try { await writePinnedInput(handle.fd, { kind: "buffer", data: content }); }
-    finally { await handle.close(); }
-    expect(write.mock.calls.length).toBe(size === 64 * 1024 ? 1 : 0);
     expect(await fs.readFile(target)).toEqual(content);
   });
 });

@@ -43,9 +43,9 @@ it.skipIf(!posix || !native).each(["before", "after"] as const)(
     __setNativeLoaderForTest(() => ({
       ...native!,
       removeStagedFile: remove,
-      renameNoReplace(...args) {
+      async renameNoReplaceAsync(...args) {
         temporary = args[1];
-        if (timing === "after") native!.renameNoReplace(...args);
+        if (timing === "after") await native!.renameNoReplaceAsync!(...args);
         throw errno;
       },
     }));
@@ -130,9 +130,9 @@ async function nativeFixture(fault?: Fault, cause?: unknown) {
   const closeParent = fsSync.closeSync;
   const binding: NativeBinding = {
     ...native!,
-    createStagedFile(...args) {
+    async createStagedFile(...args) {
       parentFd = args[0];
-      return fileFd = native!.createStagedFile!(...args);
+      return fileFd = await native!.createStagedFile!(...args);
     },
     removeStagedFile(...args) {
       calls.remove += 1;
@@ -252,10 +252,10 @@ describe.runIf(posix && !!native)("staged file hostile error settlement", () => 
     const temporary = item.owner.receipt.temporaryBasename;
     const final = path.join(item.directory, "final");
     if (overwrite) await fs.writeFile(final, "previous target");
-    const rename = overwrite ? "renameReplace" : "renameNoReplace";
-    item.binding[rename] = (...args) => {
+    const rename = overwrite ? "renameReplaceAsync" : "renameNoReplaceAsync";
+    item.binding[rename] = async (...args) => {
       item.calls.rename += 1;
-      if (timing === "after") native![rename](...args);
+      if (timing === "after") await native![rename]!(...args);
       throw cause;
     };
     try {
@@ -307,9 +307,9 @@ describe.runIf(posix && !!native)("staged file hostile error settlement", () => 
         return undefined;
       },
     });
-    item.binding.renameNoReplace = (...args) => {
+    item.binding.renameNoReplaceAsync = async (...args) => {
       item.calls.rename += 1;
-      if (timing === "after") native!.renameNoReplace(...args);
+      if (timing === "after") await native!.renameNoReplaceAsync!(...args);
       throw cause;
     };
     try {

@@ -70,7 +70,7 @@ export async function partialBindingProof() {
     const writeOnly = {
       closeOwnedFd: unavailable, openBeneath: unavailable, mkdirBeneath: unavailable,
       renameNoReplace: unavailable, renameReplace: unavailable, fstatIdentity: unavailable,
-      createStagedFile: unavailable, stagedFileMatches: unavailable, removeStagedFile: unavailable,
+      renameReplaceAsync: unavailable, renameNoReplaceAsync: unavailable, createStagedFile: unavailable, stagedFileMatches: unavailable, removeStagedFile: unavailable,
     };
     const handle = await fs.open(input, "r");
     try {

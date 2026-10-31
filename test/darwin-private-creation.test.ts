@@ -174,8 +174,8 @@ describe.runIf(process.platform === "darwin" && typeof native?.inspectDarwinAcl 
     let removedBytes: number | undefined;
     __setNativeLoaderForTest(() => ({
       ...native!,
-      createStagedFile(parent, name) {
-        const fd = native!.createStagedFile!(parent, name);
+      async createStagedFile(parent, name) {
+        const fd = await native!.createStagedFile!(parent, name);
         acl(path.join(directory, name), "everyone allow read");
         return fd;
       },
