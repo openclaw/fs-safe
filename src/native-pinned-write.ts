@@ -14,7 +14,7 @@ import type { describeStagedDirectory } from "./staged-directory.js";
 import { copyLinkAtParent } from "./copy-link.js";
 
 const writeCapabilities = ["openBeneath", "mkdirBeneath", "renameNoReplace", "renameReplace"] as const;
-const posixWriteCapabilities = [...writeCapabilities, "createStagedFile", "stagedFileMatches", "removeStagedFile"] as const;
+const posixWriteCapabilities = [...writeCapabilities, "createStagedFile", "stagedFileMatches", "removeStagedFile", "renameReplaceAsync", "renameNoReplaceAsync"] as const;
 
 type PinnedWriteCapabilitiesInput = Pick<PinnedWriteParams, "input" | "private" | "verifyPosixMode">;
 

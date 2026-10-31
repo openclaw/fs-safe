@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Async writes:** keep native POSIX staged creation, atomic publication, and small-buffer writes off the JavaScript thread so slow storage does not stall the event loop.
+
 ## 0.27.0 - 2026-10-30
 
 **Highlights:** Use `dirMode: "preserve"` for shared workspaces to keep verified existing write parents unchanged while creating new directories at `0700`. ([#1050](https://github.com/openclaw/fs-safe/pull/1050))

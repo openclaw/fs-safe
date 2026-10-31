@@ -51,13 +51,13 @@ describe.runIf(nativeAvailable)("native staged write abort", () => {
           return binding.stagedFileMetadata!(parentFd, name, fileFd);
         },
       } : {}),
-      renameReplace(...args) {
+      async renameReplaceAsync(...args) {
         observeMode(args[1]);
-        binding.renameReplace(...args);
+        await binding.renameReplaceAsync!(...args);
       },
-      renameNoReplace(...args) {
+      async renameNoReplaceAsync(...args) {
         observeMode(args[1]);
-        binding.renameNoReplace(...args);
+        await binding.renameNoReplaceAsync!(...args);
       },
       stagedFileMatches(...args) {
         observePublished(args[1]);

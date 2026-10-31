@@ -13,6 +13,9 @@ let renames = 0;
 __setNativeLoaderForTest(() => ({ ...native, renameNoReplace(...args) {
   renames++;
   return native.renameNoReplace(...args);
+}, renameNoReplaceAsync(...args) {
+  renames++;
+  return native.renameNoReplaceAsync(...args);
 } }));
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-noreplace-"));
 try {

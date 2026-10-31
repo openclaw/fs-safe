@@ -56,9 +56,14 @@ if (process.argv.includes("--child")) {
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
         if (operation === "openWritable") return result.handle.close();
       };
-      prepare();
-      const warm = await perform();
-      await cleanup(warm);
+      // Staging now runs native allocation on libuv workers. Warm the default
+      // pool before counting so per-thread allocator CPU probes stay outside
+      // the operation, just like the original native/Node startup warm-up.
+      for (let warmup = 0; warmup < (operation === "create" || operation === "write" ? 4 : 1); warmup++) {
+        prepare();
+        const warm = await perform();
+        await cleanup(warm);
+      }
       const resources = {};
       const hook = createHook({ init(_id, type) { resources[type] = (resources[type] ?? 0) + 1; } });
       prepare();
@@ -167,7 +172,9 @@ if (process.argv.includes("--child")) {
             FILEHANDLECLOSEREQ: 1
           },
           require: {
-            PROMISE: 88
+            PROMISE: 103,
+            undefined: 2,
+            FSREQCALLBACK: 1
           }
         },
         write: {
@@ -178,7 +185,9 @@ if (process.argv.includes("--child")) {
             FILEHANDLECLOSEREQ: 2
           },
           require: {
-            PROMISE: 117,
+            PROMISE: 132,
+            undefined: 2,
+            FSREQCALLBACK: 1,
             FSREQPROMISE: 1,
             FILEHANDLE: 1,
             FILEHANDLECLOSEREQ: 1

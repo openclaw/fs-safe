@@ -61,12 +61,12 @@ describe.skipIf(!native || process.platform === "win32")("native Root lock exclu
     const targetPath = path.join(directory, "state");
     const lockPath = `${targetPath}.lock`;
     const winnerPath = kind === "lock" ? lockPath : `${lockPath}.reclaim`;
-    const create = vi.fn((parent: number, name: string) => {
+    const create = vi.fn(async (parent: number, name: string) => {
       fsSync.writeFileSync(winnerPath, "foreign owner", { flag: "wx", mode: 0o600 });
-      return native!.createStagedFile!(parent, name);
+      return await native!.createStagedFile!(parent, name);
     });
-    const rename = vi.fn(native!.renameNoReplace);
-    __setNativeLoaderForTest(() => ({ ...native!, createStagedFile: create, renameNoReplace: rename }));
+    const rename = vi.fn(native!.renameNoReplaceAsync);
+    __setNativeLoaderForTest(() => ({ ...native!, createStagedFile: create, renameNoReplaceAsync: rename }));
     if (kind === "lock") {
       const manager = createSidecarLockManager(directory);
       await expect(manager.acquire({

@@ -16,14 +16,8 @@ import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-inp
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write-types.js";
 import { assertNativeStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
-import type {
-  PublishedFileReceipt,
-  StagedFile,
-  StagedFileCleanupReceipt,
-  StagedFileFailureDetails,
-  StagedFilePublication,
-  StagedFileReceipt,
-} from "./staged-file-types.js";
+import type { PublishedFileReceipt, StagedFile, StagedFileCleanupReceipt, StagedFileFailureDetails,
+  StagedFilePublication, StagedFileReceipt } from "./staged-file-types.js";
 import { classifyNativeRenameFailure } from "./native-rename-outcome.js";
 import { createStagedFileReceipt, stagedFailure } from "./staged-file-settlement.js";
 import { noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-noreplace.js";
@@ -33,7 +27,7 @@ import { annotateReadOnlyOpenError } from "./file-open-error.js";
 
 export type NativeStagingBinding = NativeBinding & Required<Pick<
   NativeBinding,
-  "createStagedFile" | "stagedFileMatches" | "removeStagedFile" | "renameReplace" | "renameNoReplace"
+  "createStagedFile" | "stagedFileMatches" | "removeStagedFile" | "renameReplaceAsync" | "renameNoReplaceAsync"
 >>;
 
 export function assertNativeStaging(binding: NativeBinding): asserts binding is NativeStagingBinding {
@@ -42,8 +36,8 @@ export function assertNativeStaging(binding: NativeBinding): asserts binding is 
     binding.createStagedFile,
     binding.stagedFileMatches,
     binding.removeStagedFile,
-    binding.renameReplace,
-    binding.renameNoReplace,
+    binding.renameReplaceAsync,
+    binding.renameNoReplaceAsync,
   ].some((fn) => typeof fn !== "function")) {
     throw new FsSafeError("helper-unavailable", "native retained-directory staging is unavailable");
   }
@@ -86,7 +80,7 @@ class NativeStagedFile implements StagedFile {
   readonly #verifyMode: boolean;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
-  #publicationFlush?: Promise<PublishedFileReceipt>;
+  #publicationTask?: Promise<PublishedFileReceipt>;
   #rejectFinalSymlink = false;
   #unsupportedNoReplace?: FsSafeError;
   #fallbackCleanup?: StagedFileCleanupReceipt["status"];
@@ -274,7 +268,7 @@ class NativeStagedFile implements StagedFile {
         this.#assertBeforeMutation?.();
         if (this.#private) assertDarwinCreationAcl(this.#owner.parentFd, "file");
         try {
-          state.fileFd = this.#owner.binding.createStagedFile(this.#owner.parentFd, this.#owner.name);
+          state.fileFd = await this.#owner.binding.createStagedFile(this.#owner.parentFd, this.#owner.name);
         } catch (error) {
           annotateReadOnlyOpenError(error, path.join(this.#owner.directory.realPath, this.#owner.name));
           throw error;
@@ -318,7 +312,14 @@ class NativeStagedFile implements StagedFile {
     this.#assertCurrent();
   }
 
-  async publish(
+  publish(basename: string, options: { overwrite: boolean }, onPublished?: PinnedWriteParams["onPublished"]): Promise<PublishedFileReceipt> {
+    if (this.#publicationTask) return Promise.reject(stagedFailure("file",
+      new FsSafeError("helper-failed", "staged file publication is pending"), { phase: "publish", publication: this.#state.status === "closed" ? this.#state.receipt.publication : this.#state.publication }));
+    // Claim the operation before yielding so cleanup cannot recycle a worker's fds.
+    return this.#publicationTask = Promise.resolve().then(() => this.#publish(basename, options, onPublished))
+      .finally(() => { this.#publicationTask = undefined; });
+  }
+  async #publish(
     basename: string,
     options: { overwrite: boolean },
     onPublished?: PinnedWriteParams["onPublished"],
@@ -339,9 +340,9 @@ class NativeStagedFile implements StagedFile {
       }
       try {
         if (overwrite) {
-          this.#owner.binding.renameReplace(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
+          await this.#owner.binding.renameReplaceAsync(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
         } else {
-          this.#owner.binding.renameNoReplace(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
+          await this.#owner.binding.renameNoReplaceAsync(this.#owner.parentFd, this.#owner.name, this.#owner.parentFd, basename);
         }
       } catch (error) {
         // Record before inspecting metadata, whose getters can reenter cleanup.
@@ -392,14 +393,13 @@ class NativeStagedFile implements StagedFile {
       return receipt;
     };
     if (this.#owner.sync === false) return verify();
-    this.#publicationFlush = Promise.resolve().then(async () => {
+    return Promise.resolve().then(async () => {
       if ((this.#owner.mode & 0o600) !== 0o600 || (stagedMode & ~this.#owner.mode) !== 0) {
         await (this.#owner.strictFileSync ? syncFile(fd) : syncFileBestEffort(fd));
       }
       await syncFileBestEffort(this.#owner.parentFd);
       return verify();
-    }).finally(() => { this.#publicationFlush = undefined; });
-    return this.#publicationFlush;
+    });
   }
 
   #finalize(): Extract<State, { status: "closed" }> {
@@ -455,8 +455,8 @@ class NativeStagedFile implements StagedFile {
   }
 
   async cleanup(): Promise<StagedFileCleanupReceipt> {
-    // Native descriptors cannot close or be recycled while libuv is synchronizing them.
-    if (this.#publicationFlush) await this.#publicationFlush.catch(() => {});
+    // Native descriptors stay owned through the rename and all durability fences.
+    if (this.#publicationTask) await this.#publicationTask.catch(() => {});
     const closed = this.#finalize();
     if (closed.error) {
       throw closed.error;

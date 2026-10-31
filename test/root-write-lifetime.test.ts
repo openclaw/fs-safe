@@ -124,8 +124,8 @@ for (const backend of ["javascript", "native", "windows fallback branch"] as con
             descriptors.push(opened.fd);
             return opened;
           },
-          createStagedFile(...args) {
-            const fd = binding.createStagedFile!(...args);
+          async createStagedFile(...args) {
+            const fd = await binding.createStagedFile!(...args);
             descriptors.push(fd);
             return fd;
           },

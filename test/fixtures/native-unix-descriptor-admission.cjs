@@ -101,7 +101,7 @@ async function run() {
         assert.equal(await invoke(root, "target", source), false);
       } else {
         assert.equal(await invoke(root, "target", source), "preserved");
-        const stage = native.createStagedFile(root, "cleanup");
+        const stage = await native.createStagedFile(root, "cleanup");
         try {
           assert.equal(await invoke(root, "cleanup", stage), "removed");
           assert.equal(await invoke(root, "cleanup", stage), "name-absent");
