@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { metadataPromiseOverhead } from "../scripts/native-call-budget-resources.mjs";
 import { configureFsSafeNative } from "../src/config.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -34,7 +35,7 @@ it("bounds mkdir metadata promises without adding filesystem hops", async () => 
       hook.enable();
       try { await context.run(counts, operation); } finally { hook.disable(); }
       cleanup();
-      expect(counts.PROMISE ?? 0, `${mode}/${name}`).toBeLessThanOrEqual(promises[name]!);
+      expect(counts.PROMISE ?? 0, `${mode}/${name}`).toBeLessThanOrEqual(promises[name]! + metadataPromiseOverhead(asyncMetadata[name]!));
       expect(counts.FSREQPROMISE ?? 0, `${mode}/${name}`).toBe(asyncMetadata[name]);
     }
   }

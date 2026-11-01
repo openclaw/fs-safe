@@ -3,6 +3,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { metadataPromiseOverhead } from "../scripts/native-call-budget-resources.mjs";
 import { replaceFileAtomic } from "../src/atomic.js";
 import { configureFsSafeNative } from "../src/config.js";
 import { createFileSync } from "../src/create.js";
@@ -55,7 +56,7 @@ const asyncMetadata = {
   "root.write": [4, 2, 1], "root.create": [4, 2, 1], "root.copyIn durable:false": [4, 2, 1],
 } as const;
 // Includes the instrumentation wrapper around open; async read traversal adds 12 promises.
-const promiseBudgets = { "root.readBytes": 51 + 12, readLocalFileSafely: 47, "root.open": 35 + 12, "readLocalFileSafely bounded": 46 };
+const promiseBudgets = { "root.readBytes": 51 + 12 + metadataPromiseOverhead(2), readLocalFileSafely: 47, "root.open": 35 + 12 + metadataPromiseOverhead(2), "readLocalFileSafely bounded": 46 };
 const { tempRoot } = useRealTempDirs();
 
 describe("Root.list filename allocation budget", () => {

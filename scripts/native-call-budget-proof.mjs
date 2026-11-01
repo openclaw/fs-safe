@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { metadataPromiseOverhead } from "./native-call-budget-resources.mjs";
 import { canonicalizeBudgetSyscalls, isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
 
 const script = fileURLToPath(import.meta.url);
@@ -109,11 +110,20 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
+      // Metadata moves to libuv without changing the syscall fixtures. Normalize
+      // only Node 26's extra lstat/stat promises to the Node 22/24 resource baseline.
+      const metadataCalls = operation === "mkdirNested" ? (row.mode === "require" ? 0 : depth + 2)
+        : creationOperation ? (row.mode === "require" ? 0 : 6 + 2 * creationDepth)
+        : operation === "mkdir" ? (row.mode === "require" ? 0 : 2)
+        : operation === "ensureRoot" ? (row.mode === "require" ? 0 : 1)
+        : operation === "move" ? 16
+        : ["append", "openWritable", "create", "write"].includes(operation) ? 6 : 0;
+      const resources = { ...row.resources, PROMISE: row.resources.PROMISE - metadataPromiseOverhead(metadataCalls) };
       if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
       if (operation === "mkdirNested") {
         const fixture = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-mkdir-budget.json", import.meta.url), "utf8"));
         const expected = fixture[String(depth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
-        assert.deepEqual(row.resources, expected.resources, `${row.mode} nested mkdir resources, depth ${depth}`);
+        assert.deepEqual(resources, expected.resources, `${row.mode} nested mkdir resources, depth ${depth}`);
         if (trace) {
           const aliases = { mkdir: "mkdirat", readlink: "readlinkat" };
           const syscalls = process.arch === "arm64"
@@ -130,11 +140,11 @@ if (process.argv.includes("--child")) {
         const platform = process.platform === "win32" ? "win32" : "posix";
         const expected = fixtures[platform][operation][String(creationDepth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
         if (process.argv.includes("--update")) {
-          expected.resources = row.resources;
+          expected.resources = resources;
           if (trace) expected.syscalls = canonicalizeBudgetSyscalls(row.syscalls, process.arch);
           fs.writeFileSync(fixturePath, `${JSON.stringify(fixtures, null, 2)}\n`);
         }
-        assert.deepEqual(row.resources, expected.resources, `${row.mode} ${operation} resources at depth ${creationDepth}`);
+        assert.deepEqual(resources, expected.resources, `${row.mode} ${operation} resources at depth ${creationDepth}`);
         if (trace) {
           const aliases = { readlink: "readlinkat", mkdir: "mkdirat" };
           const syscalls = process.arch === "arm64"
@@ -148,7 +158,7 @@ if (process.argv.includes("--child")) {
       if (operation === "tempWorkspace") {
         const expectedResources = row.mode === "off"
           ? {"PROMISE": 11, "FSREQPROMISE": 1} : {"PROMISE": 6};
-        assert.deepEqual(row.resources, expectedResources, `${row.mode} temp creation resources`);
+        assert.deepEqual(resources, expectedResources, `${row.mode} temp creation resources`);
         if (trace) {
           const expected = row.mode === "off" ? {"statx": 14, "readlink": 8, "openat": 2, "mkdir": 1, "close": 1}
             : process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? {"statx": 16, "readlink": 10, "openat": 3, "mkdirat": 1, "newfstatat": 3, "fstat": 5, "close": 2} : {"statx": 16, "readlink": 10, "openat": 1, "openat2": 2, "close": 1, "mkdirat": 1};
@@ -161,34 +171,35 @@ if (process.argv.includes("--child")) {
         console.log(JSON.stringify(row));
         continue;
       }
-      const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [82, 73], append: [66, 62], openWritable: [36, 32] }[operation];
+      const promises = { ensureRoot: [28, 5], mkdir: [37, 5], remove: [32, 27], move: [199, 190], append: [107, 103], openWritable: [77, 73] }[operation];
       const publication = operation === "create" || operation === "write";
       const publicationResources = {
         create: {
           off: {
-            PROMISE: 102,
-            FSREQPROMISE: 2,
+            PROMISE: 151,
+            FSREQPROMISE: 9,
             FILEHANDLE: 1,
             FILEHANDLECLOSEREQ: 1
           },
           require: {
-            PROMISE: 103,
+            PROMISE: 152,
+            FSREQPROMISE: 7,
             undefined: 2,
             FSREQCALLBACK: 1
           }
         },
         write: {
           off: {
-            PROMISE: 143,
-            FSREQPROMISE: 4,
+            PROMISE: 184,
+            FSREQPROMISE: 11,
             FILEHANDLE: 2,
             FILEHANDLECLOSEREQ: 2
           },
           require: {
-            PROMISE: 132,
+            PROMISE: 173,
             undefined: 2,
             FSREQCALLBACK: 1,
-            FSREQPROMISE: 1,
+            FSREQPROMISE: 8,
             FILEHANDLE: 1,
             FILEHANDLECLOSEREQ: 1
           }
@@ -202,11 +213,15 @@ if (process.argv.includes("--child")) {
           ? { PROMISE: promises[1] }
           : { PROMISE: promises[0], FSREQPROMISE: 1 };
       if (operation === "append" || operation === "openWritable") {
-        expectedResources.FSREQPROMISE = operation === "append" ? 2 : 1;
+        expectedResources.FSREQPROMISE = operation === "append" ? 9 : 8;
         expectedResources.FILEHANDLE = 1;
         if (operation === "append") expectedResources.FILEHANDLECLOSEREQ = 1;
       }
-      assert.deepEqual(row.resources, expectedResources, `${row.mode} ${operation} async resources`);
+      if ((operation === "mkdir" || operation === "ensureRoot") && row.mode !== "require") {
+        expectedResources.FSREQPROMISE = operation === "mkdir" ? 2 : 1;
+      }
+      if (operation === "move") expectedResources.FSREQPROMISE = row.mode === "require" ? 17 : 18;
+      assert.deepEqual(resources, expectedResources, `${row.mode} ${operation} async resources`);
       if (trace) {
         let expected = row.mode !== "require"
           ? { statx: 9, readlink: 14, mkdir: 1 }

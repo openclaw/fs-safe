@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { AsyncResource, createHook } from "node:async_hooks";
 import { afterEach, describe, expect, it } from "vitest";
+import { metadataPromiseOverhead } from "../scripts/native-call-budget-resources.mjs";
 import { configureFsSafeNative } from "../src/config.js";
 import { __loadBundledNativeForTest } from "../src/native.js";
 import { root } from "../src/root.js";
@@ -76,7 +77,7 @@ describe("move filesystem call budgets", () => {
         // Missing targets also schedule rejected metadata probes (+16 promises).
         expect(["p.lstat", "p.stat", "p.realpath"].map(name => counts.get(name) ?? 0), breakdown).toEqual([9, 7, 1]);
         const traversalPromises = overwrite ? 101 : 117;
-        expect(promises, breakdown).toBe((overwrite && mode !== "require" ? 82 : 73) + traversalPromises);
+        expect(promises, breakdown).toBe((overwrite && mode !== "require" ? 82 : 73) + traversalPromises + metadataPromiseOverhead(16));
         if (process.platform !== "win32") {
           const callBudget = overwrite ? mode === "require" ? 36 : 33 : mode === "auto" && process.platform === "linux" ? 35 : 34;
           expect(total, breakdown).toBe(callBudget);
