@@ -597,8 +597,8 @@
         "normal": {
           "off": {
             "resources": {
-              "PROMISE": 124,
-              "FSREQPROMISE": 10,
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -613,8 +613,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 124,
-              "FSREQPROMISE": 10,
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -623,8 +623,8 @@
         "fallback": {
           "off": {
             "resources": {
-              "PROMISE": 124,
-              "FSREQPROMISE": 10,
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -639,8 +639,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 124,
-              "FSREQPROMISE": 10,
+              "PROMISE": 75,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -651,8 +651,8 @@
         "normal": {
           "off": {
             "resources": {
-              "PROMISE": 141,
-              "FSREQPROMISE": 13,
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -667,8 +667,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 141,
-              "FSREQPROMISE": 13,
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -677,8 +677,8 @@
         "fallback": {
           "off": {
             "resources": {
-              "PROMISE": 141,
-              "FSREQPROMISE": 13,
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -693,8 +693,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 141,
-              "FSREQPROMISE": 13,
+              "PROMISE": 82,
+              "FSREQPROMISE": 4,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -705,8 +705,8 @@
         "normal": {
           "off": {
             "resources": {
-              "PROMISE": 260,
-              "FSREQPROMISE": 34,
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -721,8 +721,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 260,
-              "FSREQPROMISE": 34,
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -731,8 +731,8 @@
         "fallback": {
           "off": {
             "resources": {
-              "PROMISE": 260,
-              "FSREQPROMISE": 34,
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -747,8 +747,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 260,
-              "FSREQPROMISE": 34,
+              "PROMISE": 131,
+              "FSREQPROMISE": 11,
               "FILEHANDLE": 1,
               "FILEHANDLECLOSEREQ": 1
             }
@@ -761,8 +761,8 @@
         "normal": {
           "off": {
             "resources": {
-              "PROMISE": 94,
-              "FSREQPROMISE": 9,
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
               "FILEHANDLE": 1
             }
           },
@@ -775,8 +775,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 94,
-              "FSREQPROMISE": 9,
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
               "FILEHANDLE": 1
             }
           }
@@ -784,8 +784,8 @@
         "fallback": {
           "off": {
             "resources": {
-              "PROMISE": 94,
-              "FSREQPROMISE": 9,
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
               "FILEHANDLE": 1
             }
           },
@@ -798,8 +798,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 94,
-              "FSREQPROMISE": 9,
+              "PROMISE": 45,
+              "FSREQPROMISE": 2,
               "FILEHANDLE": 1
             }
           }
@@ -809,8 +809,8 @@
         "normal": {
           "off": {
             "resources": {
-              "PROMISE": 111,
-              "FSREQPROMISE": 12,
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1
             }
           },
@@ -823,8 +823,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 111,
-              "FSREQPROMISE": 12,
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1
             }
           }
@@ -832,8 +832,8 @@
         "fallback": {
           "off": {
             "resources": {
-              "PROMISE": 111,
-              "FSREQPROMISE": 12,
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1
             }
           },
@@ -846,8 +846,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 111,
-              "FSREQPROMISE": 12,
+              "PROMISE": 52,
+              "FSREQPROMISE": 3,
               "FILEHANDLE": 1
             }
           }
@@ -857,8 +857,8 @@
         "normal": {
           "off": {
             "resources": {
-              "PROMISE": 230,
-              "FSREQPROMISE": 33,
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
               "FILEHANDLE": 1
             }
           },
@@ -871,8 +871,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 230,
-              "FSREQPROMISE": 33,
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
               "FILEHANDLE": 1
             }
           }
@@ -880,8 +880,8 @@
         "fallback": {
           "off": {
             "resources": {
-              "PROMISE": 230,
-              "FSREQPROMISE": 33,
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
               "FILEHANDLE": 1
             }
           },
@@ -894,8 +894,8 @@
           },
           "auto": {
             "resources": {
-              "PROMISE": 230,
-              "FSREQPROMISE": 33,
+              "PROMISE": 101,
+              "FSREQPROMISE": 10,
               "FILEHANDLE": 1
             }
           }

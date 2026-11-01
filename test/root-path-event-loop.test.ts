@@ -2,14 +2,14 @@ import fs from "node:fs";
 import asyncFs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, vi } from "vitest";
 import { root } from "../src/root.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { itPosix, useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
 afterEach(() => vi.restoreAllMocks());
 
-it("keeps the event loop responsive while a Root read waits on a path lookup", async () => {
+itPosix("keeps the event loop responsive while a Root read waits on a path lookup", async () => {
   const directory = await tempRoot("fs-safe-root-read-delay-");
   const target = path.join(directory, "nested", "file.txt");
   await asyncFs.mkdir(path.dirname(target));

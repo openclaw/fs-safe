@@ -112,7 +112,8 @@ if (process.argv.includes("--child")) {
     for (const row of rows) {
       // Metadata moves to libuv without changing the syscall fixtures. Normalize
       // only Node 26's extra lstat/stat promises to the Node 22/24 resource baseline.
-      const metadataCalls = operation === "mkdirNested" ? (row.mode === "require" ? 0 : depth + 2)
+      const metadataCalls = process.platform === "win32" ? 0
+        : operation === "mkdirNested" ? (row.mode === "require" ? 0 : depth + 2)
         : creationOperation ? (row.mode === "require" ? 0 : 6 + 2 * creationDepth)
         : operation === "mkdir" ? (row.mode === "require" ? 0 : 2)
         : operation === "ensureRoot" ? (row.mode === "require" ? 0 : 1)
@@ -123,7 +124,9 @@ if (process.argv.includes("--child")) {
       if (operation === "mkdirNested") {
         const fixture = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-mkdir-budget.json", import.meta.url), "utf8"));
         const expected = fixture[String(depth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
-        assert.deepEqual(resources, expected.resources, `${row.mode} nested mkdir resources, depth ${depth}`);
+        const expectedResources = process.platform === "win32" && row.mode !== "require"
+          ? { PROMISE: expected.resources.PROMISE - (16 + 5 * depth) } : expected.resources;
+        assert.deepEqual(resources, expectedResources, `${row.mode} nested mkdir resources, depth ${depth}`);
         if (trace) {
           const aliases = { mkdir: "mkdirat", readlink: "readlinkat" };
           const syscalls = process.arch === "arm64"
@@ -171,35 +174,34 @@ if (process.argv.includes("--child")) {
         console.log(JSON.stringify(row));
         continue;
       }
-      const promises = { ensureRoot: [28, 5], mkdir: [37, 5], remove: [32, 27], move: [199, 190], append: [107, 103], openWritable: [77, 73] }[operation];
+      const promises = { ensureRoot: [21, 5], mkdir: [21, 5], remove: [32, 27], move: [82, 73], append: [66, 62], openWritable: [36, 32] }[operation];
       const publication = operation === "create" || operation === "write";
       const publicationResources = {
         create: {
           off: {
-            PROMISE: 151,
-            FSREQPROMISE: 9,
+            PROMISE: 102,
+            FSREQPROMISE: 2,
             FILEHANDLE: 1,
             FILEHANDLECLOSEREQ: 1
           },
           require: {
-            PROMISE: 152,
-            FSREQPROMISE: 7,
+            PROMISE: 103,
             undefined: 2,
             FSREQCALLBACK: 1
           }
         },
         write: {
           off: {
-            PROMISE: 184,
-            FSREQPROMISE: 11,
+            PROMISE: 143,
+            FSREQPROMISE: 4,
             FILEHANDLE: 2,
             FILEHANDLECLOSEREQ: 2
           },
           require: {
-            PROMISE: 173,
+            PROMISE: 132,
             undefined: 2,
             FSREQCALLBACK: 1,
-            FSREQPROMISE: 8,
+            FSREQPROMISE: 1,
             FILEHANDLE: 1,
             FILEHANDLECLOSEREQ: 1
           }
@@ -213,14 +215,21 @@ if (process.argv.includes("--child")) {
           ? { PROMISE: promises[1] }
           : { PROMISE: promises[0], FSREQPROMISE: 1 };
       if (operation === "append" || operation === "openWritable") {
-        expectedResources.FSREQPROMISE = operation === "append" ? 9 : 8;
+        expectedResources.FSREQPROMISE = operation === "append" ? 2 : 1;
         expectedResources.FILEHANDLE = 1;
         if (operation === "append") expectedResources.FILEHANDLECLOSEREQ = 1;
       }
-      if ((operation === "mkdir" || operation === "ensureRoot") && row.mode !== "require") {
-        expectedResources.FSREQPROMISE = operation === "mkdir" ? 2 : 1;
+      // Windows retains the parent scheduling; only POSIX traversal adds these resources.
+      const traversalResources = process.platform === "win32" ? undefined
+        : operation === "mkdir" ? (row.mode === "require" ? undefined : [16, 2])
+        : operation === "ensureRoot" ? (row.mode === "require" ? undefined : [7, 1])
+        : operation === "move" ? [117, 17]
+        : operation === "create" ? [49, 7]
+        : ["append", "openWritable", "write"].includes(operation) ? [41, 7] : undefined;
+      if (traversalResources) {
+        expectedResources.PROMISE += traversalResources[0];
+        expectedResources.FSREQPROMISE = (expectedResources.FSREQPROMISE ?? 0) + traversalResources[1];
       }
-      if (operation === "move") expectedResources.FSREQPROMISE = row.mode === "require" ? 17 : 18;
       assert.deepEqual(resources, expectedResources, `${row.mode} ${operation} async resources`);
       if (trace) {
         let expected = row.mode !== "require"

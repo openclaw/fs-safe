@@ -1,7 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import asyncFs from "node:fs/promises";
 import path from "node:path";
-import { runAsync, runSync, wait, type Procedure } from "./atomic-io.js";
+import { runSync, wait, type Procedure } from "./atomic-io.js";
 import { shortPath } from "./error-detail.js";
 import { pathEscapeError, sanitizeRootPathError, symlinkEscapeError } from "./root-path-errors.js";
 import { FsSafeError } from "./errors.js";
@@ -16,6 +16,8 @@ import {
   rawPathRelativeToCanonicalRoot,
   resolveExistingAncestorProcedure,
   resolveSymlinkHopPath,
+  runRootTraversal,
+  synchronousRootTraversal,
   type RootPathMetadataMode,
 } from "./root-path-existing.js";
 import {
@@ -106,14 +108,14 @@ export type ObservedRootPath = {
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
-  return runAsync(resolveRootPathInternal(params));
+  return runRootTraversal(resolveRootPathInternal(params));
 }
 
 export async function resolveRootPathWithCanonicalRootObservation(
   params: ResolveRootPathParams,
   observeRoot: (rootCanonicalPath: string) => void,
 ): Promise<ResolvedRootPath> {
-  return runAsync(resolveRootPathInternal(params, { observeRoot }));
+  return runRootTraversal(resolveRootPathInternal(params, { observeRoot }));
 }
 
 export async function resolveRootPathWithObservation(
@@ -121,7 +123,9 @@ export async function resolveRootPathWithObservation(
   request: RootPathObservationRequest,
 ): Promise<ObservedRootPath> {
   const observation: RootPathObservationOutput = { request };
-  const resolved = await runAsync(resolveRootPathInternal(params, { observation }));
+  const resolved = synchronousRootTraversal
+    ? runSync(resolveRootPathInternal(params, { observation }))
+    : await runRootTraversal(resolveRootPathInternal(params, { observation }));
   return observation.receipt ? { resolved, receipt: observation.receipt } : { resolved };
 }
 
@@ -160,7 +164,7 @@ type RootPathTraversalOptions = {
 function* resolveRootPathInternal(
   params: ResolveRootPathParams,
   options: RootPathTraversalOptions = {},
-  synchronous = false,
+  synchronous = synchronousRootTraversal,
 ): Procedure<ResolvedRootPath> {
   try {
     return yield* traverseRootPath(params, options, synchronous);

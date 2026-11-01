@@ -47,7 +47,7 @@ it.each(["native", "ordinary"] as const)(
       if (String(candidate) === sourceRoot) return {};
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     }) as typeof asyncFs.lstat);
-    const realpath = mode === "native"
+    const realpath = mode === "native" && process.platform !== "win32"
       ? vi.spyOn(canonical, "realpathNative").mockResolvedValue(canonicalRoot)
       : vi.spyOn(canonical.realpathSync, "native").mockReturnValue(canonicalRoot);
     const resolve = mode === "native" ? resolvePathViaExistingAncestor : resolvePathViaExistingAncestorSync;
@@ -75,9 +75,7 @@ it.runIf(process.platform === "win32").each(["native", "ordinary"] as const)(
         if (String(candidate) === ancestor) return {};
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       }) as typeof asyncFs.lstat);
-      const realpath = mode === "native"
-        ? vi.spyOn(canonical, "realpathNative").mockResolvedValue("D:\\canonical")
-        : vi.spyOn(canonical.realpathSync, "native").mockReturnValue("D:\\canonical");
+      const realpath = vi.spyOn(canonical.realpathSync, "native").mockReturnValue("D:\\canonical");
 
       await expect(Promise.resolve(resolve(target))).resolves.toBe(expected);
       expect(realpath).toHaveBeenCalledExactlyOnceWith(ancestor);

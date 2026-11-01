@@ -4,7 +4,7 @@
 
 ### Fixes
 
-- **Root traversal:** use asynchronous Node metadata and canonicalization for awaited root-path traversal, preventing slow component lookups from blocking the event loop while preserving synchronous APIs and existing identity fences.
+- **Root traversal:** use asynchronous Node metadata and canonicalization for awaited POSIX root-path traversal, preventing slow component lookups from blocking the event loop while preserving synchronous APIs and existing identity fences. Windows retains synchronous traversal to preserve concurrent reads and atomic publication until canonicalization supports delete sharing.
 
 ## 0.27.1 - 2026-10-31
 

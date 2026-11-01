@@ -75,15 +75,16 @@ describe("move filesystem call budgets", () => {
         const breakdown = JSON.stringify(Object.fromEntries(counts));
         // Traversal offloads 9 lstat, 7 stat and 1 realpath calls without extra observations.
         // Missing targets also schedule rejected metadata probes (+16 promises).
-        expect(["p.lstat", "p.stat", "p.realpath"].map(name => counts.get(name) ?? 0), breakdown).toEqual([9, 7, 1]);
-        const traversalPromises = overwrite ? 101 : 117;
-        expect(promises, breakdown).toBe((overwrite && mode !== "require" ? 82 : 73) + traversalPromises + metadataPromiseOverhead(16));
+        const posix = process.platform !== "win32";
+        expect(["p.lstat", "p.stat", "p.realpath"].map(name => counts.get(name) ?? 0), breakdown).toEqual(posix ? [9, 7, 1] : [0, 0, 0]);
+        const traversalPromises = posix ? overwrite ? 101 : 117 : 0;
+        expect(promises, breakdown).toBe((overwrite && mode !== "require" ? 82 : 73) + traversalPromises + metadataPromiseOverhead(posix ? 16 : 0));
         if (process.platform !== "win32") {
           const callBudget = overwrite ? mode === "require" ? 36 : 33 : mode === "auto" && process.platform === "linux" ? 35 : 34;
           expect(total, breakdown).toBe(callBudget);
           expect((counts.get("s.realpathSync.native") ?? 0) + (counts.get("p.realpath") ?? 0), breakdown).toBe(overwrite && mode !== "require" ? 4 : 3);
         }
-        expect(asyncTotal).toBe(17 + (mode === "require" || !overwrite ? 0 : 1));
+        expect(asyncTotal).toBe((posix ? 17 : 0) + (mode === "require" || !overwrite ? 0 : 1));
         expect(fsSync.readFileSync(target, "utf8")).toBe("source");
         expect(fsSync.existsSync(source)).toBe(false);
       }

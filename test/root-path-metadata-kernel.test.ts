@@ -92,7 +92,7 @@ it.each(["async", "sync"] as const)(
     fs.symlinkSync(target, link, linkType);
     fs.symlinkSync(missing, dangling, linkType);
     const calls: string[] = [];
-    if (mode === "async") {
+    if (mode === "async" && process.platform !== "win32") {
       const actual = canonical.realpathNative;
       vi.spyOn(canonical, "realpathNative").mockImplementation(candidate => {
         calls.push(candidate);
@@ -122,11 +122,19 @@ it("keeps strict native existence errors separate from ordinary existsSync", asy
   const rootPath = await tempRoot("fs-safe-root-metadata-existence-");
   const params = { rootPath, absolutePath: rootPath, boundaryLabel: "fixture" };
   const failure = Object.assign(new Error("synthetic metadata denial"), { code: "EACCES" });
-  const actual = asyncFs.lstat.bind(asyncFs);
-  vi.spyOn(asyncFs, "lstat").mockImplementation((async (candidate, options) => {
-    if (candidate === rootPath) throw failure;
-    return actual(candidate, options);
-  }) as typeof asyncFs.lstat);
+  if (process.platform === "win32") {
+    const actual = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((candidate, options) => {
+      if (candidate === rootPath) throw failure;
+      return actual(candidate, options);
+    }) as typeof fs.lstatSync);
+  } else {
+    const actual = asyncFs.lstat.bind(asyncFs);
+    vi.spyOn(asyncFs, "lstat").mockImplementation((async (candidate, options) => {
+      if (candidate === rootPath) throw failure;
+      return actual(candidate, options);
+    }) as typeof asyncFs.lstat);
+  }
   const exists = vi.spyOn(fs, "existsSync");
   await expect(resolveRootPath(params)).rejects.toBe(failure);
   expect(exists).not.toHaveBeenCalled();
@@ -141,7 +149,7 @@ it.each(["async", "sync"] as const)(
     const target = path.join(rootPath, "value");
     fs.writeFileSync(target, "value");
     const order: string[] = [];
-    if (mode === "async") {
+    if (mode === "async" && process.platform !== "win32") {
       const actual = asyncFs.lstat.bind(asyncFs);
       vi.spyOn(asyncFs, "lstat").mockImplementation((async (candidate, options) => {
         if (candidate === target) order.push("target");
@@ -196,7 +204,7 @@ it.each(["async", "sync"] as const)("%s propagates final metadata failures", asy
   const params = { rootPath, absolutePath, boundaryLabel: "fixture" };
   if (mode === "async") await expect(resolveRootPath(params)).rejects.toBe(failure);
   else expect(() => resolveRootPathSync(params)).toThrow(failure);
-  expect(mode === "async" ? asyncMetadata : metadata).toHaveBeenCalledWith(absolutePath);
+  expect(mode === "async" && process.platform !== "win32" ? asyncMetadata : metadata).toHaveBeenCalledWith(absolutePath);
 });
 
 it("returns rejected Promises for eager validation and canonical-root callback failures", async () => {

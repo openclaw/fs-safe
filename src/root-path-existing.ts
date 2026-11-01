@@ -16,6 +16,11 @@ import {
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 import { errorCauseOptions } from "./root-errors.js";
 
+// Windows native realpath denies delete sharing. Preserve read/publication
+// scheduling until canonicalization can safely overlap replacement.
+export const synchronousRootTraversal = process.platform === "win32";
+export const runRootTraversal = synchronousRootTraversal ? runSync : runAsync;
+
 export function absolutePathWithRawSegments(candidate: string): string {
   if (path.sep !== "\\") {
     if (path.isAbsolute(candidate)) return candidate;
@@ -110,7 +115,7 @@ function* pathExists(targetPath: string, synchronous: boolean): Procedure<boolea
 }
 
 export async function resolvePathViaExistingAncestor(targetPath: string): Promise<string> {
-  return runAsync(resolveExistingAncestorProcedure(targetPath, "native", false));
+  return runRootTraversal(resolveExistingAncestorProcedure(targetPath, "native", synchronousRootTraversal));
 }
 
 function* ordinaryExists(targetPath: string): Procedure<boolean> {

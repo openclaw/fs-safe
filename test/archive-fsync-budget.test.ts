@@ -69,7 +69,8 @@ for (const backend of ["auto", "off"] as const) {
             const index = durable === true ? 0 : 1;
             // These observations moved from sync to async; the aggregate syscall budget stays fixed.
             // Durable extraction additionally resolves each of the 20 published files.
-            const metadata = traversalMetadata[backend][kind].map((count, i) => count + (durable === true ? [40, 20, 0][i]! : 0));
+            const metadata = process.platform === "win32" ? [0, 0, 0]
+              : traversalMetadata[backend][kind].map((count, i) => count + (durable === true ? [40, 20, 0][i]! : 0));
             const movedMetadata = metadata.reduce((sum, count) => sum + count, 0);
             expect(observed.asyncTotal(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.async[index] * 1.1) + movedMetadata);
             expect(observed.total(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.total[index] * 1.1));
