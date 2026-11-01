@@ -60,7 +60,7 @@ if (process.argv.includes("--child")) {
       // Async traversal and staging allocate on libuv workers. Warm the default
       // pool before counting so per-thread allocator CPU probes stay outside
       // the operation, just like the original native/Node startup warm-up.
-      for (let warmup = 0; warmup < (operation === "openWritable" || operation === "create" || operation === "write" ? 4 : 1); warmup++) {
+      for (let warmup = 0; warmup < 4; warmup++) {
         prepare();
         const warm = await perform();
         await cleanup(warm);
