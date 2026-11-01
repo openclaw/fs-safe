@@ -1,5 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
+import asyncFs from "node:fs/promises";
 import path from "node:path";
+import { runAsync, runSync, wait, type Procedure } from "./atomic-io.js";
 import { shortPath } from "./error-detail.js";
 import { pathEscapeError, sanitizeRootPathError, symlinkEscapeError } from "./root-path-errors.js";
 import { FsSafeError } from "./errors.js";
@@ -12,7 +14,7 @@ import {
 import {
   absolutePathWithRawSegments,
   rawPathRelativeToCanonicalRoot,
-  resolveExistingAncestor,
+  resolveExistingAncestorProcedure,
   resolveSymlinkHopPath,
   type RootPathMetadataMode,
 } from "./root-path-existing.js";
@@ -104,14 +106,14 @@ export type ObservedRootPath = {
 export async function resolveRootPath(
   params: ResolveRootPathParams,
 ): Promise<ResolvedRootPath> {
-  return resolveRootPathInternal(params);
+  return runAsync(resolveRootPathInternal(params));
 }
 
 export async function resolveRootPathWithCanonicalRootObservation(
   params: ResolveRootPathParams,
   observeRoot: (rootCanonicalPath: string) => void,
 ): Promise<ResolvedRootPath> {
-  return resolveRootPathInternal(params, { observeRoot });
+  return runAsync(resolveRootPathInternal(params, { observeRoot }));
 }
 
 export async function resolveRootPathWithObservation(
@@ -119,28 +121,28 @@ export async function resolveRootPathWithObservation(
   request: RootPathObservationRequest,
 ): Promise<ObservedRootPath> {
   const observation: RootPathObservationOutput = { request };
-  const resolved = resolveRootPathInternal(params, { observation });
+  const resolved = await runAsync(resolveRootPathInternal(params, { observation }));
   return observation.receipt ? { resolved, receipt: observation.receipt } : { resolved };
 }
 
 // Removal receipts are separate from metadata observations and canonical-root
-// callbacks; the public resolver's options and result remain unchanged.
+// callbacks; retain their synchronous admission and mutation-fence owner.
 export async function resolveRootPathForRemoval(
   params: ResolveRootPathParams,
   receipts: RemovalPathReceipts,
 ): Promise<ResolvedRootPath> {
-  return resolveRootPathInternal(params, { removalReceipts: receipts });
+  return runSync(resolveRootPathInternal(params, { removalReceipts: receipts }, true));
 }
 
 export function resolveRootPathSync(params: ResolveRootPathParams): ResolvedRootPath {
-  return resolveRootPathInternal(params, { mode: "ordinary" });
+  return runSync(resolveRootPathInternal(params, { mode: "ordinary" }, true));
 }
 
 export function resolveRootPathSyncWithCanonicalRootObservation(
   params: ResolveRootPathParams,
   observeRoot: (rootCanonicalPath: string) => void,
 ): ResolvedRootPath {
-  return resolveRootPathInternal(params, { mode: "ordinary", observeRoot });
+  return runSync(resolveRootPathInternal(params, { mode: "ordinary", observeRoot }, true));
 }
 
 type RootPathObservationOutput = {
@@ -155,24 +157,26 @@ type RootPathTraversalOptions = {
   removalReceipts?: RemovalPathReceipts;
 };
 
-function resolveRootPathInternal(
+function* resolveRootPathInternal(
   params: ResolveRootPathParams,
   options: RootPathTraversalOptions = {},
-): ResolvedRootPath {
+  synchronous = false,
+): Procedure<ResolvedRootPath> {
   try {
-    return traverseRootPath(params, options);
+    return yield* traverseRootPath(params, options, synchronous);
   } catch (error) {
     throw sanitizeRootPathError(error);
   }
 }
 
-function prepareRootTraversal(
+function* prepareRootTraversal(
   params: ResolveRootPathParams,
   rootPath: string,
   rootCanonicalPath: string,
   absolutePath: string,
   rawAbsolutePath: string,
-): LexicalResolutionParams {
+  synchronous: boolean,
+): Procedure<LexicalResolutionParams> {
   let raw = rawAbsolutePath;
   let trustedAbsolutePath = false;
   // Even a metadata lookup on a foreign share contacts that host, including the
@@ -187,7 +191,7 @@ function prepareRootTraversal(
   } else {
     const canonical = admitRawPathInsideRoot(rootCanonicalPath, raw, params.rootIdentity);
     const relative = canonical?.relativePath
-      ?? rawPathRelativeToCanonicalRoot(raw, rootCanonicalPath, params);
+      ?? (yield* rawPathRelativeToCanonicalRoot(raw, rootCanonicalPath, params, synchronous));
     if (relative === undefined) {
       throw pathEscapeError({ rootPath, absolutePath: raw, boundaryLabel: params.boundaryLabel });
     }
@@ -441,9 +445,10 @@ function assertDirectoryBeforeMoreSegments(
   }
 }
 
-function assertResolvedLinkDirectory(pathname: string, isLast: boolean): void {
+function* assertResolvedLinkDirectory(pathname: string, isLast: boolean, synchronous: boolean): Procedure<void> {
   if (isLast) return;
-  const stat = fs.statSync(pathForWindowsFilesystem(pathname));
+  const stat = synchronous ? fs.statSync(pathForWindowsFilesystem(pathname))
+    : yield* wait(asyncFs.stat(pathForWindowsFilesystem(pathname)));
   assertDirectoryBeforeMoreSegments(stat, pathname, isLast);
 }
 
@@ -456,25 +461,26 @@ type LexicalResolutionParams = {
   observationEligible: boolean;
 };
 
-// Both public APIs use kernel canonicalization and synchronous metadata; only
-// ancestor existence differs. Promise wrappers preserve asynchronous rejection.
-function traverseRootPath(
+// Both drivers share containment policy. Observation receipts and platform-specific
+// native guards retain their existing synchronous owners.
+function* traverseRootPath(
   params: ResolveRootPathParams,
   { mode = "native", observation: observationOutput, observeRoot, removalReceipts }: RootPathTraversalOptions,
-): ResolvedRootPath {
+  synchronous: boolean,
+): Procedure<ResolvedRootPath> {
   const input = captureValidRootPathInputs(params);
   const rawAbsolutePath = absolutePathWithRawSegments(input.absolutePath);
   const rootPath = resolvePathPreservingWindowsRoot(input.rootPath);
   const absolutePath = resolvePathPreservingWindowsRoot(rawAbsolutePath);
   const rootCanonicalPath = input.rootCanonicalPath
     ? resolvePathPreservingWindowsRoot(input.rootCanonicalPath)
-    : resolveExistingAncestor(rootPath, mode);
+    : yield* resolveExistingAncestorProcedure(rootPath, mode, synchronous);
   assertNoWindowsPathAlias(rootPath);
   assertNoWindowsPathAlias(absolutePath);
   assertNoWindowsPathAlias(rootCanonicalPath);
   observeRoot?.(rootCanonicalPath);
   const context = createLexicalTraversalContext(
-    prepareRootTraversal(input, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath),
+    yield* prepareRootTraversal(input, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath, synchronous),
   );
   const { state } = context;
   const observation = createLexicalTraversalObservation(context, observationOutput?.request);
@@ -511,7 +517,8 @@ function traverseRootPath(
         }
         stat = isNativeDirectoryObservationGuard(observed)
           ? undefined
-          : observed?.stat ?? fs.lstatSync(state.lexicalCursor);
+          : observed?.stat ?? (synchronous ? fs.lstatSync(state.lexicalCursor)
+            : yield* wait(asyncFs.lstat(state.lexicalCursor)));
       }
     } catch (error) {
       if (observation?.enabled && observation.request.kind === "stat" &&
@@ -591,16 +598,18 @@ function traverseRootPath(
 
     if (observation?.enabled) disableLexicalTraversalObservation(context, observation);
 
-    const linkCanonical = resolveSymlinkHopPath(
+    const linkCanonical = yield* resolveSymlinkHopPath(
       state.lexicalCursor,
       mode,
       context.resolveParams.rejectUnresolvedSymlinks,
+      64,
+      synchronous,
     );
     applyResolvedSymlinkHop(context, linkCanonical);
     if (context.resolveParams.rejectSymlinks === true) {
       throw new FsSafeError("symlink", "symlink path component not allowed");
     }
-    assertResolvedLinkDirectory(linkCanonical, isLast);
+    yield* assertResolvedLinkDirectory(linkCanonical, isLast, synchronous);
   }
 
   const completeObservation = observation?.enabled === true && observation.directoryGuard !== undefined &&
@@ -609,7 +618,7 @@ function traverseRootPath(
     ? isNativeDirectoryObservationGuard(observation.target)
       ? "directory" as const
       : toResolvedKind(observation.target!.stat)
-    : getPathKindSync(state.canonicalCursor, state.preserveFinalSymlink);
+    : yield* getPathKind(state.canonicalCursor, state.preserveFinalSymlink, synchronous);
   if (completeObservation && observationOutput) {
     observationOutput.receipt = {
       kind: observation.request.kind,
@@ -623,15 +632,16 @@ function traverseRootPath(
   return finalizeLexicalResolution(context, kind);
 }
 
-function getPathKindSync(
+function* getPathKind(
   absolutePath: string,
   preserveFinalSymlink: boolean,
-): ResolvedRootPathKind {
+  synchronous: boolean,
+): Procedure<ResolvedRootPathKind> {
   try {
     const operationPath = pathForWindowsFilesystem(absolutePath);
     const stat = preserveFinalSymlink
-      ? fs.lstatSync(operationPath)
-      : fs.statSync(operationPath);
+      ? synchronous ? fs.lstatSync(operationPath) : yield* wait(asyncFs.lstat(operationPath))
+      : synchronous ? fs.statSync(operationPath) : yield* wait(asyncFs.stat(operationPath));
     return toResolvedKind(stat);
   } catch (error) {
     if (isNotFoundPathError(error)) {

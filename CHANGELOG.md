@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Root traversal:** use asynchronous Node metadata and canonicalization for awaited root-path traversal, preventing slow component lookups from blocking the event loop while preserving synchronous APIs and existing identity fences.
+
 ## 0.27.1 - 2026-10-31
 
 **Highlights:** Native POSIX staged file creation, atomic publication, small-buffer writes, and path-prefix canonicalization no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052), [#1053](https://github.com/openclaw/fs-safe/pull/1053))

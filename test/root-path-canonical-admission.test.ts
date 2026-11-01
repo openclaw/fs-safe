@@ -1,3 +1,4 @@
+import { runSync } from "../src/atomic-io.js";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -37,7 +38,7 @@ describe("canonical root-prefix pathname admission", () => {
         throw new Error("unadmitted path compared");
       });
 
-      expect(() => rawPathRelativeToCanonicalRoot(candidate, root)).toThrow(
+      expect(() => runSync(rawPathRelativeToCanonicalRoot(candidate, root))).toThrow(
         expect.objectContaining({
           code: "invalid-path",
           details: { reason: "windows-path-alias" },
