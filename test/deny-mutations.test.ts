@@ -1,5 +1,5 @@
 import fsSync from "node:fs";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import asyncFs, { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveMutationComparablePaths } from "../src/deny-mutations.js";
@@ -26,6 +26,8 @@ describe("root denyMutations policies", () => {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       });
 
+      vi.spyOn(asyncFs, "lstat").mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+
       for (const input of [
         "C:\\foo",
         "\\\\?\\C:\\",
@@ -49,6 +51,7 @@ describe("root denyMutations policies", () => {
     "rejects drive-relative roots before filesystem lookup",
     async () => {
       const lstat = vi.spyOn(fsSync, "lstatSync");
+      const asyncLstat = vi.spyOn(asyncFs, "lstat");
       const exists = vi.spyOn(fsSync, "existsSync");
       const realpath = vi.spyOn(fsSync, "realpathSync");
 
@@ -70,6 +73,7 @@ describe("root denyMutations policies", () => {
       }
 
       expect(lstat).not.toHaveBeenCalled();
+      expect(asyncLstat).not.toHaveBeenCalled();
       expect(exists).not.toHaveBeenCalled();
       expect(realpath).not.toHaveBeenCalled();
     },
@@ -80,6 +84,8 @@ describe("root denyMutations policies", () => {
     async () => {
       vi.spyOn(fsSync, "lstatSync").mockReturnValue({} as fsSync.Stats);
       vi.spyOn(fsSync.realpathSync, "native").mockReturnValue("C:\\safe:payload");
+      vi.spyOn(asyncFs, "lstat").mockResolvedValue({} as fsSync.Stats);
+      vi.spyOn(asyncFs, "realpath").mockResolvedValue("C:\\safe:payload");
 
       await expect(resolvePathViaExistingAncestor("C:\\safe")).rejects.toMatchObject({
         code: "invalid-path",

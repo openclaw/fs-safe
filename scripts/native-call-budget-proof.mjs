@@ -57,10 +57,10 @@ if (process.argv.includes("--child")) {
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
         if (operation === "openWritable") return result.handle.close();
       };
-      // Staging now runs native allocation on libuv workers. Warm the default
+      // Async traversal and staging allocate on libuv workers. Warm the default
       // pool before counting so per-thread allocator CPU probes stay outside
       // the operation, just like the original native/Node startup warm-up.
-      for (let warmup = 0; warmup < (operation === "create" || operation === "write" ? 4 : 1); warmup++) {
+      for (let warmup = 0; warmup < (operation === "openWritable" || operation === "create" || operation === "write" ? 4 : 1); warmup++) {
         prepare();
         const warm = await perform();
         await cleanup(warm);
