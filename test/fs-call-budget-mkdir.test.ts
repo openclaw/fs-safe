@@ -22,7 +22,9 @@ it("bounds mkdir metadata promises without adding filesystem hops", async () => 
       ["ensureRoot", () => safe.ensureRoot(), () => {}],
       ["mkdir-sync", () => createDirectorySync(path.join(directory, "sync")), () => fsSync.rmdirSync(path.join(directory, "sync"))],
     ];
-    const promises: Record<string, number> = { mkdir: 21, "mkdir-recursive": 21, ensureRoot: 21, "mkdir-sync": 2 };
+    // Two async traversal observations add 16 promises; ensureRoot has one (+7).
+    const promises: Record<string, number> = { mkdir: 21 + 16, "mkdir-recursive": 21 + 16, ensureRoot: 21 + 7, "mkdir-sync": 2 };
+    const asyncMetadata: Record<string, number> = { mkdir: 2, "mkdir-recursive": 2, ensureRoot: 1, "mkdir-sync": 0 };
     for (const [name, operation, cleanup] of cases) {
       await operation(); cleanup();
       const counts: Record<string, number> = {};
@@ -33,7 +35,7 @@ it("bounds mkdir metadata promises without adding filesystem hops", async () => 
       try { await context.run(counts, operation); } finally { hook.disable(); }
       cleanup();
       expect(counts.PROMISE ?? 0, `${mode}/${name}`).toBeLessThanOrEqual(promises[name]!);
-      expect(counts.FSREQPROMISE ?? 0, `${mode}/${name}`).toBe(0);
+      expect(counts.FSREQPROMISE ?? 0, `${mode}/${name}`).toBe(asyncMetadata[name]);
     }
   }
   configureFsSafeNative({ mode: "auto" });

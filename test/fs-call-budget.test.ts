@@ -49,8 +49,13 @@ const asyncBudgets = {
   sha256FileSync: 0,
   "root.copyIn durable:false": 9,
 };
-// Includes the instrumentation wrapper around open; metadata checks add no promises.
-const promiseBudgets = { "root.readBytes": 51, readLocalFileSafely: 47, "root.open": 35, "readLocalFileSafely bounded": 46 };
+// Async traversal shifts two read or seven write metadata calls off the main thread.
+const asyncMetadata = {
+  "root.open": [1, 1, 0], "root.readBytes": [1, 1, 0],
+  "root.write": [4, 2, 1], "root.create": [4, 2, 1], "root.copyIn durable:false": [4, 2, 1],
+} as const;
+// Includes the instrumentation wrapper around open; async read traversal adds 12 promises.
+const promiseBudgets = { "root.readBytes": 51 + 12, readLocalFileSafely: 47, "root.open": 35 + 12, "readLocalFileSafely bounded": 46 };
 const { tempRoot } = useRealTempDirs();
 
 describe("Root.list filename allocation budget", () => {
@@ -177,17 +182,20 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
         const breakdown = [...counts].map(([key, count]) => `${key}=${count}`).join(" ");
         const asyncTotal = [...counts].reduce((sum, [key, count]) =>
           sum + (key.startsWith("s.") ? 0 : count), 0);
+        const metadata = name in asyncMetadata ? asyncMetadata[name as keyof typeof asyncMetadata] : [0, 0, 0];
+        expect.soft(["p.lstat", "p.stat", "p.realpath"].map(key => counts.get(key) ?? 0), breakdown).toEqual(metadata);
+        const movedMetadata = metadata.reduce((sum, count) => sum + count, 0);
         expect.soft(total, `${name}: ${total} calls; ${breakdown}`).toBeLessThanOrEqual(budgets[name]);
         expect.soft(asyncTotal, `${name}: ${asyncTotal} async calls; ${breakdown}`)
-          .toBeLessThanOrEqual(asyncBudgets[name]);
+          .toBeLessThanOrEqual(asyncBudgets[name] + movedMetadata);
         if (name === "root.create") expect.soft(nonthrowingTargetProbes).toBe(1);
         if (name === "root.create" || name === "createFileSync") {
           expect.soft(total, breakdown).toBe(name === "root.create" ? 34 : 10);
-          expect.soft(asyncTotal, breakdown).toBe(name === "root.create" ? 3 : 0);
+          expect.soft(asyncTotal, breakdown).toBe(name === "root.create" ? 3 + movedMetadata : 0);
         }
         if (name === "root.readBytes") {
           expect.soft(total, breakdown).toBe(14);
-          expect.soft(asyncTotal, breakdown).toBe(3); // open, read, close
+          expect.soft(asyncTotal, breakdown).toBe(3 + movedMetadata); // open, read, close plus traversal metadata
         }
         if (name === "readLocalFileSafely") {
           // Incremental reads expose the fresh EOF fstat that readFile hid internally.

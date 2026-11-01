@@ -273,6 +273,13 @@ function installLstatFailure(context: ScenarioContext, pathname: string, code: s
     }
     return realLstat(...args);
   }) as typeof fsSync.lstatSync);
+  const asyncLstat = fs.lstat.bind(fs);
+  vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+    if (context.armed() && path.resolve(String(args[0])) === path.resolve(pathname)) {
+      throw errno(code, "lstat", pathname);
+    }
+    return asyncLstat(...args);
+  }) as typeof fs.lstat);
 }
 
 const scenarios: readonly PreparationFailureScenario[] = [
