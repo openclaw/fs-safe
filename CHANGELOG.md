@@ -1,7 +1,5 @@
 # Changelog
 
-## Unreleased
-
 ## 0.27.1 - 2026-10-31
 
 **Highlights:** Native POSIX staged file creation, atomic publication, small-buffer writes, and path-prefix canonicalization no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052), [#1053](https://github.com/openclaw/fs-safe/pull/1053))
@@ -12,6 +10,7 @@
 
 ### Fixes
 
+- **Root traversal:** keep awaited POSIX root-path metadata and canonicalization off the JavaScript thread so slow component lookups do not stall the event loop; preserve synchronous APIs, identity fences, and Windows publication behavior. ([#1054](https://github.com/openclaw/fs-safe/pull/1054))
 - **Async writes:** keep native POSIX staged creation, atomic publication, and small-buffer writes off the JavaScript thread so slow storage does not stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052))
 
 ## 0.27.0 - 2026-10-30

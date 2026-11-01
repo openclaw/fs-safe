@@ -33,6 +33,12 @@ describe.each(operations)("Root $name traversal permission errors", ({ run }) =>
       return lstat(candidate, options as never);
     }) as typeof fsSync.lstatSync);
 
+    const asyncLstat = fs.lstat;
+    vi.spyOn(fs, "lstat").mockImplementation((async (candidate, options) => {
+      if (String(candidate) === deniedPath) throw failure;
+      return asyncLstat(candidate, options as never);
+    }) as typeof fs.lstat);
+
     await expect(run(scoped)).rejects.toMatchObject({
       code: "permission-denied",
       category: "operational",

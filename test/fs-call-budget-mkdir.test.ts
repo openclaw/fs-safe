@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { metadataPromiseOverhead } from "../scripts/native-call-budget-resources.mjs";
 import { configureFsSafeNative } from "../src/config.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -22,7 +23,10 @@ it("bounds mkdir metadata promises without adding filesystem hops", async () => 
       ["ensureRoot", () => safe.ensureRoot(), () => {}],
       ["mkdir-sync", () => createDirectorySync(path.join(directory, "sync")), () => fsSync.rmdirSync(path.join(directory, "sync"))],
     ];
-    const promises: Record<string, number> = { mkdir: 21, "mkdir-recursive": 21, ensureRoot: 21, "mkdir-sync": 2 };
+    // Two async traversal observations add 16 promises; ensureRoot has one (+7).
+    const posix = process.platform !== "win32";
+    const promises: Record<string, number> = { mkdir: 21 + (posix ? 16 : 0), "mkdir-recursive": 21 + (posix ? 16 : 0), ensureRoot: 21 + (posix ? 7 : 0), "mkdir-sync": 2 };
+    const asyncMetadata: Record<string, number> = { mkdir: posix ? 2 : 0, "mkdir-recursive": posix ? 2 : 0, ensureRoot: posix ? 1 : 0, "mkdir-sync": 0 };
     for (const [name, operation, cleanup] of cases) {
       await operation(); cleanup();
       const counts: Record<string, number> = {};
@@ -32,8 +36,8 @@ it("bounds mkdir metadata promises without adding filesystem hops", async () => 
       hook.enable();
       try { await context.run(counts, operation); } finally { hook.disable(); }
       cleanup();
-      expect(counts.PROMISE ?? 0, `${mode}/${name}`).toBeLessThanOrEqual(promises[name]!);
-      expect(counts.FSREQPROMISE ?? 0, `${mode}/${name}`).toBe(0);
+      expect(counts.PROMISE ?? 0, `${mode}/${name}`).toBeLessThanOrEqual(promises[name]! + metadataPromiseOverhead(asyncMetadata[name]!));
+      expect(counts.FSREQPROMISE ?? 0, `${mode}/${name}`).toBe(asyncMetadata[name]);
     }
   }
   configureFsSafeNative({ mode: "auto" });

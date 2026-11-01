@@ -16,6 +16,10 @@ const durableModes = [undefined, false, true] as const;
 // macOS measurements for the 20-file/3-directory fixture; durable:true then false/default.
 // Include every fs/promises call and async FileHandle method, including own close.
 // Final mkdir parent fences add 23 native or 66 portable lstat/realpath pairs.
+const traversalMetadata = {
+  auto: { tar: [143, 63, 20], zip: [146, 64, 21] },
+  off: { tar: [166, 86, 20], zip: [166, 86, 20] },
+} as const;
 const budgets = {
   auto: { tar: { async: [268, 196], total: [3177, 2546] }, zip: { async: [268, 196], total: [3186, 2556] } },
   off: { tar: { async: [455, 383], total: [4280, 3649] }, zip: { async: [530, 458], total: [4834, 4204] } },
@@ -63,11 +67,15 @@ for (const backend of ["auto", "off"] as const) {
             else expect(directorySyncs, diagnostic).toBe(durable === true ? 4 : 0);
             const budget = budgets[backend][kind];
             const index = durable === true ? 0 : 1;
-            expect(observed.asyncTotal(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.async[index] * 1.1));
+            // These observations moved from sync to async; the aggregate syscall budget stays fixed.
+            // Durable extraction additionally resolves each of the 20 published files.
+            const metadata = process.platform === "win32" ? [0, 0, 0]
+              : traversalMetadata[backend][kind].map((count, i) => count + (durable === true ? [40, 20, 0][i]! : 0));
+            const movedMetadata = metadata.reduce((sum, count) => sum + count, 0);
+            expect(observed.asyncTotal(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.async[index] * 1.1) + movedMetadata);
             expect(observed.total(), diagnostic).toBeLessThanOrEqual(Math.ceil(budget.total[index] * 1.1));
-            for (const name of ["p.lstat", "p.stat", "p.realpath", "h.stat"]) {
-              expect(observed.counts[name] ?? 0, diagnostic).toBe(0);
-            }
+            expect(["p.lstat", "p.stat", "p.realpath"].map(name => observed.counts[name] ?? 0), diagnostic).toEqual(metadata);
+            expect(observed.counts["h.stat"] ?? 0, diagnostic).toBe(0);
             vi.restoreAllMocks();
             for (let f = 0; f < 20; f++) expect(await fs.readFile(path.join(destDir, `d${f % 3}/f${f}`), "utf8")).toBe("NEW");
           } finally {

@@ -212,6 +212,17 @@ it.each(orders)("rejects ancestor substitution during child admission in $name o
     return stat;
   });
 
+  const asyncLstat = fs.lstat.bind(fs);
+  vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+    const stat = await asyncLstat(...args);
+    if (!swapped && String(args[0]) === ancestor && stat.isDirectory()) {
+      fsSync.renameSync(ancestor, moved);
+      fsSync.symlinkSync(moved, ancestor, process.platform === "win32" ? "junction" : "dir");
+      swapped = true;
+    }
+    return stat;
+  }) as typeof fs.lstat);
+
   const entries = await Array.fromAsync(iterator);
 
   expect(swapped).toBe(true);

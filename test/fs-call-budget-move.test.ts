@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { AsyncResource, createHook } from "node:async_hooks";
 import { afterEach, describe, expect, it } from "vitest";
+import { metadataPromiseOverhead } from "../scripts/native-call-budget-resources.mjs";
 import { configureFsSafeNative } from "../src/config.js";
 import { __loadBundledNativeForTest } from "../src/native.js";
 import { root } from "../src/root.js";
@@ -72,13 +73,18 @@ describe("move filesystem call budgets", () => {
         const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
         const asyncTotal = [...counts].reduce((sum, [name, count]) => sum + (name.startsWith("p.") ? count : 0), 0);
         const breakdown = JSON.stringify(Object.fromEntries(counts));
-        expect(promises, breakdown).toBe(overwrite && mode !== "require" ? 82 : 73);
+        // Traversal offloads 9 lstat, 7 stat and 1 realpath calls without extra observations.
+        // Missing targets also schedule rejected metadata probes (+16 promises).
+        const posix = process.platform !== "win32";
+        expect(["p.lstat", "p.stat", "p.realpath"].map(name => counts.get(name) ?? 0), breakdown).toEqual(posix ? [9, 7, 1] : [0, 0, 0]);
+        const traversalPromises = posix ? overwrite ? 101 : 117 : 0;
+        expect(promises, breakdown).toBe((overwrite && mode !== "require" ? 82 : 73) + traversalPromises + metadataPromiseOverhead(posix ? 16 : 0));
         if (process.platform !== "win32") {
           const callBudget = overwrite ? mode === "require" ? 36 : 33 : mode === "auto" && process.platform === "linux" ? 35 : 34;
           expect(total, breakdown).toBe(callBudget);
-          expect(counts.get("s.realpathSync.native"), breakdown).toBe(overwrite && mode !== "require" ? 4 : 3);
+          expect((counts.get("s.realpathSync.native") ?? 0) + (counts.get("p.realpath") ?? 0), breakdown).toBe(overwrite && mode !== "require" ? 4 : 3);
         }
-        expect(asyncTotal).toBe(mode === "require" || !overwrite ? 0 : 1);
+        expect(asyncTotal).toBe((posix ? 17 : 0) + (mode === "require" || !overwrite ? 0 : 1));
         expect(fsSync.readFileSync(target, "utf8")).toBe("source");
         expect(fsSync.existsSync(source)).toBe(false);
       }

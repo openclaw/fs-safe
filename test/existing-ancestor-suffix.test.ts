@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import asyncFs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import * as canonical from "../src/realpath.js";
@@ -42,8 +43,13 @@ it.each(["native", "ordinary"] as const)(
     vi.spyOn(fs, "lstatSync").mockImplementation(((candidate: fs.PathLike) =>
       String(candidate) === sourceRoot ? {} : undefined) as typeof fs.lstatSync);
     vi.spyOn(fs, "existsSync").mockImplementation(candidate => String(candidate) === sourceRoot);
-    const realpath = vi.spyOn(canonical.realpathSync, "native");
-    realpath.mockReturnValue(canonicalRoot);
+    vi.spyOn(asyncFs, "lstat").mockImplementation((async candidate => {
+      if (String(candidate) === sourceRoot) return {};
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    }) as typeof asyncFs.lstat);
+    const realpath = mode === "native" && process.platform !== "win32"
+      ? vi.spyOn(canonical, "realpathNative").mockResolvedValue(canonicalRoot)
+      : vi.spyOn(canonical.realpathSync, "native").mockReturnValue(canonicalRoot);
     const resolve = mode === "native" ? resolvePathViaExistingAncestor : resolvePathViaExistingAncestorSync;
 
     await expect(Promise.resolve(resolve(target))).resolves.toBe(target);
@@ -65,8 +71,11 @@ it.runIf(process.platform === "win32").each(["native", "ordinary"] as const)(
       vi.spyOn(fs, "lstatSync").mockImplementation(((candidate: fs.PathLike) =>
         String(candidate) === ancestor ? {} : undefined) as typeof fs.lstatSync);
       vi.spyOn(fs, "existsSync").mockImplementation(candidate => String(candidate) === ancestor);
-      const realpath = vi.spyOn(canonical.realpathSync, "native");
-      realpath.mockReturnValue("D:\\canonical");
+      vi.spyOn(asyncFs, "lstat").mockImplementation((async candidate => {
+        if (String(candidate) === ancestor) return {};
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }) as typeof asyncFs.lstat);
+      const realpath = vi.spyOn(canonical.realpathSync, "native").mockReturnValue("D:\\canonical");
 
       await expect(Promise.resolve(resolve(target))).resolves.toBe(expected);
       expect(realpath).toHaveBeenCalledExactlyOnceWith(ancestor);

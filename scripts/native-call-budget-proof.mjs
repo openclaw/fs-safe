@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { metadataPromiseOverhead } from "./native-call-budget-resources.mjs";
 import { canonicalizeBudgetSyscalls, isRuntimeClockProbe } from "./native-call-budget-trace.mjs";
 
 const script = fileURLToPath(import.meta.url);
@@ -56,10 +57,10 @@ if (process.argv.includes("--child")) {
         if (operation === "move") fs.unlinkSync(path.join(temporary, "target"));
         if (operation === "openWritable") return result.handle.close();
       };
-      // Staging now runs native allocation on libuv workers. Warm the default
+      // Async traversal and staging allocate on libuv workers. Warm the default
       // pool before counting so per-thread allocator CPU probes stay outside
       // the operation, just like the original native/Node startup warm-up.
-      for (let warmup = 0; warmup < (operation === "create" || operation === "write" ? 4 : 1); warmup++) {
+      for (let warmup = 0; warmup < 4; warmup++) {
         prepare();
         const warm = await perform();
         await cleanup(warm);
@@ -109,11 +110,23 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
+      // Metadata moves to libuv without changing the syscall fixtures. Normalize
+      // only Node 26's extra lstat/stat promises to the Node 22/24 resource baseline.
+      const metadataCalls = process.platform === "win32" ? 0
+        : operation === "mkdirNested" ? (row.mode === "require" ? 0 : depth + 2)
+        : creationOperation ? (row.mode === "require" ? 0 : 6 + 2 * creationDepth)
+        : operation === "mkdir" ? (row.mode === "require" ? 0 : 2)
+        : operation === "ensureRoot" ? (row.mode === "require" ? 0 : 1)
+        : operation === "move" ? 16
+        : ["append", "openWritable", "create", "write"].includes(operation) ? 6 : 0;
+      const resources = { ...row.resources, PROMISE: row.resources.PROMISE - metadataPromiseOverhead(metadataCalls) };
       if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
       if (operation === "mkdirNested") {
         const fixture = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-mkdir-budget.json", import.meta.url), "utf8"));
         const expected = fixture[String(depth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
-        assert.deepEqual(row.resources, expected.resources, `${row.mode} nested mkdir resources, depth ${depth}`);
+        const expectedResources = process.platform === "win32" && row.mode !== "require"
+          ? { PROMISE: expected.resources.PROMISE - (16 + 5 * depth) } : expected.resources;
+        assert.deepEqual(resources, expectedResources, `${row.mode} nested mkdir resources, depth ${depth}`);
         if (trace) {
           const aliases = { mkdir: "mkdirat", readlink: "readlinkat" };
           const syscalls = process.arch === "arm64"
@@ -130,11 +143,11 @@ if (process.argv.includes("--child")) {
         const platform = process.platform === "win32" ? "win32" : "posix";
         const expected = fixtures[platform][operation][String(creationDepth)][process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? "fallback" : "normal"][row.mode];
         if (process.argv.includes("--update")) {
-          expected.resources = row.resources;
+          expected.resources = resources;
           if (trace) expected.syscalls = canonicalizeBudgetSyscalls(row.syscalls, process.arch);
           fs.writeFileSync(fixturePath, `${JSON.stringify(fixtures, null, 2)}\n`);
         }
-        assert.deepEqual(row.resources, expected.resources, `${row.mode} ${operation} resources at depth ${creationDepth}`);
+        assert.deepEqual(resources, expected.resources, `${row.mode} ${operation} resources at depth ${creationDepth}`);
         if (trace) {
           const aliases = { readlink: "readlinkat", mkdir: "mkdirat" };
           const syscalls = process.arch === "arm64"
@@ -148,7 +161,7 @@ if (process.argv.includes("--child")) {
       if (operation === "tempWorkspace") {
         const expectedResources = row.mode === "off"
           ? {"PROMISE": 11, "FSREQPROMISE": 1} : {"PROMISE": 6};
-        assert.deepEqual(row.resources, expectedResources, `${row.mode} temp creation resources`);
+        assert.deepEqual(resources, expectedResources, `${row.mode} temp creation resources`);
         if (trace) {
           const expected = row.mode === "off" ? {"statx": 14, "readlink": 8, "openat": 2, "mkdir": 1, "close": 1}
             : process.env.FS_SAFE_TEST_NO_OPENAT2 === "1" ? {"statx": 16, "readlink": 10, "openat": 3, "mkdirat": 1, "newfstatat": 3, "fstat": 5, "close": 2} : {"statx": 16, "readlink": 10, "openat": 1, "openat2": 2, "close": 1, "mkdirat": 1};
@@ -206,7 +219,18 @@ if (process.argv.includes("--child")) {
         expectedResources.FILEHANDLE = 1;
         if (operation === "append") expectedResources.FILEHANDLECLOSEREQ = 1;
       }
-      assert.deepEqual(row.resources, expectedResources, `${row.mode} ${operation} async resources`);
+      // Windows retains the parent scheduling; only POSIX traversal adds these resources.
+      const traversalResources = process.platform === "win32" ? undefined
+        : operation === "mkdir" ? (row.mode === "require" ? undefined : [16, 2])
+        : operation === "ensureRoot" ? (row.mode === "require" ? undefined : [7, 1])
+        : operation === "move" ? [117, 17]
+        : operation === "create" ? [49, 7]
+        : ["append", "openWritable", "write"].includes(operation) ? [41, 7] : undefined;
+      if (traversalResources) {
+        expectedResources.PROMISE += traversalResources[0];
+        expectedResources.FSREQPROMISE = (expectedResources.FSREQPROMISE ?? 0) + traversalResources[1];
+      }
+      assert.deepEqual(resources, expectedResources, `${row.mode} ${operation} async resources`);
       if (trace) {
         let expected = row.mode !== "require"
           ? { statx: 9, readlink: 14, mkdir: 1 }
