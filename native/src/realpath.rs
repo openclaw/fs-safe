@@ -1,4 +1,6 @@
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::task::NativeTask;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use napi::bindgen_prelude::AsyncTask;
 use napi_derive::napi;
 use std::collections::HashSet;
@@ -190,6 +192,7 @@ pub fn canonicalize_path(path: String, ordinary: bool) -> NativeRealpathResult {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[napi(js_name = "canonicalizePathAsync")]
 pub fn canonicalize_path_async(
     path: String,

@@ -177,7 +177,7 @@ export async function assertRootIdentityCurrent(
 ): Promise<void> {
   if (process.platform === "win32") return assertRootIdentityCurrentSync(root, observe);
   try {
-    const stat = await inspectDirectoryIdentity(root.rootReal, root.rootIdentity);
+    const stat = await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
     observe?.(stat);
   } catch (error) {
     throw rootPathChangedError(error instanceof Error ? error : undefined);

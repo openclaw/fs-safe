@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { realpathSync } from "../src/realpath.js";
+import * as realpathOwner from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useTempDirs } from "./helpers/vitest.js";
 
@@ -45,6 +46,17 @@ describe("root read exact identity", () => {
           return stat;
         });
       }
+      for (const operation of ["lstat", "stat"] as const) {
+        const actual = fs[operation].bind(fs);
+        vi.spyOn(fs, operation).mockImplementation(async (...args) => {
+          const stat = await actual(...args);
+          if (String(args[0]) === filePath) {
+            const ino = originalIno + (swapped ? 1n : 0n);
+            stat.ino = args[1]?.bigint ? ino : Number(ino);
+          }
+          return stat;
+        });
+      }
       __setFsSafeTestHooksForTest({
         async afterPreOpenLstat(candidate) {
           if (candidate !== filePath || swapped) return;
@@ -56,6 +68,12 @@ describe("root read exact identity", () => {
           if (candidate !== filePath) return;
           close = vi.spyOn(handle, "close");
           read = vi.spyOn(handle, "read");
+          const actualHandleStat = handle.stat.bind(handle);
+          vi.spyOn(handle, "stat").mockImplementation(async options => {
+            const stat = await actualHandleStat(options);
+            stat.ino = options?.bigint ? originalIno + 1n : Number(originalIno + 1n);
+            return stat;
+          });
           const actual = fsSync.fstatSync.bind(fsSync);
           vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
             if (fd !== handle.fd) return actual(fd, options);
@@ -97,6 +115,20 @@ describe("root read exact identity", () => {
         }
         return stat;
       });
+      const lstatAsync = fs.lstat.bind(fs);
+      vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+        const stat = await lstatAsync(...args);
+        if (String(args[0]) === filePath && args[1]?.bigint &&
+          ((boundary === "preview" && !opened) || (boundary === "pathname" && opened) ||
+            (boundary === "realpath" && canonical))) stat.ino = 0n;
+        return stat;
+      });
+      const resolveAsync = realpathOwner.realpathNative;
+      vi.spyOn(realpathOwner, "realpathNative").mockImplementation(async candidate => {
+        const result = await resolveAsync(candidate);
+        if (opened && candidate === filePath) canonical = true;
+        return result;
+      });
       const realpath = realpathSync.native;
       vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
         const result = realpath(...args);
@@ -107,6 +139,12 @@ describe("root read exact identity", () => {
         afterOpen(candidate, handle) {
           if (candidate !== filePath) return;
           opened = true;
+          const stat = handle.stat.bind(handle);
+          vi.spyOn(handle, "stat").mockImplementation(async options => {
+            const result = await stat(options);
+            if (options?.bigint && boundary === "descriptor") result.ino = 0n;
+            return result;
+          });
           close = vi.spyOn(handle, "close");
           read = vi.spyOn(handle, "read");
           const actual = fsSync.fstatSync.bind(fsSync);

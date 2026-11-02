@@ -11,6 +11,7 @@ const { tempRoot } = useTempDirs();
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.resetModules();
   Object.defineProperty(process, "platform", platform);
 });
 
@@ -22,11 +23,14 @@ for (const route of ["regular async", "regular sync", "root sync", "root async"]
       await fs.writeFile(filePath, "original");
       await fs.writeFile(`${filePath}.replacement`, "replacement");
       const observation = observeReadAdmission(filePath, options);
+      // Numeric-FD operations capture callback APIs when the owner is loaded.
+      vi.resetModules();
+      const { openRootFile: openAsync } = await import("../src/root-file.js");
       const run = async () => {
         if (route === "regular async") return await readRegularFile({ filePath });
         if (route === "regular sync") return readRegularFileSync({ filePath });
         const params = { absolutePath: filePath, rootPath: directory, boundaryLabel: "test", ioFs: fsSync };
-        const result = route === "root sync" ? openRootFileSync(params) : await openRootFile(params);
+        const result = route === "root sync" ? openRootFileSync(params) : await openAsync(params);
         if (!result.ok) {
           expect(result.reason).toBe("validation");
           throw result.error;
