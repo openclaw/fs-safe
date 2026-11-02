@@ -57,7 +57,7 @@ export async function readBoundedAsync(
   maxBytes: number,
   readChunk: (scratch: Buffer, length: number) => Promise<number>,
   options: {
-    observeRegularFileSize?: () => number | undefined;
+    observeRegularFileSize?: () => number | undefined | Promise<number | undefined>;
     initialSize?: number;
     createLimitError?: () => Error;
     /** Keep the result outside Node's shared small-buffer allocation pool. */
@@ -68,14 +68,14 @@ export async function readBoundedAsync(
   let total = 0;
   const { observeRegularFileSize, createLimitError } = options;
   const allocate = options.unpooled ? Buffer.allocUnsafeSlow : undefined;
-  const size = options.initialSize ?? observeRegularFileSize?.();
+  const size = options.initialSize ?? await observeRegularFileSize?.();
   let buffer = size === undefined ? createScratchBuffer(maxBytes, allocate) : createInitialBuffer(maxBytes, size, allocate);
   if (size !== undefined) {
     const bytesRead = await readChunk(buffer, buffer.length);
     if (bytesRead === 0) return finishReadBuffer(buffer, 0, allocate);
     // Short reads can occur before EOF. Only use the size shortcut on this
     // initial read; virtual files can report zero or stale sizes thereafter.
-    const currentSize = bytesRead < buffer.length ? observeRegularFileSize?.() : undefined;
+    const currentSize = bytesRead < buffer.length ? await observeRegularFileSize?.() : undefined;
     total = addReadBytes(total, bytesRead, maxBytes, createLimitError);
     if (currentSize !== undefined && currentSize > 0 && bytesRead >= currentSize) return finishReadBuffer(buffer, total, allocate);
   }
@@ -112,7 +112,7 @@ export function readFileHandleBoundedWithSize(
     return (await handle.read(scratch, 0, length, null)).bytesRead;
   }, {
     initialSize,
-    observeRegularFileSize: fd === undefined ? undefined : () => regularFileSize(fd),
+    observeRegularFileSize: fd === undefined ? undefined : () => regularFileSizeAsync(fd),
   });
 }
 
@@ -123,6 +123,17 @@ function regularFileSize(fd: number): number | undefined {
       ? stat.size : undefined;
   } catch {
     // Size is only an optimization hint; retain the reader's original errors.
+    return undefined;
+  }
+}
+
+async function regularFileSizeAsync(fd: number): Promise<number | undefined> {
+  try {
+    const stat = await new Promise<fs.Stats>((resolve, reject) => {
+      fs.fstat(fd, (error, value) => error ? reject(error) : resolve(value));
+    });
+    return stat.isFile() && Number.isSafeInteger(stat.size) && stat.size >= 0 ? stat.size : undefined;
+  } catch {
     return undefined;
   }
 }
@@ -144,7 +155,7 @@ export async function readFileDescriptorBounded(fd: number, maxBytes: number): P
   normalizeMaxBytes(maxBytes);
   return await readBoundedAsync(maxBytes, async (scratch, length) => {
     return await readDescriptorChunk(fd, scratch, length);
-  }, { observeRegularFileSize: () => regularFileSize(fd) });
+  }, { observeRegularFileSize: () => regularFileSizeAsync(fd) });
 }
 
 export function readBoundedSync(

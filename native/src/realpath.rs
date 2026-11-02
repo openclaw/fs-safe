@@ -1,3 +1,5 @@
+use crate::task::NativeTask;
+use napi::bindgen_prelude::AsyncTask;
 use napi_derive::napi;
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -186,4 +188,12 @@ pub fn canonicalize_path(path: String, ordinary: bool) -> NativeRealpathResult {
             ),
         },
     }
+}
+
+#[napi(js_name = "canonicalizePathAsync")]
+pub fn canonicalize_path_async(
+    path: String,
+    ordinary: bool,
+) -> AsyncTask<NativeTask<NativeRealpathResult>> {
+    AsyncTask::new(NativeTask::new(move || Ok(canonicalize_path(path, ordinary))))
 }

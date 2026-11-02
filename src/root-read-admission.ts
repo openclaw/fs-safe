@@ -1,15 +1,17 @@
 import fsSync, { type BigIntStats } from "node:fs";
+import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { openedPathResolutionError, recordOpenedFileFailure } from "./opened-file-failure.js";
 import { isNotFoundPathError } from "./path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
-import { assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
+import { assertRootIdentityCurrent, assertRootIdentityCurrentSync, type RootContext } from "./root-context.js";
+import { runAsync, runSync, wait, type Procedure } from "./atomic-io.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
 import type { HardlinkPolicy } from "./root-options.js";
 import type { SymlinkPolicy } from "./root-symlink-policy.js";
-import { realpathSync } from "./realpath.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { realpathNative, realpathSync } from "./realpath.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 
 function resolveFinalOpenedRealPath(filePath: string): string {
@@ -39,6 +41,12 @@ export function inspectOpenedPathIdentitySync(
   return stat;
 }
 
+async function inspectOpenedPathIdentity(filePath: string, symlinks?: SymlinkPolicy): Promise<BigIntStats> {
+  const stat = await (symlinks === "follow-within-root" ? fs.stat(filePath, { bigint: true }) : fs.lstat(filePath, { bigint: true }));
+  if (stat.isSymbolicLink() && symlinks !== "follow-within-root") throw new FsSafeError("symlink", "symlink not allowed");
+  return stat;
+}
+
 type OwnedRootReadHandle = {
   handle: FileHandle;
   stat: { nlink: number };
@@ -61,16 +69,17 @@ export async function admitRootReadHandle<T extends OwnedRootReadHandle>(params:
     if (params.beforeFinalFence) {
       await params.beforeFinalFence(params.filePath, params.opened.handle);
     }
-    try {
-      assertRootIdentityCurrentSync(params.root);
+    function* admit(): Procedure<T & { realPath: string }> {
+      const synchronous = process.platform === "win32";
+      if (synchronous) assertRootIdentityCurrentSync(params.root);
+      else yield* wait(assertRootIdentityCurrent(params.root));
       let realPath: string;
       try {
-        const current = inspectFileIdentitySync(
-          () => inspectOpenedPathIdentitySync(params.filePath, params.symlinks),
-          params.identity,
-        );
+        const current = synchronous
+          ? inspectFileIdentitySync(() => inspectOpenedPathIdentitySync(params.filePath, params.symlinks), params.identity)
+          : yield* wait(inspectFileIdentity(() => inspectOpenedPathIdentity(params.filePath, params.symlinks), params.identity));
         if (params.hardlinks !== "allow" && current.nlink > 1n) throw hardlinkedPathNotAllowedError();
-        const canonicalPath = resolveFinalOpenedRealPath(params.filePath);
+        const canonicalPath = synchronous ? resolveFinalOpenedRealPath(params.filePath) : yield* wait(realpathNative(params.filePath));
         assertNoWindowsPathAlias(canonicalPath, "filesystem", "resolved file path uses a Windows filesystem namespace alias");
         const admittedRealPath = admitPathInsideRoot({
           rootPath: params.root.rootReal,
@@ -82,10 +91,9 @@ export async function admitRootReadHandle<T extends OwnedRootReadHandle>(params:
         }
         // This is a fresh no-follow observation even when canonicalPath and
         // filePath have the same spelling; realpath may have raced a replacement.
-        const canonical = inspectFileIdentitySync(
-          () => inspectOpenedPathIdentitySync(canonicalPath, undefined),
-          params.identity,
-        );
+        const canonical = synchronous
+          ? inspectFileIdentitySync(() => inspectOpenedPathIdentitySync(canonicalPath, undefined), params.identity)
+          : yield* wait(inspectFileIdentity(() => inspectOpenedPathIdentity(canonicalPath), params.identity));
         if (params.hardlinks !== "allow" && canonical.nlink > 1n) throw hardlinkedPathNotAllowedError();
         realPath = admittedRealPath.path;
       } catch (error) {
@@ -94,8 +102,12 @@ export async function admitRootReadHandle<T extends OwnedRootReadHandle>(params:
           : error;
       }
       params.afterPathIdentityCheck?.(params.filePath, params.opened.handle);
-      assertRootIdentityCurrentSync(params.root);
+      if (synchronous) assertRootIdentityCurrentSync(params.root);
+      else yield* wait(assertRootIdentityCurrent(params.root));
       return { ...params.opened, realPath };
+    }
+    try {
+      return process.platform === "win32" ? runSync(admit()) : await runAsync(admit());
     } catch (error) {
       if (params.identity.nlink <= 1n) {
         await recordOpenedFileFailure(

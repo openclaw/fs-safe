@@ -113,7 +113,7 @@ export async function resolveRootPath(
 
 export async function resolveRootPathWithCanonicalRootObservation(
   params: ResolveRootPathParams,
-  observeRoot: (rootCanonicalPath: string) => void,
+  observeRoot: (rootCanonicalPath: string) => void | Promise<void>,
 ): Promise<ResolvedRootPath> {
   return runRootTraversal(resolveRootPathInternal(params, { observeRoot }));
 }
@@ -157,7 +157,7 @@ type RootPathObservationOutput = {
 type RootPathTraversalOptions = {
   mode?: RootPathMetadataMode;
   observation?: RootPathObservationOutput;
-  observeRoot?: (rootCanonicalPath: string) => void;
+  observeRoot?: (rootCanonicalPath: string) => void | Promise<void>;
   removalReceipts?: RemovalPathReceipts;
 };
 
@@ -482,7 +482,7 @@ function* traverseRootPath(
   assertNoWindowsPathAlias(rootPath);
   assertNoWindowsPathAlias(absolutePath);
   assertNoWindowsPathAlias(rootCanonicalPath);
-  observeRoot?.(rootCanonicalPath);
+  if (observeRoot) yield* wait(observeRoot(rootCanonicalPath));
   const context = createLexicalTraversalContext(
     yield* prepareRootTraversal(input, rootPath, rootCanonicalPath, absolutePath, rawAbsolutePath, synchronous),
   );

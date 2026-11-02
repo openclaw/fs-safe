@@ -11,7 +11,7 @@ const stat = (ino: bigint) => ({ dev: 1n, ino, nlink: 1n, isFile: () => true }) 
 it.each([0n, 1n])("records a distinct pre-open generation with current nlink %s, not an unlink receipt", async (nlink) => {
   const observation = fileObservation(), error = new Error("identity mismatch");
   const before = stat(1n), opened = stat(2n), current = { ...opened, nlink };
-  const handle = { fd: 123 } as FileHandle;
+  const handle = { fd: 123, stat: async () => current } as FileHandle;
   vi.spyOn(fsSync, "fstatSync").mockReturnValue(current);
   await observation.run(async () => {
     recordFileObservationFailure(error, "identity");
@@ -53,7 +53,7 @@ it.each([
 
 it("does not reuse a changed-file receipt in a later observation", async () => {
   const first = fileObservation(), next = fileObservation(), error = new Error("identity mismatch");
-  const handle = { fd: 123 } as FileHandle;
+  const handle = { fd: 123, stat: async () => stat(2n) } as FileHandle;
   vi.spyOn(fsSync, "fstatSync").mockReturnValue(stat(2n));
   await first.run(async () => {
     recordFileObservationFailure(error, "identity");

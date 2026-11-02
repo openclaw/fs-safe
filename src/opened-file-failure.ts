@@ -32,7 +32,8 @@ export async function recordPreOpenFileChange(
     ![0n, 1n].includes(before.nlink) || ![0n, 1n].includes(opened.nlink)) return;
   try {
     await inspectFileIdentity(async () => before);
-    const current = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), opened);
+    const current = await inspectFileIdentity(() => process.platform === "win32"
+      ? fsSync.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true }), opened);
     if (current.isFile() && [0n, 1n].includes(current.nlink) &&
       (before.dev !== current.dev || before.ino !== current.ino)) {
       // A stale pathname sample is not proof that its former inode was unlinked.
@@ -52,7 +53,8 @@ export async function recordOpenedFileFailure(
   if ((!isFileObservationFailure(error, "resolution") && !isFileObservationFailure(error, "identity")) ||
     !identity.isFile() || identity.nlink > 1n) return;
   try {
-    const current = await inspectFileIdentity(() => fsSync.fstatSync(handle.fd, { bigint: true }), identity);
+    const current = await inspectFileIdentity(() => process.platform === "win32"
+      ? fsSync.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true }), identity);
     if (current.isFile() && current.nlink === 0n) recordFileObservationFailure(error, `unlinked:${filePath}`);
   } catch {
     // A closed, changed, or unknown descriptor provides no retry evidence.
