@@ -177,7 +177,11 @@
     "crabbox:warmup": "crabbox warmup",
     "archive:wasm": "node scripts/build-archive-wasm.mjs",
     "archive:wasm:allocator-tests": "node scripts/build-archive-wasm.mjs --allocator-tests",
-    "archive:producer-smoke": "node scripts/archive-producer-smoke.mjs"
+    "archive:producer-smoke": "node scripts/archive-producer-smoke.mjs",
+    "archive:interop:fixtures": "node archive-core/tests/fixtures/generate-interop.mjs",
+    "archive:interop:test": "cargo test --locked -p fs-safe-archive-core --test interoperability",
+    "archive:interop:wasm": "node archive-core/tests/wasm-interoperability.mjs",
+    "archive:interop:writer": "cargo run --locked --quiet -p fs-safe-archive-core --example directory-link-reproducer"
   },
   "optionalDependencies": {
     "@openclaw/fs-safe-darwin-arm64": "0.27.1",
