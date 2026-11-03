@@ -1014,6 +1014,13 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check:runtime
 
+      - name: Check archive interoperability with built WASM
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: |
+          pnpm archive:interop:fixtures
+          git diff --exit-code -- archive-core/tests/fixtures
+          pnpm archive:interop:wasm ./dist/archive-parser.wasm
+
       - name: Smoke method benchmarks with JavaScript fallback
         if: matrix.node == 24
         run: pnpm benchmark:methods --mode off --iterations 1 --samples 1 --warmup 0
