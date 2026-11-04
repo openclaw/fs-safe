@@ -187,6 +187,15 @@ reads and private creation retain their separate, narrower principal policy.
 Descriptor forms it cannot classify completely fall back to the structured
 .NET query; `mode: "off"` exercises that fallback deterministically.
 
+This public policy applies to **every** `inspectPathPermissions()` caller, not
+only bundled-source inspection. A caller using its flags to admit writable
+destinations or browser profiles also trusts TrustedInstaller grants. The
+inspector does not establish that a path is private to the current user, make
+the inspected name race-free, or authorize a later copy/read operation.
+Use descriptor-bound secure reads and private creation for their stricter
+contracts, or apply a consumer-owned SID policy to `readOwnerAndDacl()` facts.
+Do not treat public/native backend parity as a source-only exception.
+
 ## Policy-free owner and DACL facts
 
 `readOwnerAndDacl()` exposes the direct Windows descriptor facts needed by a
