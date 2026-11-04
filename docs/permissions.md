@@ -139,8 +139,13 @@ principal classification and remediation command construction.
 Missing or nonboolean locality leaves both inspectors unverified; only
 `remote: false` establishes locality for owner trust. An explicit `remote: true`
 retains the ACL report but never grants trusted ownership.
-The existing classifier assigns principals to trusted, world, or group;
-trusted defaults include the current user, SYSTEM, and Administrators.
+The public classifier assigns principals to trusted, world, or group;
+trusted defaults include the current user, SYSTEM, Administrators, and the exact
+TrustedInstaller service SID
+`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`.
+Other service SIDs are not implicitly trusted. This servicing-writer policy
+does not grant TrustedInstaller owner trust or relax private-file or
+private-directory admission.
 The built-in query has a fixed 30-second process deadline. A command failure or timeout returns an
 unverified result (`source: "unknown"`) so callers fail closed. Advanced callers
 that inject a custom `exec` implementation own that executor's deadline.
@@ -176,10 +181,11 @@ apply to the inspected object, and deny ACEs never subtract coarse grants or
 claim effective-access evaluation. Unsupported ACE layouts remain unverified.
 
 When the native binding is available, `inspectPathPermissions()`
-reads the owner and DACL directly with Windows security APIs. It classifies the
-current user, LocalSystem, and built-in Administrators as trusted and reports
-the world/group read/write facts consumed by secure reads. Descriptor forms it
-cannot classify equivalently fall back to the structured .NET query; `mode: "off"` exercises that fallback deterministically.
+reads the owner and DACL directly with Windows security APIs and applies the
+same public ACE classifier as the structured .NET fallback. Secure descriptor
+reads and private creation retain their separate, narrower principal policy.
+Descriptor forms it cannot classify completely fall back to the structured
+.NET query; `mode: "off"` exercises that fallback deterministically.
 
 ## Policy-free owner and DACL facts
 

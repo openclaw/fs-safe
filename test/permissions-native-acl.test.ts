@@ -8,6 +8,7 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest, type NativeBinding } from "../src/native.js";
 import { executePermissionCommand } from "../src/permission-exec.js";
 import { inspectWindowsAcl, inspectWindowsPermissions } from "../src/permissions-windows.js";
+import { inspectPathPermissions } from "../src/permissions.js";
 
 vi.mock("../src/permission-exec.js", async importOriginal => ({
   ...await importOriginal<typeof import("../src/permission-exec.js")>(),
@@ -24,6 +25,7 @@ const flags = {
 const ace = (sid: string, mask: number, aceType = "allow", inheritOnly = false) => ({
   sid, mask, aceType, flags: { ...flags, inheritOnly },
 });
+const trustedInstaller = "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
 function facts(override: Partial<NativeWindowsSecurityFacts> = {}): NativeWindowsSecurityFacts {
   return {
@@ -65,6 +67,88 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform !== "win32")("native advanced Windows ACL inspection", () => {
+  const serviced = [
+    ace("s-1-5-32-544", 0x001f01ff),
+    { ...ace(trustedInstaller, 0x001f01ff), flags: { ...flags, raw: 19, objectInherit: true, containerInherit: true } },
+    ace("s-1-5-32-545", 0x001200a9),
+  ];
+  it.each([
+    ["serviced source", serviced, false, false],
+    ["current user", [ace("s-1-5-21-42", 0x001f01ff)], false, false],
+    ["SYSTEM", [ace("s-1-5-18", 0x001f01ff)], false, false],
+    ["Administrators", [ace("s-1-5-32-544", 0x001f01ff)], false, false],
+    ["foreign writer", [...serviced, ace("s-1-5-21-99", 0x40000000)], true, false],
+    ["foreign DACL writer", [...serviced, ace("s-1-5-21-99", 0x00040000)], true, false],
+    ["foreign owner writer", [...serviced, ace("s-1-5-21-99", 0x00080000)], true, false],
+    ["foreign delete", [...serviced, ace("s-1-5-21-99", 0x00010000)], true, false],
+    ["different service", [...serviced, ace(trustedInstaller.replace(/4$/, "5"), 2)], true, false],
+    ["Everyone writer", [...serviced, ace("s-1-1-0", 2)], false, true],
+    ["Users writer", [...serviced, ace("s-1-5-32-545", 2)], false, true],
+    ["deny only", [ace("s-1-5-21-99", 0x001f01ff, "deny")], false, false],
+    ["inherit-only writer", [...serviced, ace("s-1-5-21-99", 2, "allow", true)], false, false],
+    ["deny then allow", [ace("s-1-5-21-99", 2, "deny"), ace("s-1-5-21-99", 2)], true, false],
+    ["allow then deny", [ace("s-1-5-21-99", 2), ace("s-1-5-21-99", 2, "deny")], true, false],
+    ["foreign read only", [...serviced, ace("s-1-5-21-99", 1)], false, false],
+    ["empty DACL", [], false, false],
+  ] as const)("uses the same public native/fallback policy for %s", async (_name, aces, groupWritable, worldWritable) => {
+    const value = facts({
+      ownerSid: "s-1-5-32-544", ownerClass: "administrators",
+      groupReadable: true, groupWritable: true, aces: [...aces],
+    });
+    const read = install(value);
+    const native = await inspectPathPermissions(target, { platform: "win32" });
+    expect(exec).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledExactlyOnceWith(target);
+    configureFsSafeNative({ mode: "off" });
+    const fallback = await inspectPathPermissions(target, { platform: "win32", exec });
+    for (const result of [native, fallback]) {
+      expect(result).toMatchObject({
+        ok: true, source: "windows-acl", ownerTrusted: true, groupWritable, worldWritable,
+      });
+    }
+    for (const key of ["groupReadable", "groupWritable", "worldReadable", "worldWritable", "ownerTrusted"] as const) {
+      expect(native[key]).toBe(fallback[key]);
+    }
+  });
+
+  it("does not grant owner trust to TrustedInstaller while trusting its public grants", async () => {
+    install(facts({ ownerSid: trustedInstaller, ownerClass: "foreign", groupWritable: true, aces: serviced }));
+    for (const mode of ["require", "off"] as const) {
+      configureFsSafeNative({ mode });
+      await expect(inspectPathPermissions(target, { platform: "win32", exec })).resolves.toMatchObject({
+        ok: true, ownerTrusted: false, groupWritable: false, worldWritable: false,
+      });
+    }
+  });
+
+  it("reports unrestricted access for a native null DACL", async () => {
+    install(facts({ daclPresent: false }));
+    await expect(inspectPathPermissions(target, { platform: "win32" })).resolves.toMatchObject({
+      ok: true, worldReadable: true, worldWritable: true,
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("leaves incomplete native classifier inputs unverified", async () => {
+    install(facts({ currentUserSid: "" }));
+    await expect(inspectPathPermissions(target, { platform: "win32" })).resolves.toMatchObject({
+      source: "unknown", error: "Windows ACL query returned incomplete descriptor data",
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { fallbackRequired: true }, { isLocal: false },
+    { aceListComplete: false }, { unsupportedAceTypes: [9] },
+  ])("does not classify incomplete public native observations: %j", async override => {
+    install(facts(override));
+    exec.mockResolvedValue(queryOutput(facts({ aces: [ace("s-1-1-0", 2)] })));
+    await expect(inspectPathPermissions(target, { platform: "win32", exec })).resolves.toMatchObject({
+      ok: true, worldWritable: true,
+    });
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
   it("rejects namespace aliases before native loading, stat, or command fallback", async () => {
     const readOwnerAndDacl = vi.fn(() => facts());
     const load = vi.fn(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl }) as unknown as NativeBinding);

@@ -84,25 +84,38 @@ function inspectWindowsPermissionsNative(
   const native = getNativeBinding("readOwnerAndDacl");
   if (!native) return undefined;
   const facts = native.readOwnerAndDacl(targetPath);
-  if (facts.fallbackRequired) {
+  if (facts.fallbackRequired || !facts.isLocal || !facts.aceListComplete || facts.unsupportedAceTypes.length !== 0) {
     if (facts.currentAppContainerSid) {
       throw new FsSafeError("helper-unavailable", "AppContainer ACL facts require an unavailable external helper");
     }
     return undefined;
   }
+  // Native coarse flags also serve secure descriptors' stricter policy.
+  // Public reporting classifies the observations with the fallback's policy.
+  const acl = summarizeWindowsOwnerAcl({
+    daclPresent: facts.daclPresent,
+    currentUserSid: facts.currentUserSid,
+    currentAppContainerSid: facts.currentAppContainerSid ?? undefined,
+    aces: facts.aces.map(ace => ({
+      sid: ace.sid, mask: ace.mask, deny: ace.aceType === "deny",
+      inheritOnly: ace.flags.inheritOnly,
+    })),
+  });
+  if (!acl.ok) return { ...unverified, error: acl.error };
+  const worldWritable = acl.untrustedWorld.some(entry => entry.canWrite);
+  const groupWritable = acl.untrustedGroup.some(entry => entry.canWrite);
+  const worldReadable = acl.untrustedWorld.some(entry => entry.canRead);
+  const groupReadable = acl.untrustedGroup.some(entry => entry.canRead);
   return {
     ...unverified,
     source: "windows-acl",
-    worldWritable: facts.worldWritable,
-    groupWritable: facts.groupWritable,
-    worldReadable: facts.worldReadable,
-    groupReadable: facts.groupReadable,
+    worldWritable, groupWritable, worldReadable, groupReadable,
     ownerSid: facts.ownerSid,
     ownerTrusted: facts.ownerClass !== "foreign",
     aclSummary:
       `native owner=${facts.ownerClass} world=` +
-      `${facts.worldReadable ? "r" : "-"}${facts.worldWritable ? "w" : "-"} ` +
-      `group=${facts.groupReadable ? "r" : "-"}${facts.groupWritable ? "w" : "-"}`,
+      `${worldReadable ? "r" : "-"}${worldWritable ? "w" : "-"} ` +
+      `group=${groupReadable ? "r" : "-"}${groupWritable ? "w" : "-"}`,
   };
 }
 
