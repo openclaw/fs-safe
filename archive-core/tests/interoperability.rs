@@ -208,6 +208,92 @@ fn corpus_preserves_strict_contract_and_reference_member_ranges() {
 }
 
 #[test]
+fn supported_pax_writer_path_requires_a_named_metadata_header() {
+    let mut builder = tar::Builder::new(Vec::new());
+    builder
+        .append_pax_extensions([("path", &b"safe"[..])])
+        .unwrap();
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_mode(0o644);
+    header.set_size(5);
+    builder
+        .append_data(&mut header, "raw-member", &b"alpha"[..])
+        .unwrap();
+    let bytes = builder.into_inner().unwrap();
+    assert!(bytes[..100].iter().all(|byte| *byte == 0));
+    assert_eq!(bytes[156], b'x');
+    assert_eq!(&bytes[1024..1034], b"raw-member");
+
+    for named_header in [false, true] {
+        let mut case = Case {
+            id: "supported-pax-writer-path",
+            bytes: bytes.clone(),
+            expected: ["ok"; 2],
+            reference: "accept",
+            limits: TarMeterLimits {
+                windows_paths: false,
+                max_entries: 8,
+                max_meta_entry_bytes: 1024,
+                max_decoded_bytes: 65536,
+                max_manifest_bytes: 65536,
+            },
+        };
+        if named_header {
+            // Change only the local PAX header name and its checksum.
+            case.bytes[..9].copy_from_slice(b"PaxHeader");
+            case.bytes[148..156].fill(b' ');
+            let sum: u64 = case.bytes[..512].iter().map(|byte| *byte as u64).sum();
+            case.bytes[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+        }
+        // Both variants retain the effective PAX path, not the raw member name.
+        let reference = reference(&case.bytes).unwrap();
+        assert_eq!(reference.len(), 1);
+        let expected = &reference[0];
+        assert_eq!(expected.path, b"safe");
+        assert_eq!(expected.kind, b'0');
+        assert_eq!(expected.size, 5);
+        assert_eq!(expected.mode, 0o644);
+        assert_eq!(expected.offset, 1536);
+        assert_eq!(expected.payload, b"alpha");
+
+        for windows in [false, true] {
+            for chunk in CHUNKS {
+                for push in [false, true] {
+                    let context = format!(
+                        "named_header={named_header}, windows={windows}, chunk={chunk}, push={push}"
+                    );
+                    let observed = observe(&case, windows, chunk, push);
+                    if !named_header {
+                        let error = observed.result.unwrap_err();
+                        assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{context}");
+                        assert_eq!(
+                            error.to_string(),
+                            "archive-header-invalid: entry path is empty",
+                            "{context}"
+                        );
+                        assert!(observed.members.is_empty(), "{context}");
+                        continue;
+                    }
+                    observed.result.unwrap();
+                    assert_eq!(observed.forwarded, case.bytes, "{context}");
+                    assert_eq!(observed.members.len(), 1, "{context}");
+                    let member = &observed.members[0];
+                    assert_eq!(member.path.as_bytes(), b"safe", "{context}");
+                    assert_eq!(member.entry_type, b'0', "{context}");
+                    assert_eq!(member.size, 5, "{context}");
+                    assert_eq!(member.mode, 0o644, "{context}");
+                    assert_eq!(member.offset, 1536, "{context}");
+                    let start = member.offset as usize;
+                    let end = start + member.size as usize;
+                    assert_eq!(&case.bytes[start..end], b"alpha", "{context}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn directory_link_writer_pattern_retains_metadata_but_is_not_admitted() {
     // Public OCM archive.rs uses these tar 0.4.46 calls for directory links.
     // Its filesystem capture and restore functions are not executed here.
