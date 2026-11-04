@@ -1,0 +1,99 @@
+{
+  "ordinary-file": [
+    {
+      "path": "file",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 512,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    }
+  ],
+  "plain-symlink": [
+    {
+      "path": "link",
+      "type": 50,
+      "size": 0,
+      "mode": 420,
+      "offset": 512,
+      "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "plain-hardlink": [
+    {
+      "path": "hardlink",
+      "type": 49,
+      "size": 0,
+      "mode": 420,
+      "offset": 512,
+      "payloadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "long-pax-path": [
+    {
+      "path": "nested/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/leaf",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 1536,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    }
+  ],
+  "long-gnu-path": [
+    {
+      "path": "nested/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/leaf",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 1536,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    }
+  ],
+  "unicode-spelling": [
+    {
+      "path": "café",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 1536,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    },
+    {
+      "path": "café",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 3584,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    }
+  ],
+  "empty-archive": [],
+  "case-spelling": [
+    {
+      "path": "File",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 512,
+      "payloadSha256": "aee610558292023758a4229ddcf75f167c9904313a83cf795232ed7f7e2131c9"
+    },
+    {
+      "path": "file",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 1536,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    }
+  ],
+  "colon-name": [
+    {
+      "path": "file:stream",
+      "type": 48,
+      "size": 5,
+      "mode": 420,
+      "offset": 512,
+      "payloadSha256": "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    }
+  ]
+}
