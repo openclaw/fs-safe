@@ -24,6 +24,7 @@ import { createStagedFileReceipt, settleStagedFile } from "./staged-file-settlem
 import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt } from "./staged-file-types.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
+import { openPublicationPin } from "./publication-pin.js";
 
 export async function runPinnedStagedWrite(
   params: PinnedWriteParams,
@@ -57,12 +58,17 @@ export async function runPinnedStagedWrite(
       return fsSync.lstatSync(targetPath, { bigint: true });
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT") || !handle) throw error;
+      const pin = openPublicationPin(handle.fd);
       const previous = handle!;
       handle = undefined;
       return (async () => {
-        await previous.close();
-        readHandle = await openPublicationHandle(targetPath, tempIdentity!);
-        return fsSync.lstatSync(targetPath, { bigint: true });
+        try {
+          await previous.close();
+          readHandle = await openPublicationHandle(targetPath, tempIdentity!);
+          return fsSync.lstatSync(targetPath, { bigint: true });
+        } finally {
+          fsSync.closeSync(pin);
+        }
       })();
     }
   };

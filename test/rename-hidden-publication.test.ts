@@ -28,13 +28,15 @@ const writers = {
   root: async (filePath: string) => { configureFsSafeNative({ mode: "off" }); await (await root(path.dirname(filePath))).write(path.basename(filePath), "payload"); },
 };
 
-describe.each(Object.entries(writers))("%s publication on rename-hidden filesystems", (_, write) => {
+const descriptorPins = process.platform === "linux" || process.platform === "darwin";
+describe.runIf(descriptorPins).each(Object.entries(writers))("%s publication on rename-hidden filesystems", (_, write) => {
   it("closes once and verifies the original inode without a retry delay", async () => {
     const filePath = path.join(await tempRoot("rename-hidden-"), "target");
     const fault = hideRenamedFileUntilClose(filePath);
     await write(filePath);
     expect(fault.failures).toBeGreaterThan(0);
     expect(fault.closes).toBe(1);
+    expect(fault.pinnedCloses).toBe(1);
     expect(fault.hidden).toBe(0);
     expect(fs.lstatSync(filePath, { bigint: true })).toMatchObject({ dev: fault.identity!.dev, ino: fault.identity!.ino });
     expect(fs.readFileSync(filePath, "utf8")).toContain("payload");
@@ -43,28 +45,31 @@ describe.each(Object.entries(writers))("%s publication on rename-hidden filesyst
   it.each(["replacement", "deletion"])("rejects %s at close and preserves the final namespace", async kind => {
     const filePath = path.join(await tempRoot("rename-hidden-swap-"), "target");
     const fault = hideRenamedFileUntilClose(filePath, () => {
-      // Keep the old inode allocated so this is an actual identity substitution.
-      fs.renameSync(filePath, `${filePath}.retained`);
-      if (kind === "replacement") fs.writeFileSync(filePath, "payload");
+      fs.unlinkSync(filePath);
+      if (kind === "replacement") fs.writeFileSync(filePath, "payload", { mode: 0o644 });
     });
     await expect(Promise.resolve().then(() => write(filePath))).rejects.toBeTruthy();
     expect(fault.closes).toBe(1);
-    expect(fs.readFileSync(`${filePath}.retained`, "utf8")).toContain("payload");
-    if (kind === "replacement") expect(fs.readFileSync(filePath, "utf8")).toBe("payload");
+    expect(fault.pinnedCloses).toBe(1);
+    expect(fault.unlinkedPins).toBe(1);
+    if (kind === "replacement") {
+      expect(fs.readFileSync(filePath, "utf8")).toBe("payload");
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o644);
+    }
     else expect(fs.existsSync(filePath)).toBe(false);
   });
 });
 
 let native: ReturnType<typeof __loadBundledNativeForTest> | undefined;
 try { if (process.platform !== "win32") native = __loadBundledNativeForTest(); } catch { /* native CI owns this case */ }
-describe.runIf(native)("native root rename-hidden publication", () => {
+describe.runIf(native && descriptorPins)("native root rename-hidden publication", () => {
   it.each(["root", "stage", "exclusive"].flatMap(api => ["original", "replacement", "deletion"].map(kind => ({ api, kind }))))(
     "verifies $kind after closing the $api stage", async ({ api, kind }) => {
     const directory = await tempRoot("native-rename-hidden-");
     const filePath = path.join(directory, "target");
     const fault = hideRenamedFileUntilClose(filePath, kind === "original" ? undefined : () => {
-      fs.renameSync(filePath, `${filePath}.retained`);
-      if (kind === "replacement") fs.writeFileSync(filePath, "payload");
+      fs.unlinkSync(filePath);
+      if (kind === "replacement") fs.writeFileSync(filePath, "payload", { mode: 0o644 });
     });
     __setNativeLoaderForTest(() => ({ ...native!,
       async createStagedFile(parent, name) {
@@ -104,5 +109,8 @@ describe.runIf(native)("native root rename-hidden publication", () => {
     } else await expect(operation).rejects.toBeTruthy();
     expect(fault.failures).toBeGreaterThan(0);
     expect(fault.closes).toBe(1);
+    expect(fault.pinnedCloses).toBe(1);
+    if (kind !== "original") expect(fault.unlinkedPins).toBe(1);
+    if (kind === "replacement") expect(fs.statSync(filePath).mode & 0o777).toBe(0o644);
   });
 });

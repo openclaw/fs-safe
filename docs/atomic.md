@@ -36,11 +36,15 @@ are independent of this directory policy.
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
 
 On filesystems that hide a renamed file until its staging descriptor closes
-(including some WSL DrvFS/9p mounts), a post-rename `ENOENT` closes that descriptor
-before checking the published file against the original device and inode.
-This does not retry a missing file or accept matching contents: deletion,
-substitution, symlinks, and extra hardlinks still fail verification. Healthy
-filesystems retain the existing descriptor throughout publication.
+(including some WSL DrvFS/9p mounts), post-rename `ENOENT` recovery first retains
+the original inode through a kernel descriptor alias. On Linux this is an
+`O_PATH` descriptor from verified procfs, so closing the writer releases the
+filesystem's open handle without freeing the inode for reuse. Recovery then
+checks the published file against the original device and inode before
+releasing that pin. Darwin uses its descriptor filesystem; unsupported
+platforms or unavailable descriptor aliases fail closed. Deletion, substitution,
+symlinks, and extra hardlinks still fail, regardless of matching contents.
+Healthy filesystems retain the existing descriptor throughout publication.
 
 Relative paths retain their literal suffix so `.` and `..` keep Node's existing
 filesystem semantics. On Windows, an ordinary drive-relative destination such

@@ -27,6 +27,7 @@ import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { nativeOpenFlags } from "./native-operations.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { openPublicationPin } from "./publication-pin.js";
 
 export { assertNativeStaging, type NativeStagingBinding } from "./native-staged-file-metadata.js";
 
@@ -74,7 +75,6 @@ class NativeStagedFile implements StagedFile {
     this.#verifyMode = owner.permissionPolicy !== undefined;
   }
 
-  // Public staging supplies a Node parent; pinned writes supply a native parent.
   // The supplied closer owns parentFd even on construction or preparation failure.
   static async create(
     owner: NativeStageOwner,
@@ -387,14 +387,19 @@ class NativeStagedFile implements StagedFile {
       if (!hasErrorCode(error, "ENOENT")) throw error;
       const state = this.#open();
       const fd = this.#file();
-      state.fileFd = undefined;
-      this.#closeFd(fd);
-      this.#assertDirectory();
-      const open = this.#owner.binding.openBeneath;
-      if (!open) throw error;
-      state.fileFd = open(this.#owner.parentFd, basename, nativeOpenFlags(fs.constants.O_RDWR | fs.constants.O_NONBLOCK)).fd;
-      inspectFileIdentitySync(() => fs.fstatSync(this.#file(), { bigint: true }), this.receipt.identity);
-      return this.#assertNamed(basename, 0o600);
+      const pin = openPublicationPin(fd);
+      try {
+        state.fileFd = undefined;
+        this.#closeFd(fd);
+        this.#assertDirectory();
+        const open = this.#owner.binding.openBeneath;
+        if (!open) throw error;
+        state.fileFd = open(this.#owner.parentFd, basename, nativeOpenFlags(fs.constants.O_RDWR | fs.constants.O_NONBLOCK)).fd;
+        inspectFileIdentitySync(() => fs.fstatSync(this.#file(), { bigint: true }), this.receipt.identity);
+        return this.#assertNamed(basename, 0o600);
+      } finally {
+        fs.closeSync(pin);
+      }
     }
   }
 
@@ -451,7 +456,6 @@ class NativeStagedFile implements StagedFile {
   }
 
   async cleanup(): Promise<StagedFileCleanupReceipt> {
-    // Native descriptors stay owned through the rename and all durability fences.
     if (this.#publicationTask) await this.#publicationTask.catch(() => {});
     const closed = this.#finalize();
     if (closed.error) {

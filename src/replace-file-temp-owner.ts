@@ -9,6 +9,7 @@ import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
+import { openPublicationPin } from "./publication-pin.js";
 
 const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
@@ -170,19 +171,24 @@ export class AtomicTempOwner {
       if (hasErrorCode(error, "ENOENT") || (error instanceof FsSafeError && hasErrorCode(error.cause, "ENOENT"))) {
         // DrvFS can hide a renamed inode until its staging descriptor closes.
         // Consume that descriptor once, then require the original exact identity.
-        const previous = this.takeResource();
-        const closing = previous?.close();
-        if (previous && this.io.asynchronous) yield closing;
+        const pin = openPublicationPin(this.fd);
         try {
-          this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
-        } catch (openError) {
-          if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
-            (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
-          this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+          const previous = this.takeResource()!;
+          const closing = previous.close();
+          if (this.io.asynchronous) yield closing;
+          try {
+            this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
+          } catch (openError) {
+            if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
+              (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
+            this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+          }
+          yield* this.assertCurrent(pathname);
+          onVerified?.(this.identity);
+          return;
+        } finally {
+          syncFs.closeSync(pin);
         }
-        yield* this.assertCurrent(pathname);
-        onVerified?.(this.identity);
-        return;
       }
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
         throw error;

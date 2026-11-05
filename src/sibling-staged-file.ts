@@ -11,6 +11,7 @@ import {
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
+import { openPublicationPin } from "./publication-pin.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
@@ -222,6 +223,7 @@ export async function writeCallbackSibling<T>(params: {
     }
   };
   let handle: FileHandle | undefined;
+  let identityPin: number | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
   let cleanupWorkspace: (() => Promise<void>) | undefined;
@@ -324,6 +326,7 @@ export async function writeCallbackSibling<T>(params: {
         assertCurrent(filePath);
       } catch (error) {
         if (!hasErrorCode(error, "ENOENT")) throw error;
+        identityPin = openPublicationPin(handle!.fd);
         const previous = handle!;
         handle = undefined;
         await previous.close();
@@ -365,6 +368,11 @@ export async function writeCallbackSibling<T>(params: {
     } finally {
       try {
         await handle?.close();
+      } catch (error) {
+        settlementErrors.push(error);
+      }
+      try {
+        if (identityPin !== undefined) fsSync.closeSync(identityPin);
       } catch (error) {
         settlementErrors.push(error);
       }

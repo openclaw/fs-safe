@@ -8,6 +8,7 @@ import path from "node:path";
 import { replaceFileAtomic, replaceFileAtomicSync, writeTextAtomic } from "../dist/atomic.js";
 import { root } from "../dist/root.js";
 import { configureFsSafeNative } from "../dist/native-config.js";
+import { openPublicationPin } from "../dist/publication-pin.js";
 
 assert.equal(process.argv.length, 3, "Pass an existing trusted parent on the affected mount");
 const parent = await fsp.realpath(process.argv[2]);
@@ -22,6 +23,7 @@ try {
   const to = path.join(directory, "plain.txt");
   const fd = fs.openSync(from, "wx", 0o600);
   let before;
+  let pin;
   try {
     fs.writeFileSync(fd, "plain");
     before = fs.fstatSync(fd, { bigint: true });
@@ -33,9 +35,16 @@ try {
       open: observe(() => fs.closeSync(fs.openSync(to, "r"))),
       listed: fs.readdirSync(directory).includes("plain.txt"),
     };
+    report.plain.pinOpen = observe(() => { pin = openPublicationPin(fd); });
   } finally { fs.closeSync(fd); }
   const after = fs.statSync(to, { bigint: true });
   report.plain.sameIdentityAfterClose = before.dev === after.dev && before.ino === after.ino;
+  if (pin !== undefined) {
+    try {
+      const retained = fs.fstatSync(pin, { bigint: true });
+      report.plain.pinRetainsIdentity = retained.dev === before.dev && retained.ino === before.ino;
+    } finally { fs.closeSync(pin); }
+  }
 
   for (const [name, write] of [
     ["atomic-async", filePath => replaceFileAtomic({ filePath, content: "payload", syncTempFile: true, syncParentDir: true })],

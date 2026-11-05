@@ -12,13 +12,26 @@ export function hideRenamedFileUntilClose(target: string, onClose?: () => void) 
   const hidden = new Set<number>();
   let failures = 0;
   let closes = 0;
+  let pinnedCloses = 0;
+  let unlinkedPins = 0;
   let identity: fs.BigIntStats | undefined;
   const missing = () => { failures++; throw Object.assign(new Error("rename hidden until close"), { code: "ENOENT" }); };
   const checkPath = (pathname: unknown) => { if (String(pathname) === target && hidden.size) missing(); };
   const checkFd = (fd: number) => { if (hidden.has(fd)) missing(); };
   const closed = (fd: number) => {
     descriptors.delete(fd);
-    if (hidden.delete(fd)) { closes++; onClose?.(); }
+    if (hidden.delete(fd)) {
+      const pins = [...descriptors.keys()].filter(other => {
+        try {
+          const stat = original.fstat(other, { bigint: true });
+          return stat.dev === identity?.dev && stat.ino === identity?.ino;
+        } catch { return false; }
+      });
+      closes++;
+      if (pins.length) pinnedCloses++;
+      onClose?.();
+      if (pins.some(pin => original.fstat(pin, { bigint: true }).nlink === 0n)) unlinkedPins++;
+    }
   };
   const renamed = (from: unknown, to: unknown) => {
     if (String(to) !== target) return;
@@ -69,6 +82,8 @@ export function hideRenamedFileUntilClose(target: string, onClose?: () => void) 
     trackFd: (fd: number, pathname: string) => descriptors.set(fd, pathname),
     get failures() { return failures; },
     get closes() { return closes; },
+    get pinnedCloses() { return pinnedCloses; },
+    get unlinkedPins() { return unlinkedPins; },
     get identity() { return identity; },
     get hidden() { return hidden.size; },
   };
