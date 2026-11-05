@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
 - **Windows permissions:** trust exact TrustedInstaller ownership and serviced read-only sources for public inspection while rejecting servicing write grants on user-owned or user-writable profiles and retaining strict private-file checks. Thanks @paulcam206.
 - **Temporary filenames:** preserve safe Unicode names, including CJK text and accents, while retaining path/control filtering, Windows device protection, and portable byte limits. Thanks @beeven.
 - **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
