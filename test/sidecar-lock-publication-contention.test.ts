@@ -109,3 +109,33 @@ it("requires current Root mutation authority before cleaning an abandoned public
   expect(fs.statSync(final).nlink).toBe(2);
   expect(fs.readFileSync(stage, "utf8")).toBe('{"owner":"abandoned"}');
 });
+
+it("retries a publication that appears between the two Root create preflight checks", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-linked-late-preflight-");
+  const target = path.join(directory, "state"), final = `${target}.lock`;
+  const capability = await root(directory), stage = sidecarStagingPath(final);
+  fs.writeFileSync(stage, '{"owner":"publisher"}');
+  const stat = fs.statSync;
+  let published = false;
+  vi.spyOn(fs, "statSync").mockImplementation((...args) => {
+    if (args[0] === final && args[1]?.throwIfNoEntry === false && !published) {
+      published = true;
+      fs.linkSync(stage, final);
+    }
+    return Reflect.apply(stat, fs, args);
+  });
+  const finish = vi.spyOn(timing, "sleep").mockImplementation(async () => {
+    fs.unlinkSync(stage);
+    fs.unlinkSync(final);
+  });
+  const owner = await acquireFileLock(target, {
+    lockRoot: capability, payload: () => ({ owner: "waiter" }),
+    retry: { retries: 1, minTimeout: 0, maxTimeout: 0 }, timeoutMs: Infinity, staleMs: Infinity,
+  });
+  try {
+    expect(published).toBe(true);
+    expect(finish).toHaveBeenCalledOnce();
+    expect(JSON.parse(fs.readFileSync(final, "utf8"))).toEqual({ owner: "waiter" });
+  } finally { await owner.release(); }
+});
