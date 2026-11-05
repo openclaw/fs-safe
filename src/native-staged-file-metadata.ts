@@ -16,9 +16,14 @@ export type NativeStagingBinding = NativeBinding & Required<Pick<
 >>;
 
 export function assertNativeStaging(binding: NativeBinding): asserts binding is NativeStagingBinding {
-  if ([binding.closeOwnedFd, binding.createStagedFile, binding.stagedFileMatches,
-    binding.removeStagedFile, binding.renameReplaceAsync, binding.renameNoReplaceAsync,
-  ].some(fn => typeof fn !== "function")) {
+  if ([
+    binding.closeOwnedFd,
+    binding.createStagedFile,
+    binding.stagedFileMatches,
+    binding.removeStagedFile,
+    binding.renameReplaceAsync,
+    binding.renameNoReplaceAsync,
+  ].some((fn) => typeof fn !== "function")) {
     throw new FsSafeError("helper-unavailable", "native retained-directory staging is unavailable");
   }
 }
