@@ -1,14 +1,16 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { acquireFileLock, acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+afterEach(() => vi.restoreAllMocks());
 const fixture = fileURLToPath(new URL("./fixtures/sidecar-lock-publication-child.mjs", import.meta.url));
 for (const mode of ["auto", "off"]) {
   it.each(["raw-async", "raw-sync", "root-async", "root-sync"])(`%s survives a killed staging writer (${mode})`, async kind => {
@@ -55,13 +57,20 @@ for (const mode of ["auto", "off"]) {
   });
 }
 
-it.each(["raw-async", "raw-sync", "root-async", "root-sync"])("%s recovers a killed publisher after the final hardlink exists", async kind => {
+it.each([
+  ...["raw-async", "raw-sync", "root-async", "root-sync"].map(kind => ({ kind, crowded: false })),
+  ...["root-async", "root-sync"].map(kind => ({ kind, crowded: true })),
+])("$kind recovers a killed publisher after the final hardlink exists (crowded=$crowded)", async ({ kind, crowded }) => {
   const directory = await tempRoot("fs-safe-linked-crash-");
+  if (crowded) {
+    for (let i = 0; i < 200; i++) fsSync.writeFileSync(path.join(directory, `unrelated-${i}`), "untouched");
+  }
   const child = spawn(process.execPath, [fixture, directory, kind, "off", "linked"], {
     env: { ...process.env, NODE_ENV: "test" }, stdio: ["ignore", "pipe", "pipe"],
   });
   const exited = once(child, "exit");
   let stderr = "";
+  let originalStagePosition: number | undefined;
   child.stderr.on("data", data => { stderr += data; });
   try {
     const publication = await new Promise<{ final: string; temporary: string; pid: number }>((resolve, reject) => {
@@ -78,6 +87,21 @@ it.each(["raw-async", "raw-sync", "root-async", "root-sync"])("%s recovers a kil
     expect(JSON.parse(await fs.readFile(publication.final, "utf8"))).toEqual({ pid: child.pid, owner: "child" });
     child.kill("SIGKILL");
     await exited;
+    if (crowded) {
+      const opendir = fsSync.opendirSync;
+      vi.spyOn(fsSync, "opendirSync").mockImplementation((...args) => {
+        const opened = Reflect.apply(opendir, fsSync, args);
+        if (String(args[0]) !== directory) return opened;
+        const entries: fsSync.Dirent[] = [];
+        for (let entry = opened.readSync(); entry; entry = opened.readSync()) entries.push(entry);
+        opened.closeSync();
+        // Directory order is arbitrary; make the adverse legal order deterministic.
+        entries.sort((a, b) => Number(a.name === path.basename(publication.temporary)) - Number(b.name === path.basename(publication.temporary)));
+        const position = entries.findIndex(entry => entry.name === path.basename(publication.temporary));
+        if (position >= 0) originalStagePosition ??= position;
+        return { readSync: () => entries.shift() ?? null, closeSync() {} } as fsSync.Dir;
+      });
+    }
     const options = {
       payload: () => ({ owner: "recovered" }), staleMs: 0, shouldReclaim: () => true, shouldRemoveStaleLock: () => true,
       staleRecovery: "remove-if-unchanged" as const, timeoutMs: Infinity,
@@ -87,7 +111,8 @@ it.each(["raw-async", "raw-sync", "root-async", "root-sync"])("%s recovers a kil
     const target = path.join(directory, "state");
     const owner = kind.endsWith("async") ? await acquireFileLock(target, options) : acquireFileLockSync(target, options);
     try {
-      expect(await fs.readdir(directory)).toEqual(["state.lock"]);
+      if (crowded) expect(originalStagePosition).toBeGreaterThan(64);
+      expect((await fs.readdir(directory)).filter(name => !name.startsWith("unrelated-"))).toEqual(["state.lock"]);
       expect(JSON.parse(await fs.readFile(publication.final, "utf8"))).toEqual({ owner: "recovered" });
     } finally { await owner.release(); }
   } finally {

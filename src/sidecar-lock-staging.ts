@@ -19,9 +19,12 @@ function ownerAbsent(pid: number): boolean {
   return false;
 }
 
-// Opportunistic and bounded: never inspect or remove the final lock, another
-// target's staging namespace, a live PID, or an unverifiable file identity.
-export function cleanupSidecarStages(target: string, assertCurrent: (candidate?: string) => void, native?: NativeWriteParent): void {
+// Bound opportunistic cleanup to 64 entries plus one exact publication link.
+// Never remove the final lock, live owners, or unverifiable identities.
+export function cleanupSidecarStages(
+  target: string, assertCurrent: (candidate?: string) => void, native?: NativeWriteParent,
+  onlyStage?: { name: string; identity: fs.BigIntStats },
+): void {
   const directory = path.dirname(target), prefix = stagingPrefix(target);
   let entries: fs.Dir | undefined;
   let authorityFailure: { error: unknown } | undefined;
@@ -31,9 +34,9 @@ export function cleanupSidecarStages(target: string, assertCurrent: (candidate?:
   };
   try {
     assertAuthority();
-    entries = fs.opendirSync(directory);
-    for (let count = 0; count < 64; count++) {
-      const entry = entries.readSync();
+    if (!onlyStage) entries = fs.opendirSync(directory);
+    for (let count = 0; count < (onlyStage ? 1 : 64); count++) {
+      const entry = onlyStage ?? entries!.readSync();
       if (!entry) break;
       if (!entry.name.startsWith(prefix)) continue;
       const suffix = entry.name.slice(prefix.length);
@@ -46,6 +49,7 @@ export function cleanupSidecarStages(target: string, assertCurrent: (candidate?:
       try {
         assertAuthority(candidate);
         const before = fs.lstatSync(candidate, { bigint: true });
+        if (onlyStage && !sameFileIdentityForCleanup(before, onlyStage.identity)) continue;
         if (!before.isFile() || before.isSymbolicLink() || before.nlink > 2n ||
           (process.getuid && before.uid !== BigInt(process.getuid()))) continue;
         fd = fs.openSync(candidate, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
@@ -65,12 +69,16 @@ export function cleanupSidecarStages(target: string, assertCurrent: (candidate?:
     if (authorityFailure) throw authorityFailure.error;
     // Denied enumeration must not turn a working exclusive create into a failure.
   } finally { try { entries?.closeSync(); } catch { /* Best effort. */ } }
+  if (!onlyStage) sidecarPublicationPending(target, (name, identity) =>
+    cleanupSidecarStages(target, assertCurrent, native, { name, identity }));
 }
-// This is observation only: readers still reject the linked record and retry.
-// Unlike bounded orphan cleanup, recognition streams the directory to avoid
-// mistaking a live publisher for a foreign hardlink in a large directory.
-export function sidecarPublicationPending(target: string): boolean {
+// Readers reject the linked record and retry. Authorized cleanup may handle
+// the one matching stage; recognition streams past the opportunistic budget.
+export function sidecarPublicationPending(
+  target: string, onStage?: (name: string, identity: fs.BigIntStats) => void,
+): boolean {
   let entries: fs.Dir | undefined;
+  let callbackFailure: { error: unknown } | undefined;
   try {
     const current = fs.lstatSync(target, { bigint: true, throwIfNoEntry: false });
     if (!current) return true;
@@ -84,10 +92,14 @@ export function sidecarPublicationPending(target: string): boolean {
       if (!entry) break;
       if (!entry.name.startsWith(prefix) || !/^[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/.test(entry.name.slice(prefix.length))) continue;
       const stage = fs.lstatSync(path.join(path.dirname(target), entry.name), { bigint: true, throwIfNoEntry: false });
-      if (stage?.isFile() && !stage.isSymbolicLink() && sameFileIdentityForCleanup(stage, current)) return true;
+      if (stage?.isFile() && !stage.isSymbolicLink() && sameFileIdentityForCleanup(stage, current)) {
+        try { onStage?.(entry.name, current); }
+        catch (error) { callbackFailure = { error }; throw error; }
+        return true;
+      }
     }
     const after = fs.lstatSync(target, { bigint: true, throwIfNoEntry: false });
     return !after || !sameFileIdentityForCleanup(after, current) || after.nlink === 1n;
-  } catch { return false; }
+  } catch { if (callbackFailure) throw callbackFailure.error; return false; }
   finally { try { entries?.closeSync(); } catch { /* Observation remains inconclusive. */ } }
 }

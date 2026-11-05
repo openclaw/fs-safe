@@ -101,3 +101,26 @@ it("does not mistake a matching stage name with a different identity for publica
   expect(sidecarPublicationPending(target)).toBe(false);
   expect(fs.readFileSync(target, "utf8")).toBe("foreign");
 });
+
+it.each([false, true])("cleans only the exact publication link beyond the opportunistic scan budget (denied=%s)", async denied => {
+  const directory = await tempRoot("fs-safe-stage-published-budget-");
+  const target = path.join(directory, "state.lock"), stage = sidecarStagingPath(target), other = sidecarStagingPath(target);
+  fs.writeFileSync(stage, "complete owner");
+  fs.linkSync(stage, target);
+  fs.writeFileSync(other, "unrelated stage");
+  vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("dead"), { code: "ESRCH" }); });
+  vi.spyOn(fs, "opendirSync").mockImplementation(() => {
+    const entries = [...Array.from({ length: 200 }, (_, i) => ({ name: `unrelated-${i}` })),
+      { name: path.basename(other) }, { name: path.basename(stage) }];
+    return { readSync: () => entries.shift() ?? null, closeSync() {} } as fs.Dir;
+  });
+  const remove = vi.spyOn(fs, "unlinkSync");
+  const failure = new Error("candidate denied");
+  const cleanup = () => cleanupSidecarStages(target, candidate => { if (denied && candidate === stage) throw failure; });
+  if (denied) expect(cleanup).toThrow(failure);
+  else cleanup();
+  expect(remove.mock.calls).toEqual(denied ? [] : [[stage]]);
+  expect(fs.statSync(target).nlink).toBe(denied ? 2 : 1);
+  expect(fs.readFileSync(target, "utf8")).toBe("complete owner");
+  expect(fs.readFileSync(other, "utf8")).toBe("unrelated stage");
+});
