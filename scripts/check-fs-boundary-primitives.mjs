@@ -77,13 +77,13 @@ const requiredImports = [
   },
   {
     file: "src/temp-target.ts",
-    pattern: /\bnormalizeSafePathSegment\b/,
-    message: "temp filenames must use the shared normalizeSafePathSegment helper",
+    pattern: /\bfitFileNameToPortableComponent\b/,
+    message: "temp filenames must use the shared portable filename budget",
   },
   {
     file: "src/temp-target.ts",
-    pattern: /\bisSafePathSegment\b/,
-    message: "temp filenames must use the shared isSafePathSegment helper",
+    pattern: /\bsuffixWindowsReservedDeviceName\b/,
+    message: "temp filenames must use the shared Windows device-name protection",
   },
 ];
 

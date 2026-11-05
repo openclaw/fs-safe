@@ -4,6 +4,7 @@
 
 ### Fixes
 
+- **Temporary filenames:** preserve safe Unicode names, including CJK text and accents, while retaining path/control filtering, Windows device protection, and portable byte limits. Thanks @beeven.
 - **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
 - **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
 

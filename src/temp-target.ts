@@ -2,12 +2,10 @@ import crypto from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { suffixWindowsReservedDeviceName } from "./filename.js";
+import { fitFileNameToPortableComponent, suffixWindowsReservedDeviceName } from "./filename.js";
 import { sameFileIdentityForCleanup, type FileIdentityStat } from "./file-identity.js";
 import {
   assertSafePathSegment,
-  isSafePathSegment,
-  normalizeSafePathSegment,
   trimHyphenEdges,
 } from "./safe-path-segment.js";
 import { resolveSecureTempRoot } from "./secure-temp-dir.js";
@@ -100,12 +98,25 @@ function sanitizeExtension(extension?: string): string {
 }
 
 export function sanitizeTempFileName(fileName: string): string {
+  // Keep Unicode filenames, but retain the historical ASCII punctuation filtering.
+  const normalized = trimHyphenEdges(path.basename(fileName).trim()
+    .replace(/\0/g, "")
+    // Some Unicode symbols decompose into characters forbidden on Windows.
+    .replace(/[\u0080-\u{10ffff}]/gu, (character) =>
+      /[<>:"/\\|?*]/u.test(character.normalize("NFD")) ? "-" : character)
+    .replace(/(?:[^A-Za-z0-9._\-\u0080-\u{10ffff}]|[\p{Cc}\p{Cf}\p{Cs}\s])+/gu, "-"));
+  if (!normalized || normalized === "." || normalized === "..") return "download.bin";
   // Suffix reserved stems before admission so CON.txt stays CON_.txt.
-  const suffixed = suffixWindowsReservedDeviceName(
-    normalizeSafePathSegment(path.basename(fileName)),
-  );
-  // The suffix only inserts "_", so this value is already normalized.
-  return isSafePathSegment(suffixed, { allowDotPrefix: true }) ? suffixed : "download.bin";
+  const fitted = trimHyphenEdges(fitFileNameToPortableComponent({
+    prefix: "",
+    fileName: suffixWindowsReservedDeviceName(normalized),
+    suffix: "",
+  }));
+  // Truncation must not expose a device name or a parent/current-directory token.
+  return fitted && fitted !== "." && fitted !== ".." &&
+      suffixWindowsReservedDeviceName(fitted) === fitted
+    ? fitted
+    : "download.bin";
 }
 
 export function buildRandomTempFilePath(params: {
