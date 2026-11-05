@@ -198,9 +198,9 @@
   },
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-beta.2",
-    "@napi-rs/cli": "3.10.9",
-    "@types/node": "^26.6.5",
-    "@vitest/coverage-v8": "5.0.5",
+    "@napi-rs/cli": "3.10.10",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
     "acorn": "8.19.0",
     "fast-check": "^4.10.2",
     "istanbul-lib-coverage": "3.2.2",
@@ -210,7 +210,7 @@
     "tar": "7.5.22",
     "typescript": "^7.0.2",
     "vite": "8.3.5",
-    "vitest": "^5.0.3"
+    "vitest": "^5.1.0"
   },
   "engines": {
     "node": ">=22"
