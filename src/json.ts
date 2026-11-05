@@ -129,7 +129,7 @@ export function writeJsonSync(pathname: string, data: unknown) {
     renameJsonFileWithFallback(owner, filePath);
     owner.markRenamed();
     runSync(owner.assertPublished(filePath));
-    trySetSecureMode(temp.file.fd);
+    trySetSecureMode(owner.fd);
     runSync(syncDirectoryBestEffort(io, path.dirname(filePath)));
     runSync(owner.assertPublished(filePath));
   } catch (error) {

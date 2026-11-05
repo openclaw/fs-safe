@@ -35,6 +35,13 @@ are independent of this directory policy.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
 
+On filesystems that hide a renamed file until its staging descriptor closes
+(including some WSL DrvFS/9p mounts), a post-rename `ENOENT` closes that descriptor
+before checking the published file against the original device and inode.
+This does not retry a missing file or accept matching contents: deletion,
+substitution, symlinks, and extra hardlinks still fail verification. Healthy
+filesystems retain the existing descriptor throughout publication.
+
 Relative paths retain their literal suffix so `.` and `..` keep Node's existing
 filesystem semantics. On Windows, an ordinary drive-relative destination such
 as `C:.\\state.json` is captured at entry by anchoring the drive's current

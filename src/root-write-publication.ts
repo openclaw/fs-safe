@@ -6,7 +6,8 @@ import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
-import { cleanupPinnedFilePath } from "./file-cleanup.js";
+import { cleanupPinnedFilePath, hasErrorCode } from "./file-cleanup.js";
+import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import type { RootContext } from "./root-context.js";
 import type { RootWriteOptions } from "./root-options.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
@@ -40,6 +41,14 @@ export async function finishRootFallbackWrite(params: {
     }
   };
   try {
+    try {
+      fsSync.fstatSync(handle.fd, { bigint: true });
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) throw error;
+      await handle.close();
+      accepted = handle = (await params.openForCompatibility()).opened.handle;
+      inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }), identity);
+    }
     if (compatibility) {
       const current = fsSync.lstatSync(params.targetPath, { bigint: true });
       if (current.isSymbolicLink() || !current.isFile()) {

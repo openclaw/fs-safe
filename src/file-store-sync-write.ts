@@ -19,6 +19,7 @@ import { AtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-own
 import { errorCauseOptions } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { hasErrorCode } from "./file-cleanup.js";
 
 function verifyStoreFile(fd: number, expected: BigIntStats, filePath: string): void {
   const assertFile = (stat: BigIntStats, allowUnknown = false): boolean => {
@@ -119,7 +120,12 @@ export function writeFileSyncAtomic(params: {
     owner.markRenamed();
     assertSyncStoreDirectoryReceipt(parentGuard);
     try {
-      verifyStoreFile(temp.file.fd, owner.identity, filePath);
+      try {
+        verifyStoreFile(temp.file.fd, owner.identity, filePath);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT")) throw error;
+        runSync(owner.assertPublished(filePath));
+      }
     } catch (error) {
       if (error instanceof FsSafeError) {
         throw error;

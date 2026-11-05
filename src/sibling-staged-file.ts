@@ -11,6 +11,7 @@ import {
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
+import { hasErrorCode } from "./file-cleanup.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { cachedNoReplaceDevice, isNoReplaceUnavailable } from "./native-noreplace.js";
@@ -230,7 +231,7 @@ export async function writeCallbackSibling<T>(params: {
     inspectStage(() => fsSync.lstatSync(pathname, { bigint: true }), expected);
   const assertCurrent = (pathname: string) => {
     assertParent();
-    const opened = inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
+    const opened = handle ? inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity) : identity!;
     const current = inspectPath(pathname, opened);
     if (
       maxBytes !== undefined &&
@@ -319,7 +320,15 @@ export async function writeCallbackSibling<T>(params: {
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
       unregister!();
-      assertCurrent(filePath);
+      try {
+        assertCurrent(filePath);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT")) throw error;
+        const previous = handle!;
+        handle = undefined;
+        await previous.close();
+        assertCurrent(filePath);
+      }
       if (syncParentDir) {
         await syncDirectoryBestEffort(parent);
         assertCurrent(filePath);

@@ -111,6 +111,11 @@ export class AtomicTempOwner {
     return this.recordedIdentity;
   }
 
+  get fd(): number {
+    if (!this.resource) throw new Error("Atomic temp owner has no descriptor");
+    return this.resource.fd;
+  }
+
   markRenamed(): void {
     this.exists = false;
     this.unregister();
@@ -162,6 +167,23 @@ export class AtomicTempOwner {
       yield* this.assertCurrent(pathname);
       identityCurrent = true;
     } catch (error) {
+      if (hasErrorCode(error, "ENOENT") || (error instanceof FsSafeError && hasErrorCode(error.cause, "ENOENT"))) {
+        // DrvFS can hide a renamed inode until its staging descriptor closes.
+        // Consume that descriptor once, then require the original exact identity.
+        const previous = this.takeResource();
+        const closing = previous?.close();
+        if (previous && this.io.asynchronous) yield closing;
+        try {
+          this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
+        } catch (openError) {
+          if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
+            (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
+          this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+        }
+        yield* this.assertCurrent(pathname);
+        onVerified?.(this.identity);
+        return;
+      }
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
         throw error;
       }

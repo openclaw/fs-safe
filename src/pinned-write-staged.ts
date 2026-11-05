@@ -18,7 +18,7 @@ import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
 import { openPublicationHandle } from "./publication-handle.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { cleanupPinnedFilePath } from "./file-cleanup.js";
+import { cleanupPinnedFilePath, hasErrorCode } from "./file-cleanup.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { createStagedFileReceipt, settleStagedFile } from "./staged-file-settlement.js";
 import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt } from "./staged-file-types.js";
@@ -52,6 +52,18 @@ export async function runPinnedStagedWrite(
   let publication: StagedFilePublication = Object.freeze({ status: "not-published" });
   let phase: StagedFileFailureDetails["phase"] = "prepare";
   let failure: { error: unknown } | undefined;
+  const observePublished = async () => {
+    try {
+      return fsSync.lstatSync(targetPath, { bigint: true });
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT") || !handle) throw error;
+      const previous = handle!;
+      handle = undefined;
+      await previous.close();
+      readHandle = await openPublicationHandle(targetPath, tempIdentity!);
+      return fsSync.lstatSync(targetPath, { bigint: true });
+    }
+  };
   try {
     params.assertBeforeMutation?.();
     assertExclusiveCreateLeaf(tempPath);
@@ -122,6 +134,7 @@ export async function runPinnedStagedWrite(
             try { await stagedHandle.close(); }
             catch (error) { handoffCloseFailure = { error }; }
           },
+          afterRename: observePublished,
         });
       } else {
         assertBeforeMutation?.();
@@ -131,7 +144,7 @@ export async function runPinnedStagedWrite(
       }
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
-      const targetStat = fsSync.lstatSync(targetPath, { bigint: true });
+      const targetStat = await observePublished();
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }

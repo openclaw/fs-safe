@@ -40,6 +40,7 @@ import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import { publishRenameFallback } from "./publish-rename-fallback.js";
+import { openPublicationHandle } from "./publication-handle.js";
 import { isNoReplaceUnavailable } from "./native-noreplace.js";
 export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
@@ -396,7 +397,14 @@ export async function publishFileExclusive(params: {
         targetPath,
         sourceExactIdentity,
       );
-      assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
+      try {
+        assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+        await source.close();
+        renamedTarget = await openPublicationHandle(targetPath, sourceExactIdentity);
+        assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
+      }
       assertRenamedSourceAbsent(sourcePath);
       syncFileBestEffortSync(sourceNativeParent!.handle.fd);
       return await finishPublication("rename-noreplace", renamedTarget ?? source, sourceExactIdentity);
