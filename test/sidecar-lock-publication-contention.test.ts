@@ -94,3 +94,18 @@ it("Root sync release preserves a distinct successor during its publication inte
   expect(fs.readFileSync(final, "utf8")).toBe(raw);
   expect(fs.statSync(final).nlink).toBe(2);
 });
+
+it("requires current Root mutation authority before cleaning an abandoned publication link", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-linked-authority-");
+  const target = path.join(directory, "state"), final = `${target}.lock`;
+  const stage = sidecarStagingPath(final);
+  fs.writeFileSync(stage, '{"owner":"abandoned"}');
+  fs.linkSync(stage, final);
+  const failure = new Error("revoked cleanup authority");
+  const capability = await root(directory, { assertBeforeMutation() { throw failure; } });
+  vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("dead"), { code: "ESRCH" }); });
+  await expect(acquireFileLock(target, { lockRoot: capability, payload: () => ({}) })).rejects.toBe(failure);
+  expect(fs.statSync(final).nlink).toBe(2);
+  expect(fs.readFileSync(stage, "utf8")).toBe('{"owner":"abandoned"}');
+});

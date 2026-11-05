@@ -8,7 +8,7 @@ const { acquireFileLock, acquireFileLockSync } = await import(`${location}file-l
 const { root } = await import(`${location}root.js`);
 const { configureFsSafeNative } = await import(`${location}config.js`);
 const { __setFsSafeTestHooksForTest } = await import(`${location}test-hooks.js`);
-const [directory, kind, mode] = process.argv.slice(2);
+const [directory, kind, mode, boundary = "stage"] = process.argv.slice(2);
 configureFsSafeNative({ mode });
 const target = path.join(directory, "state"), lockPath = `${target}.lock`;
 const stdout = fs.writeSync.bind(fs);
@@ -34,7 +34,13 @@ fsp.open = async (...args) => {
   }
   return handle;
 };
-__setFsSafeTestHooksForTest({ beforeSidecarLockPublish: suspend });
+if (boundary === "linked") {
+  const link = fs.linkSync;
+  fs.linkSync = (source, destination) => {
+    link(source, destination);
+    if (destination === lockPath) suspend(destination, source);
+  };
+} else __setFsSafeTestHooksForTest({ beforeSidecarLockPublish: suspend });
 const options = {
   payload: () => ({ pid: process.pid, owner: "child" }), timeoutMs: 0,
   retry: { retries: 0 }, staleMs: Infinity,

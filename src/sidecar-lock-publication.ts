@@ -11,7 +11,15 @@ import { getNativeBinding } from "./native.js";
 import { noReplaceUnavailable } from "./native-noreplace.js";
 import type { NativeWriteParent } from "./pinned-write-types.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
-import { syncFileBestEffortSync } from "./file-sync.js";
+
+function optionalDirectoryPersistence(error: unknown): boolean {
+  return ["EACCES", "EPERM", "EINVAL", "ENOTSUP", "EOPNOTSUPP"].includes((error as NodeJS.ErrnoException)?.code ?? "");
+}
+
+function openPublicationParent(target: string): number | undefined {
+  try { return fs.openSync(path.dirname(target), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0)); }
+  catch (error) { if (!optionalDirectoryPersistence(error)) throw error; }
+}
 
 export type SidecarPublicationOptions = {
   nativeParent?: NativeWriteParent;
@@ -40,8 +48,8 @@ class SidecarPublication {
     if (!options.nativeParent) {
       const binding = getNativeBinding();
       if (binding && (binding.renameNoReplace || binding.linkBeneath)) {
-        this.ownedParent = fs.openSync(path.dirname(targetPath), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0));
-        options = { ...options, nativeParent: { fd: this.ownedParent, binding } };
+        this.ownedParent = openPublicationParent(targetPath);
+        if (this.ownedParent !== undefined) options = { ...options, nativeParent: { fd: this.ownedParent, binding } };
       }
     }
     this.options = options;
@@ -126,11 +134,13 @@ class SidecarPublication {
       this.removeTemporary(fd);
     }
     this.assertNamed(this.targetPath, fd, 1n);
-    if (native) syncFileBestEffortSync(native.fd);
-    else if (process.platform !== "win32") {
-      const parent = fs.openSync(path.dirname(this.targetPath), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0));
-      try { this.options.assertCurrent?.(); syncFileBestEffortSync(parent); }
-      finally { fs.closeSync(parent); }
+    const parent = native?.fd ?? (process.platform !== "win32" ? openPublicationParent(this.targetPath) : undefined);
+    if (parent !== undefined) {
+      try {
+        this.assertParent();
+        try { fs.fsyncSync(parent); }
+        catch (error) { if (!optionalDirectoryPersistence(error)) throw error; }
+      } finally { if (!native) fs.closeSync(parent); }
     }
     this.assertNamed(this.targetPath, fd, 1n);
     return true;

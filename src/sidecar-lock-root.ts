@@ -1,5 +1,7 @@
 import path from "node:path";
-import { sidecarPublicationPending } from "./sidecar-lock-staging.js";
+import { cleanupSidecarStages, sidecarPublicationPending } from "./sidecar-lock-staging.js";
+import { admitFileLockSyncRootPath, assertFileLockSyncRootPathsCurrent, assertFileLockSyncRootResolvedPathCurrent, captureFileLockSyncRootAuthority } from "./file-lock-sync-root.js";
+import { assertRetainedParentCurrent, observeDirectory } from "./file-lock-sync-root-io.js";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
@@ -7,10 +9,19 @@ import { isNotFoundPathError } from "./path.js";
 import type { OpenResult, Root } from "./root-impl.js";
 import { resolveRootPath } from "./root-path.js";
 
-export async function rootSidecarPublicationPending(lockRoot: Root, relative: string): Promise<boolean> {
+export async function rootSidecarPublicationPending(lockRoot: Root, relative: string, cleanAbandoned = false): Promise<boolean> {
   const resolved = await lockRoot.resolve(relative);
   const parent = path.dirname(resolved);
   const identity = await inspectDirectoryIdentity(parent);
+  if (cleanAbandoned) {
+    const admitted = admitFileLockSyncRootPath(captureFileLockSyncRootAuthority(lockRoot), resolved);
+    const receipt = observeDirectory(path.dirname(admitted.path));
+    cleanupSidecarStages(admitted.path, () => {
+      assertFileLockSyncRootPathsCurrent([admitted]);
+      assertFileLockSyncRootResolvedPathCurrent(admitted);
+      assertRetainedParentCurrent(admitted, receipt);
+    });
+  }
   const pending = sidecarPublicationPending(resolved);
   await inspectDirectoryIdentity(parent, identity);
   return pending && await lockRoot.resolve(relative) === resolved;

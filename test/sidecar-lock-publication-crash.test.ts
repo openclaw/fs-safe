@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { expect, it } from "vitest";
-import { acquireFileLock } from "../src/file-lock.js";
+import { acquireFileLock, acquireFileLockSync } from "../src/file-lock.js";
+import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -53,3 +54,44 @@ for (const mode of ["auto", "off"]) {
     }
   });
 }
+
+it.each(["raw-async", "raw-sync", "root-async", "root-sync"])("%s recovers a killed publisher after the final hardlink exists", async kind => {
+  const directory = await tempRoot("fs-safe-linked-crash-");
+  const child = spawn(process.execPath, [fixture, directory, kind, "off", "linked"], {
+    env: { ...process.env, NODE_ENV: "test" }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit");
+  let stderr = "";
+  child.stderr.on("data", data => { stderr += data; });
+  try {
+    const publication = await new Promise<{ final: string; temporary: string; pid: number }>((resolve, reject) => {
+      let output = "";
+      child.stdout.on("data", data => {
+        output += data;
+        if (output.includes("\n")) resolve(JSON.parse(output.split("\n")[0]));
+      });
+      child.once("error", reject);
+      child.once("exit", code => reject(new Error(`child exited ${code}: ${stderr}`)));
+    });
+    expect(publication.pid).toBe(child.pid);
+    expect((await fs.stat(publication.final)).nlink).toBe(2);
+    expect(JSON.parse(await fs.readFile(publication.final, "utf8"))).toEqual({ pid: child.pid, owner: "child" });
+    child.kill("SIGKILL");
+    await exited;
+    const options = {
+      payload: () => ({ owner: "recovered" }), staleMs: 0, shouldReclaim: () => true, shouldRemoveStaleLock: () => true,
+      staleRecovery: "remove-if-unchanged" as const, timeoutMs: Infinity,
+      retry: { retries: 2, minTimeout: 0, maxTimeout: 0 },
+      ...(kind.startsWith("root") ? { lockRoot: await root(directory) } : {}),
+    };
+    const target = path.join(directory, "state");
+    const owner = kind.endsWith("async") ? await acquireFileLock(target, options) : acquireFileLockSync(target, options);
+    try {
+      expect(await fs.readdir(directory)).toEqual(["state.lock"]);
+      expect(JSON.parse(await fs.readFile(publication.final, "utf8"))).toEqual({ owner: "recovered" });
+    } finally { await owner.release(); }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await exited;
+  }
+});
