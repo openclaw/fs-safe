@@ -1,19 +1,26 @@
 import fsp from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTempDirs } from "./helpers/vitest.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 
 const { tempRoot } = useTempDirs();
-
+const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  Object.defineProperty(process, "platform", platform);
   configureFsSafeNative({ mode: "auto" });
 });
 
-describe.runIf(process.platform === "win32")("Windows sidecar lock denials", () => {
+describe("Windows sidecar lock denials (synthetic classification; real files)", () => {
+  beforeEach(() => {
+    configureFsSafeNative({ mode: "off" });
+    Object.defineProperty(process, "platform", { value: "win32" });
+    vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
+  });
   // Windows denies access to a lock file while a just-unlinked directory entry is
   // still being torn down. Both touch points below observed it in CI as EPERM.
   const denial = (lockPath: string) =>
