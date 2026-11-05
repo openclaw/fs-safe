@@ -200,3 +200,27 @@ it.each(kinds)("%s preserves a replacement after a post-publication failure", as
   expect(await promises.readFile(final, "utf8")).toBe('{"owner":"successor"}');
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
 });
+
+it.each(["raw-async", "raw-sync"] as const)("%s preserves failed-placeholder cleanup without publication support", async kind => {
+  configureFsSafeNative({ mode: "off" });
+  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
+  const directory = await tempRoot("fs-safe-placeholder-failure-");
+  const target = path.join(directory, "state"), final = `${target}.lock`;
+  const failure = Object.assign(new Error("placeholder write failed"), { code: "EIO" });
+  if (kind === "raw-async") {
+    const open = promises.open;
+    vi.spyOn(promises, "open").mockImplementation(async (...args) => {
+      const handle = await Reflect.apply(open, promises, args);
+      if (args[0] === final) vi.spyOn(handle, "writeFile").mockRejectedValueOnce(failure);
+      return handle;
+    });
+  } else {
+    const write = fs.writeFileSync;
+    vi.spyOn(fs, "writeFileSync").mockImplementation((...args) => {
+      if (fs.existsSync(final)) throw failure;
+      return Reflect.apply(write, fs, args);
+    });
+  }
+  await expect(acquire(target, kind)).rejects.toBe(failure);
+  expect(await promises.readdir(directory)).toEqual([]);
+});

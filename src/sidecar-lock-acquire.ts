@@ -305,6 +305,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, "wx", 0o600),
           { onConflict: failedOpen, onOpenFailure: failedOpen });
           handle = created.handle;
+          if (created.complete) createdSnapshot = { raw, payload, stat: created.identity, ownershipToken };
           if (!created.complete) {
             await handle.writeFile(raw, "utf8");
           }

@@ -137,9 +137,9 @@ export function createFileLockSyncRootFile(
       fs.writeFileSync(fd, raw, "utf8");
       fs.fsyncSync(fd);
     }
-    const opened = inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
-    assertRegularFile(opened, pathAuthority.authority.hardlinks);
+    const opened = created.identity ?? inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
     receipt = Object.freeze({ identity: exactFileIdentity(opened), parent });
+    assertRegularFile(opened, pathAuthority.authority.hardlinks);
     if (!fileReceiptCurrentAfterParentCheck(pathAuthority, receipt)) {
       throw new FsSafeError("path-mismatch", "created sidecar lock changed before admission");
     }

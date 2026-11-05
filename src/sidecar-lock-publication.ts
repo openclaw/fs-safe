@@ -63,12 +63,13 @@ class SidecarPublication {
       throw new FsSafeError("path-mismatch", "sidecar publication parent changed");
     }
   }
-  remember(fd: number): void {
+  remember(fd: number): BigIntStats {
     this.identity = fs.fstatSync(fd, { bigint: true });
     if (this.options.requireExactIdentity && (!this.identity.isFile() || this.identity.nlink !== 1n ||
       !sameFileIdentityForCleanup(this.identity, this.identity))) {
       throw new FsSafeError("path-mismatch", "sidecar stage has no exact creation identity");
     }
+    return this.identity;
   }
   private assertNamed(name: string, fd: number, links: bigint): void {
     this.assertParent();
@@ -165,17 +166,17 @@ export function createSidecarFileSync(
   targetPath: string, raw: string,
   open: (pathname: string) => number,
   options: SidecarPublicationOptions = {},
-): { fd: number; complete: boolean } {
+): { fd: number; complete: boolean; identity?: BigIntStats } {
   const publication = new SidecarPublication(targetPath, raw, options);
   let fd: number | undefined;
   try {
     publication.assertParent();
     fd = open(publication.temporaryPath);
-    publication.remember(fd);
+    const identity = publication.remember(fd);
     options.prepare?.(fd);
     fs.writeFileSync(fd, raw, "utf8");
     fs.fsyncSync(fd);
-    if (publication.publish(fd)) return { fd, complete: true };
+    if (publication.publish(fd)) return { fd, complete: true, identity };
     publication.removeTemporary(fd);
     const completed = fd;
     fd = undefined;
@@ -202,17 +203,17 @@ export function createSidecarFileSync(
 export async function createSidecarFile<T extends { fd: number; close(): Promise<void>; writeFile(data: string, encoding: BufferEncoding): Promise<void> }>(
   targetPath: string, raw: string, open: (pathname: string) => Promise<T>,
   options: SidecarPublicationOptions = {},
-): Promise<{ handle: T; complete: boolean }> {
+): Promise<{ handle: T; complete: boolean; identity?: BigIntStats }> {
   const publication = new SidecarPublication(targetPath, raw, options);
   let handle: T | undefined;
   try {
     publication.assertParent();
     handle = await open(publication.temporaryPath);
-    publication.remember(handle.fd);
+    const identity = publication.remember(handle.fd);
     options.prepare?.(handle.fd);
     await handle.writeFile(raw, "utf8");
     fs.fsyncSync(handle.fd);
-    if (publication.publish(handle.fd)) return { handle, complete: true };
+    if (publication.publish(handle.fd)) return { handle, complete: true, identity };
     publication.removeTemporary(handle.fd);
     const completed = handle;
     handle = undefined;

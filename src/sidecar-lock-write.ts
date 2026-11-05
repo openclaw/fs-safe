@@ -2,6 +2,7 @@ import fs from "node:fs";
 import promises from "node:fs/promises";
 import path from "node:path";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { createSuppressedError } from "./suppressed-error.js";
 import { FsSafeError } from "./errors.js";
 import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { recordFileObservationFailure } from "./file-observation.js";
@@ -78,9 +79,10 @@ async function writeAtParent(
     }
   }, { nativeParent: native, assertCurrent, onConflict, prepare: fd => fs.fchmodSync(fd, params.mode), requireExactIdentity: true });
   const handle = created.handle;
+  let failure: { error: unknown } | undefined;
   try {
+    const identity = created.identity ?? fs.fstatSync(handle.fd, { bigint: true });
     if (!created.complete) {
-      const identity = fs.fstatSync(handle.fd, { bigint: true });
       try {
         fs.fchmodSync(handle.fd, params.mode);
         await handle.writeFile(raw, "utf8");
@@ -93,11 +95,29 @@ async function writeAtParent(
         throw error;
       }
     }
-    assertCurrent();
-    const identity = fs.fstatSync(handle.fd, { bigint: true });
-    await params.verifyPublished?.(handle.fd, identity, parent, native);
+    try {
+      assertCurrent();
+      await params.verifyPublished?.(handle.fd, identity, parent, native);
+    } catch (error) {
+      if (!native) {
+        try {
+          assertCurrent();
+          await cleanupPinnedFilePath({ pathname: target, handle, identity, parentGuard: parent, throwOnCleanupError: true });
+        } catch (cleanupError) {
+          throw createSuppressedError(cleanupError, error, "sidecar verification and cleanup both failed");
+        }
+      }
+      throw error;
+    }
     return { dev: identity.dev, ino: identity.ino };
+  } catch (error) {
+    failure = { error };
+    throw error;
   } finally {
-    await handle.close();
+    try { await handle.close(); }
+    catch (closeError) {
+      if (failure) throw createSuppressedError(closeError, failure.error, "sidecar write and close both failed");
+      throw closeError;
+    }
   }
 }

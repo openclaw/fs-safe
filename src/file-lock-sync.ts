@@ -283,9 +283,10 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         createdSnapshot = {
           raw,
           payload,
-          stat: fs.fstatSync(fd, { bigint: true }),
+          stat: created.identity,
           ownershipToken,
         };
+        createdSnapshot.stat = fs.fstatSync(fd, { bigint: true });
         createdHeld = {
           fd,
           lockPath,
