@@ -1,6 +1,6 @@
 import path from "node:path";
 import { cleanupSidecarStages, sidecarPublicationPending } from "./sidecar-lock-staging.js";
-import { admitFileLockSyncRootPath, assertFileLockSyncRootPathsCurrent, assertFileLockSyncRootResolvedPathCurrent, captureFileLockSyncRootAuthority } from "./file-lock-sync-root.js";
+import { admitFileLockSyncRootPath, assertFileLockSyncRootMutationAllowed, assertFileLockSyncRootPathsCurrent, assertFileLockSyncRootResolvedPathCurrent, captureFileLockSyncRootAuthority } from "./file-lock-sync-root.js";
 import { assertRetainedParentCurrent, observeDirectory } from "./file-lock-sync-root-io.js";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -16,10 +16,11 @@ export async function rootSidecarPublicationPending(lockRoot: Root, relative: st
   if (cleanAbandoned) {
     const admitted = admitFileLockSyncRootPath(captureFileLockSyncRootAuthority(lockRoot), resolved);
     const receipt = observeDirectory(path.dirname(admitted.path));
-    cleanupSidecarStages(admitted.path, () => {
+    cleanupSidecarStages(admitted.path, candidate => {
       assertFileLockSyncRootPathsCurrent([admitted]);
       assertFileLockSyncRootResolvedPathCurrent(admitted);
       assertRetainedParentCurrent(admitted, receipt);
+      if (candidate) assertFileLockSyncRootMutationAllowed(candidate, admitted.authority.denyMutations);
     });
   }
   const pending = sidecarPublicationPending(resolved);

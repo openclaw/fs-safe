@@ -74,6 +74,7 @@ export type PinnedWriteParams = {
   strictFileSync?: boolean;
   overwrite?: boolean;
   assertBeforeMutation?: () => void;
+  assertSidecarCleanupCandidate?: (candidate: string) => void;
   rejectFinalSymlink?: boolean;
   maxBytes?: number;
   input: PinnedWriteInput;

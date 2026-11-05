@@ -77,7 +77,10 @@ async function writeAtParent(
       if (pathname === target) onConflict(error);
       throw error;
     }
-  }, { nativeParent: native, assertCurrent, onConflict, prepare: fd => fs.fchmodSync(fd, params.mode), requireExactIdentity: true });
+  }, {
+    nativeParent: native, assertCurrent, assertCleanupCandidate: params.assertSidecarCleanupCandidate,
+    onConflict, prepare: fd => fs.fchmodSync(fd, params.mode), requireExactIdentity: true,
+  });
   const handle = created.handle;
   let failure: { error: unknown } | undefined;
   try {

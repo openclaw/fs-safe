@@ -131,7 +131,10 @@ export function createFileLockSyncRootFile(
         if (pathname === pathForWindowsFilesystem(pathAuthority.path)) options.onOpenFailure(error);
         throw error;
       }
-    }, { assertCurrent, onConflict: options.onOpenFailure, requireExactIdentity: true });
+    }, {
+      assertCurrent, onConflict: options.onOpenFailure, requireExactIdentity: true,
+      assertCleanupCandidate: candidate => assertFileLockSyncRootMutationAllowed(candidate, pathAuthority.authority.denyMutations),
+    });
     fd = created.fd;
     const opened = created.identity ?? inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
     receipt = Object.freeze({ identity: exactFileIdentity(opened), parent });

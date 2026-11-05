@@ -24,6 +24,7 @@ function openPublicationParent(target: string): number | undefined {
 export type SidecarPublicationOptions = {
   nativeParent?: NativeWriteParent;
   assertCurrent?: () => void;
+  assertCleanupCandidate?: (candidate: string) => void;
   onConflict?: (error: unknown) => void;
   prepare?: (fd: number) => void;
   requireExactIdentity?: boolean;
@@ -58,7 +59,10 @@ class SidecarPublication {
         ? fs.fstatSync(options.nativeParent.fd, { bigint: true })
         : fs.statSync(path.dirname(targetPath), { bigint: true });
       this.temporaryPath = sidecarStagingPath(targetPath);
-      cleanupSidecarStages(targetPath, () => this.assertParent(), options.nativeParent);
+      cleanupSidecarStages(targetPath, candidate => {
+        this.assertParent();
+        if (candidate) options.assertCleanupCandidate?.(candidate);
+      }, options.nativeParent);
     } catch (error) {
       this.close();
       throw error;

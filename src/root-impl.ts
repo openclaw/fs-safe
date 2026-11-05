@@ -1125,6 +1125,9 @@ async function writeFileInRoot(
     params = { ...params, private: permissions.private, mode: permissions.mode };
   }
   const input = rootWriteInput(params);
+  if (input.kind === "buffer" && input.sidecar) {
+    params = { ...params, ...snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) };
+  }
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
       !params.private && input.kind === "buffer" && !input.sidecar && !input.stageBeforePublish && process.platform === "win32" &&
@@ -1184,6 +1187,8 @@ async function commitPinnedWriteInRoot(
       rootIdentity: root.rootIdentity,
       mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
+      assertSidecarCleanupCandidate: input.kind === "buffer" && input.sidecar
+        ? candidate => assertMutationNotDenied(candidate, params.denyMutations) : undefined,
       verifyPublished: async (fd, expectedIdentity, parentGuard, nativeParent) => {
         verifyingPublication = true;
         try {

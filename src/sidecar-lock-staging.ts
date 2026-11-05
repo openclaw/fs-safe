@@ -21,12 +21,12 @@ function ownerAbsent(pid: number): boolean {
 
 // Opportunistic and bounded: never inspect or remove the final lock, another
 // target's staging namespace, a live PID, or an unverifiable file identity.
-export function cleanupSidecarStages(target: string, assertCurrent: () => void, native?: NativeWriteParent): void {
+export function cleanupSidecarStages(target: string, assertCurrent: (candidate?: string) => void, native?: NativeWriteParent): void {
   const directory = path.dirname(target), prefix = stagingPrefix(target);
   let entries: fs.Dir | undefined;
   let authorityFailure: { error: unknown } | undefined;
-  const assertAuthority = () => {
-    try { assertCurrent(); }
+  const assertAuthority = (candidate?: string) => {
+    try { assertCurrent(candidate); }
     catch (error) { authorityFailure = { error }; throw error; }
   };
   try {
@@ -44,14 +44,14 @@ export function cleanupSidecarStages(target: string, assertCurrent: () => void, 
       const candidate = path.join(directory, entry.name);
       let fd: number | undefined;
       try {
-        assertAuthority();
+        assertAuthority(candidate);
         const before = fs.lstatSync(candidate, { bigint: true });
         if (!before.isFile() || before.isSymbolicLink() || before.nlink > 2n ||
           (process.getuid && before.uid !== BigInt(process.getuid()))) continue;
         fd = fs.openSync(candidate, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
         const held = fs.fstatSync(fd, { bigint: true });
         if (!sameFileIdentityForCleanup(before, held)) continue;
-        assertAuthority();
+        assertAuthority(candidate);
         const current = fs.lstatSync(candidate, { bigint: true });
         if (!sameFileIdentityForCleanup(current, held) || !ownerAbsent(pid)) continue;
         if (native?.binding.removeStagedFile) native.binding.removeStagedFile(native.fd, entry.name, fd);
