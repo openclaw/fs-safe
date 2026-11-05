@@ -4,7 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { readFileHandleBounded } from "./bounded-read.js";
-import { openSidecarRoot } from "./sidecar-lock-root.js";
+import { openSidecarRoot, rootSidecarPublicationPending } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile } from "./native-operations.js";
 import { createSidecarFile } from "./sidecar-lock-publication.js";
 import {
@@ -268,6 +268,14 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               }),
             }));
           } catch (error) {
+            let cause: unknown = error;
+            for (let depth = 0; depth < 4 && cause && typeof cause === "object"; depth++) {
+              if (observation.has(cause, "hardlink") && await rootSidecarPublicationPending(lockRoot, relativeLockPath)) {
+                exclusiveCreateConflict = true;
+                throw Object.assign(new Error("sidecar publication in progress"), { code: "EEXIST" });
+              }
+              cause = Object.getOwnPropertyDescriptor(cause, "cause")?.value;
+            }
             // Only this invocation's failed exclusive open grants denial retry authority.
             lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&
               isTransientLockFileDenial(error, lockPath);

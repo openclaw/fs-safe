@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanupSidecarStages, sidecarStagingPath } from "../src/sidecar-lock-staging.js";
+import { cleanupSidecarStages, sidecarPublicationPending, sidecarStagingPath } from "../src/sidecar-lock-staging.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -76,4 +76,28 @@ it.runIf(process.platform !== "win32")("preserves a staging-shaped symlink and i
   cleanupSidecarStages(target, () => {});
   expect(fs.lstatSync(stage).isSymbolicLink()).toBe(true);
   expect(fs.readFileSync(target, "utf8")).toBe("live owner");
+});
+
+it("recognizes publication beyond the cleanup budget without mutating any entry", async () => {
+  const directory = await tempRoot("fs-safe-stage-observe-");
+  const target = path.join(directory, "state.lock"), stage = sidecarStagingPath(target);
+  fs.writeFileSync(stage, "complete");
+  fs.linkSync(stage, target);
+  const entries = [...Array.from({ length: 80 }, (_, i) => ({ name: `unrelated-${i}` })), { name: path.basename(stage) }];
+  vi.spyOn(fs, "opendirSync").mockReturnValue({ readSync: () => entries.shift() ?? null, closeSync() {} } as fs.Dir);
+  const remove = vi.spyOn(fs, "unlinkSync");
+  expect(sidecarPublicationPending(target)).toBe(true);
+  expect(remove).not.toHaveBeenCalled();
+  expect(fs.statSync(target).nlink).toBe(2);
+});
+
+it("does not mistake a matching stage name with a different identity for publication", async () => {
+  const directory = await tempRoot("fs-safe-stage-impostor-");
+  const target = path.join(directory, "state.lock"), stage = sidecarStagingPath(target);
+  const foreign = path.join(directory, "foreign");
+  fs.writeFileSync(foreign, "foreign");
+  fs.linkSync(foreign, target);
+  fs.writeFileSync(stage, "unrelated stage");
+  expect(sidecarPublicationPending(target)).toBe(false);
+  expect(fs.readFileSync(target, "utf8")).toBe("foreign");
 });

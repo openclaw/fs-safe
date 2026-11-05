@@ -10,6 +10,7 @@ import { hardlinkedPathNotAllowedError } from "./root-errors.js";
 import type { RootDefaults } from "./root-options.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { realpathSync } from "./realpath.js";
+import { sidecarPublicationPending } from "./sidecar-lock-staging.js";
 import {
   sidecarLockSnapshotMatches,
 } from "./sidecar-lock-reclaim.js";
@@ -148,6 +149,10 @@ export function readFileLockSyncRootSnapshot(
     )) return missingAfterCurrentRead(pathAuthority, expectedReceipt);
     throw error;
   }
+  if (!expectedReceipt && before.nlink === 2n && sidecarPublicationPending(pathAuthority.path)) {
+    assertFreshPathCurrent(pathAuthority);
+    return null;
+  }
   assertRegularFile(before, pathAuthority.authority.hardlinks);
   const parent = expectedReceipt?.parent ?? observeDirectory(path.dirname(pathAuthority.path));
   let fd: number | undefined;
@@ -179,6 +184,10 @@ export function readFileLockSyncRootSnapshot(
       }
       throw error;
     }
+    if (!expectedReceipt && opened.nlink === 2n && sidecarPublicationPending(pathAuthority.path)) {
+      assertFreshPathCurrent(pathAuthority);
+      return null;
+    }
     assertRegularFile(opened, pathAuthority.authority.hardlinks);
     const raw = readFileDescriptorBoundedSync(fd, MAX_SIDECAR_LOCK_PAYLOAD_BYTES).toString("utf8");
     let after: BigIntStats;
@@ -199,6 +208,10 @@ export function readFileLockSyncRootSnapshot(
         return null;
       }
       throw error;
+    }
+    if (!expectedReceipt && after.nlink === 2n && sidecarPublicationPending(pathAuthority.path)) {
+      assertFreshPathCurrent(pathAuthority);
+      return null;
     }
     assertRegularFile(after, pathAuthority.authority.hardlinks);
     const stat = fs.fstatSync(fd, { bigint: true });

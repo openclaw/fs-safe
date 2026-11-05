@@ -202,9 +202,9 @@ export function removeFileLockSyncRootFile(
     if (isNotFoundPathError(error)) return true;
     throw error;
   }
-  assertRegularFile(successorStat, pathAuthority.authority.hardlinks);
   assertRetainedParentCurrent(pathAuthority, receipt.parent);
   if (!sameExactIdentity(exactFileIdentity(successorStat), receipt.identity)) return true;
+  assertRegularFile(successorStat, pathAuthority.authority.hardlinks);
   if (expected) {
     const successor = readFileLockSyncRootSnapshot(pathAuthority);
     assertRetainedParentCurrent(pathAuthority, receipt.parent);
@@ -227,9 +227,9 @@ export function removeFileLockSyncRootFile(
         }
         throw error;
       }
-      assertRegularFile(current, pathAuthority.authority.hardlinks);
       assertRetainedParentCurrent(pathAuthority, receipt.parent);
       if (!sameExactIdentity(exactFileIdentity(current), receipt.identity)) return true;
+      assertRegularFile(current, pathAuthority.authority.hardlinks);
     }
   }
   throw new FsSafeError("path-mismatch", "sidecar lock was replaced during removal");

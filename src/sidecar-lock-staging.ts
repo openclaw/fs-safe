@@ -66,3 +66,28 @@ export function cleanupSidecarStages(target: string, assertCurrent: () => void, 
     // Denied enumeration must not turn a working exclusive create into a failure.
   } finally { try { entries?.closeSync(); } catch { /* Best effort. */ } }
 }
+// This is observation only: readers still reject the linked record and retry.
+// Unlike bounded orphan cleanup, recognition streams the directory to avoid
+// mistaking a live publisher for a foreign hardlink in a large directory.
+export function sidecarPublicationPending(target: string): boolean {
+  let entries: fs.Dir | undefined;
+  try {
+    const current = fs.lstatSync(target, { bigint: true, throwIfNoEntry: false });
+    if (!current) return true;
+    if (!current.isFile() || current.isSymbolicLink()) return false;
+    if (current.nlink === 1n) return true;
+    if (current.nlink !== 2n) return false;
+    const prefix = stagingPrefix(target);
+    entries = fs.opendirSync(path.dirname(target));
+    for (;;) {
+      const entry = entries.readSync();
+      if (!entry) break;
+      if (!entry.name.startsWith(prefix) || !/^[1-9]\d*-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/.test(entry.name.slice(prefix.length))) continue;
+      const stage = fs.lstatSync(path.join(path.dirname(target), entry.name), { bigint: true, throwIfNoEntry: false });
+      if (stage?.isFile() && !stage.isSymbolicLink() && sameFileIdentityForCleanup(stage, current)) return true;
+    }
+    const after = fs.lstatSync(target, { bigint: true, throwIfNoEntry: false });
+    return !after || !sameFileIdentityForCleanup(after, current) || after.nlink === 1n;
+  } catch { return false; }
+  finally { try { entries?.closeSync(); } catch { /* Observation remains inconclusive. */ } }
+}
