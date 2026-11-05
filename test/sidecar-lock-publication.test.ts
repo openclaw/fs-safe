@@ -201,7 +201,7 @@ it.each(kinds)("%s preserves a replacement after a post-publication failure", as
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
 });
 
-it.each(["raw-async", "raw-sync"] as const)("%s preserves failed-placeholder cleanup without publication support", async kind => {
+it.each(["raw-async", "raw-sync", "root-sync"] as const)("%s preserves failed-placeholder cleanup without publication support", async kind => {
   configureFsSafeNative({ mode: "off" });
   vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
   const directory = await tempRoot("fs-safe-placeholder-failure-");
@@ -221,6 +221,21 @@ it.each(["raw-async", "raw-sync"] as const)("%s preserves failed-placeholder cle
       return Reflect.apply(write, fs, args);
     });
   }
+  await expect(acquire(target, kind)).rejects.toBe(failure);
+  expect(await promises.readdir(directory)).toEqual([]);
+});
+
+it.each(["raw-sync", "root-sync"] as const)("%s removes an owned fallback placeholder when flushing fails", async kind => {
+  configureFsSafeNative({ mode: "off" });
+  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
+  const directory = await tempRoot("fs-safe-placeholder-sync-failure-");
+  const target = path.join(directory, "state"), final = `${target}.lock`;
+  const failure = Object.assign(new Error("placeholder flush failed"), { code: "EIO" });
+  const sync = fs.fsyncSync;
+  vi.spyOn(fs, "fsyncSync").mockImplementation(fd => {
+    if (fs.existsSync(final)) throw failure;
+    sync(fd);
+  });
   await expect(acquire(target, kind)).rejects.toBe(failure);
   expect(await promises.readdir(directory)).toEqual([]);
 });
