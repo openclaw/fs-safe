@@ -384,6 +384,13 @@ type TempFile = {
 };
 ```
 
+`tempFile()` and its `file()` method preserve safe Unicode filenames, including
+CJK text, accents, and emoji. They select a basename, replace unsafe punctuation,
+whitespace, and control characters, and protect Windows device names. Overlong
+names are shortened to 255 UTF-8 bytes as written and under NFC/NFD, preserving
+the extension when possible. The separate safe-path-segment identifier helpers
+remain ASCII-only.
+
 The default `cleanupSafety: "compatible"` retains the historical temp-file
 behavior without loading or probing the native helper. Cleanup captures the
 directory identity at creation time and preserves a replacement observed by
