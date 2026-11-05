@@ -194,6 +194,7 @@ describe.runIf(nativeSupported)("native Windows secure descriptor ACL inspection
     ["malformed ACL facts", "permission-unverified", "malformed-security"],
     ["remote locality", "permission-unverified", "remote"],
     ["foreign owner", "not-owned", "foreign"],
+    ["synthetic TrustedInstaller writer", "insecure-permissions", "servicing"],
   ] as const)("closes without reading on %s", async (_name, code, behavior) => {
     const filePath = await privateFile(`failure-${behavior}`);
     const watched = watchNextRead();
@@ -220,6 +221,22 @@ describe.runIf(nativeSupported)("native Windows secure descriptor ACL inspection
             return {
               identity: exactIdentity(fd),
               security: { ...safeSecurity(), ownerClass: "foreign", ownerSid: "s-1-5-21-99" },
+            };
+          }
+          if (behavior === "servicing") {
+            return {
+              identity: exactIdentity(fd),
+              security: {
+                ...safeSecurity(), groupReadable: true, groupWritable: true,
+                aces: [{
+                  sid: "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+                  mask: 0x001f01ff, aceType: "allow",
+                  flags: {
+                    raw: 0, objectInherit: false, containerInherit: false, noPropagateInherit: false,
+                    inheritOnly: false, inherited: false, successfulAccess: false, failedAccess: false,
+                  },
+                }],
+              },
             };
           }
           return {
