@@ -6,7 +6,7 @@ import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { readFileHandleBounded } from "./bounded-read.js";
 import { openSidecarRoot } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile } from "./native-operations.js";
-import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
+import { createSidecarFile } from "./sidecar-lock-publication.js";
 import {
   sidecarLockRetryDelay,
   sidecarLockTimeout,
@@ -301,16 +301,13 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             exclusiveCreateConflict = (createError as NodeJS.ErrnoException).code === "EEXIST";
             throw createError;
           };
-          handle = await createNativeExclusiveFile(lockPath, 0o600).catch(failedOpen) ?? null;
-          if (!handle) {
-            try { assertExclusiveCreateLeaf(lockPath); }
-            catch (error) {
-              exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
-              throw error;
-            }
-            handle = await fs.open(lockPath, "wx", 0o600).catch(failedOpen);
+          const created = await createSidecarFile(lockPath, raw, async pathname =>
+            await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, "wx", 0o600),
+          { onConflict: failedOpen });
+          handle = created.handle;
+          if (!created.complete) {
+            await handle.writeFile(raw, "utf8");
           }
-          await handle.writeFile(raw, "utf8");
         }
         const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd, { bigint: true }), ownershipToken };
         createdSnapshot = snapshot;

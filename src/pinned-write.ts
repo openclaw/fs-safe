@@ -25,6 +25,7 @@ import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import type { MutationDirectoryObservation } from "./pinned-mutation-observation.js";
 import type { PinnedWriteParams, RenameIdentityPolicy } from "./pinned-write-types.js";
+import { writeSidecarAtParent } from "./sidecar-lock-write.js";
 import { copyLinkAtParent } from "./copy-link.js";
 
 function assertSafeBasename(basename: string): void {
@@ -286,6 +287,9 @@ async function runPinnedWriteFallback(params: PinnedWriteParams): Promise<FileId
     await assertAsyncDirectoryGuard(parentGuard);
   }
   if (params.input.kind === "link") return await copyLinkAtParent(params, params.input, parentGuard);
+  if (params.input.kind === "buffer" && params.input.sidecar) {
+    return await writeSidecarAtParent(params, parentGuard);
+  }
   if (params.overwrite === false && params.input.kind !== "file" && !params.input.stageBeforePublish) {
     const assertBeforeMutation = () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);

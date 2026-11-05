@@ -1,5 +1,5 @@
 import fs, { type BigIntStats } from "node:fs";
-import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
+import { createSidecarFileSync } from "./sidecar-lock-publication.js";
 import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -99,6 +99,7 @@ function ensureParent(pathAuthority: FileLockSyncRootPath) {
 
 export function createFileLockSyncRootFile(
   pathAuthority: FileLockSyncRootPath,
+  raw: string,
   options: {
     assertBeforeOpen: () => void;
     onOpenFailure: (error: unknown) => void;
@@ -115,21 +116,26 @@ export function createFileLockSyncRootFile(
   let fd: number | undefined;
   let receipt: FileLockSyncRootFileReceipt | undefined;
   try {
-    options.assertBeforeOpen();
-    try { assertExclusiveCreateLeaf(pathForWindowsFilesystem(pathAuthority.path)); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onOpenFailure(error);
-      throw error;
-    }
-    try {
-      fd = fs.openSync(
-        pathForWindowsFilesystem(pathAuthority.path),
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
-        0o600,
-      );
-    } catch (error) {
-      options.onOpenFailure(error);
-      throw error;
+    const assertCurrent = () => {
+      assertFileLockSyncRootResolvedPathCurrent(pathAuthority);
+      assertRetainedParentCurrent(pathAuthority, parent);
+      options.assertBeforeOpen();
+    };
+    assertCurrent();
+    const created = createSidecarFileSync(pathForWindowsFilesystem(pathAuthority.path), raw, pathname => {
+      assertCurrent();
+      try {
+        return fs.openSync(pathname,
+          fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow, 0o600);
+      } catch (error) {
+        if (pathname === pathForWindowsFilesystem(pathAuthority.path)) options.onOpenFailure(error);
+        throw error;
+      }
+    }, { assertCurrent, onConflict: options.onOpenFailure });
+    fd = created.fd;
+    if (!created.complete) {
+      fs.writeFileSync(fd, raw, "utf8");
+      fs.fsyncSync(fd);
     }
     const opened = inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
     assertRegularFile(opened, pathAuthority.authority.hardlinks);

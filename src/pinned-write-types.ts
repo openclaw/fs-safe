@@ -8,7 +8,7 @@ import type { NativeBinding } from "./native-binding.js";
 export type NativeWriteParent = Readonly<{ fd: number; binding: NativeBinding }>;
 
 export type PinnedWriteInput =
-  | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding; stageBeforePublish?: boolean }
+  | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding; sidecar?: boolean; stageBeforePublish?: boolean }
   | { kind: "stream"; stream: AsyncIterable<Uint8Array | string>; stageBeforePublish?: boolean }
   | CopyFileInput
   | CopyLinkInput;

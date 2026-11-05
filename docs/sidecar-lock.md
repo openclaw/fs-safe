@@ -2,7 +2,13 @@
 
 For [Linux kernel write leases](platform-capabilities.md#linux-write-leases), `FileWriteLease.isHeld() === false` means “do not act on the file,” including while the kernel is still processing a lease break. The caller’s `SIGIO` handler still owns break notification.
 
-`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
+`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is a sidecar file (e.g. `state.json` ↔ `state.json.lock`). Each contender writes and syncs the complete owner record, including its ownership token, to a private same-directory staging file before claiming the final name with native no-replace rename or a hardlink. Exactly one contender can publish; neither operation replaces an existing lock. This applies to raw and Root-backed acquisition, both async and sync.
+
+A crash before publication leaves no final lock; a crash after publication leaves a complete owner record. The containing directory is synced where supported. These are process-crash guarantees, not a promise against every filesystem or storage device's power-loss behavior. Hardlink publication briefly has two names for the same complete file; strict hardlink-rejecting readers can refuse during that interval. The staging link is removed before acquisition succeeds.
+
+On mounts supporting neither native no-replace rename nor hardlinks, acquisition retains the exclusive-create placeholder behavior: the final name is reserved first and then filled. A crash in that interval can still leave an empty or incomplete lock. It requires application-owned offline recovery, such as OpenClaw's Doctor guidance; fs-safe does not infer that an empty or old lock is safe to remove. It never substitutes a replacing rename.
+
+Staging files use a reserved `.fs-safe-lock-<namespace>-<pid>-<random>.tmp` name. Before staging, an acquisition examines at most 64 directory entries for abandoned stages in its own target/hostname namespace. It removes only identity-verified regular files whose local PID is confirmed absent; live or reused PIDs, other targets, unknown ownership, and ambiguous identities are preserved. A crash during hardlink publication can leave a second staging link; cleanup removes that link only, never the final lock. This bounded, best-effort cleanup may leave artifacts outside the scan or on filesystems with inconclusive identity. Applications may remove remaining staging artifacts during explicit offline recovery after stopping every owner, including other hosts sharing the directory. No age-based lock or staging reclamation is used.
 
 On Windows, both the target and an explicitly supplied `lockPath` reject NTFS
 alternate-stream and directory-index namespace spellings before parent creation,
@@ -11,12 +17,7 @@ normal meaning, and ordinary colon-bearing POSIX paths remain valid.
 
 JavaScript raw-sidecar creation passes mode `0o600` to that exclusive open. On POSIX, the process umask may further restrict the new file but cannot add group or other access. No pathname `chmod` fallback is used.
 
-Root-backed lock records and reclaim guards also claim their final name
-exclusively, including with the native backend. The native path retains the
-admitted parent descriptor and removes incomplete claims only while their exact
-identity remains owned. Ordinary Root creates still stage privately; lock records
-use this internal exclusive-create path so racing contenders can retry without
-an ambiguous rename outcome.
+Root-backed lock records and reclaim guards retain their admitted parent and native cleanup receipt through publication. Their internal create path uses the same complete-record publication while preserving the exclusive-create fallback and Root mutation policy. Ordinary Root creates retain their existing publication contract.
 
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";

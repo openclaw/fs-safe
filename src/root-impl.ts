@@ -1126,7 +1126,7 @@ async function writeFileInRoot(
   const input = rootWriteInput(params);
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
-      !params.private && input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
+      !params.private && input.kind === "buffer" && !input.sidecar && !input.stageBeforePublish && process.platform === "win32" &&
       (params.renameIdentity === "verify-content-with-lock" || !getPinnedWriteNativeBinding({ input }))
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
@@ -1206,6 +1206,7 @@ async function commitPinnedWriteInRoot(
     if (params.overwrite === false && isAlreadyExistsError(error)) {
       throw new FsSafeError("already-exists", "file already exists", errorCauseOptions(error));
     }
+    if (input.kind === "buffer" && input.sidecar) throw error;
     throw normalizePinnedWriteError(error);
   }
 }

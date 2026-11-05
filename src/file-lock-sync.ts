@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
+import { createSidecarFileSync } from "./sidecar-lock-publication.js";
 import { acquireFileLockSyncWithRoot } from "./file-lock-sync-root-acquire.js";
 import { withSyncHeldLockHandle } from "./file-lock-sync-root-held.js";
 import path from "node:path";
@@ -262,24 +262,24 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           process.platform !== "win32" && typeof fs.constants.O_NOFOLLOW === "number"
             ? fs.constants.O_NOFOLLOW
             : 0;
-        try { assertExclusiveCreateLeaf(lockPath); }
-        catch (error) {
-          exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
-          throw error;
-        }
-        try {
-          fd = fs.openSync(
-            lockPath,
-            fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
-            0o600,
-          );
-        } catch (error) {
+        const failedOpen = (error: unknown) => {
           lockFileCreateDenied = isTransientLockFileDenial(error, lockPath);
           exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
-          throw error;
+        };
+        const created = createSidecarFileSync(lockPath, raw, pathname => {
+          try {
+            return fs.openSync(pathname,
+              fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow, 0o600);
+          } catch (error) {
+            if (pathname === lockPath) failedOpen(error);
+            throw error;
+          }
+        }, { onConflict: failedOpen });
+        fd = created.fd;
+        if (!created.complete) {
+          fs.writeFileSync(fd, raw, "utf8");
+          fs.fsyncSync(fd);
         }
-        fs.writeFileSync(fd, raw, "utf8");
-        fs.fsyncSync(fd);
         createdSnapshot = {
           raw,
           payload,

@@ -194,7 +194,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       let unpublishedTimer: NodeJS.Timeout | undefined;
       let lockFileCreateOpenFailure: { error: unknown } | undefined;
       try {
-        const created = createFileLockSyncRootFile(lockRootPath, {
+        const created = createFileLockSyncRootFile(lockRootPath, raw, {
           assertBeforeOpen: () => {
             acquisition.assert();
             if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
@@ -206,8 +206,6 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         });
         fd = created.fd;
         rootReceipt = created.receipt;
-        fs.writeFileSync(fd, raw, "utf8");
-        fs.fsyncSync(fd);
         const snapshot: SidecarLockSnapshot = {
           raw,
           payload,

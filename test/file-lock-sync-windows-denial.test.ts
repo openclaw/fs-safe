@@ -1,6 +1,7 @@
+import { configureFsSafeNative } from "../src/native-config.js";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
@@ -26,7 +27,12 @@ async function fixture(rooted = false) {
   return { directory, target, lockPath: `${target}.lock`, options: { ...defaults, lockRoot } };
 }
 
+beforeEach(() => {
+  configureFsSafeNative({ mode: "off" });
+  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
+});
 afterEach(() => {
+  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", platform);
 });
@@ -99,8 +105,8 @@ describe("synchronous Windows lock-file open denials", () => {
       expect(() => acquireFileLockSync(target, { ...options, payload })).toThrow(error);
       expect(inspect).toHaveBeenCalledTimes(1);
       expect(payload).toHaveBeenCalledTimes(1);
-      expect(fs.existsSync(lockPath)).toBe(true);
-      fs.unlinkSync(lockPath);
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.readdirSync(path.dirname(lockPath))).toHaveLength(1);
     },
   );
 
@@ -200,7 +206,7 @@ describe("synchronous Windows lock-file open denials", () => {
         })).toThrow(error);
         expect(fail).toHaveBeenCalledTimes(1);
         expect(payload).toHaveBeenCalledTimes(stage === "parent" ? 0 : 1);
-        if (["parser", "read", "fstat"].includes(stage)) expect(close).toHaveBeenCalledTimes(1);
+        if (["parser", "read", "fstat"].includes(stage)) expect(close).toHaveBeenCalledTimes(stage === "fstat" ? 1 : 2);
         vi.restoreAllMocks();
         expect(fs.existsSync(lockPath)).toBe(["parser", "read", "fstat"].includes(stage));
       }
@@ -271,11 +277,15 @@ describe("synchronous Windows lock-file open denials", () => {
       } else if (stage === "identity") {
         // Large Windows inode numbers can round away +1; use distinct known identities.
         const lstat = fs.lstatSync.bind(fs), fstat = fs.fstatSync.bind(fs);
+        const identity = fs.statSync(lockPath).ino;
         vi.spyOn(fs, "lstatSync").mockImplementation((file, opts) => {
           const stat = lstat(file, opts as never);
           return file === lockPath ? Object.assign(stat, { ino: 1 }) : stat;
         });
-        vi.spyOn(fs, "fstatSync").mockImplementation((fd) => Object.assign(fstat(fd), { ino: 2 }));
+        vi.spyOn(fs, "fstatSync").mockImplementation((fd, opts) => {
+          const stat = fstat(fd, opts as never);
+          return Number(stat.ino) === identity ? Object.assign(stat, { ino: opts?.bigint ? 2n : 2 }) : stat;
+        });
       } else {
         const lstat = fs.lstatSync.bind(fs);
         let calls = 0;

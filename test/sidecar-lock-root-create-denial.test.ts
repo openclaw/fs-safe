@@ -24,6 +24,7 @@ afterEach(() => {
 async function fixture() {
   const directory = await tempRoot("fs-safe-root-create-denial-");
   configureFsSafeNative({ mode: "off" });
+  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
   const lockRoot = await root(directory);
   const target = path.join(directory, "state");
   const lockPath = `${target}.lock`;
