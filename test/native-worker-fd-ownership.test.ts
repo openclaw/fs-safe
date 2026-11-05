@@ -37,9 +37,9 @@ describe.runIf(nativeAvailable || process.env.FS_SAFE_NATIVE_MODE === "require")
       let stderr = "";
       worker.stdout.resume();
       worker.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-      worker.on("message", (message: WorkerResult | { kind: "sentinel"; fd: number }) => {
+      worker.on("message", (message: WorkerResult | { kind: "sentinel"; fd: number } | { kind: "batch-read" }) => {
         if (message.kind === "sentinel") sentinelFd = message.fd;
-        else result = message;
+        else if (message.kind === "result") result = message;
       });
       const stillOwnsSentinel = () => {
         if (sentinelFd === undefined) return false;
