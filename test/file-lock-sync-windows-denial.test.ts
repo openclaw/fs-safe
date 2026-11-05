@@ -213,13 +213,17 @@ describe("synchronous Windows lock-file open denials", () => {
     },
   );
 
-  it.each([1, 2])("does not classify snapshot lstat %s as an open denial", async (observation) => {
+  it.each([1, 2])("does not classify post-staging lstat %s as an open denial", async (observation) => {
     const { target, lockPath, options } = await fixture();
     fs.writeFileSync(lockPath, "{}");
     const error = failure(lockPath), lstat = fs.lstatSync.bind(fs);
-    let calls = 0;
+    let calls = 0, publicationAttempted = false;
+    vi.mocked(fs.linkSync).mockImplementation(() => {
+      publicationAttempted = true;
+      throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" });
+    });
     vi.spyOn(fs, "lstatSync").mockImplementation((file, opts) => {
-      if (file === lockPath && ++calls === observation) throw error;
+      if (publicationAttempted && file === lockPath && ++calls === observation) throw error;
       return lstat(file, opts as never);
     });
     const payload = vi.fn(options.payload);
