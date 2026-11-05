@@ -4,8 +4,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { root } from "../../dist/root.js";
-import { stageFileInDirectory, writeSiblingTempFile } from "../../dist/advanced.js";
+import { createRootFileOpenBatchSync, stageFileInDirectory, writeSiblingTempFile } from "../../dist/advanced.js";
 import { configureFsSafeNative } from "../../dist/config.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../../dist/native.js";
 
 const { directory } = workerData;
 const warnings = [];
@@ -74,6 +75,70 @@ completed.push("private-sibling");
 await assert.rejects(scoped.create("moved.txt", "replacement"), { code: "already-exists" });
 assert.equal(await fs.readFile(path.join(directory, "moved.txt"), "utf8"), "create");
 completed.push("create-collision");
+
+if (process.platform === "win32") {
+  const native = __loadBundledNativeForTest();
+  assert.equal(typeof native.openBeneath, "function");
+  let leaf;
+  let disableAfterOpen = false;
+  const binding = {
+    ...native,
+    openBeneath(...args) {
+      const opened = native.openBeneath(...args);
+      assert.equal(args[1], "sentinel.txt");
+      assert.equal(leaf, undefined);
+      leaf = { fd: opened.fd, closes: 0 };
+      if (disableAfterOpen) configureFsSafeNative({ mode: "off" });
+      return opened;
+    },
+    closeOwnedFd(fd) {
+      assert.equal(this, binding);
+      assert.equal(fd, leaf.fd);
+      assert.equal(++leaf.closes, 1);
+      native.closeOwnedFd(fd);
+    },
+  };
+  __setNativeLoaderForTest(() => binding);
+  const options = { rootPath: directory, absolutePath: path.join(directory, "sentinel.txt"), boundaryLabel: "Worker read" };
+  try {
+    const batch = createRootFileOpenBatchSync();
+    try {
+      const opened = batch.openFile(options);
+      assert.equal(opened.ok, true);
+      assert.equal(typeof opened.close, "function");
+      assert.equal(opened.fd, leaf.fd); // A fallback cannot supply this native receipt.
+      configureFsSafeNative({ mode: "off" });
+      batch.close();
+      batch[Symbol.dispose]();
+      assert.equal(leaf.closes, 0);
+      assert.equal(fsSync.readFileSync(opened.fd, "utf8"), "node-owned");
+      opened.close();
+      opened.close();
+      assert.equal(leaf.closes, 1);
+      assert.throws(() => fsSync.fstatSync(opened.fd), { code: "EBADF" });
+    } finally { batch.close(); }
+    completed.push("batch-read-transfer");
+
+    configureFsSafeNative({ mode: "require" });
+    leaf = undefined;
+    disableAfterOpen = true;
+    const rejectedBatch = createRootFileOpenBatchSync();
+    try {
+      const rejected = rejectedBatch.openFile({ ...options, maxBytes: 0 });
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.reason, "validation");
+      assert.equal(rejected.error.code, "too-large");
+      assert.equal(leaf.closes, 1);
+      assert.throws(() => fsSync.fstatSync(leaf.fd), { code: "EBADF" });
+      rejectedBatch.close();
+      assert.equal(leaf.closes, 1);
+    } finally { rejectedBatch.close(); }
+    completed.push("batch-read-rejection");
+  } finally {
+    __resetNativeLoaderForTest();
+    configureFsSafeNative({ mode: "require" });
+  }
+}
 
 if (process.platform !== "win32") {
   const staged = await stageFileInDirectory({ directory, content: "staged" });

@@ -18,6 +18,7 @@ import {
 } from "./pinned-open.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { FsSafeError } from "./errors.js";
+import { ownFileDescriptorSync, type OwnedFileDescriptorSync } from "./create-owned-file.js";
 import {
   createRootFileFinalAdmission,
   createRootFileFinalAdmissionAsync,
@@ -40,7 +41,7 @@ type BoundaryReadFs = Pick<
 export type RootFileOpenFailureReason = PinnedOpenSyncFailureReason | "validation";
 
 export type RootFileOpenResult =
-  | { ok: true; path: string; fd: number; stat: fs.Stats; exactIdentity: ExactFileIdentity; rootRealPath: string }
+  | { ok: true; path: string; fd: number; stat: fs.Stats; exactIdentity: ExactFileIdentity; rootRealPath: string; close?: () => void }
   | { ok: false; reason: RootFileOpenFailureReason; error?: unknown };
 
 export type RootFileOpenFailure = Extract<RootFileOpenResult, { ok: false }>;
@@ -80,7 +81,7 @@ type AsyncResolutionSnapshot = Pick<OpenRootFileParams,
 type RootFileOpenSettings = Pick<OpenRootFileSyncParams,
   "maxBytes" | "rejectHardlinks" | "allowedType"> & {
   ioFs: BoundaryReadFs;
-  admittedFd?: number;
+  admittedFile?: OwnedFileDescriptorSync;
   rejectLeafSymlinks?: boolean;
 };
 
@@ -187,7 +188,7 @@ function* finalizeRootFileOpenProcedure(params: RootFileOpenSettings & {
     maxBytes: params.maxBytes,
     allowedType: params.allowedType,
     ioFs: params.ioFs,
-    admittedFd: params.admittedFd,
+    admittedFile: params.admittedFile,
     rejectLeafSymlinks: params.rejectLeafSymlinks,
   };
   const opened = asynchronous
@@ -203,6 +204,7 @@ function* finalizeRootFileOpenProcedure(params: RootFileOpenSettings & {
     stat: opened.stat,
     exactIdentity: exactFileIdentity(opened.identity),
     rootRealPath: resolved.rootRealPath,
+    ...(opened.close ? { close: opened.close } : {}),
   };
 }
 
@@ -211,6 +213,7 @@ export function openRootFileWithRetainedRootSync(
   params: OpenRootFileSyncParams,
   root: Extract<CanonicalRootObservation, { ok: true }>,
   admittedFd: number,
+  closeFd: (fd: number) => void,
 ): RootFileOpenResult {
   return finalizeRootFileOpen({
     resolved: {
@@ -218,7 +221,8 @@ export function openRootFileWithRetainedRootSync(
       rootRealPath: root.path, rootObservation: root, boundaryLabel: params.boundaryLabel,
     },
     maxBytes: params.maxBytes, rejectHardlinks: params.rejectHardlinks,
-    allowedType: params.allowedType, ioFs: fs, admittedFd, rejectLeafSymlinks: true,
+    allowedType: params.allowedType, ioFs: fs,
+    admittedFile: ownFileDescriptorSync(admittedFd, closeFd), rejectLeafSymlinks: true,
   });
 }
 

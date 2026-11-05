@@ -57,6 +57,7 @@ describe.runIf(nativeAvailable || process.env.FS_SAFE_NATIVE_MODE === "require")
         expect(result?.completed).toEqual([
           "write", "policy-parent-create", "policy-parent-denial", "create", "create-stream", "append", "open-writable", "copy-in",
           "move", "private-sibling", "create-collision",
+          ...(process.platform === "win32" ? ["batch-read-transfer", "batch-read-rejection"] : []),
           ...(process.platform === "win32" ? [] : ["node-parent-staging"]),
         ]);
         expect(result?.warnings).toEqual([]);
