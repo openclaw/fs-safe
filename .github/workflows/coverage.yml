@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   coverage:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/roboclaw/diag-guest-timeout'
     # Keep the required status identifier; runs-on uses the current matrix runner.
     name: Node 22 coverage (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
     runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
@@ -138,6 +139,7 @@ jobs:
           if-no-files-found: error
 
   rust-coverage:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/roboclaw/diag-guest-timeout'
     name: Rust coverage (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -180,3 +182,70 @@ jobs:
           name: fs-safe-rust-coverage-${{ github.run_id }}
           path: coverage-rust/
           if-no-files-found: error
+
+  guest-timeout-diagnostic:
+    # Diagnostic branch only; never emits a required full-coverage status/input.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/roboclaw/diag-guest-timeout'
+    name: Guest round-trip diagnostic (Node 22.23.4, xcode-27)
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - name: Check out reviewed diagnostic harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Retain harness outside the subject checkout
+        shell: bash
+        run: cp scripts/guest-timeout-diagnostic.mjs "$RUNNER_TEMP/fs-safe-guest-timeout-diagnostic.mjs"
+
+      - name: Check out fixed unchanged subject
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 37595a2695c29d71c14a6b19559077ad266dcf7c
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: "22.23.4"
+
+      - name: Add portable TAR parser target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: xcode-27-${{ hashFiles('.github/actions/setup-archive-llvm/**', 'scripts/archive-wasm-build-tools.mjs', 'scripts/build-archive-wasm.mjs') }}
+          env-vars: CARGO CC AR CFLAGS CXX CMAKE RUST
+          workspaces: |
+            . -> target
+            . -> target/archive-wasm-allocator-tests
+
+      - name: Set up portable archive LLVM
+        uses: ./.github/actions/setup-archive-llvm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build host binding
+        run: pnpm native:build
+
+      - name: Run the original named case once with coverage
+        timeout-minutes: 4
+        shell: bash
+        env:
+          GUEST_DIAG_HARNESS_COMMIT: ${{ github.sha }}
+          GUEST_DIAG_NATIVE_BUILT: "1"
+        run: node "$RUNNER_TEMP/fs-safe-guest-timeout-diagnostic.mjs"
+
+      - name: Upload bounded diagnostic receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guest-roundtrip-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fs-safe-guest-timeout-diagnostic/
+          if-no-files-found: error
+          retention-days: 7
