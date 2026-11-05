@@ -1,9 +1,11 @@
 import fs, { type BigIntStats } from "node:fs";
+import asyncFs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
   extendDirectoryObservationGuard,
   inspectDirectoryIdentitySync,
+  inspectDirectoryIdentity,
   inspectDirectoryObservationSync,
   type AsyncDirectoryGuard,
   type DirectoryObservationGuard,
@@ -20,7 +22,8 @@ import { ROOT_PATH_ALIAS_POLICIES, resolveRootPath } from "./root-path.js";
 import { admitPathInsideRoot } from "./root-boundary.js";
 import { errorCauseOptions, outsideWorkspaceError, pathTraversalPermissionError, rootPathChangedError } from "./root-errors.js";
 import { isDriveRelativePath } from "./safe-path-segment.js";
-import { realpathSync } from "./realpath.js";
+import { realpathNative, realpathSync } from "./realpath.js";
+import { absolutePathWithRawSegments } from "./root-path-existing.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
 import {
   assertNoWindowsPathAlias,
@@ -69,20 +72,23 @@ export async function expandRelativePathWithHome(relativePath: string): Promise<
   }
   const rawHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
   assertNoWindowsPathAlias(rawHome, "filesystem", "home path uses a Windows filesystem namespace alias");
-  if (cachedHomePath?.raw !== rawHome) {
+  let home = cachedHomePath?.raw === rawHome ? cachedHomePath.real : undefined;
+  if (home === undefined) {
     let realHome = rawHome;
     try {
-      realHome = realpathSync.native(pathForWindowsFilesystem(rawHome));
+      const homePath = pathForWindowsFilesystem(rawHome);
+      realHome = process.platform === "win32" ? realpathSync.native(homePath) : await realpathNative(homePath);
     } catch {
       // If the home dir cannot be canonicalized, keep lexical expansion behavior.
     }
     cachedHomePath = { raw: rawHome, real: realHome };
+    home = realHome;
   }
   if (homeOnly) {
-    assertNoWindowsPathAlias(cachedHomePath.real, "filesystem", "home path uses a Windows filesystem namespace alias");
-    return cachedHomePath.real;
+    assertNoWindowsPathAlias(home, "filesystem", "home path uses a Windows filesystem namespace alias");
+    return home;
   }
-  const expanded = `${ensureTrailingSep(cachedHomePath.real)}${relativePath.slice(2)}`;
+  const expanded = `${ensureTrailingSep(home)}${relativePath.slice(2)}`;
   assertNoWindowsPathAlias(expanded, "filesystem", "expanded path uses a Windows filesystem namespace alias");
   return expanded;
 }
@@ -96,13 +102,16 @@ export async function resolveRootContext(rootDir: string): Promise<RootContext> 
   let rootStat: BigIntStats;
   let rootIdentity: { dev: bigint; ino: bigint };
   try {
-    rootReal = realpathSync.native(pathForWindowsFilesystem(rootDir));
+    const rootPath = pathForWindowsFilesystem(absolutePathWithRawSegments(rootDir));
+    rootReal = process.platform === "win32" ? realpathSync.native(rootPath) : await realpathNative(rootPath);
     assertNoWindowsPathAlias(rootReal, "filesystem", "canonical root path uses a Windows filesystem namespace alias");
-    rootStat = await inspectFileIdentity(() => {
-      const stat = fs.statSync(rootReal, { bigint: true });
+    const inspect = (stat: BigIntStats) => {
       if (!stat.isDirectory()) throw new FsSafeError("invalid-path", "root dir is not a directory");
       return stat;
-    });
+    };
+    rootStat = await inspectFileIdentity(() => process.platform === "win32"
+      ? inspect(fs.statSync(rootReal, { bigint: true }))
+      : asyncFs.stat(rootReal, { bigint: true }).then(inspect));
     rootIdentity = { dev: rootStat.dev, ino: rootStat.ino };
   } catch (err) {
     if (err instanceof FsSafeError) {
@@ -166,7 +175,13 @@ export async function assertRootIdentityCurrent(
   root: RootContext,
   observe?: (stat: fs.BigIntStats) => void,
 ): Promise<void> {
-  assertRootIdentityCurrentSync(root, observe);
+  if (process.platform === "win32") return assertRootIdentityCurrentSync(root, observe);
+  try {
+    const stat = await inspectDirectoryIdentity(root.rootReal, { dev: root.rootIdentity.dev, ino: root.rootIdentity.ino });
+    observe?.(stat);
+  } catch (error) {
+    throw rootPathChangedError(error instanceof Error ? error : undefined);
+  }
 }
 
 /**

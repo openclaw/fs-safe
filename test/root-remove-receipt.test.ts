@@ -78,6 +78,13 @@ it.each([0, 2, 8].flatMap(depth => ["file", "directory"].map(kind => ({ depth, k
       }
       return stat;
     }) as typeof fsSync.lstatSync);
+    const asyncLstat = fs.lstat.bind(fs);
+    vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      const stat = await asyncLstat(...args);
+      const count = observed.get(String(args[0]));
+      if (count) count[args[1]?.bigint ? "exact" : "numeric"]++;
+      return stat;
+    });
     vi.spyOn(realpathSync, "native").mockImplementation(candidate => {
       if (observed.has(String(candidate))) canonicalPaths.push(String(candidate));
       return canonicalize(candidate);

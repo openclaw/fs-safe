@@ -34,10 +34,10 @@ it("rejects a replacement root whose inode has the same numeric projection", asy
   let changed = false;
   const first = 9007199254740992n, second = first + 1n;
   expect(Number(first)).toBe(Number(second));
-  for (const method of ["statSync", "lstatSync"] as const) {
-    const original = fsSync[method].bind(fsSync);
-    vi.spyOn(fsSync, method).mockImplementation((...args) => {
-      const stat = original(...args);
+  for (const method of ["stat", "lstat"] as const) {
+    const original = fs[method].bind(fs);
+    vi.spyOn(fs, method).mockImplementation(async (...args) => {
+      const stat = await original(...args);
       if (String(args[0]) !== dir) return stat;
       const ino = changed ? second : first;
       return Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });

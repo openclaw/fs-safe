@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
+
 ## 0.27.1 - 2026-10-31
 
 **Highlights:** Native POSIX staged file creation, atomic publication, small-buffer writes, path-prefix canonicalization, and awaited root-path traversal no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052), [#1053](https://github.com/openclaw/fs-safe/pull/1053), [#1054](https://github.com/openclaw/fs-safe/pull/1054))

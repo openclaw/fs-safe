@@ -110,16 +110,35 @@ if (process.argv.includes("--child")) {
       for (const row of rows) row.syscalls = counts[row.mode];
     }
     for (const row of rows) {
-      // Metadata moves to libuv without changing the syscall fixtures. Normalize
-      // only Node 26's extra lstat/stat promises to the Node 22/24 resource baseline.
-      const metadataCalls = process.platform === "win32" ? 0
+      // Existing root guards now await lstat: eleven extra promises each. The
+      // portable pinned writer also offloads its directory guard (+nine).
+      // Native direct mkdir and missing-file creation retain their own admission.
+      const rootObservations = process.platform === "win32" ? 0
+        : operation === "move" ? 6
+        : ["create", "write"].includes(operation) ? 2
+        : ["mkdir", "mkdirNested", "ensureRoot"].includes(operation) || creationOperation
+          ? row.mode === "require" ? 0 : 1
+        : ["remove", "append", "openWritable"].includes(operation) ? 1 : 0;
+      const directoryObservations = process.platform !== "win32" && row.mode === "off" &&
+        ["create", "write"].includes(operation) ? 1 : 0;
+      const admissionMetadata = rootObservations + directoryObservations;
+      // Keep historical resource fixtures and all syscall fixtures unchanged;
+      // normalize only these explicit offloads and Node 26's metadata overhead.
+      const metadataCalls = admissionMetadata + (process.platform === "win32" ? 0
         : operation === "mkdirNested" ? (row.mode === "require" ? 0 : depth + 2)
         : creationOperation ? (row.mode === "require" ? 0 : 6 + 2 * creationDepth)
         : operation === "mkdir" ? (row.mode === "require" ? 0 : 2)
         : operation === "ensureRoot" ? (row.mode === "require" ? 0 : 1)
         : operation === "move" ? 16
-        : ["append", "openWritable", "create", "write"].includes(operation) ? 6 : 0;
-      const resources = { ...row.resources, PROMISE: row.resources.PROMISE - metadataPromiseOverhead(metadataCalls) };
+        : ["append", "openWritable", "create", "write"].includes(operation) ? 6 : 0);
+      const resources = { ...row.resources,
+        PROMISE: row.resources.PROMISE - metadataPromiseOverhead(metadataCalls) -
+          11 * rootObservations - 9 * directoryObservations,
+      };
+      if (admissionMetadata) {
+        resources.FSREQPROMISE -= admissionMetadata;
+        if (resources.FSREQPROMISE === 0) delete resources.FSREQPROMISE;
+      }
       if (process.argv.includes("--record")) { console.log(JSON.stringify(row)); continue; }
       if (operation === "mkdirNested") {
         const fixture = JSON.parse(fs.readFileSync(new URL("../test/fixtures/native-mkdir-budget.json", import.meta.url), "utf8"));

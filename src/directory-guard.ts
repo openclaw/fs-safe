@@ -1,9 +1,10 @@
 import type { BigIntStats, Stats } from "node:fs";
 import fsSync from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
 import { hasSafeFileIdentity, sameFileIdentity, type FileIdentityStat } from "./file-identity.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { isNotFoundPathError } from "./path.js";
 import { directoryComponentNotDirectoryError } from "./root-errors.js";
 import {
@@ -166,7 +167,13 @@ export async function createNearestExistingDirectoryGuard(
 
 // Recovery receipts must retain every identity bit, including on Windows.
 export async function inspectDirectoryIdentity(dir: string, expected?: Pick<BigIntStats, "dev" | "ino">): Promise<BigIntStats> {
-  return inspectDirectoryIdentitySync(dir, expected);
+  if (process.platform === "win32") return inspectDirectoryIdentitySync(dir, expected);
+  const operationPath = directoryOperationPath(dir);
+  return inspectFileIdentity(async () => {
+    const stat = await fs.lstat(operationPath, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw directoryComponentNotDirectoryError();
+    return stat;
+  }, expected);
 }
 
 function directoryOperationPath(dir: string): string {

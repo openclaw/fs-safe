@@ -188,6 +188,7 @@ export interface NativeBinding {
   inspectDarwinAcl?(fd: number, inheritanceTarget?: "file" | "directory"): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
+  canonicalizePathAsync?(path: string, ordinary: boolean): Promise<{ path?: string; errno?: number }>;
   /** Internal Windows normalized name resolution after a denied DOS-name query. */
   resolveWindowsCanonicalPath?(path: string): string | null;
   /** Internal immutable primary-token membership, cached across Workers. */

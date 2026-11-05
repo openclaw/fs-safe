@@ -22,6 +22,7 @@ describe("bounded read allocation", () => {
     const stat = fsSync.fstatSync(handle.fd);
     const hintedStat = Object.assign(Object.create(stat), { size: Number.MAX_SAFE_INTEGER });
     vi.spyOn(fsSync, "fstatSync").mockReturnValue(hintedStat);
+    vi.spyOn(fsSync, "fstat").mockImplementation((_fd, callback) => callback(null, hintedStat));
     const allocate = Buffer.allocUnsafe;
     let largestAllocation = 0;
     vi.spyOn(Buffer, "allocUnsafe").mockImplementation((size) => {
@@ -94,7 +95,9 @@ describe("bounded read allocation", () => {
     const filePath = await fixture("abcdef");
     const handle = await fs.open(filePath, "r");
     const stat = fsSync.fstatSync(handle.fd);
-    vi.spyOn(fsSync, "fstatSync").mockReturnValue(Object.assign(Object.create(stat), { size: 0 }));
+    const hintedStat = Object.assign(Object.create(stat), { size: 0 });
+    vi.spyOn(fsSync, "fstatSync").mockReturnValue(hintedStat);
+    vi.spyOn(fsSync, "fstat").mockImplementation((_fd, callback) => callback(null, hintedStat));
     const read = handle.read.bind(handle);
     const readSync = fsSync.readSync;
     vi.spyOn(handle, "read").mockImplementation((buffer, offset, length, position) =>

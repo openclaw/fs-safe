@@ -1,8 +1,7 @@
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, vi } from "vitest";
-import { realpathSync } from "../src/realpath.js";
+import * as realpathOwner from "../src/realpath.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { expectClosedWithoutReading, observeOpenedHandle } from "./helpers/root-read-observer.js";
@@ -35,28 +34,22 @@ itPosix.each(["reject", "follow-parents-within-root", "follow-within-root"] as c
     let recording = false;
     let rootObservations = 0, yieldedInsideFence = false;
     const open = vi.spyOn(fs, "open");
-    for (const operation of ["lstatSync", "statSync"] as const) {
-      const actual = fsSync[operation].bind(fsSync);
-      vi.spyOn(fsSync, operation).mockImplementation((...args) => {
+    for (const operation of ["lstat", "stat"] as const) {
+      const actual = fs[operation].bind(fs);
+      vi.spyOn(fs, operation).mockImplementation((...args) => {
         if (recording) {
           expect(args[1]?.bigint).toBe(true);
           if (String(args[0]) === fixture.active) {
-            expect(yieldedInsideFence).toBe(false);
             if (++rootObservations === 1) queueMicrotask(() => { yieldedInsideFence = true; });
           }
           phases.push(String(args[0]) === fixture.active
-            ? "root" : operation === "lstatSync" ? "path:nofollow" : "path:follow");
+            ? "root" : operation === "lstat" ? "path:nofollow" : "path:follow");
         }
         return actual(...args);
       });
     }
-    const fstat = fsSync.fstatSync.bind(fsSync);
-    vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
-      if (recording) phases.push(args[1]?.bigint ? "descriptor:bigint" : "descriptor:numeric");
-      return fstat(...args);
-    });
-    const realpath = realpathSync.native;
-    vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+    const realpath = realpathOwner.realpathNative;
+    vi.spyOn(realpathOwner, "realpathNative").mockImplementation((...args) => {
       if (recording) {
         expect(String(args[0])).toBe(fixture.filePath);
         phases.push("realpath");
@@ -69,6 +62,11 @@ itPosix.each(["reject", "follow-parents-within-root", "follow-within-root"] as c
       afterOpen(candidate, handle) {
         observed.hook(candidate, handle);
         phases.push("open");
+        const stat = handle.stat.bind(handle);
+        vi.spyOn(handle, "stat").mockImplementation((...args) => {
+          if (recording) phases.push(args[0]?.bigint ? "descriptor:bigint" : "descriptor:numeric");
+          return stat(...args);
+        });
       },
       afterOpenedPathIdentityCheck: genericAdmission,
       beforeRootReadFinalFence() { phases.push("final"); },
@@ -85,6 +83,7 @@ itPosix.each(["reject", "follow-parents-within-root", "follow-within-root"] as c
       ]);
       expect(open).toHaveBeenCalledTimes(1);
       expect(rootObservations).toBe(2);
+      expect(yieldedInsideFence).toBe(true);
       expect(genericAdmission).not.toHaveBeenCalled();
       expect(result.realPath).toBe(fixture.filePath);
       expect(result.handle).toBe(observed.handle);

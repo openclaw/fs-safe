@@ -54,6 +54,8 @@ function observeSource(source: string, afterRead?: () => void) {
       if (candidate !== source) return;
       opened = handle;
       opens++;
+      const stat = handle.stat.bind(handle);
+      vi.spyOn(handle, "stat").mockImplementation((...args) => { stats++; return stat(...args); });
       const read = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(async (...args) => {
         const result = await read(...args);
