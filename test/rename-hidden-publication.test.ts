@@ -46,7 +46,10 @@ describe.runIf(descriptorPins).each(Object.entries(writers))("%s publication on 
     const filePath = path.join(await tempRoot("rename-hidden-swap-"), "target");
     const fault = hideRenamedFileUntilClose(filePath, () => {
       fs.unlinkSync(filePath);
-      if (kind === "replacement") fs.writeFileSync(filePath, "payload", { mode: 0o644 });
+      if (kind === "replacement") {
+        fs.writeFileSync(filePath, "payload");
+        fs.chmodSync(filePath, 0o644);
+      }
     });
     await expect(Promise.resolve().then(() => write(filePath))).rejects.toBeTruthy();
     expect(fault.closes).toBe(1);
@@ -69,7 +72,10 @@ describe.runIf(native && descriptorPins)("native root rename-hidden publication"
     const filePath = path.join(directory, "target");
     const fault = hideRenamedFileUntilClose(filePath, kind === "original" ? undefined : () => {
       fs.unlinkSync(filePath);
-      if (kind === "replacement") fs.writeFileSync(filePath, "payload", { mode: 0o644 });
+      if (kind === "replacement") {
+        fs.writeFileSync(filePath, "payload");
+        fs.chmodSync(filePath, 0o644);
+      }
     });
     __setNativeLoaderForTest(() => ({ ...native!,
       async createStagedFile(parent, name) {

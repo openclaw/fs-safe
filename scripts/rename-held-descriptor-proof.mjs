@@ -37,14 +37,15 @@ try {
     };
     report.plain.pinOpen = observe(() => { pin = openPublicationPin(fd); });
   } finally { fs.closeSync(fd); }
-  const after = fs.statSync(to, { bigint: true });
-  report.plain.sameIdentityAfterClose = before.dev === after.dev && before.ino === after.ino;
-  if (pin !== undefined) {
-    try {
+  try {
+    report.plain.statWhilePinned = observe(() => fs.statSync(to));
+    if (pin !== undefined) report.plain.pinStat = observe(() => {
       const retained = fs.fstatSync(pin, { bigint: true });
       report.plain.pinRetainsIdentity = retained.dev === before.dev && retained.ino === before.ino;
-    } finally { fs.closeSync(pin); }
-  }
+    });
+  } finally { if (pin !== undefined) fs.closeSync(pin); }
+  const after = fs.statSync(to, { bigint: true });
+  report.plain.sameIdentityAfterClose = before.dev === after.dev && before.ino === after.ino;
 
   for (const [name, write] of [
     ["atomic-async", filePath => replaceFileAtomic({ filePath, content: "payload", syncTempFile: true, syncParentDir: true })],
