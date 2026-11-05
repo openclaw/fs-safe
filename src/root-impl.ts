@@ -1,3 +1,4 @@
+import { SidecarFallbackWriteError } from "./sidecar-lock-write.js";
 import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import type { BigIntStats, Stats } from "node:fs";
 import { registerRootHandleContext } from "./root-handle-context.js";
@@ -1198,6 +1199,7 @@ async function commitPinnedWriteInRoot(
       },
     });
   } catch (error) {
+    if (error instanceof SidecarFallbackWriteError) throw error.failure;
     if (verifyingPublication) throw error;
     const errorCode = (error as { code?: unknown })?.code;
     if (errorCode === "file_lock_stale" || errorCode === "file_lock_timeout") {
@@ -1206,7 +1208,6 @@ async function commitPinnedWriteInRoot(
     if (params.overwrite === false && isAlreadyExistsError(error)) {
       throw new FsSafeError("already-exists", "file already exists", errorCauseOptions(error));
     }
-    if (input.kind === "buffer" && input.sidecar) throw error;
     throw normalizePinnedWriteError(error);
   }
 }

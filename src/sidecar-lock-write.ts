@@ -2,6 +2,7 @@ import fs from "node:fs";
 import promises from "node:fs/promises";
 import path from "node:path";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { recordFileObservationFailure } from "./file-observation.js";
 import { captureNativeFdClose } from "./native-binding.js";
 import { nativeOpenFlags } from "./native-operations.js";
@@ -10,8 +11,22 @@ import { writePinnedInput } from "./pinned-write-input.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { createSidecarFile } from "./sidecar-lock-publication.js";
 
-/** The admitted Root parent stays owned by the caller until verification ends. */
+export class SidecarFallbackWriteError extends Error {
+  constructor(readonly failure: unknown) { super("sidecar fallback failed"); }
+}
+
 export async function writeSidecarAtParent(
+  params: PinnedWriteParams, parent: AnyAsyncDirectoryGuard, native?: NativeWriteParent,
+) {
+  try { return await writeAtParent(params, parent, native); }
+  catch (error) {
+    if (!native) throw new SidecarFallbackWriteError(error);
+    throw error;
+  }
+}
+
+/** The admitted Root parent stays owned by the caller until verification ends. */
+async function writeAtParent(
   params: PinnedWriteParams,
   parent: AnyAsyncDirectoryGuard,
   native?: NativeWriteParent,
@@ -38,22 +53,24 @@ export async function writeSidecarAtParent(
         };
       }
       const close = captureNativeFdClose(native.binding);
+      let open = true;
       const fd = native.binding.createStagedFile && process.platform !== "win32"
         ? await native.binding.createStagedFile(native.fd, path.basename(pathname))
         : native.binding.openBeneath!(native.fd, path.basename(pathname),
           nativeOpenFlags(fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL)).fd;
       return {
         fd,
-        async close() { close(fd); },
+        async close() { if (open) { open = false; close(fd); } },
         async writeFile(data: string, encoding: BufferEncoding) {
           await writePinnedInput(fd, { kind: "buffer", data, encoding });
         },
       };
     } catch (error) {
+      if (native) annotateReadOnlyOpenError(error, pathname);
       if (pathname === target) onConflict(error);
       throw error;
     }
-  }, { nativeParent: native, assertCurrent, onConflict, prepare: fd => fs.fchmodSync(fd, params.mode) });
+  }, { nativeParent: native, assertCurrent, onConflict, prepare: fd => fs.fchmodSync(fd, params.mode), requireExactIdentity: true });
   const handle = created.handle;
   try {
     if (!created.complete) {

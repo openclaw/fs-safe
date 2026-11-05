@@ -57,3 +57,23 @@ it("bounds scanning and preserves symlinks and stages with unknown liveness", as
   expect(close).toHaveBeenCalledOnce();
   expect(fs.readFileSync(unknown, "utf8")).toBe("unknown owner");
 });
+
+it("propagates revoked mutation authority without removing any stage", async () => {
+  const directory = await tempRoot("fs-safe-stage-authority-");
+  const target = path.join(directory, "state.lock"), stage = sidecarStagingPath(target);
+  fs.writeFileSync(stage, "stage");
+  const failure = new Error("authority revoked");
+  expect(() => cleanupSidecarStages(target, () => { throw failure; })).toThrow(failure);
+  expect(fs.readFileSync(stage, "utf8")).toBe("stage");
+});
+
+it.runIf(process.platform !== "win32")("preserves a staging-shaped symlink and its final lock target", async () => {
+  const directory = await tempRoot("fs-safe-stage-link-");
+  const target = path.join(directory, "state.lock"), stage = sidecarStagingPath(target);
+  fs.writeFileSync(target, "live owner");
+  fs.symlinkSync(target, stage);
+  vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("dead"), { code: "ESRCH" }); });
+  cleanupSidecarStages(target, () => {});
+  expect(fs.lstatSync(stage).isSymbolicLink()).toBe(true);
+  expect(fs.readFileSync(target, "utf8")).toBe("live owner");
+});

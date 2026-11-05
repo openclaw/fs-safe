@@ -26,6 +26,7 @@ for (const kind of ["sync", "async"] as const) {
       } else {
         // Simulate Windows denial classification on every host, retaining real local I/O elsewhere.
         Object.defineProperty(process, "platform", { value: "win32" });
+        vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
         const denial = Object.assign(new Error("lock-file open denied"), { code: "EPERM", path: lockPath, syscall: "open" });
         if (kind === "sync") {
           const open = fs.openSync.bind(fs);

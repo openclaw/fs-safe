@@ -131,7 +131,7 @@ export function createFileLockSyncRootFile(
         if (pathname === pathForWindowsFilesystem(pathAuthority.path)) options.onOpenFailure(error);
         throw error;
       }
-    }, { assertCurrent, onConflict: options.onOpenFailure });
+    }, { assertCurrent, onConflict: options.onOpenFailure, requireExactIdentity: true });
     fd = created.fd;
     if (!created.complete) {
       fs.writeFileSync(fd, raw, "utf8");

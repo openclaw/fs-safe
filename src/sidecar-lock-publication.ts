@@ -4,7 +4,8 @@ import { sidecarStagingPath, cleanupSidecarStages } from "./sidecar-lock-staging
 import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { FsSafeError } from "./errors.js";
-import { sameFileIdentityForCleanup } from "./file-identity.js";
+import { sameFileIdentity, sameFileIdentityForCleanup } from "./file-identity.js";
+import { readSidecarLockRawSnapshotSync } from "./sidecar-lock-reclaim.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import { getNativeBinding } from "./native.js";
 import { noReplaceUnavailable } from "./native-noreplace.js";
@@ -17,22 +18,28 @@ export type SidecarPublicationOptions = {
   assertCurrent?: () => void;
   onConflict?: (error: unknown) => void;
   prepare?: (fd: number) => void;
+  requireExactIdentity?: boolean;
+  onOpenFailure?: (error: unknown) => void;
 };
 
 // Final lock ownership never comes from staging cleanup or an observed PID.
 class SidecarPublication {
   readonly temporaryPath: string;
   private identity?: BigIntStats;
+  private temporaryIdentity?: BigIntStats;
+  private publishedIdentity?: BigIntStats;
   private published = false;
   private ownedParent?: number;
   private parentIdentity: BigIntStats;
   close(): void {
-    if (this.ownedParent !== undefined) fs.closeSync(this.ownedParent);
+    const fd = this.ownedParent;
+    this.ownedParent = undefined;
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* Preserve the creation outcome. */ }
   }
-  constructor(readonly targetPath: string, readonly options: SidecarPublicationOptions) {
+  constructor(readonly targetPath: string, readonly raw: string, readonly options: SidecarPublicationOptions) {
     if (!options.nativeParent) {
-      const binding = getNativeBinding("renameNoReplace");
-      if (binding) {
+      const binding = getNativeBinding();
+      if (binding && (binding.renameNoReplace || binding.linkBeneath)) {
         this.ownedParent = fs.openSync(path.dirname(targetPath), fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0));
         options = { ...options, nativeParent: { fd: this.ownedParent, binding } };
       }
@@ -58,17 +65,34 @@ class SidecarPublication {
   }
   remember(fd: number): void {
     this.identity = fs.fstatSync(fd, { bigint: true });
+    if (this.options.requireExactIdentity && (!this.identity.isFile() || this.identity.nlink !== 1n ||
+      !sameFileIdentityForCleanup(this.identity, this.identity))) {
+      throw new FsSafeError("path-mismatch", "sidecar stage has no exact creation identity");
+    }
   }
   private assertNamed(name: string, fd: number, links: bigint): void {
     this.assertParent();
     const opened = fs.fstatSync(fd, { bigint: true });
     const named = fs.lstatSync(name, { bigint: true });
-    if (!opened.isFile() || !named.isFile() || named.isSymbolicLink() ||
-      !this.identity || !sameFileIdentityForCleanup(opened, this.identity) ||
-      !sameFileIdentityForCleanup(named, this.identity) || opened.nlink !== links || named.nlink !== links) {
+    const previous = name === this.temporaryPath ? this.temporaryIdentity : this.publishedIdentity;
+    const pathStable = !previous || sameFileIdentityForCleanup(named, previous);
+    const heldMatches = this.identity && (this.options.requireExactIdentity
+      ? sameFileIdentityForCleanup(opened, this.identity) : sameFileIdentity(opened, this.identity));
+    let namedMatches = this.identity && sameFileIdentityForCleanup(named, this.identity);
+    if (!namedMatches && !this.options.requireExactIdentity && named.isFile() && !named.isSymbolicLink()) {
+      // Raw lock ownership already tolerates descriptor/path identity drift:
+      // verify the complete in-memory owner token through a stable pathname.
+      const snapshot = readSidecarLockRawSnapshotSync(name, { allowDescriptorIdentityDrift: true });
+      namedMatches = !!snapshot?.stat && snapshot.raw === this.raw && sameFileIdentityForCleanup(named, snapshot.stat);
+    }
+    if (!opened.isFile() || !named.isFile() || named.isSymbolicLink() || !heldMatches ||
+      !namedMatches || !pathStable || opened.nlink !== links || named.nlink !== links) {
       throw new FsSafeError("path-mismatch", "sidecar publication identity changed");
     }
+    if (name === this.temporaryPath) this.temporaryIdentity ??= named;
+    else this.publishedIdentity ??= named;
   }
+
   publish(fd: number): boolean {
     this.assertNamed(this.temporaryPath, fd, 1n);
     getFsSafeTestHooks()?.beforeSidecarLockPublish?.(this.targetPath, this.temporaryPath);
@@ -107,23 +131,33 @@ class SidecarPublication {
       try { this.options.assertCurrent?.(); syncFileBestEffortSync(parent); }
       finally { fs.closeSync(parent); }
     }
+    this.assertNamed(this.targetPath, fd, 1n);
     return true;
   }
+  cleanup(fd: number): void {
+    if (this.published) this.removeName(this.targetPath, fd);
+    this.removeTemporary(fd);
+  }
   removeTemporary(fd: number): void {
+    this.removeName(this.temporaryPath, fd);
+  }
+  private removeName(pathname: string, fd: number): void {
     if (!this.identity) return;
     this.assertParent();
-    const current = fs.lstatSync(this.temporaryPath, { bigint: true, throwIfNoEntry: false });
+    const current = fs.lstatSync(pathname, { bigint: true, throwIfNoEntry: false });
     if (!current) return;
-    if (!current.isFile() || current.isSymbolicLink() || !sameFileIdentityForCleanup(current, this.identity)) {
-      throw new FsSafeError("path-mismatch", "sidecar stage changed before cleanup");
+    const expected = pathname === this.temporaryPath ? this.temporaryIdentity ?? this.identity
+      : this.publishedIdentity ?? this.identity;
+    if (!current.isFile() || current.isSymbolicLink() || !sameFileIdentityForCleanup(current, expected)) {
+      return;
     }
     const native = this.options.nativeParent;
     if (native?.binding.removeStagedFile) {
-      const removed = native.binding.removeStagedFile(native.fd, path.basename(this.temporaryPath), fd);
+      const removed = native.binding.removeStagedFile(native.fd, path.basename(pathname), fd);
       if (removed !== "removed" && removed !== "name-absent") {
         throw new FsSafeError("path-mismatch", "sidecar stage cleanup lost identity");
       }
-    } else fs.unlinkSync(this.temporaryPath);
+    } else fs.unlinkSync(pathname);
   }
 }
 
@@ -132,7 +166,7 @@ export function createSidecarFileSync(
   open: (pathname: string) => number,
   options: SidecarPublicationOptions = {},
 ): { fd: number; complete: boolean } {
-  const publication = new SidecarPublication(targetPath, options);
+  const publication = new SidecarPublication(targetPath, raw, options);
   let fd: number | undefined;
   try {
     publication.assertParent();
@@ -143,12 +177,13 @@ export function createSidecarFileSync(
     fs.fsyncSync(fd);
     if (publication.publish(fd)) return { fd, complete: true };
     publication.removeTemporary(fd);
-    fs.closeSync(fd);
+    const completed = fd;
     fd = undefined;
+    fs.closeSync(completed);
   } catch (error) {
     if (fd !== undefined) {
       try {
-        try { publication.removeTemporary(fd); } finally { fs.closeSync(fd); }
+        try { publication.cleanup(fd); } finally { fs.closeSync(fd); }
       } catch (cleanupError) {
         throw createSuppressedError(error, cleanupError, "sidecar preparation and cleanup both failed");
       }
@@ -168,7 +203,7 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
   targetPath: string, raw: string, open: (pathname: string) => Promise<T>,
   options: SidecarPublicationOptions = {},
 ): Promise<{ handle: T; complete: boolean }> {
-  const publication = new SidecarPublication(targetPath, options);
+  const publication = new SidecarPublication(targetPath, raw, options);
   let handle: T | undefined;
   try {
     publication.assertParent();
@@ -179,12 +214,13 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
     fs.fsyncSync(handle.fd);
     if (publication.publish(handle.fd)) return { handle, complete: true };
     publication.removeTemporary(handle.fd);
-    await handle.close();
+    const completed = handle;
     handle = undefined;
+    await completed.close();
   } catch (error) {
     if (handle) {
       try {
-        try { publication.removeTemporary(handle.fd); } finally { await handle.close(); }
+        try { publication.cleanup(handle.fd); } finally { await handle.close(); }
       } catch (cleanupError) {
         throw createSuppressedError(cleanupError, error, "sidecar preparation and cleanup both failed");
       }
@@ -196,5 +232,6 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
     if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onConflict?.(error);
     throw error;
   }
-  return { handle: await open(targetPath), complete: false };
+  try { return { handle: await open(targetPath), complete: false }; }
+  catch (error) { options.onOpenFailure?.(error); throw error; }
 }

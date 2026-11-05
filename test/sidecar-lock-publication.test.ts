@@ -132,3 +132,69 @@ it("keeps the placeholder write window on mounts without either publication prim
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).owner).toBe("complete");
   } finally { await lock.release(); }
 });
+
+for (const boundary of ["final-fence", "stage-unlink"] as const) {
+  it.each(kinds)(`%s cleans an owned publication when ${boundary} fails`, async kind => {
+    configureFsSafeNative({ mode: "off" });
+    const directory = await tempRoot("fs-safe-published-cleanup-");
+    const target = path.join(directory, "state"), final = `${target}.lock`;
+    const failure = Object.assign(new Error("post-publication failure"), { code: "EIO" });
+    const link = fs.linkSync, lstat = fs.lstatSync, unlink = fs.unlinkSync;
+    let published = false, injected = false;
+    vi.spyOn(fs, "linkSync").mockImplementation((...args) => { link(...args); published = true; });
+    vi.spyOn(fs, "lstatSync").mockImplementation((...args) => {
+      if (boundary === "final-fence" && published && !injected && args[0] === final) {
+        injected = true; throw failure;
+      }
+      return Reflect.apply(lstat, fs, args);
+    });
+    vi.spyOn(fs, "unlinkSync").mockImplementation(name => {
+      if (boundary === "stage-unlink" && published && !injected && String(name).endsWith(".tmp")) {
+        injected = true; throw failure;
+      }
+      return unlink(name);
+    });
+    await expect(acquire(target, kind)).rejects.toBe(failure);
+    expect(injected).toBe(true);
+    expect(await promises.readdir(directory)).toEqual([]);
+  });
+}
+
+it("preserves raw async token ownership when descriptor and pathname identities differ", async () => {
+  configureFsSafeNative({ mode: "off" });
+  const target = path.join(await tempRoot("fs-safe-stage-drift-"), "state");
+  const stat = fs.fstatSync;
+  vi.spyOn(fs, "fstatSync").mockImplementation((...args) => {
+    const actual = Reflect.apply(stat, fs, args);
+    return actual.isFile() ? Object.assign(actual, {
+      ino: typeof actual.ino === "bigint" ? actual.ino + 100n : actual.ino + 100,
+    }) : actual;
+  });
+  const lock = await acquire(target, "raw-async");
+  expect(await lock.verifyStillHeld()).toBe(true);
+  await lock.release();
+  expect(fs.existsSync(`${target}.lock`)).toBe(false);
+});
+
+it.each(kinds)("%s preserves a replacement after a post-publication failure", async kind => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-published-successor-");
+  const target = path.join(directory, "state"), final = `${target}.lock`;
+  const failure = Object.assign(new Error("post-publication replacement"), { code: "EIO" });
+  const link = fs.linkSync, lstat = fs.lstatSync;
+  let published = false, replaced = false;
+  vi.spyOn(fs, "linkSync").mockImplementation((...args) => { link(...args); published = true; });
+  vi.spyOn(fs, "lstatSync").mockImplementation((...args) => {
+    if (published && !replaced && args[0] === final) {
+      replaced = true;
+      fs.unlinkSync(final);
+      fs.writeFileSync(final, '{"owner":"successor"}', { flag: "wx" });
+      throw failure;
+    }
+    return Reflect.apply(lstat, fs, args);
+  });
+  await expect(acquire(target, kind)).rejects.toBe(failure);
+  expect(replaced).toBe(true);
+  expect(await promises.readFile(final, "utf8")).toBe('{"owner":"successor"}');
+  expect(await promises.readdir(directory)).toEqual(["state.lock"]);
+});

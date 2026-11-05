@@ -303,7 +303,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           };
           const created = await createSidecarFile(lockPath, raw, async pathname =>
             await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, "wx", 0o600),
-          { onConflict: failedOpen });
+          { onConflict: failedOpen, onOpenFailure: failedOpen });
           handle = created.handle;
           if (!created.complete) {
             await handle.writeFile(raw, "utf8");
