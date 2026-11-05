@@ -91,8 +91,8 @@ async function writeAtParent(
         await handle.writeFile(raw, "utf8");
         fs.fsyncSync(handle.fd);
       } catch (error) {
+        assertCurrent();
         if (native?.binding.removeStagedFile) {
-          assertCurrent();
           native.binding.removeStagedFile(native.fd, params.basename, handle.fd);
         } else await cleanupPinnedFilePath({ pathname: target, handle, identity, parentGuard: parent });
         throw error;
