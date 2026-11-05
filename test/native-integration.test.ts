@@ -9,6 +9,7 @@ import { loadTestNative } from "./helpers/native-probe.js";
 import { itWin32, useTempDirs } from "./helpers/vitest.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { acquireFileLock } from "../src/file-lock.js";
+import { root } from "../src/root.js";
 import {
   __resetNativeLoaderForTest,
   __setNativeLoaderForTest,
@@ -447,6 +448,17 @@ describe.runIf(native)("native filesystem primitives", () => {
     });
     expect(exclusiveOpenCalls).toBe(9);
   }, 30_000);
+
+  itWin32("removes the published owner when native retention rejects", async () => {
+    const failure = new Error("retention rejected");
+    __setNativeLoaderForTest(() => ({ ...native!, retainWindowsSidecar() { throw failure; } }));
+    configureFsSafeNative({ mode: "require" });
+    const directory = await tempRoot("fs-safe-native-retention-cleanup-");
+    const target = path.join(directory, "state");
+    const lockRoot = await root(directory);
+    await expect(acquireFileLock(target, { lockRoot, payload: () => ({ owner: "creator" }) })).rejects.toBe(failure);
+    expect(await fs.readdir(directory)).toEqual([]);
+  });
 
   it("publishes by native rename without replacing an existing target", async () => {
     __setNativeLoaderForTest(() => native!);

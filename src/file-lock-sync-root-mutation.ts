@@ -1,5 +1,6 @@
 import fs, { type BigIntStats } from "node:fs";
 import { createSidecarFileSync } from "./sidecar-lock-publication.js";
+import { sidecarPublicationPending } from "./sidecar-lock-staging.js";
 import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -258,14 +259,19 @@ export function fileLockSyncRootGuardExists(
   if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
     throw directoryComponentNotDirectoryError();
   }
-  if (stat.isFile()) assertRegularFile(stat, pathAuthority.authority.hardlinks);
+  const assertGuardFile = (current: BigIntStats) => {
+    if (current.nlink !== 2n || !sidecarPublicationPending(pathAuthority.path)) {
+      assertRegularFile(current, pathAuthority.authority.hardlinks);
+    }
+  };
+  if (stat.isFile()) assertGuardFile(stat);
   const parent = observeDirectory(path.dirname(pathAuthority.path));
   if (stat.isFile()) {
     const current = inspectFileIdentitySync(
       () => fs.lstatSync(pathForWindowsFilesystem(pathAuthority.path), { bigint: true }),
       exactFileIdentity(stat),
     );
-    assertRegularFile(current, pathAuthority.authority.hardlinks);
+    assertGuardFile(current);
   } else {
     inspectDirectoryIdentitySync(pathAuthority.path, exactFileIdentity(stat));
   }

@@ -74,7 +74,7 @@ async function writeAtParent(
       fd = native.binding.createStagedFile && process.platform !== "win32"
         ? await native.binding.createStagedFile(native.fd, path.basename(pathname))
         : native.binding.openBeneath!(native.fd, path.basename(pathname),
-          nativeOpenFlags(fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL)).fd;
+          nativeOpenFlags(fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL)).fd;
     } catch (error) {
       const failure = error as NodeJS.ErrnoException;
       if (process.platform === "win32" && failure?.code === "EPERM" && failure.path === undefined) {
