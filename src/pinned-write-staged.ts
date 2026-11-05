@@ -52,16 +52,18 @@ export async function runPinnedStagedWrite(
   let publication: StagedFilePublication = Object.freeze({ status: "not-published" });
   let phase: StagedFileFailureDetails["phase"] = "prepare";
   let failure: { error: unknown } | undefined;
-  const observePublished = async () => {
+  const observePublished = (): BigIntStats | Promise<BigIntStats> => {
     try {
       return fsSync.lstatSync(targetPath, { bigint: true });
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT") || !handle) throw error;
       const previous = handle!;
       handle = undefined;
-      await previous.close();
-      readHandle = await openPublicationHandle(targetPath, tempIdentity!);
-      return fsSync.lstatSync(targetPath, { bigint: true });
+      return (async () => {
+        await previous.close();
+        readHandle = await openPublicationHandle(targetPath, tempIdentity!);
+        return fsSync.lstatSync(targetPath, { bigint: true });
+      })();
     }
   };
   try {
@@ -144,7 +146,8 @@ export async function runPinnedStagedWrite(
       }
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
-      const targetStat = await observePublished();
+      const observed = observePublished();
+      const targetStat = observed instanceof Promise ? await observed : observed;
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }

@@ -20,7 +20,7 @@ export async function publishCopyStage(params: {
   onPublicationAttempt?: () => void;
   onPublished?: (identity: PublishedWriteIdentity) => void;
   beforeTemporaryUnlink?: () => Promise<void>;
-  afterRename?: () => Promise<unknown>;
+  afterRename?: () => unknown;
 }): Promise<void> {
   const { identity, temporaryPath, targetPath } = params;
   const assertCurrent = () => {
