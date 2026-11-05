@@ -31,7 +31,7 @@ The exports group into a handful of themes. Documented helpers link to their con
 | `resolveExistingPathsWithinRoot` | – | Validate existing regular files inside the root, while allowing missing paths. |
 | `resolveStrictExistingPathsWithinRoot` | – | Require every target to exist as a regular non-symlink file inside the root. |
 | `resolveWritablePathWithinRoot` | – | Resolve a write target inside a root. |
-| `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. Awaited POSIX traversal uses asynchronous Node metadata and canonicalization; the explicit sync variant blocks. Windows retains synchronous traversal to preserve concurrent reads and atomic publication until canonicalization supports delete sharing. Identity/observation guards and runtime-specific native canonicalization may still be synchronous. |
+| `resolveRootPath`, `resolveRootPathSync`, `ResolvedRootPath`, `ROOT_PATH_ALIAS_POLICIES`, `RootPathAliasPolicy` | – | Resolve a root directory honoring alias policy. Awaited POSIX traversal uses asynchronous Node metadata and canonicalization; the explicit sync variant blocks. Windows retains synchronous traversal to preserve concurrent reads and atomic publication until canonicalization supports delete sharing. Other identity/observation guards may still be synchronous. |
 | `resolvePathViaExistingAncestorSync` | – | Walk to an existing ancestor for paths whose tail does not yet exist. |
 | `resolvePathPrefix`, `resolvePathPrefixSync`, `ResolvedPathPrefix` | [path-prefix.md](path-prefix.md) | Follow physical symlink targets and return a canonical existing prefix with the raw missing suffix; propagate uncertain resolution failures. |
 | `probePathCaseInsensitiveSync`, `ProbePathCaseOptions` | [path-case.md](path-case.md) | Observe local ASCII-case behavior with explicit read-only mode and owned temporary-probe cleanup. |
@@ -101,6 +101,11 @@ receipts remain numeric. Custom `ioFs` adapters must honor `{ bigint: true }` fo
 `lstatSync` and `fstatSync`; numeric identity responses fail validation. Unknown
 Windows identities receive one re-inspection without reopening, then fail
 validation if still unknown.
+
+With the built-in adapter on POSIX, `openRootFile()` awaits the metadata, native
+canonicalization, descriptor open, and final admission checks. Windows and custom
+`ioFs` adapters retain their synchronous admission path; `openRootFileSync()`
+remains synchronous on every platform.
 
 On Windows, these existing-object readers retain their historical support for a
 leading drive-relative spelling such as `C:existing.txt`: it is anchored to that

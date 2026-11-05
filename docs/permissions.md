@@ -42,7 +42,7 @@ POSIX remediation strings shell-quote paths with whitespace or metacharacters
 and protect option-like paths with `--`, so they can be presented as commands
 without letting the inspected pathname add shell syntax.
 
-`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, or built-in Administrators; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` obtains descriptor-bound owner/DACL facts for the exact handle it reads, using native support or the packaged prebuilt .NET Framework helper in `auto` and `off` modes.
+`inspectPathPermissions()` follows symlink targets for the effective mode but tells you whether the original path was a symlink. On POSIX it reports owner/group/world bits. On Windows it delegates to the ACL helpers below and also reports `ownerSid` plus `ownerTrusted` when ownership can be verified. `ownerTrusted` is true only for a local volume owned by the current user, LocalSystem, built-in Administrators, or the exact TrustedInstaller service SID; remote filesystems fail closed. This remains a pathname reporting API with the fallbacks described below. `readSecureFile()` obtains descriptor-bound owner/DACL facts for the exact handle it reads, using native support or the packaged prebuilt .NET Framework helper in `auto` and `off` modes.
 
 ## Advanced Windows ACL helpers
 
@@ -139,13 +139,15 @@ principal classification and remediation command construction.
 Missing or nonboolean locality leaves both inspectors unverified; only
 `remote: false` establishes locality for owner trust. An explicit `remote: true`
 retains the ACL report but never grants trusted ownership.
-The public classifier assigns principals to trusted, world, or group;
-trusted defaults include the current user, SYSTEM, Administrators, and the exact
-TrustedInstaller service SID
-`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`.
-Other service SIDs are not implicitly trusted. This servicing-writer policy
-does not grant TrustedInstaller owner trust or relax private-file or
-private-directory admission.
+The public classifier trusts the current user, SYSTEM, and Administrators. It
+also trusts the exact TrustedInstaller service SID
+`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`
+as owner. Its servicing grants are trusted only on TrustedInstaller-, SYSTEM-, or
+Administrators-owned paths without an explicit current-user or current-container
+write grant.
+User-owned profiles with TrustedInstaller write grants still report group write
+access; other service SIDs remain untrusted. Private-file and private-directory
+admission retain their stricter policy.
 The built-in query has a fixed 30-second process deadline. A command failure or timeout returns an
 unverified result (`source: "unknown"`) so callers fail closed. Advanced callers
 that inject a custom `exec` implementation own that executor's deadline.
@@ -187,14 +189,10 @@ reads and private creation retain their separate, narrower principal policy.
 Descriptor forms it cannot classify completely fall back to the structured
 .NET query; `mode: "off"` exercises that fallback deterministically.
 
-This public policy applies to **every** `inspectPathPermissions()` caller, not
-only bundled-source inspection. A caller using its flags to admit writable
-destinations or browser profiles also trusts TrustedInstaller grants. The
-inspector does not establish that a path is private to the current user, make
-the inspected name race-free, or authorize a later copy/read operation.
-Use descriptor-bound secure reads and private creation for their stricter
-contracts, or apply a consumer-owned SID policy to `readOwnerAndDacl()` facts.
-Do not treat public/native backend parity as a source-only exception.
+Ownership does not establish private access or authorize a later operation.
+Additional untrusted writers remain rejected even on a TrustedInstaller-owned
+path. The inspector does not make a pathname race-free; use descriptor-bound
+secure reads and private creation for their stricter contracts.
 
 ## Policy-free owner and DACL facts
 

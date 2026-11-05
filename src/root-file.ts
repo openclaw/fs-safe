@@ -1,6 +1,7 @@
 import { exactFileIdentity, type ExactFileIdentity } from "./exact-identity.js";
 import fs from "node:fs";
 import path from "node:path";
+import { runAsync, runSync, wait, type Procedure } from "./atomic-io.js";
 import {
   resolveRootPathSyncWithCanonicalRootObservation,
   resolveRootPathWithCanonicalRootObservation,
@@ -11,6 +12,7 @@ import { readSymlinkResolution, type SymlinkPolicy } from "./root-symlink-policy
 import {
   isExpectedPathError,
   openPinnedFileSync,
+  openPinnedFile,
   type PinnedOpenSyncAllowedType,
   type PinnedOpenSyncFailureReason,
 } from "./pinned-open.js";
@@ -18,7 +20,9 @@ import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { FsSafeError } from "./errors.js";
 import {
   createRootFileFinalAdmission,
+  createRootFileFinalAdmissionAsync,
   observeCanonicalRoot,
+  observeCanonicalRootAsync,
   type CanonicalRootObservation,
 } from "./root-file-final-admission.js";
 
@@ -165,12 +169,18 @@ export function matchRootFileOpenFailure<T>(
 function finalizeRootFileOpen(params: RootFileOpenSettings & {
   resolved: ResolvedRootFilePath | RootFileOpenResult;
 }): RootFileOpenResult {
+  return runSync(finalizeRootFileOpenProcedure(params, false));
+}
+
+function* finalizeRootFileOpenProcedure(params: RootFileOpenSettings & {
+  resolved: ResolvedRootFilePath | RootFileOpenResult;
+}, asynchronous: boolean): Procedure<RootFileOpenResult> {
   if ("ok" in params.resolved) {
     return params.resolved;
   }
   const resolved = params.resolved;
   const rejectHardlinks = params.rejectHardlinks ?? true;
-  const opened = openPinnedFileSync({
+  const input = {
     filePath: resolved.absolutePath,
     resolvedPath: resolved.resolvedPath,
     rejectHardlinks,
@@ -179,13 +189,10 @@ function finalizeRootFileOpen(params: RootFileOpenSettings & {
     ioFs: params.ioFs,
     admittedFd: params.admittedFd,
     rejectLeafSymlinks: params.rejectLeafSymlinks,
-    finalAdmission: createRootFileFinalAdmission(
-      params.ioFs,
-      resolved.rootObservation,
-      resolved.boundaryLabel,
-      rejectHardlinks,
-    ),
-  });
+  };
+  const opened = asynchronous
+    ? yield* wait(openPinnedFile({ ...input, finalAdmission: createRootFileFinalAdmissionAsync(resolved.rootObservation, resolved.boundaryLabel, rejectHardlinks) }))
+    : openPinnedFileSync({ ...input, finalAdmission: createRootFileFinalAdmission(params.ioFs, resolved.rootObservation, resolved.boundaryLabel, rejectHardlinks) });
   if (!opened.ok) {
     return opened;
   }
@@ -219,6 +226,8 @@ export async function openRootFile(
   params: OpenRootFileParams,
 ): Promise<RootFileOpenResult> {
   const ioFs = params.ioFs ?? fs;
+  // Windows sharing and explicit synchronous adapters retain their existing owner.
+  const asynchronous = process.platform !== "win32" && ioFs === fs;
   const rawAbsolutePath = params.absolutePath;
   let resolutionSnapshot: AsyncResolutionSnapshot | RootFileOpenResult;
   try {
@@ -248,9 +257,9 @@ export async function openRootFile(
         rejectSymlinks: resolutionSnapshot.rejectSymlinks,
         rejectFinalSymlink: resolutionSnapshot.rejectFinalSymlink,
         skipLexicalRootCheck: resolutionSnapshot.skipLexicalRootCheck,
-      }, rootCanonicalPath => {
-        rootObservation = observeCanonicalRoot(ioFs, rootCanonicalPath);
-      });
+      }, asynchronous
+        ? async rootCanonicalPath => { rootObservation = await observeCanonicalRootAsync(rootCanonicalPath); }
+        : rootCanonicalPath => { rootObservation = observeCanonicalRoot(ioFs, rootCanonicalPath); });
       resolved = mapResolvedRootPath(
         resolutionSnapshot.absolutePath,
         resolutionSnapshot.boundaryLabel,
@@ -261,13 +270,13 @@ export async function openRootFile(
       resolved = toBoundaryValidationError(error);
     }
   }
-  return finalizeRootFileOpen({
+  return runAsync(finalizeRootFileOpenProcedure({
     resolved,
     maxBytes: openSnapshot.maxBytes,
     rejectHardlinks: openSnapshot.rejectHardlinks,
     allowedType: openSnapshot.allowedType,
     ioFs,
-  });
+  }, asynchronous));
 }
 
 function toBoundaryValidationError(error: unknown): RootFileOpenResult {

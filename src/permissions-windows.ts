@@ -6,7 +6,7 @@ import { executePermissionCommand, type PermissionFailureFields } from "./permis
 import { safeStat, type PermissionCheck, type PermissionCheckOptions } from "./permissions.js";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.js";
 import { resolveWindowsSystemCommand } from "./windows-command.js";
-import { inspectWindowsOwner, type WindowsOwnerSummary } from "./windows-owner.js";
+import { inspectWindowsOwner, TRUSTED_INSTALLER_SID, type WindowsOwnerSummary } from "./windows-owner.js";
 import { assertWindowsAclRemediationAllowed } from "./windows-appcontainer.js";
 import { hasWindowsPathAlias } from "./windows-path-alias.js";
 
@@ -58,7 +58,7 @@ const SID_RE = /^\*?s-\d+-\d+(-\d+)+$/i;
 const TRUSTED_SIDS = new Set([
   "s-1-5-18",
   "s-1-5-32-544",
-  "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+  TRUSTED_INSTALLER_SID,
 ]);
 const WORLD_SIDS = new Set(["s-1-1-0", "s-1-5-11", "s-1-5-32-545", "s-1-5-7", "s-1-5-32-546", "s-1-5-4", "s-1-2-0", "s-1-5-2"]);
 const STATUS_PREFIXES = [
@@ -93,6 +93,7 @@ function inspectWindowsPermissionsNative(
   // Native coarse flags also serve secure descriptors' stricter policy.
   // Public reporting classifies the observations with the fallback's policy.
   const acl = summarizeWindowsOwnerAcl({
+    sid: facts.ownerSid,
     daclPresent: facts.daclPresent,
     currentUserSid: facts.currentUserSid,
     currentAppContainerSid: facts.currentAppContainerSid ?? undefined,
@@ -111,7 +112,7 @@ function inspectWindowsPermissionsNative(
     source: "windows-acl",
     worldWritable, groupWritable, worldReadable, groupReadable,
     ownerSid: facts.ownerSid,
-    ownerTrusted: facts.ownerClass !== "foreign",
+    ownerTrusted: facts.ownerClass !== "foreign" || normalizeSid(facts.ownerSid) === TRUSTED_INSTALLER_SID,
     aclSummary:
       `native owner=${facts.ownerClass} world=` +
       `${worldReadable ? "r" : "-"}${worldWritable ? "w" : "-"} ` +
@@ -303,6 +304,16 @@ function summarizeWindowsOwnerAcl(owner: WindowsOwnerSummary): WindowsAclSummary
     };
   });
   const summary = summarizeWindowsAcl(entries, { USERSID: owner.currentUserSid });
+  // Admit serviced sources, but not user-owned or user-writable profiles.
+  const ownerSid = normalizeSid(owner.sid ?? "");
+  const serviceOwned = ownerSid === TRUSTED_INSTALLER_SID || ownerSid === "s-1-5-18" || ownerSid === "s-1-5-32-544";
+  const userWritable = entries.some(entry => entry.canWrite &&
+    (entry.sid === owner.currentUserSid || entry.sid === owner.currentAppContainerSid));
+  if (!serviceOwned || userWritable) {
+    const servicing = summary.trusted.filter(entry => entry.sid === TRUSTED_INSTALLER_SID);
+    summary.untrustedGroup.push(...servicing);
+    summary.trusted = summary.trusted.filter(entry => entry.sid !== TRUSTED_INSTALLER_SID);
+  }
   if (owner.currentAppContainerSid) {
     const own = summary.untrustedGroup.filter(entry => entry.sid === owner.currentAppContainerSid);
     summary.trusted.push(...own);

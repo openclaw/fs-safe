@@ -23,10 +23,11 @@ it("bounds mkdir metadata promises without adding filesystem hops", async () => 
       ["ensureRoot", () => safe.ensureRoot(), () => {}],
       ["mkdir-sync", () => createDirectorySync(path.join(directory, "sync")), () => fsSync.rmdirSync(path.join(directory, "sync"))],
     ];
-    // Two async traversal observations add 16 promises; ensureRoot has one (+7).
+    // Existing traversal adds 16 promises (ensureRoot: 7); the unchanged root
+    // observation now schedules one lstat request and eleven additional promises.
     const posix = process.platform !== "win32";
-    const promises: Record<string, number> = { mkdir: 21 + (posix ? 16 : 0), "mkdir-recursive": 21 + (posix ? 16 : 0), ensureRoot: 21 + (posix ? 7 : 0), "mkdir-sync": 2 };
-    const asyncMetadata: Record<string, number> = { mkdir: posix ? 2 : 0, "mkdir-recursive": posix ? 2 : 0, ensureRoot: posix ? 1 : 0, "mkdir-sync": 0 };
+    const promises: Record<string, number> = { mkdir: 21 + (posix ? 27 : 0), "mkdir-recursive": 21 + (posix ? 27 : 0), ensureRoot: 21 + (posix ? 18 : 0), "mkdir-sync": 2 };
+    const asyncMetadata: Record<string, number> = { mkdir: posix ? 3 : 0, "mkdir-recursive": posix ? 3 : 0, ensureRoot: posix ? 2 : 0, "mkdir-sync": 0 };
     for (const [name, operation, cleanup] of cases) {
       await operation(); cleanup();
       const counts: Record<string, number> = {};

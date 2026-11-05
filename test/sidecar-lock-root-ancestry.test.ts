@@ -87,6 +87,11 @@ it.each(["EACCES", "EIO"])("does not treat initial directory %s as missing-paren
     if (String(args[0]) === parent && typeof args[1] === "object" && args[1]?.bigint) throw failure;
     return lstat(...args);
   });
+  const lstatAsync = fs.lstat.bind(fs);
+  vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+    if (String(args[0]) === parent && typeof args[1] === "object" && args[1]?.bigint) throw failure;
+    return lstatAsync(...args);
+  });
   await expect(readSidecarLockSnapshot(lockPath, { lockRoot: capability, discardObservation: "unlinked" })).rejects.toBe(failure);
   expect(open).not.toHaveBeenCalled();
 });

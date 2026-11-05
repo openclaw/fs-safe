@@ -175,6 +175,22 @@ assertion. Neither lane rewrites `off` to `auto` or marks defects as expected pa
 
 Use `vi.mock` sparingly. Most tests should drive real disk operations in a `mkdtemp`-created scratch directory, asserting on observable behavior. The library has [test hooks](testing.md) for the rare cases where you need to inject a TOCTOU race deterministically.
 
+Vitest timeouts do not cancel filesystem promises. Shared fixtures with expensive
+setup use `useSuiteFixture` from `test/helpers/suite-fixture.ts`: setup has a separate
+30-second hook budget, and teardown waits for tracked setup and test work before
+removing directories. Run shared-state corpora sequentially with a deadline per
+payload. Keep child-process liveness limits separate from fixture preparation.
+The Windows CI slow-copy proof runs the real package-copy process-exit test with a
+16-second copy delay, a 10-second child deadline, a 15-second test deadline, and
+60-second setup and teardown hook budgets. Other hosts retain the ordinary
+six-second delay, four-second child deadline, five-second test deadline, and
+30-second hook budgets:
+
+```bash
+pnpm build
+pnpm test --config scripts/slow-package-copy.config.ts
+```
+
 ### Windows public-permission/browser boundary proof
 
 After `pnpm native:build` and `pnpm build`, Windows x64 contributors with Node
@@ -194,36 +210,12 @@ Its existing dependency seam redirects state and browser-profile roots into
 temporary storage; it never consults an installed OpenClaw or Chrome profile.
 Filesystem wrappers count and forward copy/profile-read operations.
 
-The proof checks TrustedInstaller-writable source acceptance and copying into
-a destination that still passes strict secure reads. Added unrelated-service,
-LocalService, Users and Everyone writers must be refused before source copy,
-existing destination replacement, or profile-byte reads. TrustedInstaller
-profile grants are also accepted by the public policy; private secure reads
-remain stricter. Output contains principal categories and effect counts, not
-user SIDs or profile paths. All temporary fixtures are removed on exit.
-
-For comparison with a separately built upstream package, pass
-`--package-root <absolute-path> --expect-native-rejection`; this expects the
-old false refusal for TrustedInstaller sources/profiles while retaining the
-unsafe-writer controls. Omitting that flag against upstream demonstrates the
-source-acceptance regression. This is pinned browser-module proof, not a full
-MSIX/browser pairing scenario or human approval of the public trust policy.
-
-Vitest timeouts do not cancel filesystem promises. Shared fixtures with expensive
-setup use `useSuiteFixture` from `test/helpers/suite-fixture.ts`: setup has a separate
-30-second hook budget, and teardown waits for tracked setup and test work before
-removing directories. Run shared-state corpora sequentially with a deadline per
-payload. Keep child-process liveness limits separate from fixture preparation.
-The Windows CI slow-copy proof runs the real package-copy process-exit test with a
-16-second copy delay, a 10-second child deadline, a 15-second test deadline, and
-60-second setup and teardown hook budgets. Other hosts retain the ordinary
-six-second delay, four-second child deadline, five-second test deadline, and
-30-second hook budgets:
-
-```bash
-pnpm build
-pnpm test --config scripts/slow-package-copy.config.ts
-```
+The proof creates user-owned source, destination, and profile fixtures with
+TrustedInstaller and other untrusted write grants. It checks refusal before
+copying or reading profile bytes, and verifies private secure reads remain
+strict. Ownership acceptance is covered by synthetic native/fallback descriptor
+tests; changing a real fixture to TrustedInstaller ownership requires privileges
+and is not attempted by this non-elevated proof.
 
 ## Checks
 

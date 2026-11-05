@@ -6,7 +6,7 @@ import { itPosix, useTempDirs } from "./helpers/vitest.js";
 import { openLocalFileSafely, root as openRoot } from "../src/root.js";
 import { resolvePathInRoot, resolveRootContext } from "../src/root-context.js";
 import { resolveStrictExistingPathsWithinRoot } from "../src/root-paths.js";
-import { realpathSync } from "../src/realpath.js";
+import * as realpathOwner from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 
 const { tempRoot } = useTempDirs();
@@ -204,7 +204,8 @@ describe("root context error paths", () => {
       .resolves.toMatchObject({ resolved: path.join(rootDir, "value.txt") });
 
     const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-    vi.spyOn(realpathSync, "native").mockImplementationOnce(() => { throw denied; });
+    if (process.platform === "win32") vi.spyOn(realpathOwner.realpathSync, "native").mockImplementationOnce(() => { throw denied; });
+    else vi.spyOn(realpathOwner, "realpathNative").mockRejectedValueOnce(denied);
     await expect(resolveRootContext(rootDir)).rejects.toBe(denied);
   });
 });

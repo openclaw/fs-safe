@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { realpathSync } from "../src/realpath.js";
+import { realpathNative, realpathSync } from "../src/realpath.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -14,9 +14,9 @@ describe.skipIf(process.platform === "win32")("POSIX canonical paths", () => {
     fs.writeFileSync(path.join(directory, "a", "file"), "slash");
     const literal = path.join(directory, "a\\file");
     fs.writeFileSync(literal, "backslash");
-    for (const resolve of [realpathSync, realpathSync.native]) {
-      expect(resolve(literal)).toBe(literal);
-      expect(fs.readFileSync(resolve(literal), "utf8")).toBe("backslash");
+    for (const resolve of [realpathSync, realpathSync.native, realpathNative]) {
+      expect(await resolve(literal)).toBe(literal);
+      expect(fs.readFileSync(await resolve(literal), "utf8")).toBe("backslash");
     }
   });
 
@@ -28,6 +28,7 @@ describe.skipIf(process.platform === "win32")("POSIX canonical paths", () => {
     // path.join would erase the component whose ordering is being tested.
     const input = `${directory}/link/..`;
     expect(realpathSync.native(input)).toBe(path.join(directory, "target"));
+    expect(await realpathNative(input)).toBe(path.join(directory, "target"));
     expect(realpathSync(input)).toBe(directory);
     fs.symlinkSync("link/..", path.join(directory, "indirect"));
     expect(realpathSync.native(path.join(directory, "indirect"))).toBe(path.join(directory, "target"));
@@ -44,9 +45,9 @@ describe.skipIf(process.platform === "win32")("POSIX canonical paths", () => {
     const caseInsensitive = fs.existsSync(caseAlias);
     fs.chmodSync(searchOnly, 0o100);
     try {
-      for (const resolve of [realpathSync, realpathSync.native]) {
-        expect(resolve(file)).toBe(file);
-        expect(resolve(searchOnly)).toBe(searchOnly);
+      for (const resolve of [realpathSync, realpathSync.native, realpathNative]) {
+        expect(await resolve(file)).toBe(file);
+        expect(await resolve(searchOnly)).toBe(searchOnly);
       }
       if (caseInsensitive) expect(realpathSync.native(caseAlias)).toBe(file);
       expect(fs.statSync(file).mode & 0o777).toBe(0);
@@ -69,6 +70,7 @@ describe.skipIf(process.platform === "win32")("POSIX canonical paths", () => {
         server.listen(socket, resolve);
       });
       expect(realpathSync.native(socket)).toBe(socket);
+      expect(await realpathNative(socket)).toBe(socket);
       expect(realpathSync(socket)).toBe(socket);
       expect(fs.lstatSync(socket).isSocket()).toBe(true);
     } finally {
@@ -90,6 +92,8 @@ describe.skipIf(process.platform === "win32")("POSIX canonical paths", () => {
       for (const [input, code] of cases) {
         expect(() => realpathSync.native(input!)).toThrowError(expect.objectContaining({ code }));
         expect(realpathSync.native(file)).toBe(file);
+        await expect(realpathNative(input!)).rejects.toMatchObject({ code });
+        expect(await realpathNative(file)).toBe(file);
       }
     }
     expect(() => realpathSync.native(`${directory}/file\0ignored`)).toThrowError(

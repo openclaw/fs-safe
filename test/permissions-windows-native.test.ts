@@ -42,7 +42,7 @@ describe.runIf(process.platform === "win32" && !!native?.readOwnerAndDacl)("real
   });
 
   it.each([
-    ["TrustedInstaller", installer, false, false],
+    ["TrustedInstaller", installer, true, false],
     ["unrelated service", otherService, true, false],
     ["LocalService", "s-1-5-19", true, false],
     ["Users", "s-1-5-32-545", false, true],
@@ -104,7 +104,7 @@ describe.runIf(process.platform === "win32" && !!native?.readOwnerAndDacl)("real
     for (const mode of ["require", "off"] as const) {
       configureFsSafeNative({ mode });
       await expect(inspectPathPermissions(child)).resolves.toMatchObject({
-        source: "windows-acl", ownerTrusted: true, groupWritable: false, worldWritable: false,
+        source: "windows-acl", ownerTrusted: true, groupWritable: true, worldWritable: false,
       });
     }
   });
@@ -133,7 +133,7 @@ describe.runIf(process.platform === "win32" && !!native?.readOwnerAndDacl)("real
       fallbackRequired: false, groupWritable: true,
     });
     await expect(inspectPathPermissions(filePath)).resolves.toMatchObject({
-      source: "windows-acl", groupWritable: false,
+      source: "windows-acl", groupWritable: true,
     });
     const open = fs.open.bind(fs);
     const reads: ReturnType<typeof vi.spyOn>[] = [];

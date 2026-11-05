@@ -16,6 +16,12 @@ function shortVirtualReads(handle: FileHandle, initialSize: number) {
   const stat = fsSync.fstatSync(handle.fd);
   const observe = vi.spyOn(fsSync, "fstatSync").mockReturnValue(Object.assign(Object.create(stat), { size: 0 }));
   if (initialSize > 0) observe.mockReturnValueOnce(Object.assign(Object.create(stat), { size: initialSize }));
+  let first = true;
+  vi.spyOn(fsSync, "fstat").mockImplementation((_fd, callback) => {
+    const size = first ? initialSize : 0;
+    first = false;
+    callback(null, Object.assign(Object.create(stat), { size }));
+  });
   const handleRead = handle.read.bind(handle);
   vi.spyOn(handle, "read").mockImplementation((buffer, offset, length, position) =>
     handleRead(buffer, offset, Math.min(length, 1), position));

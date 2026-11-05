@@ -50,13 +50,25 @@ const asyncBudgets = {
   sha256FileSync: 0,
   "root.copyIn durable:false": 9,
 };
-// Async traversal shifts two read or seven write metadata calls off the main thread.
+// Path and descriptor observations move off-thread; aggregate syscall budgets stay fixed.
 const asyncMetadata = {
-  "root.open": [1, 1, 0], "root.readBytes": [1, 1, 0],
-  "root.write": [4, 2, 1], "root.create": [4, 2, 1], "root.copyIn durable:false": [4, 2, 1],
+  "root.open": [7, 1, 1], "root.readBytes": [7, 1, 1],
+  "readLocalFileSafely bounded": [1, 0, 0], readLocalFileSafely: [1, 0, 0],
+  "root.write": [7, 2, 1], "root.create": [7, 2, 1], "root.copyIn durable:false": [7, 2, 1],
 } as const;
-// Includes the instrumentation wrapper around open; async read traversal adds 12 promises.
-const promiseBudgets = { "root.readBytes": 51 + 12 + metadataPromiseOverhead(2), readLocalFileSafely: 47, "root.open": 35 + 12 + metadataPromiseOverhead(2), "readLocalFileSafely bounded": 46 };
+const asyncDescriptorMetadata: Partial<Record<keyof typeof budgets, number>> = {
+  "root.open": 1, "root.readBytes": 2, "readLocalFileSafely bounded": 2,
+  readLocalFileSafely: 2, readRegularFile: 2, tryReadJson: 2, "root.copyIn durable:false": 1,
+};
+// The existing margins remain; paired runs add 84 promises for eight offloaded
+// Root observations, plus four for the callback EOF stat. Local reads offload
+// preview/descriptor identity and EOF stat (+24). Node 26 adds two per async stat.
+const promiseBudgets = {
+  "root.readBytes": 51 + 12 + 88 + metadataPromiseOverhead(9),
+  readLocalFileSafely: 47 + 24 + metadataPromiseOverhead(2),
+  "root.open": 35 + 12 + 84 + metadataPromiseOverhead(9),
+  "readLocalFileSafely bounded": 46 + 24 + metadataPromiseOverhead(2),
+};
 const { tempRoot } = useRealTempDirs();
 
 describe("Root.list filename allocation budget", () => {
@@ -147,6 +159,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
     };
     try {
       wrap(fs, Object.keys(fs), "p.");
+      wrap(fsSync, ["fstat"], "c.");
       wrap(fsSync.realpathSync, ["native"], "s.realpathSync.");
       wrap(fsSync, Object.keys(fsSync).filter((key) => key.endsWith("Sync") && key !== "writeSync"), "s.");
       wrap(prototype, Object.getOwnPropertyNames(prototype).filter((key) => key !== "constructor" && key !== "fd"), "h.");
@@ -185,7 +198,7 @@ describe.skipIf(process.platform === "win32")("fallback filesystem call budgets"
           sum + (key.startsWith("s.") ? 0 : count), 0);
         const metadata = name in asyncMetadata ? asyncMetadata[name as keyof typeof asyncMetadata] : [0, 0, 0];
         expect.soft(["p.lstat", "p.stat", "p.realpath"].map(key => counts.get(key) ?? 0), breakdown).toEqual(metadata);
-        const movedMetadata = metadata.reduce((sum, count) => sum + count, 0);
+        const movedMetadata = metadata.reduce((sum, count) => sum + count, 0) + (asyncDescriptorMetadata[name] ?? 0);
         expect.soft(total, `${name}: ${total} calls; ${breakdown}`).toBeLessThanOrEqual(budgets[name]);
         expect.soft(asyncTotal, `${name}: ${asyncTotal} async calls; ${breakdown}`)
           .toBeLessThanOrEqual(asyncBudgets[name] + movedMetadata);

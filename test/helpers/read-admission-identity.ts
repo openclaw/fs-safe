@@ -100,6 +100,37 @@ export function observeReadAdmission(filePath: string, options: {
     if (options.swap === "after-open") swap();
     return fd;
   });
+  const openCallback = fsSync.open.bind(fsSync);
+  vi.spyOn(fsSync, "open").mockImplementation((...args) => {
+    const callback = args.at(-1) as (error: NodeJS.ErrnoException | null, fd: number) => void;
+    if (String(args[0]) !== filePath) return Reflect.apply(openCallback, fsSync, args);
+    if (options.swap === "before-open") swap();
+    args[args.length - 1] = (error: NodeJS.ErrnoException | null, fd: number) => {
+      if (!error) {
+        opened = true;
+        open();
+        descriptors.add(fd);
+        if (options.swap === "after-open") swap();
+      }
+      callback(error, fd);
+    };
+    return Reflect.apply(openCallback, fsSync, args);
+  });
+  const fstatCallback = fsSync.fstat.bind(fsSync);
+  vi.spyOn(fsSync, "fstat").mockImplementation((...args) => {
+    const callback = args.at(-1) as (error: NodeJS.ErrnoException | null, stat?: Stats | BigIntStats) => void;
+    args[args.length - 1] = (error: NodeJS.ErrnoException | null, stat: Stats | BigIntStats) => {
+      if (error || !descriptors.has(args[0])) { callback(error, stat); return; }
+      try { callback(null, observe("descriptor", stat, typeof args[1] === "object" && args[1]?.bigint === true)); }
+      catch (failure) { callback(failure as NodeJS.ErrnoException); }
+    };
+    return Reflect.apply(fstatCallback, fsSync, args);
+  });
+  const closeCallback = fsSync.close.bind(fsSync);
+  vi.spyOn(fsSync, "close").mockImplementation((fd, callback) => {
+    if (descriptors.has(fd)) { close(); descriptors.delete(fd); }
+    closeCallback(fd, callback);
+  });
   const fstat = fsSync.fstatSync.bind(fsSync);
   vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
     const stat = fstat(...args);

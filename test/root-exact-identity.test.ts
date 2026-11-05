@@ -21,6 +21,9 @@ function watchRootObservations() {
     vi.spyOn(fsSync, "statSync"),
     vi.spyOn(fsSync, "lstatSync"),
     vi.spyOn(realpathSync, "native"),
+    vi.spyOn(fs, "stat"),
+    vi.spyOn(fs, "lstat"),
+    vi.spyOn(fs, "realpath"),
   ];
 }
 
@@ -106,6 +109,15 @@ it("keeps high-bit root identities exact across metadata reads and a replacement
     const original = fsSync[method].bind(fsSync);
     vi.spyOn(fsSync, method).mockImplementation((...args) => {
       const stat = original(...args);
+      return String(args[0]) === directory
+        ? Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? inode : Number(inode) })
+        : stat;
+    });
+  }
+  for (const method of ["stat", "lstat"] as const) {
+    const original = fs[method].bind(fs);
+    vi.spyOn(fs, method).mockImplementation(async (...args) => {
+      const stat = await original(...args);
       return String(args[0]) === directory
         ? Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? inode : Number(inode) })
         : stat;

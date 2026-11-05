@@ -71,7 +71,7 @@ const browser = new Function(
   () => { throw new Error("Unexpected global state lookup"); });
 const installer = "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 const cases = [
-  ["TrustedInstaller", installer, false],
+  ["TrustedInstaller", installer, true],
   ["unrelated-service", "s-1-5-80-0", true],
   ["LocalService", "s-1-5-19", true],
   ["Users", "s-1-5-32-545", true],

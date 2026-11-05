@@ -12,13 +12,20 @@ const opened = await fs.open("large.log");               // FileHandle for strea
 
 ## What every read does
 
-Identity and containment checks use brief synchronous metadata calls, like Node's module resolution, while file data is read asynchronously. Canonical paths retain Node's native realpath spelling, including expansion of Windows short paths.
+On POSIX, `root()` acquisition and `Root.open()`/read admission use asynchronous
+metadata and canonicalization, including `~` expansion and bounded-read size
+observations. Bun uses the native resolver on a worker to preserve physical path,
+permission, and record-lock semantics. The optional native addon can still load
+synchronously on first use. File data is read asynchronously.
+Canonical paths retain native realpath spelling, including Windows short paths.
 
-The same observation rule applies to archive extraction, copy, publication, move,
-directory modes, and supporting lock, queue, and secret-file operations. Opens,
-data transfers, durability syncs, filesystem mutations, and closes retain their
-existing asynchronous behavior. Custom filesystem adapters retain their async
-metadata interface.
+Windows retains synchronous metadata and final admission to preserve native
+namespace and delete-sharing behavior. Explicit synchronous APIs and custom
+`openRootFile` `ioFs` adapters also retain their synchronous contract. This does
+not make every fs-safe operation nonblocking: stat/list/walk observation guards,
+archive extraction, copy, publication, move, directory modes, and supporting lock,
+queue, and secret-file operations may still use synchronous metadata or durability
+calls.
 
 Regardless of shape, every read goes through the same boundary checks:
 

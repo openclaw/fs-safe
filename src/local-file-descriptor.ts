@@ -14,7 +14,7 @@ import {
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { fileNotFoundError, hardlinkedPathNotAllowedError } from "./root-errors.js";
 import type { RootReadOptions } from "./root-options.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 
 const OPEN_READ_FLAGS = resolveReadOpenFlags();
@@ -40,8 +40,7 @@ export async function openLocalFileDescriptor(
   // Reject directories before opening so we never surface EISDIR to callers (e.g. tool
   // results that get sent to messaging channels). See openclaw/openclaw#31186.
   try {
-    preOpenStat = inspectFileIdentitySync(() => {
-      const stat = fsSync.lstatSync(filePath, { bigint: true });
+    const inspect = (stat: BigIntStats) => {
       observedBeforeOpen = true;
       if (stat.isSymbolicLink() && options?.symlinks !== "follow-within-root") {
         throw new FsSafeError("symlink", "symlink not allowed");
@@ -50,7 +49,10 @@ export async function openLocalFileDescriptor(
         throw new FsSafeError("not-file", "not a file");
       }
       return stat;
-    });
+    };
+    preOpenStat = process.platform === "win32"
+      ? inspectFileIdentitySync(() => inspect(fsSync.lstatSync(filePath, { bigint: true })))
+      : await inspectFileIdentity(async () => inspect(await fs.lstat(filePath, { bigint: true })));
   } catch (err) {
     if (err instanceof FsSafeError || observedBeforeOpen) {
       throw err;
@@ -86,14 +88,15 @@ export async function openLocalFileDescriptor(
     let openedIdentity: BigIntStats | undefined;
     let identity: BigIntStats;
     try {
-      identity = inspectFileIdentitySync(
-        () => {
-          openedIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
-          if (!openedIdentity.isFile()) throw new FsSafeError("not-file", "not a file");
-          return openedIdentity;
-        },
-        preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined,
-      );
+      const inspect = (stat: BigIntStats) => {
+        openedIdentity = stat;
+        if (!stat.isFile()) throw new FsSafeError("not-file", "not a file");
+        return stat;
+      };
+      const expected = preOpenStat && !preOpenStat.isSymbolicLink() ? preOpenStat : undefined;
+      identity = process.platform === "win32"
+        ? inspectFileIdentitySync(() => inspect(fsSync.fstatSync(handle.fd, { bigint: true })), expected)
+        : await inspectFileIdentity(async () => inspect(await handle.stat({ bigint: true })), expected);
     } catch (error) {
       if (openedIdentity && [0n, 1n].includes(openedIdentity.nlink)) {
         await recordPreOpenFileChange(error, handle, filePath, preOpenStat, openedIdentity);

@@ -9,6 +9,14 @@ import { isWindowsAppContainer } from "./windows-appcontainer.js";
 
 const runtimePlatform = process.versions.bun ? platform() : undefined;
 const bunPosix = runtimePlatform === "darwin" || runtimePlatform === "linux" ? runtimePlatform : undefined;
+function nativeResult(input: string, result: { path?: string; errno?: number }): string {
+  if (result.path !== undefined) return result.path;
+  const errno = -(result.errno!);
+  const code = getSystemErrorName(errno);
+  throw Object.assign(new Error(`${code}: realpath '${input}'`), {
+    code, errno, syscall: "realpath", path: input,
+  });
+}
 function resolve(input: string, native: boolean): string {
   if (native && process.platform === "win32") {
     try { return fs.realpathSync.native(input); }
@@ -44,13 +52,7 @@ function resolve(input: string, native: boolean): string {
     const binding = getNativeBinding();
     if (binding?.canonicalizePath) {
       // Ordinary resolution normalizes both the input and each expanded symlink.
-      const result = binding.canonicalizePath(input, !native);
-      if (result.path !== undefined) return result.path;
-      const errno = -(result.errno!);
-      const code = getSystemErrorName(errno);
-      throw Object.assign(new Error(`${code}: realpath '${input}'`), {
-        code, errno, syscall: "realpath", path: input,
-      });
+      return nativeResult(input, binding.canonicalizePath(input, !native));
     }
     if (getFsSafeNativeConfig().mode === "require") {
       throw new FsSafeError("helper-unavailable", "native fs-safe canonicalization is unavailable");
@@ -65,9 +67,18 @@ export const realpathSync = Object.assign((input: string) => resolve(input, fals
   native: (input: string) => resolve(input, true),
 });
 
-/** Async on Node; retain runtime-specific native canonicalization guarantees. */
+/** POSIX async canonicalization retains Bun's native path and record-lock semantics. */
 export async function realpathNative(input: string): Promise<string> {
-  if (bunPosix) return realpathSync.native(input);
+  if (bunPosix) {
+    if (input.includes("\0")) {
+      throw Object.assign(new TypeError("realpath input must not contain null bytes"), { code: "ERR_INVALID_ARG_VALUE" });
+    }
+    const binding = getNativeBinding();
+    if (binding?.canonicalizePathAsync) return nativeResult(input, await binding.canonicalizePathAsync(input, false));
+    if (binding?.canonicalizePath || getFsSafeNativeConfig().mode === "require") {
+      throw new FsSafeError("helper-unavailable", "native fs-safe canonicalization is unavailable");
+    }
+  }
   try { return await asyncFs.realpath(input); }
   catch (error) {
     if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM" ||

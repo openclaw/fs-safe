@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { root } from "../src/root.js";
 import { openRootFile, openRootFileSync, type OpenRootFileSyncParams } from "../src/root-file.js";
 import { realpathSync } from "../src/realpath.js";
+import * as realpathOwner from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
@@ -35,6 +36,12 @@ for (const operation of ["open", "readText", "readAbsolute", "reader"] as const)
       vi.spyOn(realpathSync, "native").mockImplementation((candidate, options) => {
         const result = resolve(candidate, options);
         if (opened && String(candidate) === target && phase === "canonicalization") addLink();
+        return result;
+      });
+      const resolveAsync = realpathOwner.realpathNative;
+      vi.spyOn(realpathOwner, "realpathNative").mockImplementation(async candidate => {
+        const result = await resolveAsync(candidate);
+        if (opened && candidate === target && phase === "canonicalization") addLink();
         return result;
       });
       let failure: unknown;

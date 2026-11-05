@@ -46,6 +46,17 @@ describe("Root copy source lifetime", () => {
         return stat;
       });
     }
+    for (const method of ["lstat", "stat"] as const) {
+      const actual = fs[method].bind(fs);
+      vi.spyOn(fs, method).mockImplementation(async (...args) => {
+        const stat = await actual(...args);
+        if (String(args[0]) === source) {
+          const value = swapped ? (timing === "unknown-after-copy" ? 0n : ino + 1n) : ino;
+          stat.ino = args[1]?.bigint ? value : Number(value);
+        }
+        return stat;
+      });
+    }
     __setFsSafeTestHooksForTest({
       afterOpen(candidate, handle) {
         if (candidate !== source) return;
@@ -54,6 +65,12 @@ describe("Root copy source lifetime", () => {
         vi.spyOn(fsSync, "fstatSync").mockImplementation((fd, options) => {
           if (fd !== handle.fd) return actualStat(fd, options);
           const stat = actualStat(fd, options);
+          stat.ino = options?.bigint ? ino : Number(ino);
+          return stat;
+        });
+        const handleStat = handle.stat.bind(handle);
+        vi.spyOn(handle, "stat").mockImplementation(async options => {
+          const stat = await handleStat(options);
           stat.ino = options?.bigint ? ino : Number(ino);
           return stat;
         });
