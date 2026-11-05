@@ -28,7 +28,6 @@ export type SidecarPublicationOptions = {
   onConflict?: (error: unknown) => void;
   prepare?: (fd: number) => void;
   requireExactIdentity?: boolean;
-  onOpenFailure?: (error: unknown) => void;
 };
 
 // Final lock ownership never comes from staging cleanup or an observed PID.
@@ -247,6 +246,5 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
     if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onConflict?.(error);
     throw error;
   }
-  try { return { handle: await open(targetPath), complete: false }; }
-  catch (error) { options.onOpenFailure?.(error); throw error; }
+  return { handle: await open(targetPath), complete: false };
 }

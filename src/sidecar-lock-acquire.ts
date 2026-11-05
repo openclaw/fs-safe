@@ -277,8 +277,8 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               cause = Object.getOwnPropertyDescriptor(cause, "cause")?.value;
             }
             // Only this invocation's failed exclusive open grants denial retry authority.
-            lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&
-              isTransientLockFileDenial(error, lockPath);
+            lockFileCreateDenied = observation.has(error, `sidecar-create-denial:${lockPath}`) ||
+              (observation.has(error, `exclusive-create:${lockPath}`) && isTransientLockFileDenial(error, lockPath));
             if (error instanceof FsSafeError && error.code === "already-exists") {
               exclusiveCreateConflict = true;
               throw Object.assign(new Error("sidecar lock exists"), { code: "EEXIST" });
@@ -304,14 +304,15 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           }
           handle = opened.handle;
         } else {
-          const failedOpen = (createError: unknown): never => {
-            lockFileCreateDenied = isTransientLockFileDenial(createError, lockPath);
-            exclusiveCreateConflict = (createError as NodeJS.ErrnoException).code === "EEXIST";
+          const failedOpen = (createError: unknown, pathname = lockPath): never => {
+            lockFileCreateDenied = isTransientLockFileDenial(createError, pathname);
+            exclusiveCreateConflict = pathname === lockPath && (createError as NodeJS.ErrnoException).code === "EEXIST";
             throw createError;
           };
-          const created = await createSidecarFile(lockPath, raw, async pathname =>
-            await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, "wx", 0o600),
-          { onConflict: failedOpen, onOpenFailure: failedOpen });
+          const created = await createSidecarFile(lockPath, raw, async pathname => {
+            try { return await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, "wx", 0o600); }
+            catch (error) { return failedOpen(error, pathname); }
+          }, { onConflict: failedOpen });
           handle = created.handle;
           if (created.complete) createdSnapshot = { raw, payload, stat: created.identity, ownershipToken };
           if (!created.complete) {

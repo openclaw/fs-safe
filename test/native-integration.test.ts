@@ -417,11 +417,13 @@ describe.runIf(native)("native filesystem primitives", () => {
 
   itWin32("preserves a native exclusive-open denial after the bounded retry budget", async () => {
     let exclusiveOpenCalls = 0;
+    let deniedRelativePath = "";
     __setNativeLoaderForTest(() => ({
       ...native!,
       openBeneath(rootFd, relPath, flags) {
         if (flags & fsSync.constants.O_EXCL) {
           exclusiveOpenCalls += 1;
+          deniedRelativePath = relPath;
           throw Object.assign(new Error("open relative path failed with Windows error 5"), {
             code: "EPERM",
           });
@@ -432,18 +434,15 @@ describe.runIf(native)("native filesystem primitives", () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await fs.realpath(await tempRoot("fs-safe-native-lock-permission-"));
     const targetPath = path.join(directory, "state.json");
-    const lockPath = `${targetPath}.lock`;
-
-    await expect(
-      acquireFileLock(targetPath, {
-        // Exercise the denial-count cap without an elapsed deadline.
-        timeoutMs: Number.POSITIVE_INFINITY,
-        retry: { retries: 20, minTimeout: 1, maxTimeout: 1 },
-        payload: () => ({ pid: process.pid }),
-      }),
-    ).rejects.toMatchObject({
+    const error = await acquireFileLock(targetPath, {
+      // Exercise the denial-count cap without an elapsed deadline.
+      timeoutMs: Number.POSITIVE_INFINITY,
+      retry: { retries: 20, minTimeout: 1, maxTimeout: 1 },
+      payload: () => ({ pid: process.pid }),
+    }).catch(error => error);
+    expect(error).toMatchObject({
       code: "EPERM",
-      path: lockPath,
+      path: path.join(directory, deniedRelativePath),
       message: "open relative path failed with Windows error 5",
     });
     expect(exclusiveOpenCalls).toBe(9);

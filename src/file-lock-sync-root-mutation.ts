@@ -102,7 +102,7 @@ export function createFileLockSyncRootFile(
   raw: string,
   options: {
     assertBeforeOpen: () => void;
-    onOpenFailure: (error: unknown) => void;
+    onOpenFailure: (error: unknown, pathname?: string) => void;
   },
 ): { fd: number; receipt: FileLockSyncRootFileReceipt } {
   const parent = ensureParent(pathAuthority);
@@ -128,7 +128,7 @@ export function createFileLockSyncRootFile(
         return fs.openSync(pathname,
           fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow, 0o600);
       } catch (error) {
-        if (pathname === pathForWindowsFilesystem(pathAuthority.path)) options.onOpenFailure(error);
+        options.onOpenFailure(error, pathname);
         throw error;
       }
     }, {

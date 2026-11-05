@@ -192,7 +192,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       let fd: number | undefined;
       let rootReceipt: FileLockSyncRootFileReceipt | undefined;
       let unpublishedTimer: NodeJS.Timeout | undefined;
-      let lockFileCreateOpenFailure: { error: unknown } | undefined;
+      let lockFileCreateOpenFailure: { error: unknown; pathname: string } | undefined;
       try {
         const created = createFileLockSyncRootFile(lockRootPath, raw, {
           assertBeforeOpen: () => {
@@ -200,8 +200,8 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
             if (currentTargetHolder() !== undefined) throw new FileLockSyncRootArbitrationCollision();
           },
-          onOpenFailure: (error) => {
-            lockFileCreateOpenFailure = { error };
+          onOpenFailure: (error, pathname = lockPath) => {
+            lockFileCreateOpenFailure = { error, pathname };
           },
         });
         fd = created.fd;
@@ -265,8 +265,9 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         }
         const fromLockFileOpen = lockFileCreateOpenFailure !== undefined &&
           lockFileCreateOpenFailure.error === error;
-        if (fromLockFileOpen && acquisition.retryDenial(error)) continue;
-        if (!fromLockFileOpen || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (fromLockFileOpen && acquisition.retryDenial(error, lockFileCreateOpenFailure!.pathname)) continue;
+        if (!fromLockFileOpen || lockFileCreateOpenFailure!.pathname !== lockPath ||
+          (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         if (ownedReclaimGuard) {
           releaseReclaimGuard();
           const reused = reuseCurrentHeld();

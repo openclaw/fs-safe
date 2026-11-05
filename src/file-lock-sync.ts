@@ -256,22 +256,24 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         if (currentTargetHolder() !== undefined) { acquisition.waitForRetry(); continue; }
       }
       let lockFileCreateDenied = false;
+      let createOpenPath = lockPath;
       let exclusiveCreateConflict = false;
       try {
         const noFollow =
           process.platform !== "win32" && typeof fs.constants.O_NOFOLLOW === "number"
             ? fs.constants.O_NOFOLLOW
             : 0;
-        const failedOpen = (error: unknown) => {
-          lockFileCreateDenied = isTransientLockFileDenial(error, lockPath);
-          exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
+        const failedOpen = (error: unknown, pathname = lockPath) => {
+          createOpenPath = pathname;
+          lockFileCreateDenied = isTransientLockFileDenial(error, pathname);
+          exclusiveCreateConflict = pathname === lockPath && (error as NodeJS.ErrnoException).code === "EEXIST";
         };
         const created = createSidecarFileSync(lockPath, raw, pathname => {
           try {
             return fs.openSync(pathname,
               fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow, 0o600);
           } catch (error) {
-            if (pathname === lockPath) failedOpen(error);
+            failedOpen(error, pathname);
             throw error;
           }
         }, { onConflict: failedOpen });
@@ -352,7 +354,7 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
         if (lockFileCreateDenied) {
           if (!acquisition.hasToken()) throw sidecarLockTimeout(lockPath, normalizedTargetPath);
           if (currentTargetHolder() !== undefined) { acquisition.waitForRetry(); continue; }
-          if (acquisition.retryDenial(error)) continue;
+          if (acquisition.retryDenial(error, createOpenPath)) continue;
           throw error;
         }
         if (!exclusiveCreateConflict) throw error;

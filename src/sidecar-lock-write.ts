@@ -12,6 +12,7 @@ import type { NativeWriteParent, PinnedWriteParams } from "./pinned-write-types.
 import { writePinnedInput } from "./pinned-write-input.js";
 import { cleanupPinnedFilePath } from "./file-cleanup.js";
 import { createSidecarFile } from "./sidecar-lock-publication.js";
+import { isTransientLockFileDenial } from "./sidecar-lock-policy.js";
 
 export class SidecarFallbackWriteError extends Error {
   constructor(readonly failure: unknown) { super("sidecar fallback failed"); }
@@ -74,6 +75,7 @@ async function writeAtParent(
       };
     } catch (error) {
       if (native) annotateReadOnlyOpenError(error, pathname);
+      if (isTransientLockFileDenial(error, pathname)) recordFileObservationFailure(error, `sidecar-create-denial:${target}`);
       if (pathname === target) onConflict(error);
       throw error;
     }
