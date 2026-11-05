@@ -64,7 +64,9 @@ it.each(kinds)("%s never exposes the final sidecar while writing its owner recor
   } finally { await lock.release(); }
 });
 
-it.each(kinds)("%s cleans an interrupted stage and preserves a concurrent winner", async kind => {
+it.each(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mode }))))(
+  "$kind cleans an interrupted stage and preserves a concurrent winner ($mode)", async ({ kind, mode }) => {
+  configureFsSafeNative({ mode });
   const directory = await tempRoot("fs-safe-stage-rollback-");
   const target = path.join(directory, "state"), lockPath = `${target}.lock`;
   let staged = false;

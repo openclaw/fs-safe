@@ -2,6 +2,7 @@ import fs from "node:fs";
 import promises from "node:fs/promises";
 import path from "node:path";
 import { assertSyncDirectoryGuard, type AnyAsyncDirectoryGuard } from "./directory-guard.js";
+import { FsSafeError } from "./errors.js";
 import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { recordFileObservationFailure } from "./file-observation.js";
 import { captureNativeFdClose } from "./native-binding.js";
@@ -39,7 +40,12 @@ async function writeAtParent(
     params.assertBeforeMutation?.();
     assertSyncDirectoryGuard(parent);
   };
-  const onConflict = (error: unknown) => recordFileObservationFailure(error, `exclusive-create:${target}`);
+  const onConflict = (error: unknown) => {
+    recordFileObservationFailure(error, `exclusive-create:${target}`);
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new FsSafeError("already-exists", "file already exists", { cause: error });
+    }
+  };
   const created = await createSidecarFile(target, raw, async pathname => {
     assertCurrent();
     try {
