@@ -50,35 +50,45 @@ async function writeAtParent(
   };
   const created = await createSidecarFile(target, raw, async pathname => {
     assertCurrent();
-    try {
-      if (!native) {
-        const handle = await promises.open(pathname, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, params.mode);
-        return {
-          fd: handle.fd,
-          close: () => handle.close(),
-          writeFile: async (data: string, encoding: BufferEncoding) =>
-            await writePinnedInput(handle, { kind: "buffer", data, encoding }),
-        };
-      }
-      const close = captureNativeFdClose(native.binding);
-      let open = true;
-      const fd = native.binding.createStagedFile && process.platform !== "win32"
-        ? await native.binding.createStagedFile(native.fd, path.basename(pathname))
-        : native.binding.openBeneath!(native.fd, path.basename(pathname),
-          nativeOpenFlags(fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL)).fd;
-      return {
-        fd,
-        async close() { if (open) { open = false; close(fd); } },
-        async writeFile(data: string, encoding: BufferEncoding) {
-          await writePinnedInput(fd, { kind: "buffer", data, encoding });
-        },
-      };
-    } catch (error) {
+    const failedOpen = (error: unknown): never => {
       if (native) annotateReadOnlyOpenError(error, pathname);
       if (isTransientLockFileDenial(error, pathname)) recordFileObservationFailure(error, `sidecar-create-denial:${target}`);
       if (pathname === target) onConflict(error);
       throw error;
+    };
+    if (!native) {
+      let handle: Awaited<ReturnType<typeof promises.open>>;
+      try { handle = await promises.open(pathname, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, params.mode); }
+      catch (error) { return failedOpen(error); }
+      return {
+        fd: handle.fd,
+        close: () => handle.close(),
+        writeFile: async (data: string, encoding: BufferEncoding) =>
+          await writePinnedInput(handle, { kind: "buffer", data, encoding }),
+      };
     }
+    const close = captureNativeFdClose(native.binding);
+    let open = true;
+    let fd: number;
+    try {
+      fd = native.binding.createStagedFile && process.platform !== "win32"
+        ? await native.binding.createStagedFile(native.fd, path.basename(pathname))
+        : native.binding.openBeneath!(native.fd, path.basename(pathname),
+          nativeOpenFlags(fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL)).fd;
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException;
+      if (process.platform === "win32" && failure?.code === "EPERM" && failure.path === undefined) {
+        try { failure.path = pathname; } catch { /* Keep immutable native diagnostics. */ }
+      }
+      return failedOpen(error);
+    }
+    return {
+      fd,
+      async close() { if (open) { open = false; close(fd); } },
+      async writeFile(data: string, encoding: BufferEncoding) {
+        await writePinnedInput(fd, { kind: "buffer", data, encoding });
+      },
+    };
   }, {
     nativeParent: native, assertCurrent, assertCleanupCandidate: params.assertSidecarCleanupCandidate,
     onConflict, prepare: fd => fs.fchmodSync(fd, params.mode), requireExactIdentity: true,
