@@ -28,9 +28,10 @@ $cases = @(
   @{name='read-true'; type='XA'; mask='0x001200A9'; flags='OICI'; condition=$trueCondition},
   @{name='read-false'; type='XA'; mask='0x001200A9'; flags='OICI'; condition=$falseCondition},
   @{name='read-inherited'; type='XA'; mask='0x001200A9'; flags='OICIID'; condition=$trueCondition},
+  @{name='trusted-callback'; type='XA'; mask='0x001200A9'; flags=''; condition=$trueCondition; sid=$user},
   @{name='generic-read'; type='XA'; mask='GRGX'; flags=''; condition=$trueCondition},
   @{name='inherit-only'; type='XA'; mask='0x001200A9'; flags='OICIIO'; condition=$trueCondition},
-  @{name='private-parent'; type='XA'; mask='0x001200A9'; flags='OICI'; condition=$trueCondition},
+  @{name='private-parent'; type='XA'; mask='0x001200A9'; flags='OICI'; condition=$trueCondition; sid=$user},
   @{name='write'; type='XA'; mask='0x00000002'; flags=''; condition=$trueCondition},
   @{name='generic-write'; type='XA'; mask='GW'; flags=''; condition=$falseCondition},
   @{name='write-dac'; type='XA'; mask='WD'; flags=''; condition=$trueCondition},
@@ -40,7 +41,8 @@ $cases = @(
 )
 foreach ($case in $cases) {
   $target = Join-Path $Root $case.name
-  $sddl = "D:P(A;;FA;;;$user)(A;;FA;;;SY)($($case.type);$($case.flags);$($case.mask);;;WD;$($case.condition))"
+  $principal = if ($case.ContainsKey('sid')) { $case.sid } else { 'WD' }
+  $sddl = "D:P(A;;FA;;;$user)(A;;FA;;;SY)($($case.type);$($case.flags);$($case.mask);;;$principal;$($case.condition))"
   [CallbackAclFixture]::Set($target, $sddl)
 }
 # The current user retains every file right except READ_DATA. A true callback

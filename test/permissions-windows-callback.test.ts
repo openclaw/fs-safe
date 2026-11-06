@@ -13,7 +13,7 @@ import { readSecureFile } from "../src/secure-file.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
 
-const supported = ["read-true", "read-false", "read-inherited", "generic-read", "inherit-only"] as const;
+const supported = ["read-true", "read-false", "read-inherited", "trusted-callback", "generic-read", "inherit-only"] as const;
 const unsupported = ["write", "generic-write", "write-dac", "write-owner", "delete", "deny"] as const;
 const names = [...supported, ...unsupported, "kernel-true", "kernel-false"];
 const native = process.platform === "win32" ? (() => {
@@ -64,7 +64,7 @@ describe.runIf(!!native?.readOwnerAndDacl)("real Windows callback ACL inspection
     const fallback = await inspectPathPermissions(target);
     expect(direct).toMatchObject({
       source: "windows-acl", ownerTrusted: true, worldWritable: false, groupWritable: false,
-      worldReadable: name !== "inherit-only",
+      worldReadable: name !== "inherit-only" && name !== "trusted-callback",
     });
     for (const key of ["source", "worldReadable", "groupReadable", "worldWritable", "groupWritable", "ownerTrusted"] as const) {
       expect(fallback[key]).toEqual(direct[key]);
