@@ -13,6 +13,7 @@ import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { openPublicationPin } from "./publication-pin.js";
 import { hasErrorCode } from "./file-cleanup.js";
+import { recoverAfterHiddenRename } from "./publication-recovery.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { cachedNoReplaceDevice, isNoReplaceUnavailable } from "./native-noreplace.js";
@@ -223,7 +224,6 @@ export async function writeCallbackSibling<T>(params: {
     }
   };
   let handle: FileHandle | undefined;
-  let identityPin: number | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
   let cleanupWorkspace: (() => Promise<void>) | undefined;
@@ -326,11 +326,16 @@ export async function writeCallbackSibling<T>(params: {
         assertCurrent(filePath);
       } catch (error) {
         if (!hasErrorCode(error, "ENOENT")) throw error;
-        identityPin = openPublicationPin(handle!.fd);
+        // A metadata pin retains the inode on ordinary filesystems; DrvFS
+        // keeps the renamed name hidden behind any descriptor, so recovery
+        // releases the pin too when the mount still hides it.
         const previous = handle!;
         handle = undefined;
-        await previous.close();
-        assertCurrent(filePath);
+        await recoverAfterHiddenRename({
+          closeWriter: () => previous.close(),
+          reopen: async () => { assertCurrent(filePath); },
+          openPin: () => openPublicationPin(previous.fd),
+        });
       }
       if (syncParentDir) {
         await syncDirectoryBestEffort(parent);
@@ -368,11 +373,6 @@ export async function writeCallbackSibling<T>(params: {
     } finally {
       try {
         await handle?.close();
-      } catch (error) {
-        settlementErrors.push(error);
-      }
-      try {
-        if (identityPin !== undefined) fsSync.closeSync(identityPin);
       } catch (error) {
         settlementErrors.push(error);
       }

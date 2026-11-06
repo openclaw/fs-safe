@@ -9,6 +9,7 @@ import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { cleanupPinnedFilePath, hasErrorCode } from "./file-cleanup.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { openPublicationPin } from "./publication-pin.js";
+import { recoverAfterHiddenRename } from "./publication-recovery.js";
 import type { RootContext } from "./root-context.js";
 import type { RootWriteOptions } from "./root-options.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
@@ -46,14 +47,16 @@ export async function finishRootFallbackWrite(params: {
       fsSync.fstatSync(handle.fd, { bigint: true });
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) throw error;
-      const pin = openPublicationPin(handle.fd);
-      try {
-        await handle.close();
-        accepted = handle = (await params.openForCompatibility()).opened.handle;
-        inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }), identity);
-      } finally {
-        fsSync.closeSync(pin);
-      }
+      // A metadata pin retains the inode on ordinary filesystems; DrvFS
+      // keeps the renamed name hidden behind any descriptor, so recovery
+      // releases the pin too when the mount still hides it.
+      const writer = handle;
+      accepted = handle = await recoverAfterHiddenRename({
+        closeWriter: () => writer.close(),
+        reopen: async () => (await params.openForCompatibility()).opened.handle,
+        openPin: () => openPublicationPin(writer.fd),
+      });
+      inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }), identity);
     }
     if (compatibility) {
       const current = fsSync.lstatSync(params.targetPath, { bigint: true });

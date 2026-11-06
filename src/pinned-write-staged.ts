@@ -25,6 +25,7 @@ import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
 import { openPublicationPin } from "./publication-pin.js";
+import { recoverAfterHiddenRename } from "./publication-recovery.js";
 
 export async function runPinnedStagedWrite(
   params: PinnedWriteParams,
@@ -58,17 +59,18 @@ export async function runPinnedStagedWrite(
       return fsSync.lstatSync(targetPath, { bigint: true });
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT") || !handle) throw error;
-      const pin = openPublicationPin(handle.fd);
       const previous = handle!;
       handle = undefined;
       return (async () => {
-        try {
-          await previous.close();
-          readHandle = await openPublicationHandle(targetPath, tempIdentity!);
-          return fsSync.lstatSync(targetPath, { bigint: true });
-        } finally {
-          fsSync.closeSync(pin);
-        }
+        // A metadata pin retains the inode on ordinary filesystems; DrvFS
+        // keeps the renamed name hidden behind any descriptor, so recovery
+        // releases the pin too when the mount still hides it.
+        readHandle = await recoverAfterHiddenRename({
+          closeWriter: () => previous.close(),
+          reopen: () => openPublicationHandle(targetPath, tempIdentity!),
+          openPin: () => openPublicationPin(previous.fd),
+        });
+        return fsSync.lstatSync(targetPath, { bigint: true });
       })();
     }
   };

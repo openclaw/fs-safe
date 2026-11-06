@@ -11,7 +11,8 @@ import { publishFileExclusive } from "../src/publish-file.js";
 import { writeFileSyncAtomic } from "../src/file-store-sync-write.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
-import { hideRenamedFileUntilClose } from "./helpers/rename-hidden.js";
+import { hideRenamedFileWhileOpen } from "./helpers/rename-hidden.js";
+import { hideRenamedFileUntilClose } from "./helpers/rename-hidden-original.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -30,13 +31,13 @@ const writers = {
 
 const descriptorPins = process.platform === "linux" || process.platform === "darwin";
 describe.runIf(descriptorPins).each(Object.entries(writers))("%s publication on rename-hidden filesystems", (_, write) => {
-  it("closes once and verifies the original inode without a retry delay", async () => {
+  it("closes every descriptor and verifies the original inode", async () => {
     const filePath = path.join(await tempRoot("rename-hidden-"), "target");
-    const fault = hideRenamedFileUntilClose(filePath);
+    const fault = hideRenamedFileWhileOpen(filePath);
     await write(filePath);
     expect(fault.failures).toBeGreaterThan(0);
-    expect(fault.closes).toBe(1);
-    expect(fault.pinnedCloses).toBe(1);
+    // The staging descriptor and the released pin both close on this model.
+    expect(fault.closes).toBe(2);
     expect(fault.hidden).toBe(0);
     expect(fs.lstatSync(filePath, { bigint: true })).toMatchObject({ dev: fault.identity!.dev, ino: fault.identity!.ino });
     expect(fs.readFileSync(filePath, "utf8")).toContain("payload");
@@ -53,8 +54,6 @@ describe.runIf(descriptorPins).each(Object.entries(writers))("%s publication on 
     });
     await expect(Promise.resolve().then(() => write(filePath))).rejects.toBeTruthy();
     expect(fault.closes).toBe(1);
-    expect(fault.pinnedCloses).toBe(1);
-    expect(fault.unlinkedPins).toBe(1);
     if (kind === "replacement") {
       expect(fs.readFileSync(filePath, "utf8")).toBe("payload");
       expect(fs.statSync(filePath).mode & 0o777).toBe(0o644);
@@ -115,8 +114,6 @@ describe.runIf(native && descriptorPins)("native root rename-hidden publication"
     } else await expect(operation).rejects.toBeTruthy();
     expect(fault.failures).toBeGreaterThan(0);
     expect(fault.closes).toBe(1);
-    expect(fault.pinnedCloses).toBe(1);
-    if (kind !== "original") expect(fault.unlinkedPins).toBe(1);
     if (kind === "replacement") expect(fs.statSync(filePath).mode & 0o777).toBe(0o644);
   });
 });

@@ -169,25 +169,34 @@ export class AtomicTempOwner {
       identityCurrent = true;
     } catch (error) {
       if (hasErrorCode(error, "ENOENT") || (error instanceof FsSafeError && hasErrorCode(error.cause, "ENOENT"))) {
-        // DrvFS can hide a renamed inode until its staging descriptor closes.
-        // Consume that descriptor once, then require the original exact identity.
-        const pin = openPublicationPin(this.fd);
-        try {
-          const previous = this.takeResource()!;
-          const closing = previous.close();
-          if (this.io.asynchronous) yield closing;
+        // DrvFS can hide a renamed inode behind any open descriptor; the pin
+        // stays for inode retention on ordinary filesystems and is released
+        // too when the mount still hides the name behind it.
+        let pin: number | undefined;
+        try { pin = openPublicationPin(this.fd); } catch { pin = undefined; }
+        const previous = this.takeResource()!;
+        const closing = previous.close();
+        if (this.io.asynchronous) yield closing;
+        for (let attempt = 1; ; attempt += 1) {
           try {
-            this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
-          } catch (openError) {
-            if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
-              (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
-            this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+            try {
+              this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
+            } catch (openError) {
+              if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
+                (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
+              this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+            }
+            yield* this.assertCurrent(pathname);
+            if (pin !== undefined) syncFs.closeSync(pin);
+            onVerified?.(this.identity);
+            return;
+          } catch (recoveryError) {
+            if (pin !== undefined) { syncFs.closeSync(pin); pin = undefined; }
+            try { this.resource?.close(); } catch { /* best effort */ }
+            this.resource = undefined;
+            if (!hasErrorCode(recoveryError, "ENOENT") || attempt >= 5) throw recoveryError;
+            yield* this.io.delay(20);
           }
-          yield* this.assertCurrent(pathname);
-          onVerified?.(this.identity);
-          return;
-        } finally {
-          syncFs.closeSync(pin);
         }
       }
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {

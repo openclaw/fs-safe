@@ -42,6 +42,7 @@ import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import { publishRenameFallback } from "./publish-rename-fallback.js";
 import { openPublicationHandle } from "./publication-handle.js";
 import { openPublicationPin } from "./publication-pin.js";
+import { recoverAfterHiddenRename } from "./publication-recovery.js";
 import { isNoReplaceUnavailable } from "./native-noreplace.js";
 export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
@@ -402,14 +403,15 @@ export async function publishFileExclusive(params: {
         assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
-        const pin = openPublicationPin(source.fd);
-        try {
-          await source.close();
-          renamedTarget = await openPublicationHandle(targetPath, sourceExactIdentity);
-          assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
-        } finally {
-          fsSync.closeSync(pin);
-        }
+        // A metadata pin retains the inode on ordinary filesystems; DrvFS
+        // keeps the renamed name hidden behind any descriptor, so recovery
+        // releases the pin too when the mount still hides it.
+        renamedTarget = await recoverAfterHiddenRename({
+          closeWriter: () => source.close(),
+          reopen: () => openPublicationHandle(targetPath, sourceExactIdentity),
+          openPin: () => openPublicationPin(source.fd),
+        });
+        assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
       }
       assertRenamedSourceAbsent(sourcePath);
       syncFileBestEffortSync(sourceNativeParent!.handle.fd);
