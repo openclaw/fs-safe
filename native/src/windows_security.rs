@@ -2753,7 +2753,14 @@ pub(crate) fn read_owner_and_dacl_for_handle(
     handle: windows_sys::Win32::Foundation::HANDLE,
 ) -> NativeResult<WindowsSecurityFacts> {
     let local = windows::is_local_handle(handle)?;
-    windows::security_facts(handle, local)
+    let mut facts = windows::security_facts(handle, local)?;
+    if facts.aces.iter().any(|ace| ace.is_callback == Some(true)) {
+        // Preserve the strict wire contract even for JS predating isCallback.
+        facts.fallback_required = true;
+        facts.ace_list_complete = false;
+        facts.unsupported_ace_types.push(9);
+    }
+    Ok(facts)
 }
 
 #[cfg(test)]

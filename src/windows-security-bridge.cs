@@ -209,7 +209,7 @@ public static partial class FsSafeWindowsBridge {
     return ace!=null && (int)ace.AceType==9 && ace.IsCallback &&
       (unchecked((uint)ace.AccessMask)&~0xa01200a9u)==0 && ((int)ace.AceFlags&~0x1f)==0;
   }
-  static Dictionary<string,object> Security(SafeFileHandle handle, bool requireLocality=true) {
+  static Dictionary<string,object> Security(SafeFileHandle handle, bool requireLocality=true, bool allowReadCallbacks=false) {
     IntPtr owner,group,dacl,sacl,descriptor;
     uint error=GetSecurityInfo(handle,1,5,out owner,out group,out dacl,out sacl,out descriptor);
     if(error!=0) throw OsFailure(error,"read owner and DACL");
@@ -228,6 +228,9 @@ public static partial class FsSafeWindowsBridge {
         if(basic==null || (!callback && (basic.IsCallback || (ace.AceType!=AceType.AccessAllowed && ace.AceType!=AceType.AccessDenied)))) {
           unsupported.Add((int)ace.AceType); continue;
         }
+        // Descriptor/private consumers retain historical incomplete facts,
+        // including older JS that does not understand the additive marker.
+        if(callback && !allowReadCallbacks) unsupported.Add(9);
         byte flags=(byte)ace.AceFlags;
         var row=Row("sid",Sid(basic.SecurityIdentifier),"mask",unchecked((uint)basic.AccessMask),
           "aceType",ace.AceType==AceType.AccessDenied ? "deny" : "allow",
@@ -399,7 +402,7 @@ public static partial class FsSafeWindowsBridge {
   static object InspectPath(string path) {
     // Raw reporting retains ACL facts when locality is unknown; admission remains strict.
     using(var handle=Open(path,0x00020080,false)) {
-      var facts=Security(handle,false);
+      var facts=Security(handle,false,allowReadCallbacks:true);
       facts["isVolumeRoot"]=(bool)facts["isLocal"] && IsVolumeRootPath(path,handle);
       return facts;
     }

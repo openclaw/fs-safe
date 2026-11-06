@@ -8,7 +8,7 @@ import { configureFsSafeNative, getFsSafeNativeConfig, __resetFsSafeNativeConfig
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest } from "../src/native.js";
 import { inspectPathPermissions } from "../src/permissions.js";
 import { readOwnerAndDacl } from "../src/owner-dacl.js";
-import { inspectWindowsDirectoryCommand } from "../src/windows-security-command.js";
+import { inspectWindowsDirectoryCommand, inspectWindowsDescriptorCommand } from "../src/windows-security-command.js";
 import { readSecureFile } from "../src/secure-file.js";
 import { resolveWindowsSystemCommand } from "../src/windows-command.js";
 import { useSuiteFixture } from "./helpers/suite-fixture.js";
@@ -103,6 +103,17 @@ describe.runIf(!!native?.readOwnerAndDacl)("real Windows callback ACL inspection
 
   it.each(supported)("does not admit a private file with a %s callback", name => withFixture(async () => {
     const target = path.join(directory, name);
+    const handle = await fs.open(target, "r");
+    try {
+      for (const facts of [
+        native!.inspectWindowsSecureFileHandle!(handle.fd),
+        await inspectWindowsDescriptorCommand(handle.fd),
+      ]) {
+        expect(facts.security).toMatchObject({
+          fallbackRequired: true, aceListComplete: false, unsupportedAceTypes: [9],
+        });
+      }
+    } finally { await handle.close(); }
     const open = fs.open.bind(fs);
     const reads: ReturnType<typeof vi.spyOn>[] = [];
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
