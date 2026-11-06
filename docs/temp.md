@@ -54,10 +54,19 @@ can pass `trustedWritableAncestors` to allow group/world-write on exact named
 ancestors without sticky protection. For example, an isolated volume mounted
 at `/sandbox` can contain a private temp root:
 
+Untrusted processes, including same-UID model tools, terminal sessions, and
+worker subprocesses, must not be able to rename or recreate the trusted
+ancestry. Otherwise, later workspace reads or writes may target replacement
+directories. Private root/child permissions and `cleanupSafety: "require-bounded"`
+do not prevent redirected I/O. A volume dedicated to one workload is insufficient
+if untrusted processes inside that workload can mutate this ancestry. Isolation
+must hold from admission through the completion of workspace use and cleanup.
+
 ```ts
 await withTempWorkspace({
   rootDir: "/sandbox/private-temp",
   prefix: "job-",
+  // Deployment isolation excludes every untrusted writer for the workspace lifetime.
   trustedWritableAncestors: ["/sandbox"],
 }, async (workspace) => {
   await workspace.writeText("result.txt", "done");
@@ -76,6 +85,17 @@ unchanged. This option does not establish isolation: the caller must ensure
 that untrusted writers cannot replace directories through the trusted ancestor for
 the workspace's lifetime. Obtain the list from trusted deployment configuration,
 not workspace contents or untrusted requests.
+
+The first ancestor writable-mode check bypassed through this option emits a
+`FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning through Node's warning event, once
+per process and without paths. An unused entry or a directory already accepted
+by the strict policy emits no such warning. The warning reports reliance on
+external isolation; it does not verify that isolation or guarantee that the
+remaining workspace admission checks succeed.
+
+See the [isolation reference](temp-isolation-reference.md) for a reproducible
+Linux configuration and adversarial lifetime proof. Its result applies only
+to the tested configuration; other deployments must establish equivalent isolation.
 
 ### Platform and identity checks
 

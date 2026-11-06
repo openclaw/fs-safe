@@ -77,6 +77,17 @@ export function validateTempWorkspaceDirMode(mode: number): void {
   }
 }
 
+let warnedTrustedWritableAncestor = false;
+
+function warnTrustedWritableAncestor(): void {
+  if (warnedTrustedWritableAncestor) return;
+  warnedTrustedWritableAncestor = true;
+  process.emitWarning(
+    "Temp workspace ancestor write protection is bypassed by trustedWritableAncestors; external isolation must prevent untrusted writers, including same-UID processes, from replacing the directory ancestry for the workspace lifetime.",
+    { code: "FS_SAFE_TRUSTED_WRITABLE_ANCESTOR", type: "FsSafeWarning" },
+  );
+}
+
 export function assertTrustedTempWorkspaceDirectory(
   stat: Pick<BigIntStats, "uid" | "gid" | "mode"> | Pick<Stats, "uid" | "gid" | "mode">,
   uid: number | undefined,
@@ -112,6 +123,7 @@ export function assertTrustedTempWorkspaceDirectory(
         : `temp workspace ancestor ${JSON.stringify(dir)} has group/world-writable mode ${tempDirectoryMode(stat.mode)} without sticky protection (sticky bit missing); have its administrator restore safe permissions (1777 for a shared system temp directory), or move the private root under trusted ancestors`,
     );
   }
+  if (!privateDirectory && writable && !sticky && allowWritableAncestor) warnTrustedWritableAncestor();
   if (ownership === "unmapped") warnUnmappedTempWorkspaceAncestor();
 }
 

@@ -126,6 +126,29 @@ for (const variant of ["async", "sync"] as const) {
       expect(await fs.readdir(rootDir)).toEqual([]);
     });
 
+    it("preserves original and replacement trees after same-UID ancestry recreation", async () => {
+      const { ancestor, rootDir } = await fixture();
+      const workspace = await create(rootDir, [ancestor]);
+      await workspace.writeText("original", "original tree");
+      const retained = path.join(await tempRoot("fs-safe-retained-ancestor-"), "original");
+      const originalWorkspace = path.join(retained, path.relative(ancestor, workspace.dir));
+      await fs.rename(ancestor, retained);
+      await fs.mkdir(ancestor, { mode: 0o777 });
+      await fs.chmod(ancestor, 0o777);
+      await fs.mkdir(rootDir, { mode: 0o700 });
+      await fs.mkdir(workspace.dir, { mode: 0o700 });
+      const replacementFile = path.join(workspace.dir, "kept");
+      await fs.writeFile(replacementFile, "replacement tree");
+
+      // This namespace mutation violates the lifetime isolation precondition.
+      // Require safe cleanup without making redirected I/O a supported behavior.
+      expect(["identity-mismatch", "indeterminate"]).toContain(await workspace.cleanup());
+      expect(await fs.readdir(workspace.dir)).toEqual(["kept"]);
+      expect(await fs.readFile(replacementFile, "utf8")).toBe("replacement tree");
+      expect(await fs.readdir(originalWorkspace)).toEqual(["original"]);
+      expect(await fs.readFile(path.join(originalWorkspace, "original"), "utf8")).toBe("original tree");
+    });
+
     it("retains traversal, symlink, hardlink, and cleanup identity protections", async () => {
       const { ancestor, rootDir } = await fixture();
       const workspace = await create(rootDir, [ancestor]);
