@@ -1958,6 +1958,7 @@ jobs:
       - name: Prove platform capabilities on the main thread and in Workers
         env:
           FS_SAFE_NATIVE_MODE: require
+          FS_SAFE_PLATFORM_CAPABILITY_DIAGNOSTICS: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && github.ref == 'refs/heads/roboclaw/diag-windows-smoke-owner' && runner.os == 'Windows' && runner.arch == 'X64' && matrix.node == 22 && matrix.capacity == 'standard' && '1' || '' }}
         run: pnpm test test/platform-capabilities.test.ts
 
       - name: Verify root-only npm and pnpm consumer installs

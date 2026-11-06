@@ -11,6 +11,40 @@ import { inspectDarwinAcl } from "../../dist/permissions-public.js";
 import { tryAcquireWriteLease } from "../../dist/file-lock.js";
 import { holdWindowsSharingLock, setWindowsFileAttributes, readWindowsFileExtents } from "../../dist/test-hooks.js";
 
+const diagnostic = process.env.FS_SAFE_PLATFORM_CAPABILITY_DIAGNOSTICS === "1";
+const phaseStarted = diagnostic ? process.hrtime.bigint() : 0n;
+let phaseCount = 0, phaseError;
+function phase(label) {
+  if (!diagnostic || phaseError) return;
+  try {
+    const directory = isMainThread ? process.argv[3] : workerData;
+    const file = path.join(directory, ".fs-safe-platform-capability-phases.jsonl");
+    assert.ok(++phaseCount <= 64 && fs.statSync(file).size < 32 * 1024, "diagnostic phase bound");
+    fs.appendFileSync(file, `${JSON.stringify({ phase: label, role: isMainThread ? "process-main" : "worker",
+      elapsedMs: Number(process.hrtime.bigint() - phaseStarted) / 1e6, utc: new Date().toISOString() })}\n`);
+  } catch (error) {
+    // Telemetry must never prevent the original operation or its finally cleanup.
+    phaseError = { name: error.name, code: error.code ?? null };
+  }
+}
+function observed(label, operation) {
+  phase(`${label}:enter`);
+  const result = operation();
+  phase(`${label}:leave`);
+  return result;
+}
+if (diagnostic) {
+  assert.equal(process.platform, "win32");
+  assert.equal(process.arch, "x64");
+  assert.equal(process.version, "v22.23.4");
+  process.once("exit", code => {
+    if (!phaseError) return;
+    try { fs.writeSync(2, `PLATFORM_DIAGNOSTIC_COLLECTION_ERROR ${JSON.stringify(phaseError)}\n`); } catch {}
+    if (code === 0) process.exitCode = 1;
+  });
+  phase("fixture-body-entry"); // Static imports have already completed.
+}
+
 async function readyChild(file, mode = "r") {
   const child = spawn(process.execPath, ["--input-type=module", "-e", `
     import fs from 'node:fs';
@@ -88,26 +122,27 @@ function darwin(directory) {
 }
 
 function windows(directory) {
+  phase("run:enter");
   const file = path.join(directory, "file");
-  fs.writeFileSync(file, Buffer.alloc(2 * 1024 * 1024, 0x5a));
-  const lock = holdWindowsSharingLock(file);
+  observed("file-write", () => fs.writeFileSync(file, Buffer.alloc(2 * 1024 * 1024, 0x5a)));
+  const lock = observed("sharing-lock-acquire", () => holdWindowsSharingLock(file));
   assert.equal(Object.isFrozen(lock), true);
-  try { assert.throws(() => fs.unlinkSync(file), { code: "EBUSY" }); }
-  finally { lock.close(); lock.close(); lock[Symbol.dispose](); }
+  try { observed("unlink-denial", () => assert.throws(() => fs.unlinkSync(file), { code: "EBUSY" })); }
+  finally { observed("sharing-lock-close", () => { lock.close(); lock.close(); lock[Symbol.dispose](); }); }
   const facts = () => JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-File",
     fileURLToPath(new URL("./windows-volume-facts.ps1", import.meta.url)), file], { encoding: "utf8" }));
-  const original = facts();
-  assert.equal(fs.statfsSync(file).bsize, original.clusterSize);
+  const original = observed("facts-original", facts);
+  observed("statfs", () => assert.equal(fs.statfsSync(file).bsize, original.clusterSize));
   assert.equal(original.filesystem, "NTFS");
   console.log(JSON.stringify({ proof: "windows-cluster-size", node: process.version, ...original, statfsBsize: fs.statfsSync(file).bsize }));
   try {
-    setWindowsFileAttributes(file, { readOnly: true, hidden: true, system: true });
-    assert.equal(facts().attributes & 7, 7);
-    setWindowsFileAttributes(file, { hidden: false });
-    assert.equal(facts().attributes & 7, 5);
-  } finally { setWindowsFileAttributes(file, { readOnly: false, hidden: false, system: false }); }
-  assert.equal(facts().attributes, original.attributes);
-  const extents = readWindowsFileExtents(file);
+    observed("attrs-all", () => setWindowsFileAttributes(file, { readOnly: true, hidden: true, system: true }));
+    assert.equal(observed("facts-all", facts).attributes & 7, 7);
+    observed("attrs-hidden-clear", () => setWindowsFileAttributes(file, { hidden: false }));
+    assert.equal(observed("facts-hidden-clear", facts).attributes & 7, 5);
+  } finally { observed("attrs-restore", () => setWindowsFileAttributes(file, { readOnly: false, hidden: false, system: false })); }
+  assert.equal(observed("facts-restored", facts).attributes, original.attributes);
+  const extents = observed("extents", () => readWindowsFileExtents(file));
   assert.ok(extents.length > 0);
   let next = 0n;
   for (const extent of extents) {
@@ -118,10 +153,11 @@ function windows(directory) {
   }
   assert.ok(next * BigInt(original.clusterSize) >= BigInt(fs.statSync(file).size));
   const empty = path.join(directory, "empty");
-  fs.writeFileSync(empty, "");
-  assert.deepEqual(readWindowsFileExtents(empty), []);
-  fs.unlinkSync(file);
-  assert.throws(() => readWindowsFileExtents(file), { code: "helper-failed" });
+  observed("empty-write", () => fs.writeFileSync(empty, ""));
+  assert.deepEqual(observed("empty-extents", () => readWindowsFileExtents(empty)), []);
+  observed("unlink", () => fs.unlinkSync(file));
+  observed("missing-extents", () => assert.throws(() => readWindowsFileExtents(file), { code: "helper-failed" }));
+  phase("run:leave");
   return "no delete sharing, idempotent close, attributes preserve unspecified bits, NTFS extents, empty extents, statfs cluster size";
 }
 
@@ -135,7 +171,14 @@ if (isMainThread) {
   if (process.platform === "linux") process.on("SIGIO", () => {});
   const [mode, directory] = process.argv.slice(2);
   if (mode === "worker") {
+    phase("worker-create:enter");
     const worker = new Worker(new URL(import.meta.url), { workerData: directory });
+    phase("worker-create:leave");
+    if (diagnostic) {
+      worker.once("online", () => phase("worker-online"));
+      worker.once("message", () => phase("worker-message"));
+      worker.once("exit", () => phase("worker-exit"));
+    }
     worker.on("message", value => console.log(JSON.stringify({ mode, proof: value })));
     const [code] = await once(worker, "exit");
     assert.equal(code, 0);
