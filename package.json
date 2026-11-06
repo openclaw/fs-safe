@@ -199,7 +199,7 @@
   },
   "devDependencies": {
     "@emnapi/runtime": "2.0.0-beta.2",
-    "@napi-rs/cli": "3.10.10",
+    "@napi-rs/cli": "3.10.12",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "5.1.0",
     "acorn": "8.19.0",
