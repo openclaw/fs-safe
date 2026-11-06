@@ -1,13 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.27.2 - 2026-11-05
+
+**Highlights:** POSIX reads stay responsive on slow storage; Windows public-path inspection keeps TrustedInstaller trust narrow, and release verification dependencies include denial-of-service fixes.
 
 ### Fixes
 
+- **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
 - **Windows permissions:** trust exact TrustedInstaller ownership and serviced read-only sources for public inspection while rejecting servicing write grants on user-owned or user-writable profiles and retaining strict private-file checks. Thanks @paulcam206.
 - **Temporary filenames:** preserve safe Unicode names, including CJK text and accents, while retaining path/control filtering, Windows device protection, and portable byte limits. Thanks @beeven.
 - **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
-- **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
 
 ## 0.27.1 - 2026-10-31
 
