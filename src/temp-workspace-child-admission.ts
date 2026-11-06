@@ -82,6 +82,7 @@ export function assertTrustedTempWorkspaceDirectory(
   uid: number | undefined,
   privateDirectory: boolean,
   dir: string,
+  allowWritableAncestor = false,
 ): void {
   if (uid === undefined) return;
   const ownership = classifyTempWorkspaceOwner(stat, uid);
@@ -90,7 +91,8 @@ export function assertTrustedTempWorkspaceDirectory(
   }
   // Unmapped host owners are unverifiable; trust the host directory hierarchy.
   // Admit sticky ancestors so PrivateUsers keeps host /tmp and PrivateTmp usable.
-  // Leaf roots stay euid-owned/private; non-sticky writable ancestors are rejected.
+  // Leaf roots stay euid-owned/private. Only explicitly trusted ancestors may
+  // rely on external isolation instead of sticky protection against other writers.
   const writeMask = !privateDirectory && hasTrustedAndroidTempAncestorGroup(stat, uid, ownership)
     ? 0o002 : 0o022;
   const writable = typeof stat.mode === "bigint"
@@ -102,7 +104,7 @@ export function assertTrustedTempWorkspaceDirectory(
   if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
     throw new FsSafeError("insecure-permissions", `temp workspace directory ${JSON.stringify(dir)} permissions are invalid; ${privateTempDirectoryFix(uid)}`);
   }
-  if (writable && (privateDirectory || !sticky)) {
+  if (writable && (privateDirectory || (!sticky && !allowWritableAncestor))) {
     throw new FsSafeError(
       "insecure-permissions",
       privateDirectory

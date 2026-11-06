@@ -266,6 +266,7 @@ See [JSON stores](docs/json-store.md) for single-path stores and update semantic
 [File locks](docs/sidecar-lock.md) for coordination and stale-lock recovery.
 The store subpath also provides [durable JSON queues](docs/store.md#durable-json-queues).
 Use [temp workspaces](docs/temp.md) for scoped scratch files and cleanup policies.
+Externally isolated deployments can opt into [exact trusted writable ancestors](docs/temp.md#externally-isolated-ancestors); private-directory checks remain strict.
 
 ## Exact file comparison
 

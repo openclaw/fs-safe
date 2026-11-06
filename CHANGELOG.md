@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict.
+
 ### Fixes
 
 - **Windows permissions:** trust exact TrustedInstaller ownership and serviced read-only sources for public inspection while rejecting servicing write grants on user-owned or user-writable profiles and retaining strict private-file checks. Thanks @paulcam206.

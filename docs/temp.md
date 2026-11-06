@@ -47,6 +47,38 @@ under trusted ancestry. Do not make shared `/tmp` private or take ownership of
 another user's directory. A caller's preferred root takes precedence over
 `TMPDIR`; changing `TMPDIR` only changes the resolver's fallback location.
 
+### Externally isolated ancestors
+
+When a deployment excludes untrusted writers through external isolation, it
+can pass `trustedWritableAncestors` to allow group/world-write on exact named
+ancestors without sticky protection. For example, an isolated volume mounted
+at `/sandbox` can contain a private temp root:
+
+```ts
+await withTempWorkspace({
+  rootDir: "/sandbox/private-temp",
+  prefix: "job-",
+  trustedWritableAncestors: ["/sandbox"],
+}, async (workspace) => {
+  await workspace.writeText("result.txt", "done");
+});
+```
+
+Entries must be existing, normalized, canonical absolute paths; symlink aliases
+are rejected. Matching is exact, not recursive or by prefix. The list is copied
+at admission, and omitted or empty lists keep the default policy. All four
+workspace helpers accept the option; it does not configure other fs-safe APIs.
+
+Only the matching ancestor's writable-mode requirement changes. Ownership,
+directory type, path and identity checks, and private root/child permissions
+still apply, even if the private root is listed. Windows ACL requirements are
+unchanged. This option does not establish isolation: the caller must ensure
+that untrusted writers cannot replace directories through the trusted ancestor for
+the workspace's lifetime. Obtain the list from trusted deployment configuration,
+not workspace contents or untrusted requests.
+
+### Platform and identity checks
+
 On Android only (`process.platform === "android"`), ancestors may also be owned
 by Android's OS system identity, AID_SYSTEM (UID 1000). The system is trusted like
 root; this does not trust arbitrary foreign UIDs or stop the walk at `HOME` or

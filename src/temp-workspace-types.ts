@@ -10,6 +10,8 @@ export type TempWorkspaceOptions = {
   dirMode?: DirectoryMode;
   mode?: number;
   cleanupSafety?: TempWorkspaceCleanupSafety;
+  /** Allow ancestor write bits at exact canonical paths; external isolation must exclude untrusted writers. */
+  trustedWritableAncestors?: readonly string[];
 };
 
 export type TempWorkspace = {
