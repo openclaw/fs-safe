@@ -100,6 +100,17 @@ On Linux x64 or arm64 with Docker, run `pnpm build`, copy the matching GNU artif
 artifact and run native security and no-replace move tests in Rocky Linux 8
 (glibc 2.28). Both GNU architectures execute this load test on matching runners.
 
+### FreeBSD runtime admission
+
+The shared FreeBSD 14.4 workflow prepares JavaScript with Node 24.22.1 and
+installs the FreeBSD `node24` package inside each VM. Before native builds or
+package proofs, it verifies the actual executable is stable Node 24, version
+24.22.1 or newer, and matches the expected FreeBSD architecture. The package
+name alone does not establish that its security fixes are present. If admission
+fails, refresh FreeBSD package metadata and upgrade the selected Node package
+before rerunning. Do not bypass the floor to obtain native artifacts; a missing
+patched supplier package blocks this qualification route.
+
 ### Windows ARM64 builds
 
 `windows-11-arm` builds and runs the ARM64 MSVC addon using native ARM64 Node
