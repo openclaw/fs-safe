@@ -26,7 +26,8 @@ public static class FsSafeWindowsOwnerQuery {
     if(dacl!=null) foreach(GenericAce ace in dacl) {
       var basic=ace as CommonAce;
       int type=(int)ace.AceType;
-      if(basic==null || basic.IsCallback || (type!=0 && type!=1)) { complete=false; continue; }
+      bool callback=FsSafeWindowsBridge.SupportedReadCallback(basic);
+      if(basic==null || (!callback && (basic.IsCallback || (type!=0 && type!=1)))) { complete=false; continue; }
       aces.Add(new Dictionary<string,object>{
         {"sid",basic.SecurityIdentifier.Value},{"mask",((long)basic.AccessMask)&0xffffffffL},
         {"deny",type==1},{"inheritOnly",((int)ace.AceFlags&8)!=0}

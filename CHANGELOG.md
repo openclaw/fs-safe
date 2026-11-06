@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- **Windows permissions:** inspect read-only allow-callback ACEs conservatively in native and fallback public reporting, instead of rejecting serviced sources solely for that bounded ACE form. Raw observations mark callbacks explicitly; mutation/deny callbacks and private admission remain fail-closed.
+
 - **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal.
 
 - **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity.

@@ -205,6 +205,10 @@ public static partial class FsSafeWindowsBridge {
     }
     internal bool Trusts(string sid) { return Array.Exists(Principals, principal=>Sid(principal)==sid); }
   }
+  internal static bool SupportedReadCallback(CommonAce ace) {
+    return ace!=null && (int)ace.AceType==9 && ace.IsCallback &&
+      (unchecked((uint)ace.AccessMask)&~0xa01200a9u)==0 && ((int)ace.AceFlags&~0x1f)==0;
+  }
   static Dictionary<string,object> Security(SafeFileHandle handle, bool requireLocality=true) {
     IntPtr owner,group,dacl,sacl,descriptor;
     uint error=GetSecurityInfo(handle,1,5,out owner,out group,out dacl,out sacl,out descriptor);
@@ -220,15 +224,18 @@ public static partial class FsSafeWindowsBridge {
       var aces=new List<object>(); var unsupported=new List<int>();
       if(raw.DiscretionaryAcl!=null) foreach(GenericAce ace in raw.DiscretionaryAcl) {
         var basic=ace as CommonAce;
-        if(basic==null || basic.IsCallback || (ace.AceType!=AceType.AccessAllowed && ace.AceType!=AceType.AccessDenied)) {
+        bool callback=SupportedReadCallback(basic);
+        if(basic==null || (!callback && (basic.IsCallback || (ace.AceType!=AceType.AccessAllowed && ace.AceType!=AceType.AccessDenied)))) {
           unsupported.Add((int)ace.AceType); continue;
         }
         byte flags=(byte)ace.AceFlags;
-        aces.Add(Row("sid",Sid(basic.SecurityIdentifier),"mask",unchecked((uint)basic.AccessMask),
-          "aceType",ace.AceType==AceType.AccessAllowed ? "allow" : "deny",
+        var row=Row("sid",Sid(basic.SecurityIdentifier),"mask",unchecked((uint)basic.AccessMask),
+          "aceType",ace.AceType==AceType.AccessDenied ? "deny" : "allow",
           "flags",Row("raw",flags,"objectInherit",(flags&1)!=0,"containerInherit",(flags&2)!=0,
             "noPropagateInherit",(flags&4)!=0,"inheritOnly",(flags&8)!=0,"inherited",(flags&16)!=0,
-            "successfulAccess",(flags&64)!=0,"failedAccess",(flags&128)!=0)));
+            "successfulAccess",(flags&64)!=0,"failedAccess",(flags&128)!=0));
+        if(callback) row.Add("isCallback",true);
+        aces.Add(row);
       }
       bool isLocal;
       try { isLocal=IsLocal(handle); }
@@ -271,6 +278,7 @@ public static partial class FsSafeWindowsBridge {
       (bool)facts["aceListComplete"] && (owner==current || (allowAdministratorsOwner && owner=="s-1-5-32-544")),
       "EACCES","private object security was not enforced");
     foreach(Dictionary<string,object> ace in (object[])facts["aces"]) {
+      Require(!ace.ContainsKey("isCallback"),"EACCES","private object has an opaque callback ACE");
       var flags=(Dictionary<string,object>)ace["flags"];
       string sid=(string)ace["sid"];
       if((string)ace["aceType"]=="deny" || identity.Trusts(sid)) continue;
