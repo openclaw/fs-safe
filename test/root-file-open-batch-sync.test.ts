@@ -30,7 +30,7 @@ function readAndClose(result: ReturnType<typeof openRootFileSync>) {
   expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   try { return fs.readFileSync(result.fd, "utf8"); }
-  finally { fs.closeSync(result.fd); }
+  finally { if (result.close) result.close(); else fs.closeSync(result.fd); }
 }
 
 it("transfers independent descriptors and closes only retained roots", async () => {

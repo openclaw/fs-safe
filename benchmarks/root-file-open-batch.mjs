@@ -24,7 +24,7 @@ export function registerRootFileOpenBatch({ api, workspace, register, contract, 
         assert(opened.ok);
         assert.deepEqual(fs.readFileSync(opened.fd), readCase.payload);
       },
-      after: opened => { if (opened?.ok) fs.closeSync(opened.fd); },
+      after: opened => { if (opened?.ok) { if (opened.close) opened.close(); else fs.closeSync(opened.fd); } },
     });
   }
   for (const [name, dispose] of [["close", batch => batch.close()], ["[Symbol.dispose]", batch => batch[Symbol.dispose]()]]) {

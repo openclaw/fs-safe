@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
+
 ## 0.27.2 - 2026-11-05
 
 **Highlights:** POSIX reads stay responsive on slow storage; Windows public-path inspection keeps TrustedInstaller trust narrow, and release verification dependencies include denial-of-service fixes.
