@@ -122,7 +122,7 @@ it.each([
   }
 });
 
-it.each(["exclusive", "partial", "json-prefix"].flatMap(boundary => ["off", "require"].flatMap(mode =>
+it.for(["exclusive", "partial", "json-prefix"].flatMap(boundary => ["off", "require"].flatMap(mode =>
   ["raw-async", "raw-sync", "root-async", "root-sync"].map(kind => ({ boundary, mode, kind })),
 )))("$kind preserves a killed $boundary fallback writer ($mode)", async ({ boundary, mode, kind }, ctx) => {
   if (mode === "require") {
@@ -159,14 +159,18 @@ it.each(["exclusive", "partial", "json-prefix"].flatMap(boundary => ["off", "req
       payload: () => ({ owner: "contender" }), staleMs: 0, timeoutMs: 0,
       retry: { retries: 0 }, staleRecovery: "remove-if-unchanged" as const, shouldRemoveStaleLock,
     };
-    const contend = async () => kind.endsWith("async")
-      ? await acquireFileLock(path.join(directory, "state"), options)
-      : acquireFileLockSync(path.join(directory, "state"), options);
-    await expect(contend()).rejects.toMatchObject({ code: "file_lock_timeout" });
+    const contend = async (parsePayload?: (raw: string) => unknown) => kind.endsWith("async")
+      ? await acquireFileLock(path.join(directory, "state"), { ...options, parsePayload })
+      : acquireFileLockSync(path.join(directory, "state"), { ...options, parsePayload });
+    for (const parser of [undefined, () => ({}), () => undefined, JSON.parse]) {
+      await expect(contend(parser)).rejects.toMatchObject({ code: "file_lock_timeout" });
+    }
     child.kill("SIGKILL");
     await exited;
     await fs.utimes(publication.final, 1, 1);
-    await expect(contend()).rejects.toMatchObject({ code: "file_lock_timeout" });
+    for (const parser of [undefined, () => ({}), () => undefined, JSON.parse]) {
+      await expect(contend(parser)).rejects.toMatchObject({ code: "file_lock_timeout" });
+    }
     expect(shouldRemoveStaleLock).not.toHaveBeenCalled();
     expect(await fs.readFile(publication.final, "utf8")).toBe(raw);
     const current = await fs.lstat(publication.final, { bigint: true });

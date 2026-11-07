@@ -3,7 +3,7 @@ import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
 import type { SyncLockAcquisition } from "./file-lock-sync-acquisition.js";
 import {
   parseSidecarLockSnapshot,
-  isCompleteSidecarLockRecord,
+  isIncompleteSidecarLockRecord,
   readSidecarLockRawSnapshotSync,
   removeSidecarLockIfUnchangedSync,
   type SidecarLockSnapshot,
@@ -102,7 +102,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     throw error;
   }
   // An incomplete owner can still be writing; age is not liveness evidence.
-  if (!snapshot || !isCompleteSidecarLockRecord(snapshot.raw)) {
+  if (!snapshot || snapshot.payload === null || isIncompleteSidecarLockRecord(snapshot.raw)) {
     acquisition.waitForRetry();
     return;
   }

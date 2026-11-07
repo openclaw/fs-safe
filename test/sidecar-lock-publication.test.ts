@@ -64,7 +64,7 @@ it.each(kinds)("%s never exposes the final sidecar while writing its owner recor
   } finally { await lock.release(); }
 });
 
-it.each(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mode }))))(
+it.for(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mode }))))(
   "$kind cleans an interrupted stage and preserves a concurrent winner ($mode)", async ({ kind, mode }, ctx) => {
   if (mode === "require") {
     try { __loadBundledNativeForTest(); } catch { return ctx.skip(); }
@@ -86,7 +86,7 @@ it.each(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mo
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
 });
 
-it.each(kinds.flatMap(kind => (["require", "off"] as const).map(mode => ({ kind, mode }))))(
+it.for(kinds.flatMap(kind => (["require", "off"] as const).map(mode => ({ kind, mode }))))(
   "$kind uses exclusive create when publication primitives are unavailable ($mode)", async ({ kind, mode }, ctx) => {
   if (mode === "require") {
     try { __loadBundledNativeForTest(); } catch { return ctx.skip(); }

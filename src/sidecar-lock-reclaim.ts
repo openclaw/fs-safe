@@ -92,6 +92,7 @@ export function parseSidecarLockPayload(
   raw: string,
   parser?: (raw: string) => unknown,
 ): unknown {
+  if (isIncompleteSidecarLockRecord(raw)) return null;
   if (parser) {
     return parser(raw);
   }
@@ -103,10 +104,10 @@ export function parseSidecarLockPayload(
   }
 }
 
-// A custom parser cannot turn an unfinished on-disk write into a stale owner.
-// Complete legacy JSON records remain valid without an ownership token.
-export function isCompleteSidecarLockRecord(raw: string | undefined): boolean {
-  return raw !== undefined && parseSidecarLockPayload(raw) !== null;
+// Compatibility writes reserve their length before writing, so unwritten bytes
+// remain NULs. Legacy formats still belong to the caller's parser.
+export function isIncompleteSidecarLockRecord(raw: string | undefined): boolean {
+  return raw === undefined || raw.length === 0 || raw.includes("\0");
 }
 
 async function readSidecarLockComparisonSnapshot(

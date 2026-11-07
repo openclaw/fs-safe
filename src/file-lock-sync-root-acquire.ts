@@ -1,4 +1,4 @@
-import { isCompleteSidecarLockRecord } from "./sidecar-lock-reclaim.js";
+import { isIncompleteSidecarLockRecord } from "./sidecar-lock-reclaim.js";
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
@@ -309,7 +309,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         }
         const snapshot = current.snapshot;
         // An incomplete owner can still be writing; never reclaim it by age.
-        if (!isCompleteSidecarLockRecord(snapshot.raw)) {
+        if (snapshot.payload === null || isIncompleteSidecarLockRecord(snapshot.raw)) {
           acquisition.waitForRetry();
           continue;
         }

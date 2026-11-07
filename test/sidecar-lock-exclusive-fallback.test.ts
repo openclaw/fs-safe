@@ -38,24 +38,27 @@ async function options(directory: string, kind: typeof kinds[number]) {
   };
 }
 
-it.each(matrix.flatMap(entry => ["default", "object", "undefined"].map(parser => ({ ...entry, parser }))))(
+it.for(matrix.flatMap(entry => ["default", "object", "undefined", "strict"].map(parser => ({ ...entry, parser }))))(
   "$kind treats a partial live record as contention ($mode, $parser parser)", async ({ kind, mode, parser }, ctx) => {
   if (mode === "require" && !nativeAvailable) return ctx.skip();
   fallback(mode);
   const directory = await tempRoot("fs-safe-exclusive-partial-");
   const target = path.join(directory, "state"), final = `${target}.lock`;
-  fs.writeFileSync(final, '{"owner":', { flag: "wx", mode: 0o600 });
+  const partial = '{"owner":\0\0\0';
+  fs.writeFileSync(final, partial, { flag: "wx", mode: 0o600 });
   fs.utimesSync(final, 1, 1);
+  const parsePayload = vi.fn((raw: string) => parser === "strict" ? JSON.parse(raw) : parser === "object" ? {} : undefined);
   const opts = { ...await options(directory, kind),
-    ...(parser === "default" ? {} : { parsePayload: () => parser === "object" ? {} : undefined }),
+    ...(parser === "default" ? {} : { parsePayload }),
   };
   const attempt = async () => kind.endsWith("async") ? await acquireFileLock(target, opts) : acquireFileLockSync(target, opts);
   await expect(attempt()).rejects.toMatchObject({ code: "file_lock_timeout" });
   expect(opts.shouldRemoveStaleLock).not.toHaveBeenCalled();
-  expect(fs.readFileSync(final, "utf8")).toBe('{"owner":');
+  expect(parsePayload).not.toHaveBeenCalled();
+  expect(fs.readFileSync(final, "utf8")).toBe(partial);
 });
 
-it.each(modes)("exclusive fallback admits one concurrent owner (%s)", async (mode, ctx) => {
+it.for(modes)("exclusive fallback admits one concurrent owner (%s)", async (mode, ctx) => {
   if (mode === "require" && !nativeAvailable) return ctx.skip();
   fallback(mode);
   const directory = await tempRoot("fs-safe-exclusive-race-");
@@ -97,7 +100,7 @@ it.each(["EIO", "ENOSPC", "EEXIST"])("does not enter exclusive fallback for a ha
   expect(await fsp.readdir(directory)).toEqual([]);
 });
 
-it.each(modes)("supported publication never opens the final name (%s)", async (mode, ctx) => {
+it.for(modes)("supported publication never opens the final name (%s)", async (mode, ctx) => {
   if (mode === "require" && !nativeAvailable) return ctx.skip();
   configureFsSafeNative({ mode });
   const directory = await tempRoot("fs-safe-exclusive-not-needed-");
@@ -162,7 +165,7 @@ it.each(["async", "sync"] as const)("%s cleans a failed fallback write without t
   expect((await fsp.readdir(directory)).sort()).toEqual(["old", "state.lock"]);
 });
 
-it.each(modes)("Root reclaim guards use the exclusive fallback (%s)", async (mode, ctx) => {
+it.for(modes)("Root reclaim guards use the exclusive fallback (%s)", async (mode, ctx) => {
   if (mode === "require" && !nativeAvailable) return ctx.skip();
   fallback(mode);
   const directory = await tempRoot("fs-safe-exclusive-guard-");
@@ -172,4 +175,20 @@ it.each(modes)("Root reclaim guards use the exclusive fallback (%s)", async (mod
   expect((await fsp.readdir(directory))).toEqual(["state.lock.reclaim"]);
   await guard!.release();
   expect(await fsp.readdir(directory)).toEqual([]);
+});
+
+it.each(kinds)("%s retains caller-defined non-JSON legacy reclaim", async kind => {
+  configureFsSafeNative({ mode: "off" });
+  const directory = await tempRoot("fs-safe-exclusive-legacy-");
+  const target = path.join(directory, "state");
+  fs.writeFileSync(`${target}.lock`, "pid=123\n");
+  const opts = {
+    ...await options(directory, kind), timeoutMs: Infinity, retry: { retries: 1, minTimeout: 0, maxTimeout: 0 },
+    parsePayload: (raw: string) => raw.startsWith("pid=") ? { pid: 123 } : JSON.parse(raw),
+    shouldReclaim: () => true,
+  };
+  const owner = kind.endsWith("async") ? await acquireFileLock(target, opts) : acquireFileLockSync(target, opts);
+  try { expect(await owner.verifyStillHeld()).toBe(true); }
+  finally { await owner.release(); }
+  expect(opts.shouldRemoveStaleLock).toHaveBeenCalledOnce();
 });
