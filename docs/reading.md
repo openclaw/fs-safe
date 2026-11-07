@@ -204,7 +204,8 @@ for (const absolutePath of sourceFiles) {
   try {
     consume(fs.readFileSync(opened.fd));
   } finally {
-    fs.closeSync(opened.fd);
+    if (opened.close) opened.close();
+    else fs.closeSync(opened.fd);
   }
 }
 ```
@@ -220,7 +221,14 @@ are never cached. Other platforms, unavailable native support, other path
 spellings, explicit canonical-root hints, custom filesystem adapters, and
 symlink-following policies retain the ordinary per-open admission path.
 
-Successful opens transfer descriptor ownership to the caller. `close()` and
+Successful native batch opens include an idempotent `opened.close()` bound to
+the descriptor's originating native closer. Always use it when present, including
+after changing native configuration; otherwise close the Node-opened descriptor
+with `fs.closeSync(opened.fd)`. The optional method preserves the existing result
+fields and ordinary one-shot/fallback results. Do not close the same descriptor
+through both methods.
+
+Successful opens transfer descriptor ownership to the caller. Batch `close()` and
 `Symbol.dispose` release retained root descriptors, are idempotent, and do not close
 previously returned descriptors. Opening after close returns a validation
 failure with code `invalid-path`. Keep batches scoped to one operation rather

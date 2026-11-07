@@ -84,7 +84,7 @@ describe("docs site navigation", () => {
   it("covers the full repository inventory and retains staging pages in Atomic & temp", () => {
     expect(() => assertNavigationCoversDocs(readDocPages(docsDir))).not.toThrow();
     expect(sections.find(([name]) => name === "Atomic & temp")?.[1])
-      .toEqual(["atomic.md", "staged-file.md", "staged-symlink.md", "durability.md", "output.md", "json.md", "temp.md", "archive.md"]);
+      .toEqual(["atomic.md", "staged-file.md", "staged-symlink.md", "durability.md", "output.md", "json.md", "temp.md", "temp-isolation-reference.md", "archive.md"]);
   });
 
   it.each(["missing nested registration", "nonexistent target"])("the builder rejects %s before replacing output", (problem) => {

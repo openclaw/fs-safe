@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import { getNativeBinding } from "./native.js";
 import { openExactNativeRootSync } from "./native-parent-admission.js";
 import { isExpectedPathError } from "./pinned-open.js";
@@ -83,6 +84,7 @@ export function createRootFileOpenBatchSync(): RootFileOpenBatchSync {
         }
         const { owner, observation } = retained;
         inspectDirectoryIdentitySync(observation.path, observation.identity);
+        const closeFd = captureNativeFdClose(binding);
         let admittedFd: number;
         try {
           // Reject reparses before any full-leaf pathname observation can follow them.
@@ -95,7 +97,7 @@ export function createRootFileOpenBatchSync(): RootFileOpenBatchSync {
           }
           throw error;
         }
-        return openRootFileWithRetainedRootSync(params, observation, admittedFd);
+        return openRootFileWithRetainedRootSync(params, observation, admittedFd, closeFd);
       } catch (error) { return failure(error); }
     },
     close,

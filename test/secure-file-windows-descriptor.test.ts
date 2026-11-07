@@ -139,6 +139,27 @@ describe("secure Windows descriptor ACL facts", () => {
       .rejects.toThrow(expect.objectContaining({ code: "permission-unverified" }));
   });
 
+  it("does not apply public servicing-writer trust to secure descriptors", async () => {
+    const expected = { dev: 1n, ino: 2n };
+    const aces = [{
+      sid: "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+      mask: 0x001f01ff, aceType: "allow", flags: FLAGS,
+    }];
+    // Public-policy booleans must not suppress the private descriptor's writer.
+    install(() => ({
+      identity: identity(expected.dev, expected.ino),
+      security: security({ aces }),
+    }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .rejects.toThrow(expect.objectContaining({ code: "permission-unverified" }));
+    install(() => ({
+      identity: identity(expected.dev, expected.ino),
+      security: security({ aces, groupReadable: true, groupWritable: true }),
+    }));
+    await expect(inspectSecureWindowsFile({ fd: 1, identity: expected, stat }))
+      .resolves.toMatchObject({ groupReadable: true, groupWritable: true });
+  });
+
   it.each([
     ["world", "s-1-1-0", { worldReadable: true, groupReadable: false }],
     ["LOCAL", "s-1-2-0", { worldReadable: false, groupReadable: true }],

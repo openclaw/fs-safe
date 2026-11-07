@@ -223,7 +223,7 @@ async function createTempWorkspace(
   scopedPrefix = false,
 ): Promise<TempWorkspace & ExactIdentityReceipt> {
   const { rootDir, dirMode, mode, cleanupSafety } = tempWorkspaceSettings(options);
-  const admission = await admitTempWorkspaceRoot(rootDir);
+  const admission = await admitTempWorkspaceRoot(rootDir, options.trustedWritableAncestors);
   const root = admission.dir;
   const childPrefix = tempWorkspaceChildPrefix(root, options, scopedPrefix);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);
@@ -329,7 +329,7 @@ function createTempWorkspaceSync(
   scopedPrefix = false,
 ): TempWorkspaceSync & ExactIdentityReceipt {
   const { rootDir, dirMode, mode, cleanupSafety } = tempWorkspaceSettings(options);
-  const admission = admitTempWorkspaceRootSync(rootDir);
+  const admission = admitTempWorkspaceRootSync(rootDir, options.trustedWritableAncestors);
   const root = admission.dir;
   const childPrefix = tempWorkspaceChildPrefix(root, options, scopedPrefix);
   const capability = new TempWorkspaceCleanupCapability(root, cleanupSafety, admission, dirMode);

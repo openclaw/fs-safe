@@ -96,7 +96,12 @@ describe("seeded path property stress", () => {
     for (let index = 0; index < 2_000; index += 1) {
       const input = generatedString(random);
       const segment = sanitizeTempFileName(input);
-      expect(isSafePathSegment(segment, { allowDotPrefix: true }), `${seed}:${index}:${input}`).toBe(true);
+      expect(segment, `${seed}:${index}:${input}`).not.toBe("");
+      expect([".", ".."]).not.toContain(segment);
+      expect(segment).toBe(path.posix.basename(segment));
+      expect(segment).toBe(path.win32.basename(segment));
+      expect(/[\p{Cc}\p{Cf}\p{Cs}\s<>:"/\\|?*]/u.test(segment)).toBe(false);
+      expect(Buffer.byteLength(segment.normalize("NFD"))).toBeLessThanOrEqual(255);
       expect(isUnsafeDeviceReadPath(`C:\\tmp\\${segment}`, { platform: "win32" })).toBe(false);
       expect(sanitizeTempFileName(segment), `${seed}:${index}:${input}`).toBe(segment);
 

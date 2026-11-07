@@ -2,10 +2,24 @@
 
 ## Unreleased
 
+### Features
+
+- **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict. Using the exception emits a path-free `FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning once per process.
+
 ### Fixes
 
-- **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
+- **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
+
+## 0.27.2 - 2026-11-05
+
+**Highlights:** POSIX reads stay responsive on slow storage; Windows public-path inspection keeps TrustedInstaller trust narrow, and release verification dependencies include denial-of-service fixes.
+
+### Fixes
+
 - **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
+- **Windows permissions:** trust exact TrustedInstaller ownership and serviced read-only sources for public inspection while rejecting servicing write grants on user-owned or user-writable profiles and retaining strict private-file checks. Thanks @paulcam206.
+- **Temporary filenames:** preserve safe Unicode names, including CJK text and accents, while retaining path/control filtering, Windows device protection, and portable byte limits. Thanks @beeven.
+- **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
 
 ## 0.27.1 - 2026-10-31
 
