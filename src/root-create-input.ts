@@ -5,7 +5,7 @@ import type { NativeWriteParent, PinnedWriteInput, PublishedWriteIdentity } from
 import type { RootCreateOptions, RootCreateStreamOptions, RootWriteOptions } from "./root-options.js";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 
-// Lock records prefer complete exclusive publication, retaining the placeholder fallback.
+// Lock records require complete exclusive publication.
 // Keep this composition hook off the public Root options and package exports.
 const exclusiveSidecarCreate = Symbol("exclusiveSidecarCreate");
 export const sidecarExclusiveCreate = Object.freeze({ [exclusiveSidecarCreate]: true as const });
