@@ -8,6 +8,8 @@
 
 ### Fixes
 
+- **File locks:** stage and sync complete owner records before exclusive publication so crashes cannot leave empty locks; fail closed on mounts without no-replace rename or hardlinks. Existing unverifiable locks remain untouched. Thanks @chrislro.
+
 - **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
 
 ## 0.27.2 - 2026-11-05

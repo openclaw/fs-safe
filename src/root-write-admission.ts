@@ -9,6 +9,7 @@ import {
   type AnyAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { recordFileObservationFailure } from "./file-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertNoPathAliasEscape } from "./path-policy.js";
 import {
@@ -405,7 +406,11 @@ export async function resolvePinnedWriteTargetInRoot(
       const existing = fsSync.statSync(resolved, { throwIfNoEntry: false });
       if (existing) {
         if (!existing.isFile() && !existing.isDirectory()) throw new FsSafeError("not-file", "not a file");
-        if (existing.isFile() && existing.nlink > 1) throw hardlinkedPathNotAllowedError();
+        if (existing.isFile() && existing.nlink > 1) {
+          const error = hardlinkedPathNotAllowedError();
+          recordFileObservationFailure(error, "hardlink");
+          throw error;
+        }
         throw new FsSafeError("already-exists", "file already exists");
       }
     } catch (error) {

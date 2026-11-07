@@ -26,11 +26,13 @@ it("names a read-only native lock creation without retrying or acquiring ownersh
     code: "EROFS", errno: 30,
   });
   let attempts = 0;
+  let stagePath = "";
   __setNativeLoaderForTest(() => ({
     closeOwnedFd: fs.closeSync,
     openBeneath(_fd, name, flags) {
       attempts++;
-      expect(name).toBe(path.basename(lockPath));
+      expect(name).toMatch(/^\.fs-safe-lock-.*\.tmp$/);
+      stagePath = path.join(directory, name);
       expect(flags & (fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL))
         .toBe(fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL);
       throw failure;
@@ -44,8 +46,8 @@ it("names a read-only native lock creation without retrying or acquiring ownersh
   }).catch((error: unknown) => error);
   expect(caught).toBe(failure);
   expect(caught).toMatchObject({
-    code: "EROFS", errno: 30, path: lockPath, syscall: "open",
-    message: `EROFS: read-only filesystem, open '${lockPath.replaceAll("\n", "\\u000a")}'`,
+    code: "EROFS", errno: 30, path: stagePath, syscall: "open",
+    message: `EROFS: read-only filesystem, open '${stagePath}'`,
   });
   expect(attempts).toBe(1);
   expect(manager.heldEntries()).toEqual([]);

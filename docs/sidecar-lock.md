@@ -2,7 +2,15 @@
 
 For [Linux kernel write leases](platform-capabilities.md#linux-write-leases), `FileWriteLease.isHeld() === false` means “do not act on the file,” including while the kernel is still processing a lease break. The caller’s `SIGIO` handler still owns break notification.
 
-`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
+`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is a sidecar file (e.g. `state.json` ↔ `state.json.lock`). Each contender writes and syncs the complete owner record, including its ownership token, to a private same-directory staging file before claiming the final name with native no-replace rename or a hardlink. Exactly one contender can publish; neither operation replaces an existing lock. This applies to raw and Root-backed acquisition, both async and sync.
+
+A crash before publication leaves no final lock; a crash after publication leaves a complete owner record. The containing directory is synced where supported. These are process-crash guarantees, not a promise against every filesystem or storage device's power-loss behavior. Hardlink publication briefly has two names for the same complete file. Root-backed contenders recognize a matching staging inode and retry without reading or reclaiming that linked record; ordinary Root readers retain their hardlink policy. The staging link is removed before acquisition succeeds.
+
+Directory persistence remains best-effort when directory read access or directory fsync is unavailable; this does not prevent otherwise permitted lock acquisition. Other I/O errors and revoked mutation authority still fail acquisition. After a crash leaves both hardlinks, guarded staging cleanup can remove the abandoned link before the existing stale-owner policy inspects the complete final record.
+
+On mounts supporting neither native no-replace rename nor hardlinks, acquisition fails closed with `FsSafeError` code `helper-unavailable` and leaves no final lock. It never substitutes a replacing rename or writes an empty placeholder. Existing empty or incomplete locks require application-owned offline recovery; fs-safe does not infer that an empty or old lock is safe to remove.
+
+Staging files use a reserved `.fs-safe-lock-<namespace>-<pid>-<random>.tmp` name. Before staging, an acquisition examines at most 64 directory entries for abandoned stages in its own target/hostname namespace. If the final record has a second link, publication recognition can scan farther and select at most one exact matching stage for the same guarded cleanup. It removes only identity-verified regular files whose local PID is confirmed absent; live or reused PIDs, other targets, unknown ownership, and ambiguous identities are preserved. Root mutation policies are checked against each candidate staging path before removal. A crash during hardlink publication can leave a second staging link; cleanup removes that link only, never the final lock. This bounded, best-effort cleanup may leave unrelated artifacts outside the opportunistic scan or artifacts on filesystems with inconclusive identity. Applications may remove remaining staging artifacts during explicit offline recovery after stopping every owner, including other hosts sharing the directory. No age-based lock or staging reclamation is used.
 
 On Windows, both the target and an explicitly supplied `lockPath` reject NTFS
 alternate-stream and directory-index namespace spellings before parent creation,
@@ -11,12 +19,7 @@ normal meaning, and ordinary colon-bearing POSIX paths remain valid.
 
 JavaScript raw-sidecar creation passes mode `0o600` to that exclusive open. On POSIX, the process umask may further restrict the new file but cannot add group or other access. No pathname `chmod` fallback is used.
 
-Root-backed lock records and reclaim guards also claim their final name
-exclusively, including with the native backend. The native path retains the
-admitted parent descriptor and removes incomplete claims only while their exact
-identity remains owned. Ordinary Root creates still stage privately; lock records
-use this internal exclusive-create path so racing contenders can retry without
-an ambiguous rename outcome.
+Root-backed lock records and reclaim guards retain their admitted parent and native cleanup receipt through publication. Their internal create path uses the same complete-record publication while preserving Root mutation policy and failing closed when neither publication primitive is available. Ordinary Root creates retain their existing publication contract.
 
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";

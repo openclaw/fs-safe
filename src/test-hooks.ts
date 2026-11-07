@@ -34,6 +34,7 @@ export type FsSafeTestHooks = {
   ) => Promise<void> | void;
   afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
+  beforeSidecarLockPublish?: (lockPath: string, temporaryPath: string) => void;
   beforeSidecarLockSnapshotOpen?: (lockPath: string) => Promise<void> | void;
   beforeRegularFileAppendOpen?: (filePath: string) => Promise<void> | void;
   beforeRegularFileAppendOpenSync?: (filePath: string) => void;
