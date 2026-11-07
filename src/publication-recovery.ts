@@ -15,16 +15,6 @@ const IDENTITY_PROBE_ROUNDS = 48;
 const probeResults = new Map<bigint, boolean>();
 
 export function admitsUnpinnedRenameRecovery(directoryPath: string): boolean {
-  return admitsAtPath(directoryPath);
-}
-
-/** Native publication paths hold a parent descriptor instead of a path. */
-export function admitsUnpinnedRenameRecoveryAtFd(parentFd: number): boolean {
-  if (process.platform !== "linux") return false;
-  return admitsAtPath(`/proc/self/fd/${parentFd}`);
-}
-
-function admitsAtPath(directoryPath: string): boolean {
   const hook = getFsSafeTestHooks()?.admitUnpinnedRenameRecovery;
   if (hook) return hook(directoryPath);
   let device: bigint;
@@ -33,9 +23,30 @@ function admitsAtPath(directoryPath: string): boolean {
   } catch {
     return false;
   }
+  return admittedForDevice(device, () => probeGenerationBearingIdentities(directoryPath));
+}
+
+/** Native publication paths hold a parent descriptor instead of a path. */
+export function admitsUnpinnedRenameRecoveryAtFd(parentFd: number): boolean {
+  if (process.platform !== "linux") return false;
+  const hook = getFsSafeTestHooks()?.admitUnpinnedRenameRecovery;
+  if (hook) return hook(`/proc/self/fd/${parentFd}`);
+  // The retained descriptor is the device identity; observing the procfs
+  // symlink instead would key the cache on procfs and leak verdicts across
+  // unrelated mounts.
+  let device: bigint;
+  try {
+    device = fsSync.fstatSync(parentFd, { bigint: true }).dev;
+  } catch {
+    return false;
+  }
+  return admittedForDevice(device, () => probeGenerationBearingIdentities(`/proc/self/fd/${parentFd}`));
+}
+
+function admittedForDevice(device: bigint, probe: () => boolean): boolean {
   const cached = probeResults.get(device);
   if (cached !== undefined) return cached;
-  const admitted = probeGenerationBearingIdentities(directoryPath);
+  const admitted = probe();
   probeResults.set(device, admitted);
   return admitted;
 }
