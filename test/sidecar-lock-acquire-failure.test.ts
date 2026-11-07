@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -105,18 +106,16 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     const targetPath = path.join(directory, "state.json");
     const lockPath = `${targetPath}.lock`;
     const realOpen = fs.open.bind(fs);
-    const realRm = fs.rm.bind(fs);
+    let stagePath = "";
     const acquisitionError = Object.assign(new Error("lock write failed"), { code: "EIO" });
     const cleanupError = Object.assign(new Error("lock cleanup failed"), { code: "EACCES" });
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
+      stagePath = String(args[0]);
       const handle = await realOpen(...args);
       vi.spyOn(handle, "writeFile").mockRejectedValueOnce(acquisitionError);
       return handle;
     });
-    const rm = vi.spyOn(fs, "rm").mockImplementation(async (target, ...args) => {
-      if (path.basename(String(target)) === path.basename(lockPath)) throw cleanupError;
-      return await realRm(target, ...args);
-    });
+    const rm = vi.spyOn(fsSync, "unlinkSync").mockImplementation(() => { throw cleanupError; });
 
     const manager = createSidecarLockManager(`write-cleanup-failure-${Date.now()}-${Math.random()}`);
     const error = await manager
@@ -127,11 +126,12 @@ describe("asynchronous sidecar lock acquisition failures", () => {
       error: cleanupError,
       suppressed: acquisitionError,
     });
-    expect((await fs.lstat(lockPath)).isFile()).toBe(true);
+    expect((await fs.lstat(stagePath)).isFile()).toBe(true);
+    await expect(fs.lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(manager.heldEntries()).toEqual([]);
 
     rm.mockRestore();
-    await fs.rm(lockPath, { force: true });
+    await fs.rm(stagePath, { force: true });
   });
 
   it("preserves a replacement lock when payload persistence fails", async () => {
@@ -145,7 +145,7 @@ describe("asynchronous sidecar lock acquisition failures", () => {
     vi.spyOn(fs, "open").mockImplementationOnce(async (...args) => {
       const handle = await realOpen(...args);
       vi.spyOn(handle, "writeFile").mockImplementationOnce(async () => {
-        await fs.rename(lockPath, displacedPath);
+        await fs.rename(String(args[0]), displacedPath);
         await fs.writeFile(lockPath, "replacement");
         throw failure;
       });

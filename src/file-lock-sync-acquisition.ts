@@ -55,8 +55,8 @@ export class SyncLockAcquisition {
     sleepSync(delay);
     this.#attempt += 1;
   }
-  retryDenial(error: unknown): boolean {
-    if (!isTransientLockFileDenial(error, this.lockPath) ||
+  retryDenial(error: unknown, openedPath = this.lockPath): boolean {
+    if (!isTransientLockFileDenial(error, openedPath) ||
       ++this.#transientDenials > maxTransientLockDenials) return false;
     try {
       this.waitForRetry();

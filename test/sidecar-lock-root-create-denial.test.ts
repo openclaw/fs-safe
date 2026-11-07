@@ -8,6 +8,7 @@ import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const isStage = (name: unknown) => typeof name === "string" && path.basename(name).startsWith(".fs-safe-lock-");
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const retry = { minTimeout: 0, maxTimeout: 0 };
 const denial = (filePath: string, code = "EPERM") =>
@@ -40,7 +41,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     const realOpen = fsp.open.bind(fsp);
     let attempts = 0;
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-      if (args[0] === lockPath && exclusive(args[1]) && ++attempts === 1) throw error;
+      if (isStage(args[0]) && exclusive(args[1]) && ++attempts === 1) { error.path = String(args[0]); throw error; }
       return await realOpen(...args);
     });
 
@@ -64,7 +65,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
       const realOpen = fsp.open.bind(fsp);
       let denied = 0;
       vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-        if (args[0] === lockPath && exclusive(args[1])) { denied += 1; throw error; }
+        if (isStage(args[0]) && exclusive(args[1])) { denied += 1; error.path = String(args[0]); throw error; }
         return await realOpen(...args);
       });
 
@@ -84,8 +85,9 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     const realOpen = fsp.open.bind(fsp);
     let attempts = 0;
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-      if (args[0] === lockPath && exclusive(args[1])) {
+      if (isStage(args[0]) && exclusive(args[1])) {
         attempts += 1;
+        error.path = String(args[0]);
         clock.mockReturnValue(now + 100);
         throw error;
       }
@@ -105,7 +107,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
       const realOpen = fsp.open.bind(fsp);
       let attempts = 0;
       vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-        if (args[0] === lockPath && exclusive(args[1])) { attempts += 1; throw error; }
+        if (isStage(args[0]) && exclusive(args[1])) { attempts += 1; throw error; }
         return await realOpen(...args);
       });
       await expect(manager.acquire(target, options)).rejects.toBe(error);
@@ -122,13 +124,15 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     let createDenials = 0;
     let readDenials = 0;
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-      if (args[0] === lockPath) {
+      if (exclusive(args[1]) ? isStage(args[0]) : args[0] === lockPath) {
         if (exclusive(args[1]) && createDenials < 4) {
           if (++createDenials === 4) await fsp.writeFile(lockPath, foreign);
+          error.path = String(args[0]);
           throw error;
         }
         if (typeof args[1] === "number" && !(args[1] & fs.constants.O_EXCL)) {
           readDenials += 1;
+          error.path = lockPath;
           throw error;
         }
       }
@@ -158,7 +162,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     const realOpen = fsp.open.bind(fsp);
     let opens = 0;
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-      if (args[0] === lockPath && exclusive(args[1])) { opens += 1; throw error; }
+      if (isStage(args[0]) && exclusive(args[1])) { opens += 1; error.path = String(args[0]); throw error; }
       return await realOpen(...args);
     });
     const create = lockRoot.create.bind(lockRoot);
@@ -213,7 +217,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
       const error = denial(lockPath);
       const realOpen = fsp.open.bind(fsp);
       const open = vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-        if (args[0] === lockPath && exclusive(args[1])) throw error;
+        if (isStage(args[0]) && exclusive(args[1])) { error.path = String(args[0]); throw error; }
         return await realOpen(...args);
       });
       await expect(manager.acquire(target, { ...options, retry: { ...retry, retries: 0 } })).rejects.toBe(error);
@@ -243,7 +247,7 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     let attempts = 0;
     vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
       const handle = await realOpen(...args);
-      if (args[0] === lockPath && exclusive(args[1])) {
+      if (isStage(args[0]) && exclusive(args[1])) {
         attempts += 1;
         if (operation === "write") vi.spyOn(handle, "write").mockRejectedValue(error);
         else {
@@ -260,7 +264,11 @@ describe("Root exclusive-create denial (synthetic Windows/errno; real files)", (
     expect(attempts).toBe(1);
     expect(manager.heldEntries()).toEqual([]);
     // A failed first exact stat provides no cleanup authority over the pathname.
-    expect(await fsp.readdir(directory)).toEqual(operation === "stat" ? ["state.lock"] : []);
-    if (operation === "stat") expect(await fsp.readFile(lockPath, "utf8")).toBe("");
+    const remaining = await fsp.readdir(directory);
+    expect(remaining).toHaveLength(operation === "stat" ? 1 : 0);
+    if (operation === "stat") {
+      expect(isStage(remaining[0])).toBe(true);
+      expect(await fsp.readFile(path.join(directory, remaining[0]!), "utf8")).toBe("");
+    }
   });
 });
