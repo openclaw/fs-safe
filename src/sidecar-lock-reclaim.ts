@@ -103,6 +103,12 @@ export function parseSidecarLockPayload(
   }
 }
 
+// A custom parser cannot turn an unfinished on-disk write into a stale owner.
+// Complete legacy JSON records remain valid without an ownership token.
+export function isCompleteSidecarLockRecord(raw: string | undefined): boolean {
+  return raw !== undefined && parseSidecarLockPayload(raw) !== null;
+}
+
 async function readSidecarLockComparisonSnapshot(
   lockPath: string,
   options: (Parameters<typeof readSidecarLockRawSnapshot>[1] & { parsePayload?: (raw: string) => unknown }) | undefined,

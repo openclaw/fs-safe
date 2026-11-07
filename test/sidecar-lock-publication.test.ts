@@ -65,7 +65,10 @@ it.each(kinds)("%s never exposes the final sidecar while writing its owner recor
 });
 
 it.each(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mode }))))(
-  "$kind cleans an interrupted stage and preserves a concurrent winner ($mode)", async ({ kind, mode }) => {
+  "$kind cleans an interrupted stage and preserves a concurrent winner ($mode)", async ({ kind, mode }, ctx) => {
+  if (mode === "require") {
+    try { __loadBundledNativeForTest(); } catch { return ctx.skip(); }
+  }
   configureFsSafeNative({ mode });
   const directory = await tempRoot("fs-safe-stage-rollback-");
   const target = path.join(directory, "state"), lockPath = `${target}.lock`;
@@ -83,20 +86,29 @@ it.each(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mo
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
 });
 
-it.each(kinds)("%s fails closed when publication primitives are unavailable", async kind => {
-  let native;
-  try { native = __loadBundledNativeForTest(); } catch { configureFsSafeNative({ mode: "off" }); }
+it.each(kinds.flatMap(kind => (["require", "off"] as const).map(mode => ({ kind, mode }))))(
+  "$kind uses exclusive create when publication primitives are unavailable ($mode)", async ({ kind, mode }, ctx) => {
+  if (mode === "require") {
+    try { __loadBundledNativeForTest(); } catch { return ctx.skip(); }
+  }
+  configureFsSafeNative({ mode });
   const unsupported = () => { throw Object.assign(new Error("unsupported mount"), { code: "ENOTSUP" }); };
-  if (native) __setNativeLoaderForTest(() => ({ ...native, renameNoReplace: unsupported, linkBeneath: unsupported }));
+  if (mode === "require") {
+    const native = __loadBundledNativeForTest();
+    __setNativeLoaderForTest(() => ({ ...native, renameNoReplace: unsupported, linkBeneath: unsupported }));
+  }
   vi.spyOn(fs, "linkSync").mockImplementation(unsupported);
   const target = path.join(await tempRoot("fs-safe-no-links-"), "state");
   let publicationAttempts = 0;
   __setFsSafeTestHooksForTest({ beforeSidecarLockPublish() { publicationAttempts++; } });
-  await expect(acquire(target, kind)).rejects.toMatchObject({
-    code: "helper-unavailable",
-    message: expect.stringContaining("no-replace rename or hardlinks"),
-  });
-  expect(publicationAttempts).toBe(1);
+  const lock = await acquire(target, kind);
+  try {
+    expect(publicationAttempts).toBe(1);
+    expect(JSON.parse(fs.readFileSync(`${target}.lock`, "utf8")).owner).toBe("complete");
+    expect(await promises.readdir(path.dirname(target))).toEqual(["state.lock"]);
+    if (process.platform !== "win32") expect(fs.statSync(`${target}.lock`).mode & 0o777).toBe(0o600);
+    expect(await lock.verifyStillHeld()).toBe(true);
+  } finally { await lock.release(); }
   expect(await promises.readdir(path.dirname(target))).toEqual([]);
 });
 

@@ -40,7 +40,9 @@ describe("raw asynchronous sidecar fallback modes", () => {
 
       const lock = await manager.acquire({ targetPath, payload: () => ({ owner: scenario }) });
       try {
-        expect(open).toHaveBeenCalledWith(expect.stringMatching(/\.fs-safe-lock-.*\.tmp$/), "wx", 0o600);
+        expect(open).toHaveBeenCalledWith(expect.stringMatching(/\.fs-safe-lock-.*\.tmp$/),
+          fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
+            (process.platform !== "win32" ? fs.constants.O_NOFOLLOW ?? 0 : 0), 0o600);
         expect((await fs.lstat(lockPath)).isFile()).toBe(true);
         await expect(lock.verifyStillHeld()).resolves.toBe(true);
       } finally {

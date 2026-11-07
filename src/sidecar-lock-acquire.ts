@@ -310,7 +310,8 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             throw createError;
           };
           const created = await createSidecarFile(lockPath, raw, async pathname => {
-            try { return await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, "wx", 0o600); }
+            try { return await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL |
+              (process.platform !== "win32" ? fsSync.constants.O_NOFOLLOW ?? 0 : 0), 0o600); }
             catch (error) { return failedOpen(error, pathname); }
           }, { onConflict: failedOpen });
           handle = created.handle;
