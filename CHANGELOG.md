@@ -4,7 +4,7 @@
 
 ### Fixes
 
-- **Atomic publication:** recover renamed files on DrvFS bind mounts by closing every descriptor and re-observing the published name by identity; a metadata pin keeps the name hidden on these mounts, so recovery no longer pins before verification. ([openclaw/openclaw#193262](https://github.com/openclaw/openclaw/issues/193262))
+- **Atomic publication:** recover renamed files hidden on DrvFS bind mounts behind open descriptors through an admitted close-everything fallback (9P only, where measured identity continuity rejects recreated files); everywhere else recovery retains the metadata pin through verification and settlement and fails closed. ([openclaw/openclaw#193262](https://github.com/openclaw/openclaw/issues/193262))
 - **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
 - **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
 

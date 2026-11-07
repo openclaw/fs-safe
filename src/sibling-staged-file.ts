@@ -13,7 +13,7 @@ import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
 import { openPublicationPin } from "./publication-pin.js";
 import { hasErrorCode } from "./file-cleanup.js";
-import { recoverAfterHiddenRename } from "./publication-recovery.js";
+import { admitsUnpinnedRenameRecovery, recoverAfterHiddenRename } from "./publication-recovery.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { cachedNoReplaceDevice, isNoReplaceUnavailable } from "./native-noreplace.js";
@@ -322,24 +322,50 @@ export async function writeCallbackSibling<T>(params: {
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
       unregister!();
+      let recoveredHandle: FileHandle | undefined;
+      let settled = false;
       try {
         assertCurrent(filePath);
       } catch (error) {
         if (!hasErrorCode(error, "ENOENT")) throw error;
-        // A metadata pin retains the inode on ordinary filesystems; DrvFS
-        // keeps the renamed name hidden behind any descriptor, so recovery
-        // releases the pin too when the mount still hides it.
+        // The pin retains the inode through verification on ordinary
+        // filesystems; DrvFS hides the renamed name behind any descriptor,
+        // so the admitted fallback closes every descriptor and re-verifies.
+        // Settlement runs while the pin (or the re-observed handle) still
+        // guards the published name.
         const previous = handle!;
         handle = undefined;
-        await recoverAfterHiddenRename({
+        recoveredHandle = await recoverAfterHiddenRename({
           closeWriter: () => previous.close(),
-          reopen: async () => { assertCurrent(filePath); },
           openPin: () => openPublicationPin(previous.fd),
+          admitUnpinned: () => admitsUnpinnedRenameRecovery(parent),
+          reopen: async () => {
+            const access = syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
+            const reopened = await fs.open(filePath, access | resolveReadOpenFlags());
+            try {
+              const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
+              inspectPath(filePath, opened);
+              return reopened;
+            } catch (verifyError) {
+              await reopened.close().catch(() => undefined);
+              throw verifyError;
+            }
+          },
+          retain: async (reopened) => {
+            if (syncParentDir) await syncDirectoryBestEffort(parent);
+            const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
+            inspectPath(filePath, opened);
+          },
         });
+        settled = true;
       }
-      if (syncParentDir) {
-        await syncDirectoryBestEffort(parent);
-        assertCurrent(filePath);
+      try {
+        if (syncParentDir && !settled) {
+          await syncDirectoryBestEffort(parent);
+          assertCurrent(filePath);
+        }
+      } finally {
+        await recoveredHandle?.close().catch(() => undefined);
       }
     });
     return { filePath, result };

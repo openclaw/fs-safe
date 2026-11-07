@@ -11,12 +11,13 @@ import { publishFileExclusive } from "../src/publish-file.js";
 import { writeFileSyncAtomic } from "../src/file-store-sync-write.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { hideRenamedFileWhileOpen } from "./helpers/rename-hidden.js";
 import { hideRenamedFileUntilClose } from "./helpers/rename-hidden-original.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-afterEach(() => { vi.restoreAllMocks(); configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); });
+afterEach(() => { vi.restoreAllMocks(); configureFsSafeNative({ mode: "auto" }); __resetNativeLoaderForTest(); __setFsSafeTestHooksForTest(undefined); });
 const writers = {
   async: (filePath: string) => replaceFileAtomic({ filePath, content: "payload", syncTempFile: true, syncParentDir: true }),
   sync: (filePath: string) => replaceFileAtomicSync({ filePath, content: "payload", syncTempFile: true, syncParentDir: true }),
@@ -34,6 +35,9 @@ describe.runIf(descriptorPins).each(Object.entries(writers))("%s publication on 
   it("closes every descriptor and verifies the original inode", async () => {
     const filePath = path.join(await tempRoot("rename-hidden-"), "target");
     const fault = hideRenamedFileWhileOpen(filePath);
+    // The simulated mount hides behind any descriptor; admit the unpinned
+    // fallback the real DrvFS filesystem would be admitted to.
+    __setFsSafeTestHooksForTest({ admitUnpinnedRenameRecovery: () => true });
     await write(filePath);
     expect(fault.failures).toBeGreaterThan(0);
     // The staging descriptor and the released pin both close on this model.
@@ -69,6 +73,9 @@ describe.runIf(native && descriptorPins)("native root rename-hidden publication"
     "verifies $kind after closing the $api stage", async ({ api, kind }) => {
     const directory = await tempRoot("native-rename-hidden-");
     const filePath = path.join(directory, "target");
+    // The attack kinds simulate deletion/substitution on an ordinary
+    // filesystem, which must keep the strict pinned contract.
+    __setFsSafeTestHooksForTest({ admitUnpinnedRenameRecovery: () => kind === "original" });
     const fault = hideRenamedFileUntilClose(filePath, kind === "original" ? undefined : () => {
       fs.unlinkSync(filePath);
       if (kind === "replacement") {

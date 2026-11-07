@@ -46,6 +46,7 @@ export type FsSafeTestHooks = {
     identity: FileIdentityStat,
   ) => Promise<void> | void;
   beforePublishDirectorySync?: NonNullable<FsSafeTestHooks["afterPublishTargetCreated"]>;
+  admitUnpinnedRenameRecovery?: (directoryPath: string) => boolean;
 };
 
 let fsSafeTestHooks: FsSafeTestHooks | undefined;

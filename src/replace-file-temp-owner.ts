@@ -10,6 +10,7 @@ import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
 import { openPublicationPin } from "./publication-pin.js";
+import { admitsUnpinnedRenameRecovery } from "./publication-recovery.js";
 
 const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
@@ -169,34 +170,51 @@ export class AtomicTempOwner {
       identityCurrent = true;
     } catch (error) {
       if (hasErrorCode(error, "ENOENT") || (error instanceof FsSafeError && hasErrorCode(error.cause, "ENOENT"))) {
-        // DrvFS can hide a renamed inode behind any open descriptor; the pin
-        // stays for inode retention on ordinary filesystems and is released
-        // too when the mount still hides the name behind it.
+        // The pin retains the inode through verification on ordinary
+        // filesystems; DrvFS hides a renamed inode behind any descriptor, so
+        // the admitted fallback closes every descriptor and re-verifies.
         let pin: number | undefined;
-        try { pin = openPublicationPin(this.fd); } catch { pin = undefined; }
-        const previous = this.takeResource()!;
-        const closing = previous.close();
-        if (this.io.asynchronous) yield closing;
-        for (let attempt = 1; ; attempt += 1) {
-          try {
+        try {
+          pin = openPublicationPin(this.fd);
+          const previous = this.takeResource()!;
+          const closing = previous.close();
+          if (this.io.asynchronous) yield closing;
+          let admitted = false;
+          for (let attempt = 1; ; attempt += 1) {
             try {
-              this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
-            } catch (openError) {
-              if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
-                (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
-              this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+              try {
+                this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
+              } catch (openError) {
+                if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
+                  (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
+                this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
+              }
+              yield* this.assertCurrent(pathname);
+              onVerified?.(this.identity);
+              return;
+            } catch (recoveryError) {
+              // Settle the failed observation before retrying; async
+              // AtomicFile close returns a promise that must be awaited
+              // through the procedure boundary before the next attempt.
+              const failed = this.resource;
+              this.resource = undefined;
+              if (failed) {
+                const failedClosing = failed.close();
+                if (this.io.asynchronous && failedClosing) yield failedClosing;
+              }
+              if (attempt === 1) {
+                if (!hasErrorCode(recoveryError, "ENOENT") ||
+                  !admitsUnpinnedRenameRecovery(path.dirname(this.pathname))) throw recoveryError;
+                admitted = true;
+                if (pin !== undefined) { syncFs.closeSync(pin); pin = undefined; }
+                continue;
+              }
+              if (!admitted || !hasErrorCode(recoveryError, "ENOENT") || attempt >= 5) throw recoveryError;
+              yield* this.io.delay(20);
             }
-            yield* this.assertCurrent(pathname);
-            if (pin !== undefined) syncFs.closeSync(pin);
-            onVerified?.(this.identity);
-            return;
-          } catch (recoveryError) {
-            if (pin !== undefined) { syncFs.closeSync(pin); pin = undefined; }
-            try { this.resource?.close(); } catch { /* best effort */ }
-            this.resource = undefined;
-            if (!hasErrorCode(recoveryError, "ENOENT") || attempt >= 5) throw recoveryError;
-            yield* this.io.delay(20);
           }
+        } finally {
+          if (pin !== undefined) syncFs.closeSync(pin);
         }
       }
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {

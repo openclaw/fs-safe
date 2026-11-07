@@ -28,7 +28,7 @@ import { hasErrorCode } from "./file-cleanup.js";
 import { nativeOpenFlags } from "./native-operations.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { openPublicationPin } from "./publication-pin.js";
-import { recoverAfterHiddenRenameSync } from "./publication-recovery.js";
+import { admitsUnpinnedRenameRecoveryAtFd, recoverAfterHiddenRenameSync } from "./publication-recovery.js";
 
 export { assertNativeStaging, type NativeStagingBinding } from "./native-staged-file-metadata.js";
 
@@ -388,17 +388,17 @@ class NativeStagedFile implements StagedFile {
       if (!hasErrorCode(error, "ENOENT")) throw error;
       const state = this.#open();
       const fd = this.#file();
-      // The pin retains the inode on ordinary filesystems; DrvFS hides a renamed inode behind any descriptor, so recovery releases it too.
-      const open = this.#owner.binding.openBeneath;
       return recoverAfterHiddenRenameSync({
         openPin: () => openPublicationPin(fd),
         closeWriter: () => { state.fileFd = undefined; this.#closeFd(fd); this.#assertDirectory(); },
         reopen: () => {
+          const open = this.#owner.binding.openBeneath;
           if (!open) throw error;
           state.fileFd = open(this.#owner.parentFd, basename, nativeOpenFlags(fs.constants.O_RDWR | fs.constants.O_NONBLOCK)).fd;
           inspectFileIdentitySync(() => fs.fstatSync(this.#file(), { bigint: true }), this.receipt.identity);
           return this.#assertNamed(basename, 0o600);
         },
+        admitUnpinned: () => admitsUnpinnedRenameRecoveryAtFd(this.#owner.parentFd),
       });
     }
   }

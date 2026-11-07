@@ -9,7 +9,7 @@ import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { cleanupPinnedFilePath, hasErrorCode } from "./file-cleanup.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { openPublicationPin } from "./publication-pin.js";
-import { recoverAfterHiddenRename } from "./publication-recovery.js";
+import { admitsUnpinnedRenameRecovery, recoverAfterHiddenRename } from "./publication-recovery.js";
 import type { RootContext } from "./root-context.js";
 import type { RootWriteOptions } from "./root-options.js";
 import { verifyAtomicWriteResult } from "./root-write-verification.js";
@@ -47,14 +47,15 @@ export async function finishRootFallbackWrite(params: {
       fsSync.fstatSync(handle.fd, { bigint: true });
     } catch (error) {
       if (!hasErrorCode(error, "ENOENT")) throw error;
-      // A metadata pin retains the inode on ordinary filesystems; DrvFS
-      // keeps the renamed name hidden behind any descriptor, so recovery
-      // releases the pin too when the mount still hides it.
+      // The pin retains the inode through verification on ordinary
+      // filesystems; DrvFS hides the renamed name behind any descriptor, so
+      // the admitted fallback closes every descriptor and re-verifies.
       const writer = handle;
       accepted = handle = await recoverAfterHiddenRename({
         closeWriter: () => writer.close(),
         reopen: async () => (await params.openForCompatibility()).opened.handle,
         openPin: () => openPublicationPin(writer.fd),
+        admitUnpinned: () => admitsUnpinnedRenameRecovery(path.dirname(params.targetPath)),
       });
       inspectFileIdentitySync(() => fsSync.fstatSync(handle.fd, { bigint: true }), identity);
     }

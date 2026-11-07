@@ -2,125 +2,162 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { recoverAfterHiddenRename } from "../src/publication-recovery.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { admitsUnpinnedRenameRecovery, recoverAfterHiddenRename, recoverAfterHiddenRenameSync } from "../src/publication-recovery.js";
+import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
+
+afterEach(() => {
+  __setFsSafeTestHooksForTest(undefined);
+});
+
+const enoent = () => Object.assign(new Error("not visible"), { code: "ENOENT" });
+
+async function makePinFile() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-pin-"));
+  const pinPath = path.join(dir, "pin");
+  await fs.writeFile(pinPath, "pin");
+  return pinPath;
+}
 
 describe("recoverAfterHiddenRename", () => {
-  it("closes the writer before the first reopen attempt", async () => {
-    const order: string[] = [];
+  it("retains the pin through settlement and closes it afterwards", async () => {
+    const pinPath = await makePinFile();
+    let pinFd = -1;
+    let pinValidAtSettlement = false;
     await recoverAfterHiddenRename({
-      closeWriter: async () => { order.push("close"); },
-      reopen: async () => { order.push("reopen"); return "handle"; },
-      backoffMs: 0,
+      closeWriter: async () => undefined,
+      reopen: async () => "verified",
+      openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
+      retain: async () => {
+        try {
+          fsSync.fstatSync(pinFd);
+          pinValidAtSettlement = true;
+        } catch { /* closed early */ }
+      },
     });
-    expect(order).toEqual(["close", "reopen"]);
+    expect(pinValidAtSettlement).toBe(true);
+    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
   });
 
-  it("retries bounded ENOENT visibility lag and returns the verified handle", async () => {
-    let attempts = 0;
+  it("fails closed on ENOENT when the filesystem is not admitted", async () => {
+    const pinPath = await makePinFile();
+    let pinFd = -1;
+    let reopens = 0;
+    __setFsSafeTestHooksForTest({ admitUnpinnedRenameRecovery: () => false });
+    await expect(recoverAfterHiddenRename({
+      closeWriter: async () => undefined,
+      reopen: async () => { reopens += 1; throw enoent(); },
+      openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
+    })).rejects.toMatchObject({ code: "ENOENT" });
+    expect(reopens).toBe(1);
+    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  });
+
+  it("releases the pin and retries only when the filesystem is admitted", async () => {
+    const pinPath = await makePinFile();
+    let pinFd = -1;
+    let reopens = 0;
+    __setFsSafeTestHooksForTest({ admitUnpinnedRenameRecovery: () => true });
     const handle = await recoverAfterHiddenRename({
       closeWriter: async () => undefined,
       reopen: async () => {
-        attempts += 1;
-        if (attempts < 3) throw Object.assign(new Error("not yet visible"), { code: "ENOENT" });
+        reopens += 1;
+        if (reopens === 1) throw enoent();
         return "verified";
       },
-      attempts: 5,
+      openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
+      admitUnpinned: () => admitsUnpinnedRenameRecovery(os.tmpdir()),
       backoffMs: 0,
     });
     expect(handle).toBe("verified");
-    expect(attempts).toBe(3);
+    expect(reopens).toBe(2);
+    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
   });
 
-  it("stops retrying after the attempt budget and rethrows ENOENT", async () => {
-    let attempts = 0;
+  it("does not admit unpinned recovery for non-ENOENT failures", async () => {
+    const pinPath = await makePinFile();
+    let pinFd = -1;
+    __setFsSafeTestHooksForTest({ admitUnpinnedRenameRecovery: () => true });
+    const mismatch = Object.assign(new Error("identity changed"), { code: "path-mismatch" });
     await expect(recoverAfterHiddenRename({
       closeWriter: async () => undefined,
-      reopen: async () => { attempts += 1; throw Object.assign(new Error("gone"), { code: "ENOENT" }); },
+      reopen: async () => { throw mismatch; },
+      openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
+    })).rejects.toBe(mismatch);
+    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  });
+
+  it("closes the pin when the writer close rejects", async () => {
+    const pinPath = await makePinFile();
+    let pinFd = -1;
+    const closeFailure = Object.assign(new Error("close failed"), { code: "EIO" });
+    await expect(recoverAfterHiddenRename({
+      closeWriter: async () => { throw closeFailure; },
+      reopen: async () => "unused",
+      openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
+    })).rejects.toBe(closeFailure);
+    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  });
+
+  it("propagates pin acquisition failures without reopening", async () => {
+    let reopens = 0;
+    const unavailable = Object.assign(new Error("no pin support"), { code: "helper-unavailable" });
+    await expect(recoverAfterHiddenRename({
+      closeWriter: async () => undefined,
+      reopen: async () => { reopens += 1; return "unused"; },
+      openPin: () => { throw unavailable; },
+    })).rejects.toBe(unavailable);
+    expect(reopens).toBe(0);
+  });
+
+  it("stops retrying after the admitted attempt budget", async () => {
+    let reopens = 0;
+    __setFsSafeTestHooksForTest({ admitUnpinnedRenameRecovery: () => true });
+    await expect(recoverAfterHiddenRename({
+      closeWriter: async () => undefined,
+      reopen: async () => { reopens += 1; throw enoent(); },
+      admitUnpinned: () => admitsUnpinnedRenameRecovery(os.tmpdir()),
       attempts: 3,
       backoffMs: 0,
     })).rejects.toMatchObject({ code: "ENOENT" });
-    expect(attempts).toBe(3);
+    // One pinned attempt plus the three-attempt admitted budget.
+    expect(reopens).toBe(4);
   });
+});
 
-  it("does not retry non-ENOENT failures", async () => {
-    let attempts = 0;
-    const failure = Object.assign(new Error("denied"), { code: "EACCES" });
-    await expect(recoverAfterHiddenRename({
-      closeWriter: async () => undefined,
-      reopen: async () => { attempts += 1; throw failure; },
-      attempts: 5,
-      backoffMs: 0,
-    })).rejects.toBe(failure);
-    expect(attempts).toBe(1);
-  });
-
-  it("closes the writer even when reopening keeps failing", async () => {
-    let closed = false;
-    await expect(recoverAfterHiddenRename({
-      closeWriter: async () => { closed = true; },
-      reopen: async () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); },
-      attempts: 2,
-      backoffMs: 0,
-    })).rejects.toMatchObject({ code: "ENOENT" });
-    expect(closed).toBe(true);
-  });
-
-  it("opens the pin before closing the writer and closes it after success", async () => {
-    const pinPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-pin-")), "pin");
-    await fs.writeFile(pinPath, "pin");
-    const order: string[] = [];
+describe("recoverAfterHiddenRenameSync", () => {
+  it("retains the pin through settlement and fails closed without admission", () => {
+    const dir = fsSync.mkdtempSync(path.join(os.tmpdir(), "fs-safe-pin-"));
+    const pinPath = path.join(dir, "pin");
+    fsSync.writeFileSync(pinPath, "pin");
     let pinFd = -1;
-    const handle = await recoverAfterHiddenRename({
-      closeWriter: async () => { order.push("close"); },
-      reopen: async () => { order.push("reopen"); return "verified"; },
-      openPin: () => {
-        pinFd = fsSync.openSync(pinPath, "r");
-        order.push("pin");
-        return pinFd;
-      },
-      backoffMs: 0,
-    });
-    expect(handle).toBe("verified");
-    expect(order).toEqual(["pin", "close", "reopen"]);
-    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
-  });
-
-  it("releases the pin and retries when the name stays hidden behind it", async () => {
-    let pinFd = -1;
-    const pinPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-pin-")), "pin");
-    await fs.writeFile(pinPath, "pin");
-    let attempts = 0;
-    const handle = await recoverAfterHiddenRename({
-      closeWriter: async () => undefined,
-      reopen: async () => {
-        attempts += 1;
-        if (attempts === 1) throw Object.assign(new Error("hidden behind pin"), { code: "ENOENT" });
-        return "verified";
-      },
+    let pinValidAtSettlement = false;
+    recoverAfterHiddenRenameSync({
+      closeWriter: () => undefined,
+      reopen: () => "verified",
       openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
-      attempts: 5,
-      backoffMs: 0,
+      retain: () => {
+        try {
+          fsSync.fstatSync(pinFd);
+          pinValidAtSettlement = true;
+        } catch { /* closed early */ }
+      },
     });
-    expect(handle).toBe("verified");
-    expect(attempts).toBe(2);
+    expect(pinValidAtSettlement).toBe(true);
     expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
-  });
 
-  it("releases the pin and rethrows non-ENOENT failures without retrying", async () => {
-    let pinFd = -1;
-    let attempts = 0;
-    const pinPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "fs-safe-pin-")), "pin");
-    await fs.writeFile(pinPath, "pin");
-    const failure = Object.assign(new Error("identity changed"), { code: "path-mismatch" });
-    await expect(recoverAfterHiddenRename({
-      closeWriter: async () => undefined,
-      reopen: async () => { attempts += 1; throw failure; },
-      openPin: () => { pinFd = fsSync.openSync(pinPath, "r"); return pinFd; },
-      attempts: 5,
-      backoffMs: 0,
-    })).rejects.toBe(failure);
-    expect(attempts).toBe(1);
-    expect(() => fsSync.fstatSync(pinFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    let pinFd2 = -1;
+    expect(() => recoverAfterHiddenRenameSync({
+      closeWriter: () => undefined,
+      reopen: () => { throw enoent(); },
+      openPin: () => { pinFd2 = fsSync.openSync(pinPath, "r"); return pinFd2; },
+    })).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(() => fsSync.fstatSync(pinFd2)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  });
+});
+
+describe("admitsUnpinnedRenameRecovery", () => {
+  it("rejects admission when statfs cannot be observed", () => {
+    expect(admitsUnpinnedRenameRecovery(path.join(os.tmpdir(), "does-not-exist-xyz"))).toBe(false);
   });
 });

@@ -25,7 +25,7 @@ import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
 import { openPublicationPin } from "./publication-pin.js";
-import { recoverAfterHiddenRename } from "./publication-recovery.js";
+import { admitsUnpinnedRenameRecovery, recoverAfterHiddenRename } from "./publication-recovery.js";
 
 export async function runPinnedStagedWrite(
   params: PinnedWriteParams,
@@ -62,13 +62,14 @@ export async function runPinnedStagedWrite(
       const previous = handle!;
       handle = undefined;
       return (async () => {
-        // A metadata pin retains the inode on ordinary filesystems; DrvFS
-        // keeps the renamed name hidden behind any descriptor, so recovery
-        // releases the pin too when the mount still hides it.
+        // The pin retains the inode through verification on ordinary
+        // filesystems; DrvFS hides the renamed name behind any descriptor, so
+        // the admitted fallback closes every descriptor and re-verifies.
         readHandle = await recoverAfterHiddenRename({
           closeWriter: () => previous.close(),
           reopen: () => openPublicationHandle(targetPath, tempIdentity!),
           openPin: () => openPublicationPin(previous.fd),
+          admitUnpinned: () => admitsUnpinnedRenameRecovery(path.dirname(targetPath)),
         });
         return fsSync.lstatSync(targetPath, { bigint: true });
       })();
