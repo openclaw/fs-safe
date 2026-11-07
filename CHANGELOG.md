@@ -2,19 +2,23 @@
 
 ## Unreleased
 
+## 0.28.0 - 2026-11-07
+
+**Highlights:** Crash-safe lock publication and working writes on Docker Desktop Windows bind mounts through the new opt-in `allowDrvfsRenameRecovery`. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076), [#1074](https://github.com/openclaw/fs-safe/pull/1074))
+
 ### Features
 
-- **Atomic writes:** add the explicit, off-by-default `allowDrvfsRenameRecovery` option for verified DrvFS mounts, with documented residual inode-reuse risk.
+- **Atomic writes:** add the explicit, off-by-default `allowDrvfsRenameRecovery` option for verified DrvFS mounts, with documented residual inode-reuse risk. ([#1074](https://github.com/openclaw/fs-safe/pull/1074))
 
-- **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict. Using the exception emits a path-free `FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning once per process.
+- **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict. Using the exception emits a path-free `FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning once per process. Thanks @Kimiyu-186. ([#1073](https://github.com/openclaw/fs-safe/pull/1073))
 
 ### Fixes
 
-- **DrvFS publication:** recover files hidden until the last descriptor closes on verified Windows-drive mounts, retaining exact identity, ownership, mode, size, link-count, parent, and available content checks. Thanks @om49967588 for the report and @lswang9 for the probes.
+- **DrvFS publication:** recover files hidden until the last descriptor closes on verified Windows-drive mounts, retaining exact identity, ownership, mode, size, link-count, parent, and available content checks. Thanks @om49967588 for the report and @lswang9 for the probes. ([#1074](https://github.com/openclaw/fs-safe/pull/1074))
 
-- **File locks:** stage and sync complete owner records before exclusive publication; retain mutually exclusive create-and-write on mounts without no-replace rename or hardlinks, where a crash can leave an empty or partial lock requiring offline recovery. Existing unverifiable locks remain untouched. Thanks @chrislro.
+- **File locks:** stage and sync complete owner records before exclusive publication; retain mutually exclusive create-and-write on mounts without no-replace rename or hardlinks, where a crash can leave an empty or partial lock requiring offline recovery. Existing unverifiable locks remain untouched. Thanks @chrislro. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076))
 
-- **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
+- **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report. ([#1071](https://github.com/openclaw/fs-safe/pull/1071))
 
 ## 0.27.2 - 2026-11-05
 
