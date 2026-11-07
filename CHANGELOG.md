@@ -12,7 +12,7 @@
 
 - **DrvFS publication:** recover files hidden until the last descriptor closes on verified Windows-drive mounts, retaining exact identity, ownership, mode, size, link-count, parent, and available content checks. Thanks @om49967588 for the report and @lswang9 for the probes.
 
-- **File locks:** stage and sync complete owner records before exclusive publication so crashes cannot leave empty locks; fail closed on mounts without no-replace rename or hardlinks. Existing unverifiable locks remain untouched. Thanks @chrislro.
+- **File locks:** stage and sync complete owner records before exclusive publication; retain mutually exclusive create-and-write on mounts without no-replace rename or hardlinks, where a crash can leave an empty or partial lock requiring offline recovery. Existing unverifiable locks remain untouched. Thanks @chrislro.
 
 - **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
 

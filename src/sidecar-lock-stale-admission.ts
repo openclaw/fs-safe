@@ -1,5 +1,6 @@
 import { defaultSidecarLockShouldReclaim, isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
 import {
+  isIncompleteSidecarLockRecord,
   readSidecarLockRawSnapshot,
   removeStaleSidecarLockIfAllowed,
   sidecarLockSnapshotStillPresent,
@@ -111,7 +112,8 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     if (await retryChangedBoundary()) return;
     throw error;
   }
-  if (!snapshot) {
+  // An incomplete owner can still be writing; age is not liveness evidence.
+  if (!snapshot || (!params.parserState.parser && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw)) {
     await params.waitForRetry();
     return;
   }
