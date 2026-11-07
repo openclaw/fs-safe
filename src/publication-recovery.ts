@@ -1,38 +1,75 @@
 import fsSync from "node:fs";
+import path from "node:path";
 import { hasErrorCode } from "./file-cleanup.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { sleep, sleepSync } from "./timing.js";
 
-// 9P is the only filesystem class with measured evidence for both behaviors
-// this fallback relies on: a renamed name stays hidden behind any open
-// descriptor, and recreate-after-close yields a new identity (NTFS MFT record
-// plus sequence number), so identity re-verification still rejects a swapped
-// file. Everything else keeps the strict pinned contract and fails closed.
-const ADMITTED_UNPINNED_STATFS_TYPES: readonly bigint[] = [0x01021997n];
+// Unpinned recovery is only sound on backends whose identities carry a
+// generation: recreate-after-close must produce a device/inode pair the
+// previous file could never have. That property cannot be inferred from a
+// filesystem magic number, so admission runs a bounded behavioral probe
+// (create/stat/unlink rounds must all produce distinct non-zero identities)
+// and caches the verdict per device. Backends that recycle identities fail
+// the probe and keep the strict pinned contract.
+const IDENTITY_PROBE_ROUNDS = 48;
+const probeResults = new Map<bigint, boolean>();
 
 export function admitsUnpinnedRenameRecovery(directoryPath: string): boolean {
-  const hook = getFsSafeTestHooks()?.admitUnpinnedRenameRecovery;
-  if (hook) return hook(directoryPath);
-  try {
-    return ADMITTED_UNPINNED_STATFS_TYPES.includes(
-      fsSync.statfsSync(directoryPath, { bigint: true }).type,
-    );
-  } catch {
-    return false;
-  }
+  return admitsAtPath(directoryPath);
 }
 
 /** Native publication paths hold a parent descriptor instead of a path. */
 export function admitsUnpinnedRenameRecoveryAtFd(parentFd: number): boolean {
   if (process.platform !== "linux") return false;
-  const procPath = `/proc/self/fd/${parentFd}`;
+  return admitsAtPath(`/proc/self/fd/${parentFd}`);
+}
+
+function admitsAtPath(directoryPath: string): boolean {
   const hook = getFsSafeTestHooks()?.admitUnpinnedRenameRecovery;
-  if (hook) return hook(procPath);
+  if (hook) return hook(directoryPath);
+  let device: bigint;
   try {
-    return ADMITTED_UNPINNED_STATFS_TYPES.includes(fsSync.statfsSync(procPath, { bigint: true }).type);
+    device = fsSync.lstatSync(directoryPath, { bigint: true }).dev;
   } catch {
     return false;
   }
+  const cached = probeResults.get(device);
+  if (cached !== undefined) return cached;
+  const admitted = probeGenerationBearingIdentities(directoryPath);
+  probeResults.set(device, admitted);
+  return admitted;
+}
+
+function probeGenerationBearingIdentities(directoryPath: string): boolean {
+  const identities = new Set<string>();
+  for (let round = 0; round < IDENTITY_PROBE_ROUNDS; round += 1) {
+    const probePath = path.join(directoryPath, `.fs-safe-id-probe-${process.pid}-${round}`);
+    let fd = -1;
+    try {
+      fd = fsSync.openSync(probePath, fsSync.constants.O_CREAT | fsSync.constants.O_EXCL | fsSync.constants.O_WRONLY, 0o600);
+      const stat = fsSync.fstatSync(fd, { bigint: true });
+      if (stat.ino === 0n) return false;
+      const key = `${stat.dev}:${stat.ino}`;
+      if (identities.has(key)) return false;
+      identities.add(key);
+    } catch {
+      return false;
+    } finally {
+      if (fd >= 0) {
+        try {
+          fsSync.closeSync(fd);
+        } catch {
+          // Best effort; the probe file is removed below.
+        }
+      }
+    }
+    try {
+      fsSync.unlinkSync(probePath);
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -56,6 +93,7 @@ export async function recoverAfterHiddenRename<T>(params: {
   openPin?: () => number;
   admitUnpinned?: () => boolean;
   retain?: (recovered: T) => Promise<void>;
+  dispose?: (recovered: T) => Promise<void>;
   attempts?: number;
   backoffMs?: number;
 }): Promise<T> {
@@ -74,7 +112,16 @@ export async function recoverAfterHiddenRename<T>(params: {
       }
       recovered = await reopenAdmitted(params);
     }
-    if (params.retain) await params.retain(recovered);
+    if (params.retain) {
+      try {
+        await params.retain(recovered);
+      } catch (error) {
+        // Settlement failed; the caller never took ownership, so release the
+        // recovered resource instead of leaving it unowned.
+        if (params.dispose) await params.dispose(recovered).catch(() => undefined);
+        throw error;
+      }
+    }
     return recovered;
   } finally {
     if (pin !== undefined) closePublicationPin(pin);
@@ -88,6 +135,7 @@ export function recoverAfterHiddenRenameSync<T>(params: {
   openPin?: () => number;
   admitUnpinned?: () => boolean;
   retain?: (recovered: T) => void;
+  dispose?: (recovered: T) => void;
   attempts?: number;
   backoffMs?: number;
 }): T {
@@ -106,7 +154,20 @@ export function recoverAfterHiddenRenameSync<T>(params: {
       }
       recovered = reopenAdmittedSync(params);
     }
-    if (params.retain) params.retain(recovered);
+    if (params.retain) {
+      try {
+        params.retain(recovered);
+      } catch (error) {
+        if (params.dispose) {
+          try {
+            params.dispose(recovered);
+          } catch {
+            // Best effort; the settlement error takes precedence.
+          }
+        }
+        throw error;
+      }
+    }
     return recovered;
   } finally {
     if (pin !== undefined) closePublicationPin(pin);

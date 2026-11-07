@@ -332,31 +332,46 @@ export async function writeCallbackSibling<T>(params: {
         // filesystems; DrvFS hides the renamed name behind any descriptor,
         // so the admitted fallback closes every descriptor and re-verifies.
         // Settlement runs while the pin (or the re-observed handle) still
-        // guards the published name.
+        // guards the published name, and keeps the full parent/size
+        // admission instead of leaf-only checks.
+        const assertPublishedCurrent = (reopened: FileHandle) => {
+          assertParent();
+          const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
+          const current = inspectPath(filePath, opened);
+          if (maxBytes !== undefined && (opened.size > maxBytes || current.size > maxBytes)) {
+            throw new FsSafeError("too-large", `sibling temp exceeds maxBytes (${maxBytes})`);
+          }
+        };
         const previous = handle!;
         handle = undefined;
-        recoveredHandle = await recoverAfterHiddenRename({
-          closeWriter: () => previous.close(),
-          openPin: () => openPublicationPin(previous.fd),
-          admitUnpinned: () => admitsUnpinnedRenameRecovery(parent),
-          reopen: async () => {
-            const access = syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
-            const reopened = await fs.open(filePath, access | resolveReadOpenFlags());
-            try {
-              const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
-              inspectPath(filePath, opened);
-              return reopened;
-            } catch (verifyError) {
-              await reopened.close().catch(() => undefined);
-              throw verifyError;
-            }
-          },
-          retain: async (reopened) => {
-            if (syncParentDir) await syncDirectoryBestEffort(parent);
-            const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
-            inspectPath(filePath, opened);
-          },
-        });
+        try {
+          recoveredHandle = await recoverAfterHiddenRename({
+            closeWriter: () => previous.close(),
+            openPin: () => openPublicationPin(previous.fd),
+            admitUnpinned: () => admitsUnpinnedRenameRecovery(parent),
+            reopen: async () => {
+              const access = syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
+              const reopened = await fs.open(filePath, access | resolveReadOpenFlags());
+              try {
+                assertPublishedCurrent(reopened);
+                return reopened;
+              } catch (verifyError) {
+                await reopened.close().catch(() => undefined);
+                throw verifyError;
+              }
+            },
+            retain: async (reopened) => {
+              if (syncParentDir) await syncDirectoryBestEffort(parent);
+              assertPublishedCurrent(reopened);
+            },
+            dispose: async (reopened) => { await reopened.close().catch(() => undefined); },
+          });
+        } catch (error) {
+          // Reclaim the writer if recovery failed before closing it; a
+          // second close on an already-closed handle is swallowed.
+          await previous.close().catch(() => undefined);
+          throw error;
+        }
         settled = true;
       }
       try {
