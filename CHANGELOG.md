@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict. Using the exception emits a path-free `FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning once per process.
+
 ### Fixes
 
 - **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report.
