@@ -19,6 +19,7 @@ import { AtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-own
 import { errorCauseOptions } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { hasErrorCode } from "./file-cleanup.js";
 
 function verifyStoreFile(fd: number, expected: BigIntStats, filePath: string): void {
   const assertFile = (stat: BigIntStats, allowUnknown = false): boolean => {
@@ -54,6 +55,7 @@ export function writeFileSyncAtomic(params: {
   filePath: string;
   content: string | Uint8Array;
   privateMode: boolean;
+  allowDrvfsRenameRecovery?: boolean;
   durable: boolean;
   dirMode: number | "preserve";
   mode: number;
@@ -115,11 +117,17 @@ export function writeFileSyncAtomic(params: {
     if (params.durable) fs.fsyncSync(temp.file.fd);
     verifyStoreFile(temp.file.fd, owner.identity, tempPath);
     assertSyncStoreDirectoryReceipt(parentGuard);
+    if (params.allowDrvfsRenameRecovery === true) runSync(owner.prepareRecovery(params.content, parentGuard.dir));
     fs.renameSync(tempPath, filePath);
     owner.markRenamed();
     assertSyncStoreDirectoryReceipt(parentGuard);
     try {
-      verifyStoreFile(temp.file.fd, owner.identity, filePath);
+      try {
+        verifyStoreFile(temp.file.fd, owner.identity, filePath);
+      } catch (error) {
+        if (!owner.canRecoverHiddenRename || !hasErrorCode(error, "ENOENT")) throw error;
+        runSync(owner.assertPublished(filePath));
+      }
     } catch (error) {
       if (error instanceof FsSafeError) {
         throw error;

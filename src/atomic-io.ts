@@ -217,6 +217,16 @@ export class AtomicFile {
     }
   }
 
+  *readFileBounded(maxBytes: number): Procedure<Buffer> {
+    if (typeof this.resource !== "number") return yield* wait(readFileHandleBounded(this.resource, maxBytes));
+    let position = 0;
+    return readBoundedSync(maxBytes, (buffer, length) => {
+      const bytes = this.io.syncFs!.readSync!(this.resource as number, buffer, 0, length, position);
+      position += bytes;
+      return bytes;
+    });
+  }
+
   *readFile(sizeHint?: number): Procedure<Buffer> {
     if (typeof this.resource !== "number") return yield* wait(readFileHandleBounded(this.resource, Infinity));
     if (sizeHint === undefined) return this.io.syncFs!.readFileSync!(this.resource);

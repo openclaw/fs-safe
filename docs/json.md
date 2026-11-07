@@ -1,5 +1,7 @@
 # JSON files
 
+
+`WriteJsonSyncOptions`, used by `writeJsonSync`, and `WriteJsonOptions`, used by `writeJson`, accept `allowDrvfsRenameRecovery` in their options. It is off by default; [verified DrvFS recovery](atomic.md#drvfs-hidden-rename-recovery) compares the serialized bytes and documents the residual inode-reuse risk.
 `@openclaw/fs-safe/json` is the standalone JSON surface: strict and lenient read variants plus atomic JSON writes.
 
 ```ts

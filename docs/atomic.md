@@ -35,6 +35,10 @@ are independent of this directory policy.
 
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
 
+On DrvFS mounts that hide renamed files while any descriptor is open, the
+strict default rejects post-rename `ENOENT`. See the explicit
+[`allowDrvfsRenameRecovery` exception](#drvfs-hidden-rename-recovery).
+
 Relative paths retain their literal suffix so `.` and `..` keep Node's existing
 filesystem semantics. On Windows, an ordinary drive-relative destination such
 as `C:.\\state.json` is captured at entry by anchoring the drive's current
@@ -72,6 +76,7 @@ type ReplaceFileAtomicOptions = {
   maxRestoreBytes?: number;          // required with "restore-original"
   destinationHardlinks?: "reject"; // default unset (no destination nlink policy)
   renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
+  allowDrvfsRenameRecovery?: boolean; // default false; verified DrvFS only
   syncTempFile?: boolean;           // fsync(temp) before rename, or the final file after copy fallback; default false
   syncParentDir?: boolean;          // fsync(parent) after rename, POSIX only; default false
   throwOnCleanupError?: boolean;    // report temp cleanup failure; default false
@@ -92,6 +97,57 @@ inode; an in-place copy fallback can retain metadata already attached to its
 pinned destination. The snapshot does not make replacement a compare-and-swap
 operation, so the destination parent must still be protected from untrusted
 concurrent namespace mutation.
+
+### DrvFS hidden-rename recovery
+
+`allowDrvfsRenameRecovery: true` permits recovery only after a successful rename
+is followed by `ENOENT`. It is off by default. Omitting it preserves strict
+behavior and adds no filesystem calls. Enabling it retains the parent directory
+for that operation; healthy publications still use their ordinary verification.
+
+The retained parent's backing filesystem must have statfs magic `0x01021997`
+(9p). Its `/proc/self/fdinfo/<fd>` mount ID must select exactly one entry in
+`/proc/self/mountinfo` with filesystem type `9p` and `aname=drvfs` in the super
+options. This includes the reporter's Docker Desktop Windows-drive bind mount.
+Unavailable, malformed, ambiguous, or different mount evidence never enables
+recovery. No create/unlink sampling, path-name heuristics, or positive mount
+cache is used.
+
+Recovery closes the operation's file descriptors, then reopens the published
+name through guarded helpers. It requires the pre-rename exact bigint device
+and inode, regular-file type, one link, size, mode, owner and group. Parent
+identity/confinement checks remain in force. Byte-backed writes compare content
+as well; callback staging compares a SHA-256 digest captured before rename.
+There are at most five reopen attempts, retrying only `ENOENT` with 20 ms delays.
+A swap, deletion or ownership change fails. A mode that prevents the required
+read also fails; recovery never widens permissions to read the file. Descriptors
+owned by other code can keep the name hidden and exhaust the retry budget.
+
+**Residual risk:** closing the last descriptor gives up continuous inode
+retention. If an inode is deleted and its complete identity is recycled before
+verification, identity alone cannot distinguish it. NTFS file references include
+a 16-bit sequence that wraps after 65,536 reuses of the same record; DrvFS
+admission does not prove the underlying Windows filesystem is NTFS. Content
+comparison narrows this risk but cannot distinguish an identical replacement.
+Scheduling pauses are not bounded by retry counts or delays. Enable this option
+only when accepting that tradeoff for the affected mount.
+
+| API | Where to enable | Content check after recovery |
+| --- | --- | --- |
+| `replaceFileAtomic`, `replaceFileAtomicSync` | options | exact bytes |
+| `writeTextAtomic`, `writeJson`, `writeJsonSync` | options | exact serialized bytes |
+| `Root.write`, `writeJson`, `create`, `createJson` | Root defaults or per-call options | exact bytes for buffered input |
+| `Root.copyIn`, streamed `Root.create` | Root defaults or per-call options | metadata; bytes are not retained |
+| `fileStore`, `fileStoreSync` | store defaults or write options | exact bytes for buffered/JSON writes |
+| `jsonStore`, `fileStore().json()` | JSON-store options or parent store defaults | exact serialized bytes |
+| `writeSiblingTempFile`, sibling `writeExternalFileWithinRoot` | options | pre-rename digest |
+| `stageFileInDirectory` | staging options | exact bytes |
+| `writeSecretFileAtomic`, `createSecretFileAtomic` | options | exact bytes |
+
+The same admission and metadata requirements apply to native and TypeScript
+implementations and synchronous and asynchronous writes. This option is separate
+from `renameIdentity: "verify-content-with-lock"`, which addresses changed inode
+identities on other filesystems; DrvFS recovery never accepts a changed identity.
 
 ### `beforeRename`
 

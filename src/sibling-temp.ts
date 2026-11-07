@@ -35,6 +35,7 @@ export type WriteSiblingTempFileOptions<T> = {
   syncTempFile?: boolean;
   /** Best-effort parent directory sync after rename; defaults to false. */
   syncParentDir?: boolean;
+  allowDrvfsRenameRecovery?: boolean;
 };
 
 export type WriteSiblingTempFileResult<T> = {
@@ -65,6 +66,7 @@ export async function writeSiblingTempFile<T>(
   const mode = options.mode;
   const syncTempFile = options.syncTempFile === true;
   const syncParentDir = options.syncParentDir === true;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery === true;
   if (dirMode === "preserve" || chmodDir) {
     await runAsync(prepareDirectoryMode(AtomicIo.async(fs), {
       dirPath: dir,
@@ -82,6 +84,7 @@ export async function writeSiblingTempFile<T>(
     ignoreModeError: true,
     syncTempFile,
     syncParentDir,
+    allowDrvfsRenameRecovery,
   });
 }
 

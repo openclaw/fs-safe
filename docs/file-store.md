@@ -1,5 +1,7 @@
 # File store
 
+
+Store defaults and write options accept `allowDrvfsRenameRecovery`, including synchronous stores and private writes. Buffered/JSON writes compare bytes during [verified DrvFS recovery](atomic.md#drvfs-hidden-rename-recovery); streamed copies retain metadata checks.
 `fileStore` is exported from `@openclaw/fs-safe/store`. It is a managed wrapper around `root()` for the common "store files under a directory at known modes, prune old ones, hand back absolute paths" pattern. Useful for caches, ingest staging, generated artifacts, anywhere the consumer wants object-style access plus stream and copy primitives.
 
 ```ts

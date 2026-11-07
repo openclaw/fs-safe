@@ -47,6 +47,7 @@ export type FsSafeTestHooks = {
     identity: FileIdentityStat,
   ) => Promise<void> | void;
   beforePublishDirectorySync?: NonNullable<FsSafeTestHooks["afterPublishTargetCreated"]>;
+  drvfsMountObservation?: (parentFd: number) => { magic: bigint; fdinfo: string; mountinfo: string } | undefined;
 };
 
 let fsSafeTestHooks: FsSafeTestHooks | undefined;

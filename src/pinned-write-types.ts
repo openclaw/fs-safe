@@ -80,6 +80,7 @@ export type PinnedWriteParams = {
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
   mutationAdmission?: PinnedWriteMutationAdmission;
+  allowDrvfsRenameRecovery?: boolean;
   onRenameIdentityMismatch?: "verify-content";
   onPublished?: (identity: PublishedWriteIdentity) => void;
   // Borrowed only for this callback; the writer closes every descriptor in finally.

@@ -23,6 +23,7 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
   return fileStore({
     rootDir: path.dirname(filePath),
     private: true,
+    allowDrvfsRenameRecovery: options.allowDrvfsRenameRecovery,
     mode: options.mode,
     dirMode: options.dirMode,
   }).json<T>(path.basename(filePath), options);

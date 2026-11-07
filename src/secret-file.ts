@@ -239,6 +239,7 @@ async function ensurePrivateDirectory(
 }
 
 type SecretFileWriteParams = {
+  allowDrvfsRenameRecovery?: boolean;
   rootDir: string;
   filePath: string;
   content: string | Uint8Array;
@@ -263,6 +264,7 @@ function snapshotSecretFileWriteParams(
     rootDir,
     filePath,
     content: params.content,
+    allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
     mode: params.mode,
     dirMode: params.dirMode,
     durable: params.durable,
@@ -358,6 +360,7 @@ async function materializeSecretFileAtomic(
     mkdir: false,
     mode,
     verifyPosixMode: true,
+    allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
     sync: params.durable !== false,
     strictFileSync: createOnly && params.durable === "file",
     overwrite: !createOnly,

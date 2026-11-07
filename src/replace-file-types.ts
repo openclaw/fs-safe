@@ -58,6 +58,8 @@ export type ReplaceFileAtomicBaseOptions = AtomicMutationOptions & {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   /** Strict by default; locked content verification is an explicit FUSE compatibility policy. */
   renameIdentity?: RenameIdentityPolicy;
+  /** Opt in to close-all recovery only on a verified DrvFS mount; identity reuse remains possible. */
+  allowDrvfsRenameRecovery?: boolean;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
   throwOnCleanupError?: boolean;
