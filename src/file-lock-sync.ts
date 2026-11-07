@@ -278,10 +278,6 @@ export function acquireFileLockSync<TPayload extends Record<string, unknown>>(
           }
         }, { onConflict: failedOpen });
         fd = created.fd;
-        if (!created.complete) {
-          fs.writeFileSync(fd, raw, "utf8");
-          fs.fsyncSync(fd);
-        }
         createdSnapshot = {
           raw,
           payload,

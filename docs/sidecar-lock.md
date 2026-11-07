@@ -8,7 +8,7 @@ A crash before publication leaves no final lock; a crash after publication leave
 
 Directory persistence remains best-effort when directory read access or directory fsync is unavailable; this does not prevent otherwise permitted lock acquisition. Other I/O errors and revoked mutation authority still fail acquisition. After a crash leaves both hardlinks, guarded staging cleanup can remove the abandoned link before the existing stale-owner policy inspects the complete final record.
 
-On mounts supporting neither native no-replace rename nor hardlinks, acquisition retains the exclusive-create placeholder behavior: the final name is reserved first and then filled. A crash in that interval can still leave an empty or incomplete lock. It requires application-owned offline recovery, such as OpenClaw's Doctor guidance; fs-safe does not infer that an empty or old lock is safe to remove. It never substitutes a replacing rename.
+On mounts supporting neither native no-replace rename nor hardlinks, acquisition fails closed with `FsSafeError` code `helper-unavailable` and leaves no final lock. It never substitutes a replacing rename or writes an empty placeholder. Existing empty or incomplete locks require application-owned offline recovery; fs-safe does not infer that an empty or old lock is safe to remove.
 
 Staging files use a reserved `.fs-safe-lock-<namespace>-<pid>-<random>.tmp` name. Before staging, an acquisition examines at most 64 directory entries for abandoned stages in its own target/hostname namespace. If the final record has a second link, publication recognition can scan farther and select at most one exact matching stage for the same guarded cleanup. It removes only identity-verified regular files whose local PID is confirmed absent; live or reused PIDs, other targets, unknown ownership, and ambiguous identities are preserved. Root mutation policies are checked against each candidate staging path before removal. A crash during hardlink publication can leave a second staging link; cleanup removes that link only, never the final lock. This bounded, best-effort cleanup may leave unrelated artifacts outside the opportunistic scan or artifacts on filesystems with inconclusive identity. Applications may remove remaining staging artifacts during explicit offline recovery after stopping every owner, including other hosts sharing the directory. No age-based lock or staging reclamation is used.
 
@@ -19,7 +19,7 @@ normal meaning, and ordinary colon-bearing POSIX paths remain valid.
 
 JavaScript raw-sidecar creation passes mode `0o600` to that exclusive open. On POSIX, the process umask may further restrict the new file but cannot add group or other access. No pathname `chmod` fallback is used.
 
-Root-backed lock records and reclaim guards retain their admitted parent and native cleanup receipt through publication. Their internal create path uses the same complete-record publication while preserving the exclusive-create fallback and Root mutation policy. Ordinary Root creates retain their existing publication contract.
+Root-backed lock records and reclaim guards retain their admitted parent and native cleanup receipt through publication. Their internal create path uses the same complete-record publication while preserving Root mutation policy and failing closed when neither publication primitive is available. Ordinary Root creates retain their existing publication contract.
 
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";

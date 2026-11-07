@@ -1,7 +1,6 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { sidecarStagingPath, cleanupSidecarStages } from "./sidecar-lock-staging.js";
-import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import { createSuppressedError } from "./suppressed-error.js";
 import { FsSafeError } from "./errors.js";
 import { sameFileIdentity, sameFileIdentityForCleanup } from "./file-identity.js";
@@ -105,7 +104,7 @@ class SidecarPublication {
     else this.publishedIdentity ??= named;
   }
 
-  publish(fd: number): boolean {
+  publish(fd: number): void {
     this.assertNamed(this.temporaryPath, fd, 1n);
     getFsSafeTestHooks()?.beforeSidecarLockPublish?.(this.targetPath, this.temporaryPath);
     this.assertNamed(this.temporaryPath, fd, 1n);
@@ -128,7 +127,11 @@ class SidecarPublication {
         else fs.linkSync(this.temporaryPath, this.targetPath);
         this.published = true;
       } catch (error) {
-        if (isHardlinkFallbackError(error)) return false;
+        if (isHardlinkFallbackError(error)) {
+          throw new FsSafeError("helper-unavailable",
+            "sidecar lock publication requires no-replace rename or hardlinks on this filesystem",
+            { cause: error });
+        }
         if ((error as NodeJS.ErrnoException).code === "EEXIST") this.options.onConflict?.(error);
         throw error;
       }
@@ -146,7 +149,6 @@ class SidecarPublication {
       } finally { if (!native) fs.closeSync(parent); }
     }
     this.assertNamed(this.targetPath, fd, 1n);
-    return true;
   }
   cleanup(fd: number): void {
     if (this.published) this.removeName(this.targetPath, fd);
@@ -179,7 +181,7 @@ export function createSidecarFileSync(
   targetPath: string, raw: string,
   open: (pathname: string) => number,
   options: SidecarPublicationOptions = {},
-): { fd: number; complete: boolean; identity?: BigIntStats } {
+): { fd: number; identity: BigIntStats } {
   const publication = new SidecarPublication(targetPath, raw, options);
   let fd: number | undefined;
   try {
@@ -189,11 +191,8 @@ export function createSidecarFileSync(
     options.prepare?.(fd);
     fs.writeFileSync(fd, raw, "utf8");
     fs.fsyncSync(fd);
-    if (publication.publish(fd)) return { fd, complete: true, identity };
-    publication.removeTemporary(fd);
-    const completed = fd;
-    fd = undefined;
-    fs.closeSync(completed);
+    publication.publish(fd);
+    return { fd, identity };
   } catch (error) {
     if (fd !== undefined) {
       try {
@@ -204,19 +203,12 @@ export function createSidecarFileSync(
     }
     throw error;
   } finally { publication.close(); }
-  // Preserve exclusive-create compatibility on mounts with neither primitive.
-  try { assertExclusiveCreateLeaf(targetPath); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onConflict?.(error);
-    throw error;
-  }
-  return { fd: open(targetPath), complete: false };
 }
 
 export async function createSidecarFile<T extends { fd: number; close(): Promise<void>; writeFile(data: string, encoding: BufferEncoding): Promise<void> }>(
   targetPath: string, raw: string, open: (pathname: string) => Promise<T>,
   options: SidecarPublicationOptions = {},
-): Promise<{ handle: T; complete: boolean; identity?: BigIntStats }> {
+): Promise<{ handle: T; identity: BigIntStats }> {
   const publication = new SidecarPublication(targetPath, raw, options);
   let handle: T | undefined;
   try {
@@ -226,11 +218,8 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
     options.prepare?.(handle.fd);
     await handle.writeFile(raw, "utf8");
     fs.fsyncSync(handle.fd);
-    if (publication.publish(handle.fd)) return { handle, complete: true, identity };
-    publication.removeTemporary(handle.fd);
-    const completed = handle;
-    handle = undefined;
-    await completed.close();
+    publication.publish(handle.fd);
+    return { handle, identity };
   } catch (error) {
     if (handle) {
       try {
@@ -241,10 +230,4 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
     }
     throw error;
   } finally { publication.close(); }
-  try { assertExclusiveCreateLeaf(targetPath); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onConflict?.(error);
-    throw error;
-  }
-  return { handle: await open(targetPath), complete: false };
 }

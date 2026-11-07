@@ -314,10 +314,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
             catch (error) { return failedOpen(error, pathname); }
           }, { onConflict: failedOpen });
           handle = created.handle;
-          if (created.complete) createdSnapshot = { raw, payload, stat: created.identity, ownershipToken };
-          if (!created.complete) {
-            await handle.writeFile(raw, "utf8");
-          }
+          createdSnapshot = { raw, payload, stat: created.identity, ownershipToken };
         }
         const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd, { bigint: true }), ownershipToken };
         createdSnapshot = snapshot;

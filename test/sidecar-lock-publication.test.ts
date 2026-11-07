@@ -83,7 +83,7 @@ it.each(kinds.flatMap(kind => (["auto", "off"] as const).map(mode => ({ kind, mo
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
 });
 
-it.each(kinds)("%s retains exclusive-create compatibility when publication primitives are unavailable", async kind => {
+it.each(kinds)("%s fails closed when publication primitives are unavailable", async kind => {
   let native;
   try { native = __loadBundledNativeForTest(); } catch { configureFsSafeNative({ mode: "off" }); }
   const unsupported = () => { throw Object.assign(new Error("unsupported mount"), { code: "ENOTSUP" }); };
@@ -92,12 +92,12 @@ it.each(kinds)("%s retains exclusive-create compatibility when publication primi
   const target = path.join(await tempRoot("fs-safe-no-links-"), "state");
   let publicationAttempts = 0;
   __setFsSafeTestHooksForTest({ beforeSidecarLockPublish() { publicationAttempts++; } });
-  const lock = await acquire(target, kind);
-  try {
-    expect(publicationAttempts).toBe(1);
-    expect(JSON.parse(await promises.readFile(`${target}.lock`, "utf8")).owner).toBe("complete");
-    expect(await promises.readdir(path.dirname(target))).toEqual(["state.lock"]);
-  } finally { await lock.release(); }
+  await expect(acquire(target, kind)).rejects.toMatchObject({
+    code: "helper-unavailable",
+    message: expect.stringContaining("no-replace rename or hardlinks"),
+  });
+  expect(publicationAttempts).toBe(1);
+  expect(await promises.readdir(path.dirname(target))).toEqual([]);
 });
 
 it.each(["auto", "off"] as const)("concurrent contenders publish exactly one complete owner (%s)", async mode => {
@@ -115,24 +115,16 @@ it.each(["auto", "off"] as const)("concurrent contenders publish exactly one com
   }
 });
 
-it("keeps the placeholder write window on mounts without either publication primitive", async () => {
-  configureFsSafeNative({ mode: "off" });
-  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
-  const target = path.join(await tempRoot("fs-safe-placeholder-"), "state"), lockPath = `${target}.lock`;
-  const write = fs.writeFileSync;
-  let placeholderObserved = false;
-  vi.spyOn(fs, "writeFileSync").mockImplementation((...args) => {
-    if (fs.existsSync(lockPath)) {
-      placeholderObserved = true;
-      expect(fs.readFileSync(lockPath, "utf8")).toBe("");
-    }
-    return Reflect.apply(write, fs, args);
-  });
-  const lock = await acquire(target, "raw-sync");
-  try {
-    expect(placeholderObserved).toBe(true);
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).owner).toBe("complete");
-  } finally { await lock.release(); }
+it.each(kinds)("%s leaves pre-existing empty locks untouched regardless of age", async kind => {
+  const target = path.join(await tempRoot("fs-safe-empty-lock-"), "state");
+  const lockPath = `${target}.lock`;
+  fs.writeFileSync(lockPath, "", { mode: 0o600 });
+  fs.utimesSync(lockPath, 1, 1);
+  const original = fs.lstatSync(lockPath, { bigint: true });
+  await expect(acquire(target, kind)).rejects.toMatchObject({ code: "file_lock_timeout" });
+  expect(fs.readFileSync(lockPath, "utf8")).toBe("");
+  const current = fs.lstatSync(lockPath, { bigint: true });
+  expect([current.dev, current.ino]).toEqual([original.dev, original.ino]);
 });
 
 for (const boundary of ["final-fence", "stage-unlink"] as const) {
@@ -199,43 +191,4 @@ it.each(kinds)("%s preserves a replacement after a post-publication failure", as
   expect(replaced).toBe(true);
   expect(await promises.readFile(final, "utf8")).toBe('{"owner":"successor"}');
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
-});
-
-it.each(["raw-async", "raw-sync", "root-sync"] as const)("%s preserves failed-placeholder cleanup without publication support", async kind => {
-  configureFsSafeNative({ mode: "off" });
-  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
-  const directory = await tempRoot("fs-safe-placeholder-failure-");
-  const target = path.join(directory, "state"), final = `${target}.lock`;
-  const failure = Object.assign(new Error("placeholder write failed"), { code: "EIO" });
-  if (kind === "raw-async") {
-    const open = promises.open;
-    vi.spyOn(promises, "open").mockImplementation(async (...args) => {
-      const handle = await Reflect.apply(open, promises, args);
-      if (args[0] === final) vi.spyOn(handle, "writeFile").mockRejectedValueOnce(failure);
-      return handle;
-    });
-  } else {
-    const write = fs.writeFileSync;
-    vi.spyOn(fs, "writeFileSync").mockImplementation((...args) => {
-      if (fs.existsSync(final)) throw failure;
-      return Reflect.apply(write, fs, args);
-    });
-  }
-  await expect(acquire(target, kind)).rejects.toBe(failure);
-  expect(await promises.readdir(directory)).toEqual([]);
-});
-
-it.each(["raw-sync", "root-sync"] as const)("%s removes an owned fallback placeholder when flushing fails", async kind => {
-  configureFsSafeNative({ mode: "off" });
-  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
-  const directory = await tempRoot("fs-safe-placeholder-sync-failure-");
-  const target = path.join(directory, "state"), final = `${target}.lock`;
-  const failure = Object.assign(new Error("placeholder flush failed"), { code: "EIO" });
-  const sync = fs.fsyncSync;
-  vi.spyOn(fs, "fsyncSync").mockImplementation(fd => {
-    if (fs.existsSync(final)) throw failure;
-    sync(fd);
-  });
-  await expect(acquire(target, kind)).rejects.toBe(failure);
-  expect(await promises.readdir(directory)).toEqual([]);
 });

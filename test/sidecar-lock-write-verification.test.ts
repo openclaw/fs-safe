@@ -55,24 +55,23 @@ it("preserves a completed record when Root cleanup authority has been revoked", 
   expect(await fs.readFile(target, "utf8")).toBe('{"owner":"creator"}');
 });
 
-it.each(["write", "fsync"])("preserves a fallback placeholder when %s fails after authority revocation", async operation => {
+it.each(["write", "fsync"])("preserves a private stage when %s fails after authority revocation", async operation => {
   configureFsSafeNative({ mode: "off" });
-  const directory = await tempRoot("fs-safe-placeholder-authority-");
+  const directory = await tempRoot("fs-safe-stage-authority-");
   const target = path.join(directory, "state.lock");
-  const failure = new Error("placeholder persistence failed"), revoked = new Error("cleanup authority revoked");
+  const failure = new Error("stage persistence failed"), revoked = new Error("cleanup authority revoked");
   let allowed = true;
-  vi.spyOn(fsSync, "linkSync").mockImplementation(() => { throw Object.assign(new Error("unsupported"), { code: "ENOTSUP" }); });
   const open = fs.open;
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await Reflect.apply(open, fs, args);
-    if (operation === "write" && args[0] === target) vi.spyOn(handle, "write").mockImplementation(async () => {
-      allowed = false; throw failure;
-    });
+    if (operation === "write" && path.basename(String(args[0])).startsWith(".fs-safe-lock-")) {
+      vi.spyOn(handle, "write").mockImplementation(async () => { allowed = false; throw failure; });
+    }
     return handle;
   });
   const sync = fsSync.fsyncSync;
   vi.spyOn(fsSync, "fsyncSync").mockImplementation(fd => {
-    if (operation === "fsync" && fsSync.existsSync(target)) { allowed = false; throw failure; }
+    if (operation === "fsync" && fsSync.fstatSync(fd).isFile()) { allowed = false; throw failure; }
     sync(fd);
   });
   const result = await writeSidecarAtParent({
@@ -81,7 +80,9 @@ it.each(["write", "fsync"])("preserves a fallback placeholder when %s fails afte
     assertBeforeMutation() { if (!allowed) throw revoked; },
   }, await createAsyncDirectoryGuard(directory, { bigint: true })).catch(error => error);
   expect(result).toBeInstanceOf(SidecarFallbackWriteError);
-  expect(result.failure).toBe(revoked);
-  expect(fsSync.existsSync(target)).toBe(true);
-  expect(await fs.readdir(directory)).toEqual(["state.lock"]);
+  expect(result.failure).toMatchObject({ name: "SuppressedError", error: revoked, suppressed: failure });
+  expect(fsSync.existsSync(target)).toBe(false);
+  const remaining = await fs.readdir(directory);
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0]).toMatch(/^\.fs-safe-lock-.*\.tmp$/);
 });

@@ -7,6 +7,7 @@ import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const isStage = (name: unknown) => typeof name === "string" && path.basename(name).startsWith(".fs-safe-lock-");
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const defaults = {
   payload: () => ({ pid: process.pid }),
@@ -29,7 +30,6 @@ async function fixture(rooted = false) {
 
 beforeEach(() => {
   configureFsSafeNative({ mode: "off" });
-  vi.spyOn(fs, "linkSync").mockImplementation(() => { throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" }); });
 });
 afterEach(() => {
   configureFsSafeNative({ mode: "auto" });
@@ -47,12 +47,12 @@ describe("synchronous Windows lock-file open denials", () => {
     const parsePayload = vi.fn(JSON.parse);
     let creates = 0, denials = 0;
     vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-      if (file === lockPath) {
+      if (exclusive(flags) ? isStage(file) : file === lockPath) {
         if (exclusive(flags)) creates += 1;
         if (!denials && exclusive(flags) === (stage === "create")) {
           denials += 1;
           if (stage === "snapshot") fs.unlinkSync(lockPath);
-          throw failure(lockPath);
+          throw failure(String(file));
         }
       }
       return open(file, flags, mode);
@@ -122,9 +122,9 @@ describe("synchronous Windows lock-file open denials", () => {
       const open = fs.openSync.bind(fs);
       let denied = 0, lastError: Error | undefined;
       vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-        if (file === lockPath && exclusive(flags) === (stage === "create")) {
+        if ((stage === "create" ? isStage(file) : file === lockPath) && exclusive(flags) === (stage === "create")) {
           denied += 1;
-          lastError = failure(lockPath);
+          lastError = failure(String(file));
           throw lastError;
         }
         return open(file, flags, mode);
@@ -150,10 +150,10 @@ describe("synchronous Windows lock-file open denials", () => {
     const open = fs.openSync.bind(fs);
     let denials = 0;
     vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-      if (file === lockPath && (denials < 4 || !exclusive(flags))) {
+      if ((exclusive(flags) ? isStage(file) : file === lockPath) && (denials < 4 || !exclusive(flags))) {
         denials += 1;
         if (denials === 4) fs.writeFileSync(lockPath, "{}");
-        throw failure(lockPath);
+        throw failure(String(file));
       }
       return open(file, flags, mode);
     });
@@ -174,8 +174,9 @@ describe("synchronous Windows lock-file open denials", () => {
       const error = Object.assign(failure(lockPath, code), { path: pathname });
       let calls = 0;
       const spy = vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-        if (file === lockPath && exclusive(flags) === (stage === "create")) {
+        if ((stage === "create" ? isStage(file) : file === lockPath) && exclusive(flags) === (stage === "create")) {
           calls += 1;
+          if (pathname === lockPath && stage === "create") error.path = String(file);
           throw error;
         }
         return open(file, flags, mode);
@@ -218,9 +219,10 @@ describe("synchronous Windows lock-file open denials", () => {
     fs.writeFileSync(lockPath, "{}");
     const error = failure(lockPath), lstat = fs.lstatSync.bind(fs);
     let calls = 0, publicationAttempted = false;
-    vi.mocked(fs.linkSync).mockImplementation(() => {
+    const link = fs.linkSync;
+    vi.spyOn(fs, "linkSync").mockImplementation((...args) => {
       publicationAttempted = true;
-      throw Object.assign(new Error("no hardlinks"), { code: "ENOTSUP" });
+      return link(...args);
     });
     vi.spyOn(fs, "lstatSync").mockImplementation((file, opts) => {
       if (publicationAttempted && file === lockPath && ++calls === observation) throw error;

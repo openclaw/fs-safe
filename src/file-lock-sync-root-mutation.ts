@@ -137,15 +137,11 @@ export function createFileLockSyncRootFile(
       assertCleanupCandidate: candidate => assertFileLockSyncRootMutationAllowed(candidate, pathAuthority.authority.denyMutations),
     });
     fd = created.fd;
-    const opened = created.identity ?? inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
+    const opened = created.identity;
     receipt = Object.freeze({ identity: exactFileIdentity(opened), parent });
     assertRegularFile(opened, pathAuthority.authority.hardlinks);
     if (!fileReceiptCurrentAfterParentCheck(pathAuthority, receipt)) {
       throw new FsSafeError("path-mismatch", "created sidecar lock changed before admission");
-    }
-    if (!created.complete) {
-      fs.writeFileSync(fd, raw, "utf8");
-      fs.fsyncSync(fd);
     }
     return { fd, receipt };
   } catch (error) {

@@ -96,20 +96,7 @@ async function writeAtParent(
   const handle = created.handle;
   let failure: { error: unknown } | undefined;
   try {
-    const identity = created.identity ?? fs.fstatSync(handle.fd, { bigint: true });
-    if (!created.complete) {
-      try {
-        fs.fchmodSync(handle.fd, params.mode);
-        await handle.writeFile(raw, "utf8");
-        fs.fsyncSync(handle.fd);
-      } catch (error) {
-        assertCurrent();
-        if (native?.binding.removeStagedFile) {
-          native.binding.removeStagedFile(native.fd, params.basename, handle.fd);
-        } else await cleanupPinnedFilePath({ pathname: target, handle, identity, parentGuard: parent });
-        throw error;
-      }
-    }
+    const identity = created.identity;
     try {
       assertCurrent();
       await params.verifyPublished?.(handle.fd, identity, parent, native);
