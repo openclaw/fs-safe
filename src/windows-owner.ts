@@ -34,7 +34,8 @@ export type WindowsOwnerAce = {
 };
 
 const SID_RE = /^\*?s-\d+-\d+(-\d+)+$/i;
-const TRUSTED_OWNER_SIDS = new Set(["s-1-5-18", "s-1-5-32-544"]);
+export const TRUSTED_INSTALLER_SID = "s-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+const TRUSTED_OWNER_SIDS = new Set(["s-1-5-18", "s-1-5-32-544", TRUSTED_INSTALLER_SID]);
 
 function normalizeSid(value: string): string {
   const normalized = value.trim().toLowerCase();

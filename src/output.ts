@@ -18,6 +18,7 @@ export type ExternalFileWriteOptions<T = void> = {
   maxBytes?: number;
   mode?: number;
   staging?: "workspace" | "sibling";
+  allowDrvfsRenameRecovery?: boolean;
   /** Isolate sibling producers; workspace staging is already private. */
   producerIsolation?: "private-directory";
   fallbackFileName?: string;
@@ -132,6 +133,7 @@ export async function writeExternalFileWithinRoot<T = void>(
       fallbackFileName,
       maxBytes,
       mode,
+      allowDrvfsRenameRecovery: options.allowDrvfsRenameRecovery,
     });
     return { path: siblingFinalPath, result };
   }
@@ -147,6 +149,7 @@ export async function writeExternalFileWithinRoot<T = void>(
       mode,
       mkdir: true,
       sourceHardlinks: "reject",
+      allowDrvfsRenameRecovery: options.allowDrvfsRenameRecovery,
     });
     return { path: finalPath, result };
   } finally {
@@ -184,6 +187,7 @@ async function writeExternalFileViaSibling<T>(
     mode: params.mode,
     maxBytes: params.maxBytes,
     syncTempFile: true,
+    allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
     syncParentDir: true,
   });
   return result;

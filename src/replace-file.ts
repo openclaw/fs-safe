@@ -135,10 +135,11 @@ export async function replaceFileAtomicWithDirectorySync(
   const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery === true;
   validateRenameIdentity(renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
     if (renameIdentity !== "verify-content-with-lock") {
-      return await replaceAsync(options, filePath, renameIdentity, mutation, syncParent);
+      return await replaceAsync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery, syncParent);
     }
     const fsModule = options.fileSystem?.promises ?? fs;
     const dir = path.dirname(filePath);
@@ -151,7 +152,7 @@ export async function replaceFileAtomicWithDirectorySync(
     });
     mutation.assert();
     return await withAtomicRenameIdentityLock(filePath, () =>
-      replaceAsync(options, filePath, renameIdentity, mutation, syncParent));
+      replaceAsync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery, syncParent));
   });
 }
 
@@ -160,10 +161,11 @@ function replaceAsync(
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
   mutation: AtomicMutation,
+  allowDrvfsRenameRecovery: boolean,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
   return runAsync(replace(AtomicIo.async(options.fileSystem?.promises ?? fs), options,
-    filePath, renameIdentity, mutation, syncParent));
+    filePath, renameIdentity, mutation, allowDrvfsRenameRecovery, syncParent));
 }
 
 export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): ReplaceFileAtomicResult {
@@ -171,9 +173,10 @@ export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): Re
   const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery === true;
   validateRenameIdentity(renameIdentity);
   if (renameIdentity !== "verify-content-with-lock") {
-    return replaceSync(options, filePath, renameIdentity, mutation);
+    return replaceSync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery);
   }
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
@@ -186,7 +189,7 @@ export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): Re
   });
   mutation.assert();
   return withAtomicRenameIdentityLockSync(filePath, () =>
-    replaceSync(options, filePath, renameIdentity, mutation));
+    replaceSync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery));
 }
 
 function replaceSync(
@@ -194,9 +197,10 @@ function replaceSync(
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
   mutation: AtomicMutation,
+  allowDrvfsRenameRecovery: boolean,
 ): ReplaceFileAtomicResult {
   return runSync(replace(AtomicIo.sync(options.fileSystem ?? syncFs), options,
-    filePath, renameIdentity, mutation));
+    filePath, renameIdentity, mutation, allowDrvfsRenameRecovery));
 }
 
 function* replace(
@@ -205,6 +209,7 @@ function* replace(
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
   mutation: AtomicMutation,
+  allowDrvfsRenameRecovery: boolean,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Procedure<ReplaceFileAtomicResult> {
   const dir = path.dirname(filePath);
@@ -246,6 +251,7 @@ function* replace(
       yield* assertDestinationHardlinkPolicy(io, filePath, options.destinationHardlinks);
       yield* tempOwner.assertCurrent();
     }
+    if (allowDrvfsRenameRecovery) yield* tempOwner.prepareRecovery(options.content);
     const result = yield* renameWithRetry(io, tempOwner, filePath, options, mutation);
     if (result.method === "rename") {
       tempOwner.markRenamed();

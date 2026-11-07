@@ -8,7 +8,7 @@ import type { NativeBinding } from "./native-binding.js";
 export type NativeWriteParent = Readonly<{ fd: number; binding: NativeBinding }>;
 
 export type PinnedWriteInput =
-  | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding; stageBeforePublish?: boolean }
+  | { kind: "buffer"; data: string | Buffer; encoding?: BufferEncoding; sidecar?: boolean; stageBeforePublish?: boolean }
   | { kind: "stream"; stream: AsyncIterable<Uint8Array | string>; stageBeforePublish?: boolean }
   | CopyFileInput
   | CopyLinkInput;
@@ -74,11 +74,13 @@ export type PinnedWriteParams = {
   strictFileSync?: boolean;
   overwrite?: boolean;
   assertBeforeMutation?: () => void;
+  assertSidecarCleanupCandidate?: (candidate: string) => void;
   rejectFinalSymlink?: boolean;
   maxBytes?: number;
   input: PinnedWriteInput;
   rootIdentity?: FileIdentityStat;
   mutationAdmission?: PinnedWriteMutationAdmission;
+  allowDrvfsRenameRecovery?: boolean;
   onRenameIdentityMismatch?: "verify-content";
   onPublished?: (identity: PublishedWriteIdentity) => void;
   // Borrowed only for this callback; the writer closes every descriptor in finally.

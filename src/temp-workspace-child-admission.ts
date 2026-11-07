@@ -77,11 +77,23 @@ export function validateTempWorkspaceDirMode(mode: number): void {
   }
 }
 
+let warnedTrustedWritableAncestor = false;
+
+function warnTrustedWritableAncestor(): void {
+  if (warnedTrustedWritableAncestor) return;
+  warnedTrustedWritableAncestor = true;
+  process.emitWarning(
+    "Temp workspace ancestor write protection is bypassed by trustedWritableAncestors; external isolation must prevent untrusted writers, including same-UID processes, from replacing the directory ancestry for the workspace lifetime.",
+    { code: "FS_SAFE_TRUSTED_WRITABLE_ANCESTOR", type: "FsSafeWarning" },
+  );
+}
+
 export function assertTrustedTempWorkspaceDirectory(
   stat: Pick<BigIntStats, "uid" | "gid" | "mode"> | Pick<Stats, "uid" | "gid" | "mode">,
   uid: number | undefined,
   privateDirectory: boolean,
   dir: string,
+  allowWritableAncestor = false,
 ): void {
   if (uid === undefined) return;
   const ownership = classifyTempWorkspaceOwner(stat, uid);
@@ -90,7 +102,8 @@ export function assertTrustedTempWorkspaceDirectory(
   }
   // Unmapped host owners are unverifiable; trust the host directory hierarchy.
   // Admit sticky ancestors so PrivateUsers keeps host /tmp and PrivateTmp usable.
-  // Leaf roots stay euid-owned/private; non-sticky writable ancestors are rejected.
+  // Leaf roots stay euid-owned/private. Only explicitly trusted ancestors may
+  // rely on external isolation instead of sticky protection against other writers.
   const writeMask = !privateDirectory && hasTrustedAndroidTempAncestorGroup(stat, uid, ownership)
     ? 0o002 : 0o022;
   const writable = typeof stat.mode === "bigint"
@@ -102,7 +115,7 @@ export function assertTrustedTempWorkspaceDirectory(
   if (typeof stat.mode !== "bigint" && (!Number.isSafeInteger(stat.mode) || stat.mode < 0)) {
     throw new FsSafeError("insecure-permissions", `temp workspace directory ${JSON.stringify(dir)} permissions are invalid; ${privateTempDirectoryFix(uid)}`);
   }
-  if (writable && (privateDirectory || !sticky)) {
+  if (writable && (privateDirectory || (!sticky && !allowWritableAncestor))) {
     throw new FsSafeError(
       "insecure-permissions",
       privateDirectory
@@ -110,6 +123,7 @@ export function assertTrustedTempWorkspaceDirectory(
         : `temp workspace ancestor ${JSON.stringify(dir)} has group/world-writable mode ${tempDirectoryMode(stat.mode)} without sticky protection (sticky bit missing); have its administrator restore safe permissions (1777 for a shared system temp directory), or move the private root under trusted ancestors`,
     );
   }
+  if (!privateDirectory && writable && !sticky && allowWritableAncestor) warnTrustedWritableAncestor();
   if (ownership === "unmapped") warnUnmappedTempWorkspaceAncestor();
 }
 

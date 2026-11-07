@@ -9,8 +9,8 @@ import { sameFileIdentityForCleanup, sha256Hex } from "./file-identity.js";
 import { withAsyncDirectoryGuards } from "./guarded-mutation.js";
 import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 import { registerTempPathForExit, type TempPathRegistration } from "./temp-cleanup.js";
-import { openPublicationPin } from "./publication-pin.js";
-import { admitsUnpinnedRenameRecovery } from "./publication-recovery.js";
+import { admitsDrvfsRenameRecoveryAtFd, assertRecoveredPublication, shouldPrepareDrvfsRecovery } from "./publication-recovery.js";
+import { retainDrvfsParent } from "./drvfs-parent.js";
 
 const PUBLISHED_READ_FLAGS = resolveReadOpenFlags();
 
@@ -93,6 +93,10 @@ export class AtomicTempOwner {
   private resource: AtomicFile | undefined;
   private recordedIdentity: BigIntStats | undefined;
   private exists = false;
+  private recoveryParent?: ReturnType<typeof retainDrvfsParent>;
+  private recoveryIdentity?: BigIntStats;
+  private recoveryContent?: Uint8Array;
+  private recovered = false;
   private readonly unregister: TempPathRegistration;
 
   constructor(readonly pathname: string, private readonly io: AtomicIo) {
@@ -113,9 +117,22 @@ export class AtomicTempOwner {
     return this.recordedIdentity;
   }
 
+  get canRecoverHiddenRename(): boolean {
+    return this.recoveryParent !== undefined;
+  }
+
   get fd(): number {
     if (!this.resource) throw new Error("Atomic temp owner has no descriptor");
     return this.resource.fd;
+  }
+
+  *prepareRecovery(content: string | Uint8Array): Procedure<void> {
+    if (!shouldPrepareDrvfsRecovery(true)) return;
+    this.recoveryParent = retainDrvfsParent(path.dirname(this.pathname));
+    if (!this.recoveryParent) return;
+    const observed = this.resource!.statExact();
+    this.recoveryIdentity = (this.io.asynchronous ? yield observed : observed) as BigIntStats;
+    this.recoveryContent = Buffer.from(content);
   }
 
   markRenamed(): void {
@@ -148,9 +165,11 @@ export class AtomicTempOwner {
   *assertCurrent(pathname = this.pathname): Procedure<void> {
     const openedInspection = this.inspectOwned(() => this.resource!.statExact(), pathname, false, this.identity);
     const opened = (this.io.asynchronous ? (yield openedInspection) : openedInspection) as BigIntStats;
+    if (this.recovered) assertRecoveredPublication(opened, this.recoveryIdentity!);
     try {
       const currentInspection = this.inspectOwned(() => this.io.lstatExact(pathname), pathname, true, opened);
-      if (this.io.asynchronous) yield currentInspection;
+      const current = (this.io.asynchronous ? yield currentInspection : currentInspection) as BigIntStats;
+      if (this.recovered) assertRecoveredPublication(current, this.recoveryIdentity!);
     } catch (error) {
       if (hasErrorCode(error, "ENOENT")) {
         throw missingOwnedFile(pathname, error);
@@ -169,52 +188,38 @@ export class AtomicTempOwner {
       yield* this.assertCurrent(pathname);
       identityCurrent = true;
     } catch (error) {
-      if (hasErrorCode(error, "ENOENT") || (error instanceof FsSafeError && hasErrorCode(error.cause, "ENOENT"))) {
-        // The pin retains the inode through verification on ordinary
-        // filesystems; DrvFS hides a renamed inode behind any descriptor, so
-        // the admitted fallback closes every descriptor and re-verifies.
-        let pin: number | undefined;
-        try {
-          pin = openPublicationPin(this.fd);
-          const previous = this.takeResource()!;
-          const closing = previous.close();
-          if (this.io.asynchronous) yield closing;
-          let admitted = false;
-          for (let attempt = 1; ; attempt += 1) {
-            try {
-              try {
-                this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
-              } catch (openError) {
-                if (!hasErrorCode(openError, "EACCES") || process.platform !== "linux" ||
-                  (process.arch !== "x64" && process.arch !== "arm64")) throw openError;
-                this.resource = yield* this.io.open(pathname, 0x200000 | syncFs.constants.O_NOFOLLOW); // O_PATH
-              }
-              yield* this.assertCurrent(pathname);
-              onVerified?.(this.identity);
-              return;
-            } catch (recoveryError) {
-              // Settle the failed observation before retrying; async
-              // AtomicFile close returns a promise that must be awaited
-              // through the procedure boundary before the next attempt.
-              const failed = this.resource;
-              this.resource = undefined;
-              if (failed) {
-                const failedClosing = failed.close();
-                if (this.io.asynchronous && failedClosing) yield failedClosing;
-              }
-              if (attempt === 1) {
-                if (!hasErrorCode(recoveryError, "ENOENT") ||
-                  !admitsUnpinnedRenameRecovery(path.dirname(this.pathname))) throw recoveryError;
-                admitted = true;
-                if (pin !== undefined) { syncFs.closeSync(pin); pin = undefined; }
-                continue;
-              }
-              if (!admitted || !hasErrorCode(recoveryError, "ENOENT") || attempt >= 5) throw recoveryError;
-              yield* this.io.delay(20);
+      if (this.recoveryParent && (hasErrorCode(error, "ENOENT") ||
+        (error instanceof FsSafeError && hasErrorCode(error.cause, "ENOENT")))) {
+        this.recoveryParent.assertCurrent();
+        if (!admitsDrvfsRenameRecoveryAtFd(this.recoveryParent.fd)) throw error;
+        const previous = this.takeResource()!;
+        const closing = previous.close();
+        if (this.io.asynchronous) yield closing;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            this.recoveryParent.assertCurrent();
+            this.resource = yield* this.io.open(pathname, PUBLISHED_READ_FLAGS);
+            yield* this.assertCurrent(pathname);
+            const observed = this.resource.statExact();
+            const stat = (this.io.asynchronous ? yield observed : observed) as BigIntStats;
+            assertRecoveredPublication(stat, this.recoveryIdentity!);
+            if (!Buffer.from(yield* this.resource.readFileBounded(this.recoveryContent!.byteLength)).equals(this.recoveryContent!)) {
+              throw new FsSafeError("path-mismatch", "published content changed during DrvFS recovery");
             }
+            yield* this.assertCurrent(pathname);
+            this.recoveryParent.assertCurrent();
+            this.recovered = true;
+            onVerified?.(this.identity);
+            return;
+          } catch (recoveryError) {
+            const failed = this.takeResource();
+            if (failed) {
+              const settled = failed.close();
+              if (this.io.asynchronous) yield settled;
+            }
+            if (!hasErrorCode(recoveryError, "ENOENT") || attempt === 4) throw recoveryError;
+            yield* this.io.delay(20);
           }
-        } finally {
-          if (pin !== undefined) syncFs.closeSync(pin);
         }
       }
       if (!(error instanceof FsSafeError) || !hasErrorCode(error, "path-mismatch") || !expectedHash) {
@@ -307,6 +312,9 @@ export class AtomicTempOwner {
     } catch (closeError) {
       deferredFailure = closeFailure(closeError, params, deferredFailure);
     }
+    try { this.recoveryParent?.close(); }
+    catch (error) { deferredFailure ??= { error }; }
+    this.recoveryParent = undefined;
     if (deferredFailure) throw deferredFailure.error;
   }
 }

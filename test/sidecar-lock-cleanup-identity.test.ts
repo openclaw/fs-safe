@@ -154,178 +154,78 @@ describe("sidecar no-token cleanup identity", () => {
 });
 
 describe("failed sidecar creation with unknown Windows identity", () => {
-  it("preserves the async pathname and original error while closing both handles", async () => {
-    const directory = await tempRoot("fs-safe-sidecar-cleanup-async-unknown-");
-    const targetPath = path.join(directory, "state.json");
-    const lockPath = `${targetPath}.lock`;
-    const displacedPath = `${lockPath}.failed-create`;
-    const replacementPath = `${lockPath}.replacement`;
-    const replacement = serializeSidecarLockPayload({ owner: "replacement" }).raw;
-    await fs.writeFile(replacementPath, replacement);
-    const failure = Object.assign(new Error("payload persistence failed"), {
-      code: "EIO",
-      path: lockPath,
-      syscall: "write",
-    });
-    configureFsSafeNative({ mode: "off" });
-    Object.defineProperty(process, "platform", { value: "win32" });
-    const realFstat = fsSync.fstatSync.bind(fsSync);
-    vi.spyOn(fsSync, "fstatSync").mockImplementationOnce((fd) =>
-      projectIdentity(realFstat(fd), { ino: 0 }));
-    const realOpen = fs.open.bind(fs);
-    const openedHandles: Array<Awaited<ReturnType<typeof fs.open>>> = [];
-    vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-      const handle = await realOpen(...args);
-      openedHandles.push(handle);
-      if (openedHandles.length === 1) {
-        vi.spyOn(handle, "writeFile").mockRejectedValueOnce(failure);
-        const realClose = handle.close.bind(handle);
-        vi.spyOn(handle, "close").mockImplementationOnce(async () => {
-          await realClose();
-          await fs.rename(lockPath, displacedPath);
-          await fs.rename(replacementPath, lockPath);
-        });
-      }
-      return handle;
-    });
-    const manager = createSidecarLockManager(`cleanup-unknown:${targetPath}`);
-
-    await expect(manager.acquire({
-      targetPath,
-      payload: async () => ({ owner: "async" }),
-      retry,
-      timeoutMs: 0,
-    })).rejects.toBe(failure);
-
-    expect(openedHandles).toHaveLength(2);
-    expect(openedHandles.map(({ fd }) => fd)).toEqual([-1, -1]);
-    await expect(fs.readFile(lockPath, "utf8")).resolves.toBe(replacement);
-    await expect(fs.readFile(displacedPath, "utf8")).resolves.toBe("");
-    expect(manager.heldEntries()).toEqual([]);
-  });
-
-  it("preserves the raw sync pathname and original error while closing both handles", async () => {
-      const directory = await tempRoot("fs-safe-sidecar-cleanup-sync-unknown-");
-      const targetPath = path.join(directory, "state.json");
-      const lockPath = `${targetPath}.lock`;
-      const displacedPath = `${lockPath}.failed-create`;
-      const replacementPath = `${lockPath}.replacement`;
-      const replacement = serializeSidecarLockPayload({ owner: "replacement" }).raw;
-      fsSync.writeFileSync(replacementPath, replacement);
-      const failure = Object.assign(new Error("payload persistence failed"), {
-        code: "EIO",
-        path: lockPath,
-        syscall: "write",
-      });
+  it.each(["async", "sync", "root-sync"] as const)(
+    "preserves an unverified stage and a final successor after %s persistence fails", async kind => {
+      configureFsSafeNative({ mode: "off" });
+      const directory = await tempRoot("fs-safe-stage-unknown-");
+      const targetPath = path.join(directory, "state.json"), lockPath = `${targetPath}.lock`;
+      const capability = kind === "root-sync" ? await root(directory) : undefined;
       Object.defineProperty(process, "platform", { value: "win32" });
-      const realFstat = fsSync.fstatSync.bind(fsSync);
-      vi.spyOn(fsSync, "fstatSync").mockImplementationOnce((fd) =>
-        projectIdentity(realFstat(fd), { ino: 0 }));
-      vi.spyOn(fsSync, "writeFileSync").mockImplementationOnce(() => { throw failure; });
-      const open = vi.spyOn(fsSync, "openSync");
-      const realClose = fsSync.closeSync.bind(fsSync);
-      let closed = 0;
-      const close = vi.spyOn(fsSync, "closeSync").mockImplementation((fd) => {
-        realClose(fd);
-        if (closed++ === 0) {
-          fsSync.renameSync(lockPath, displacedPath);
-          fsSync.renameSync(replacementPath, lockPath);
-        }
+      const failure = Object.assign(new Error("payload persistence failed"), { code: "EIO" });
+      const replacement = serializeSidecarLockPayload({ owner: "successor" }).raw;
+      const fstat = fsSync.fstatSync.bind(fsSync), lstat = fsSync.lstatSync.bind(fsSync);
+      const write = fsSync.writeFileSync.bind(fsSync), openSync = fsSync.openSync.bind(fsSync);
+      let stage = "", failed = false;
+      const descriptors: number[] = [];
+      vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
+        const stat = fstat(...args);
+        return kind !== "root-sync" && stat.isFile()
+          ? projectIdentity(stat, { ino: typeof stat.ino === "bigint" ? 0n : 0 }) : stat;
       });
-      const remove = vi.spyOn(fsSync, "rmSync");
-
-      let caught: unknown;
-      try {
-        acquireFileLockSync(targetPath, {
-          payload: () => ({ owner: "sync" }),
-          retry,
-          timeoutMs: 0,
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+        const stat = lstat(...args);
+        return failed && String(args[0]) === stage && stat
+          ? projectIdentity(stat, { ino: typeof stat.ino === "bigint" ? 0n : 0 }) : stat;
+      });
+      const fail = () => { failed = true; write(lockPath, replacement); throw failure; };
+      if (kind === "async") {
+        const open = fs.open.bind(fs);
+        vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+          const handle = await open(...args);
+          stage = String(args[0]); descriptors.push(handle.fd);
+          vi.spyOn(handle, "writeFile").mockImplementationOnce(fail);
+          return handle;
         });
-      } catch (error) {
-        caught = error;
+        const manager = createSidecarLockManager(`unknown:${targetPath}`);
+        await expect(manager.acquire({ targetPath, payload: () => ({}), retry, timeoutMs: 0 })).rejects.toBe(failure);
+        expect(manager.heldEntries()).toEqual([]);
+      } else {
+        vi.spyOn(fsSync, "openSync").mockImplementation((...args) => {
+          const fd = openSync(...args);
+          if (String(args[0]).includes(".fs-safe-lock-")) { stage = String(args[0]); descriptors.push(fd); }
+          return fd;
+        });
+        vi.spyOn(fsSync, "writeFileSync").mockImplementationOnce(fail);
+        expect(() => acquireFileLockSync(targetPath, {
+          lockRoot: capability, payload: () => ({}), retry, timeoutMs: 0,
+        })).toThrow(failure);
       }
-
-      expect(caught).toBe(failure);
-      expect(open).toHaveBeenCalledTimes(2);
-      expect(close).toHaveBeenCalledTimes(2);
-      expect(remove).not.toHaveBeenCalled();
-      for (const [fd] of close.mock.calls) {
-        expect(() => realFstat(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
-      }
+      expect(stage).not.toBe(lockPath);
+      expect(descriptors).toHaveLength(1);
+      for (const fd of descriptors) expect(() => fstat(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      expect(fsSync.readFileSync(stage, "utf8")).toBe("");
       expect(fsSync.readFileSync(lockPath, "utf8")).toBe(replacement);
-      expect(fsSync.readFileSync(displacedPath, "utf8")).toBe("");
-  });
+    },
+  );
 
-  it("preserves a Root write failure and an ambiguous cleanup receipt without deleting the successor", async () => {
+  it("rejects unknown Root stage identity before writing, leaving the final name absent", async () => {
     configureFsSafeNative({ mode: "off" });
-    const directory = await tempRoot("fs-safe-root-cleanup-unknown-");
+    const directory = await tempRoot("fs-safe-root-stage-unknown-");
     const capability = await root(directory);
-    const targetPath = path.join(directory, "state.json");
-    const lockPath = `${targetPath}.lock`;
-    const displacedPath = `${lockPath}.failed-create`;
-    const replacementPath = `${lockPath}.replacement`;
-    const replacement = serializeSidecarLockPayload({ owner: "successor" }).raw;
-    fsSync.writeFileSync(replacementPath, replacement);
-    const failure = Object.assign(new Error("payload persistence failed"), { code: "EIO" });
     Object.defineProperty(process, "platform", { value: "win32" });
-    const realFstat = fsSync.fstatSync.bind(fsSync);
-    const realLstat = fsSync.lstatSync.bind(fsSync);
-    let closedCreator = false;
-    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-      const stat = realLstat(...args);
-      return closedCreator && String(args[0]) === lockPath && stat && typeof stat.ino === "bigint"
-        ? projectIdentity(stat, { ino: 0n }) : stat;
-    });
-    const write = vi.spyOn(fsSync, "writeFileSync").mockImplementationOnce(() => { throw failure; });
-    const open = vi.spyOn(fsSync, "openSync");
-    const realClose = fsSync.closeSync.bind(fsSync);
-    const close = vi.spyOn(fsSync, "closeSync").mockImplementation(fd => {
-      realClose(fd);
-      closedCreator = true;
-      fsSync.renameSync(lockPath, displacedPath);
-      fsSync.renameSync(replacementPath, lockPath);
-    });
-    const remove = vi.spyOn(fsSync, "unlinkSync");
-    let caught: unknown;
-    try {
-      acquireFileLockSync(targetPath, {
-        lockRoot: capability, payload: () => ({ owner: "sync" }), retry, timeoutMs: 0,
-      });
-    } catch (error) { caught = error; }
-    expect(caught).toMatchObject({ name: "SuppressedError", error: failure, suppressed: { code: "path-mismatch" } });
-    expect((caught as { error: unknown }).error).toBe(failure);
-    expect(write).toHaveBeenCalledOnce();
-    expect(open).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledOnce();
-    expect(remove).not.toHaveBeenCalled();
-    expect(() => realFstat(close.mock.calls[0]![0])).toThrow(expect.objectContaining({ code: "EBADF" }));
-    expect(fsSync.readFileSync(lockPath, "utf8")).toBe(replacement);
-    expect(fsSync.readFileSync(displacedPath, "utf8")).toBe("");
-  });
-
-  it("rejects unknown Root creator identity before writing and leaves the unverified path untouched", async () => {
-    configureFsSafeNative({ mode: "off" });
-    const directory = await tempRoot("fs-safe-root-create-unknown-");
-    const capability = await root(directory);
-    const targetPath = path.join(directory, "state.json");
-    Object.defineProperty(process, "platform", { value: "win32" });
-    const realFstat = fsSync.fstatSync.bind(fsSync);
+    const fstat = fsSync.fstatSync.bind(fsSync);
     vi.spyOn(fsSync, "fstatSync").mockImplementation((...args) => {
-      const stat = realFstat(...args);
-      return typeof stat.ino === "bigint" ? projectIdentity(stat, { ino: 0n }) : stat;
+      const stat = fstat(...args);
+      return stat.isFile() ? projectIdentity(stat, { ino: typeof stat.ino === "bigint" ? 0n : 0 }) : stat;
     });
     const write = vi.spyOn(fsSync, "writeFileSync");
-    const open = vi.spyOn(fsSync, "openSync");
-    const close = vi.spyOn(fsSync, "closeSync");
-    const remove = vi.spyOn(fsSync, "unlinkSync");
-    expect(() => acquireFileLockSync(targetPath, {
-      lockRoot: capability, payload: () => ({ owner: "sync" }), retry, timeoutMs: 0,
+    expect(() => acquireFileLockSync(path.join(directory, "state"), {
+      lockRoot: capability, payload: () => ({}), retry, timeoutMs: 0,
     })).toThrow(expect.objectContaining({ code: "path-mismatch" }));
     expect(write).not.toHaveBeenCalled();
-    expect(open).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledOnce();
-    expect(remove).not.toHaveBeenCalled();
-    expect(() => realFstat(close.mock.calls[0]![0])).toThrow(expect.objectContaining({ code: "EBADF" }));
-    expect(fsSync.readFileSync(`${targetPath}.lock`, "utf8")).toBe("");
+    const names = fsSync.readdirSync(directory);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(/^\.fs-safe-lock-.*\.tmp$/);
+    expect(fsSync.readFileSync(path.join(directory, names[0]!), "utf8")).toBe("");
   });
 });

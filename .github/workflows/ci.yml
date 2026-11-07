@@ -77,7 +77,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 12.15.0
           run_install: false
@@ -203,7 +203,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 12.15.0
           run_install: false
@@ -1885,7 +1885,7 @@ jobs:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm package:collect --allow-host-only --pack-only --output release-artifacts-package-smoke
 
-      # The ES2022 output and napi8 binding are shared across Node 22/24.
+      # The ES2022 output and napi8 binding are shared across supported Node runtimes.
       # Each consumer checks out this same PR head; merge-ref builds stay separate.
       - name: Upload exact-source package build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1916,8 +1916,12 @@ jobs:
         node:
           - 22
           - 24
+        include:
+          - os: windows-latest
+            node: "26.13.0"
+            capacity: standard
         # Manual controls consume the same immutable artifact as standard rows.
-        # Ordinary PR/main runs keep exactly the six required consumer checks.
+        # Preserve the six required checks and add the reporter's Windows runtime.
         capacity: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && '["standard","control"]' || '["standard"]') }}
         exclude:
           - os: ubuntu-latest
@@ -1976,6 +1980,32 @@ jobs:
         env:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/root-file-open-batch-sync.test.ts
+
+      # This negative control qualifies the read-owner change against its exact
+      # pre-fix base; it is not an ongoing old-runtime compatibility requirement.
+      - name: Check out native batch-read negative control
+        if: matrix.node == '26.13.0' && github.event_name == 'pull_request' && github.event.pull_request.base.sha == '7d307d46028de5c7dcf37cf511b2fe94d5896821'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 7d307d46028de5c7dcf37cf511b2fe94d5896821
+          path: artifacts/native-batch-read-baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove native batch-read baseline failure and candidate ownership
+        if: matrix.node == '26.13.0' && github.event_name == 'pull_request' && github.event.pull_request.base.sha == '7d307d46028de5c7dcf37cf511b2fe94d5896821'
+        env:
+          FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+          FS_SAFE_NATIVE_MODE: require
+        run: node scripts/native-batch-read-regression-proof.mjs
+
+      - name: Upload native batch-read comparison receipt
+        if: always() && matrix.node == '26.13.0' && github.event_name == 'pull_request' && github.event.pull_request.base.sha == '7d307d46028de5c7dcf37cf511b2fe94d5896821'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-batch-read-node26-${{ github.event.pull_request.head.sha }}
+          path: artifacts/native-batch-read-proof.json
+          if-no-files-found: error
 
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'

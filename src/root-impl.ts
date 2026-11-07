@@ -1,3 +1,4 @@
+import { SidecarFallbackWriteError } from "./sidecar-lock-write.js";
 import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import type { BigIntStats, Stats } from "node:fs";
 import { registerRootHandleContext } from "./root-handle-context.js";
@@ -437,6 +438,7 @@ export class RootHandle implements Root {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
       renameIdentity: this.defaults.renameIdentity,
+      allowDrvfsRenameRecovery: this.defaults.allowDrvfsRenameRecovery,
       ...this.mutationOptions(options),
       atomic: undefined,
       private: undefined,
@@ -459,6 +461,7 @@ export class RootHandle implements Root {
     await writeFileInRoot(this.context, {
       mkdir: this.defaults.mkdir,
       mode: this.defaults.mode,
+      allowDrvfsRenameRecovery: this.defaults.allowDrvfsRenameRecovery,
       ...this.mutationOptions(createInputOptions(data, options, this.defaults.maxBytes)),
       relativePath,
       data,
@@ -500,6 +503,7 @@ export class RootHandle implements Root {
     await copyFileInRoot(this.context, {
       maxBytes: normalizeMaxBytes(maxBytes, { defaultValue: this.defaults.maxBytes }),
       mkdir: this.defaults.mkdir,
+      allowDrvfsRenameRecovery: this.defaults.allowDrvfsRenameRecovery,
       ...copyOptions,
       source: copySource,
       relativePath,
@@ -1124,9 +1128,12 @@ async function writeFileInRoot(
     params = { ...params, private: permissions.private, mode: permissions.mode };
   }
   const input = rootWriteInput(params);
+  if (input.kind === "buffer" && input.sidecar) {
+    params = { ...params, ...snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) };
+  }
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
-      !params.private && input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
+      !params.private && input.kind === "buffer" && !input.sidecar && !input.stageBeforePublish && process.platform === "win32" &&
       (params.renameIdentity === "verify-content-with-lock" || !getPinnedWriteNativeBinding({ input }))
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
@@ -1171,6 +1178,7 @@ async function commitPinnedWriteInRoot(
       basename: pinned.basename,
       targetPath: pinned.targetPath,
       renameIdentity: params.renameIdentity,
+      allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
       mkdir: !params.private && params.mkdir !== false,
       private: params.private,
       mode: params.mode ?? pinned.mode,
@@ -1183,6 +1191,8 @@ async function commitPinnedWriteInRoot(
       rootIdentity: root.rootIdentity,
       mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
+      assertSidecarCleanupCandidate: input.kind === "buffer" && input.sidecar
+        ? candidate => assertMutationNotDenied(candidate, params.denyMutations) : undefined,
       verifyPublished: async (fd, expectedIdentity, parentGuard, nativeParent) => {
         verifyingPublication = true;
         try {
@@ -1198,6 +1208,7 @@ async function commitPinnedWriteInRoot(
       },
     });
   } catch (error) {
+    if (error instanceof SidecarFallbackWriteError) throw error.failure;
     if (verifyingPublication) throw error;
     const errorCode = (error as { code?: unknown })?.code;
     if (errorCode === "file_lock_stale" || errorCode === "file_lock_timeout") {

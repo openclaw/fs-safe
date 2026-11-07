@@ -1,5 +1,7 @@
 # Writing
 
+
+Writes and creates can explicitly enable `allowDrvfsRenameRecovery` through Root defaults or per-call options. Native and TypeScript paths use the same [DrvFS admission and recovery contract](atomic.md#drvfs-hidden-rename-recovery).
 The `Root` handle exposes a tight set of mutation verbs. Replacement writes
 (`write`, `writeJson`, and `copyIn`) publish with a sibling-temp commit so no
 half-written replacement appears at the destination. Create-only writes

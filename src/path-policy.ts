@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { recordFileObservationFailure } from "./file-observation.js";
 import {
   ROOT_PATH_ALIAS_POLICIES,
   resolveRootPath,
@@ -62,8 +63,10 @@ export async function assertNoHardlinkedFinalPath(params: {
     return;
   }
   if (stat.nlink > 1) {
-    throw new Error(
+    const error = new Error(
       `Hardlinked path is not allowed under ${boundaryLabel} (${shortPath(root)}): ${shortPath(filePath)}`,
     );
+    recordFileObservationFailure(error, "hardlink");
+    throw error;
   }
 }

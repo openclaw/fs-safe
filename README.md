@@ -221,6 +221,11 @@ mutation authority, and publication receipts. Retained lifecycles have separate
 contracts: [staged files](docs/staged-file.md), [entry publication](docs/entry-publication.md),
 and [staged symlinks](docs/staged-symlink.md).
 
+For affected WSL/Docker Windows-drive mounts, explicitly opt into
+[`allowDrvfsRenameRecovery`](docs/atomic.md#drvfs-hidden-rename-recovery). It is
+off by default, requires descriptor-verified DrvFS mount evidence, and gives up
+continuous inode retention during recovery; read the documented reuse risk.
+
 For a shared parent, pass `dirMode: "preserve"`: verified existing directories
 keep their permissions without chmod, while directories created by the write
 finish at `0o700`. Omission retains the existing parent-tightening default.
@@ -266,6 +271,7 @@ See [JSON stores](docs/json-store.md) for single-path stores and update semantic
 [File locks](docs/sidecar-lock.md) for coordination and stale-lock recovery.
 The store subpath also provides [durable JSON queues](docs/store.md#durable-json-queues).
 Use [temp workspaces](docs/temp.md) for scoped scratch files and cleanup policies.
+Externally isolated deployments can opt into [exact trusted writable ancestors](docs/temp.md#externally-isolated-ancestors); private-directory checks remain strict.
 
 ## Exact file comparison
 

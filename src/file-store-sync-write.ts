@@ -55,6 +55,7 @@ export function writeFileSyncAtomic(params: {
   filePath: string;
   content: string | Uint8Array;
   privateMode: boolean;
+  allowDrvfsRenameRecovery?: boolean;
   durable: boolean;
   dirMode: number | "preserve";
   mode: number;
@@ -116,6 +117,7 @@ export function writeFileSyncAtomic(params: {
     if (params.durable) fs.fsyncSync(temp.file.fd);
     verifyStoreFile(temp.file.fd, owner.identity, tempPath);
     assertSyncStoreDirectoryReceipt(parentGuard);
+    if (params.allowDrvfsRenameRecovery === true) runSync(owner.prepareRecovery(params.content));
     fs.renameSync(tempPath, filePath);
     owner.markRenamed();
     assertSyncStoreDirectoryReceipt(parentGuard);
@@ -123,7 +125,7 @@ export function writeFileSyncAtomic(params: {
       try {
         verifyStoreFile(temp.file.fd, owner.identity, filePath);
       } catch (error) {
-        if (!hasErrorCode(error, "ENOENT")) throw error;
+        if (!owner.canRecoverHiddenRename || !hasErrorCode(error, "ENOENT")) throw error;
         runSync(owner.assertPublished(filePath));
       }
     } catch (error) {

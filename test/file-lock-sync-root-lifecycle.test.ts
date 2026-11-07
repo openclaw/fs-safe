@@ -93,10 +93,11 @@ describe("synchronous Root-backed file-lock lifecycle", () => {
     const readFailure = new Error("snapshot read failed");
     const closeFailure = new Error("snapshot close failed");
     const actualClose = fs.closeSync;
-    vi.spyOn(fs, "readSync").mockImplementation(() => { throw readFailure; });
+    let snapshotFd: number | undefined;
+    vi.spyOn(fs, "readSync").mockImplementation(fd => { snapshotFd = fd; throw readFailure; });
     vi.spyOn(fs, "closeSync").mockImplementation((fd) => {
       actualClose(fd);
-      throw closeFailure;
+      if (fd === snapshotFd) throw closeFailure;
     });
     let failure: unknown;
     try {

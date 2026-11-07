@@ -191,6 +191,32 @@ pnpm build
 pnpm test --config scripts/slow-package-copy.config.ts
 ```
 
+### Windows public-permission/browser boundary proof
+
+After `pnpm native:build` and `pnpm build`, Windows x64 contributors with Node
+26 can run:
+
+```powershell
+$env:FS_SAFE_NATIVE_MODE = "require"
+pnpm test test/permissions-windows-native.test.ts
+node scripts/windows-permissions-browser-proof.mjs
+```
+
+The regression suite applies real ACLs only to task-owned temporary fixtures.
+The browser proof downloads and SHA-256-verifies the affected core's pinned
+layout module, strips TypeScript syntax, and executes the entire module with
+real filesystem operations and this checkout's built permission inspector.
+Its existing dependency seam redirects state and browser-profile roots into
+temporary storage; it never consults an installed OpenClaw or Chrome profile.
+Filesystem wrappers count and forward copy/profile-read operations.
+
+The proof creates user-owned source, destination, and profile fixtures with
+TrustedInstaller and other untrusted write grants. It checks refusal before
+copying or reading profile bytes, and verifies private secure reads remain
+strict. Ownership acceptance is covered by synthetic native/fallback descriptor
+tests; changing a real fixture to TrustedInstaller ownership requires privileges
+and is not attempted by this non-elevated proof.
+
 ## Checks
 
 Run the complete repository gate before handoff:

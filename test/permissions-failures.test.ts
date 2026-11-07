@@ -50,7 +50,13 @@ describe("permission inspection failure modes", () => {
       isLocal: true,
       aceListComplete: true,
       unsupportedAceTypes: [],
-      aces: [],
+      aces: [{
+        sid: "s-1-5-21-99", mask: 1, aceType: "allow",
+        flags: {
+          raw: 0, objectInherit: false, containerInherit: false, noPropagateInherit: false,
+          inheritOnly: false, inherited: false, successfulAccess: false, failedAccess: false,
+        },
+      }],
     }));
     __setNativeLoaderForTest(() => ({ closeOwnedFd: vi.fn(), readOwnerAndDacl }) as unknown as NativeBinding);
     configureFsSafeNative({ mode: "require" });

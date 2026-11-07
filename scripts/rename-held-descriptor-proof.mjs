@@ -8,7 +8,8 @@ import path from "node:path";
 import { replaceFileAtomic, replaceFileAtomicSync, writeTextAtomic } from "../dist/atomic.js";
 import { root } from "../dist/root.js";
 import { configureFsSafeNative } from "../dist/native-config.js";
-import { openPublicationPin } from "../dist/publication-pin.js";
+import { admitsDrvfsRenameRecoveryAtFd } from "../dist/publication-recovery.js";
+const openPublicationPin = fd => fs.openSync(`/proc/self/fd/${fd}`, 0x200000);
 
 assert.equal(process.argv.length, 3, "Pass an existing trusted parent on the affected mount");
 const parent = await fsp.realpath(process.argv[2]);
@@ -47,13 +48,15 @@ try {
   const after = fs.statSync(to, { bigint: true });
   report.plain.sameIdentityAfterClose = before.dev === after.dev && before.ino === after.ino;
 
+  const parentFd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try { report.verifiedDrvfs = admitsDrvfsRenameRecoveryAtFd(parentFd); } finally { fs.closeSync(parentFd); }
   for (const [name, write] of [
-    ["atomic-async", filePath => replaceFileAtomic({ filePath, content: "payload", syncTempFile: true, syncParentDir: true })],
-    ["atomic-sync", filePath => replaceFileAtomicSync({ filePath, content: "payload", syncTempFile: true, syncParentDir: true })],
-    ["text", filePath => writeTextAtomic(filePath, "payload")],
+    ["atomic-async", filePath => replaceFileAtomic({ filePath, content: "payload", allowDrvfsRenameRecovery: true, syncTempFile: true, syncParentDir: true })],
+    ["atomic-sync", filePath => replaceFileAtomicSync({ filePath, content: "payload", allowDrvfsRenameRecovery: true, syncTempFile: true, syncParentDir: true })],
+    ["text", filePath => writeTextAtomic(filePath, "payload", { allowDrvfsRenameRecovery: true })],
     ...["off", "require"].map(mode => [`root-${mode}`, async filePath => {
       configureFsSafeNative({ mode });
-      await (await root(directory)).write(path.basename(filePath), "payload");
+      await (await root(directory, { allowDrvfsRenameRecovery: true })).write(path.basename(filePath), "payload");
     }]),
   ]) {
     try {

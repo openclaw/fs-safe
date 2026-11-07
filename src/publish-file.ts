@@ -40,9 +40,6 @@ import { hasErrorCode } from "./file-cleanup.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { isHardlinkFallbackError } from "./hardlink-fallback.js";
 import { publishRenameFallback } from "./publish-rename-fallback.js";
-import { openPublicationHandle } from "./publication-handle.js";
-import { openPublicationPin } from "./publication-pin.js";
-import { admitsUnpinnedRenameRecovery, recoverAfterHiddenRename } from "./publication-recovery.js";
 import { isNoReplaceUnavailable } from "./native-noreplace.js";
 export { isHardlinkFallbackError } from "./hardlink-fallback.js";
 
@@ -399,21 +396,7 @@ export async function publishFileExclusive(params: {
         targetPath,
         sourceExactIdentity,
       );
-      try {
-        assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
-        // The pin retains the inode through verification on ordinary
-        // filesystems; DrvFS hides the renamed name behind any descriptor, so
-        // the admitted fallback closes every descriptor and re-verifies.
-        renamedTarget = await recoverAfterHiddenRename({
-          closeWriter: () => source.close(),
-          reopen: () => openPublicationHandle(targetPath, sourceExactIdentity),
-          openPin: () => openPublicationPin(source.fd),
-          admitUnpinned: () => admitsUnpinnedRenameRecovery(path.dirname(targetPath)),
-        });
-        assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
-      }
+      assertPublishedTargetCurrent(targetPath, sourceExactIdentity, "no-replace publication target changed");
       assertRenamedSourceAbsent(sourcePath);
       syncFileBestEffortSync(sourceNativeParent!.handle.fd);
       return await finishPublication("rename-noreplace", renamedTarget ?? source, sourceExactIdentity);

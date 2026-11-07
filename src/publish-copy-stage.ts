@@ -20,7 +20,6 @@ export async function publishCopyStage(params: {
   onPublicationAttempt?: () => void;
   onPublished?: (identity: PublishedWriteIdentity) => void;
   beforeTemporaryUnlink?: () => Promise<void>;
-  afterRename?: () => unknown;
 }): Promise<void> {
   const { identity, temporaryPath, targetPath } = params;
   const assertCurrent = () => {
@@ -60,7 +59,6 @@ export async function publishCopyStage(params: {
   }
   try {
     if (renamed) {
-      await params.afterRename?.();
       assertSyncDirectoryGuard(params.parentGuard);
       if (fs.lstatSync(temporaryPath, { throwIfNoEntry: false })) {
         throw new FsSafeError("path-mismatch", "renamed copy stage still exists");

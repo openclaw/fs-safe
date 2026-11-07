@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe",
-  "version": "0.27.1",
+  "version": "0.27.2",
   "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "keywords": [
     "filesystem",
@@ -157,6 +157,7 @@
     "test:coverage:collect": "pnpm build && pnpm archive:wasm:allocator-tests && vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
     "test:coverage:merge": "node scripts/merge-coverage.mjs",
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
+    "proof:temp-isolation": "node scripts/verify-temp-workspace-isolation.mjs",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm check:runtime",
     "check:runtime": "pnpm build && pnpm archive:wasm:allocator-tests && pnpm docs:check && pnpm test && node scripts/check-pack.mjs",
     "docs:check": "node scripts/check-doc-examples.mjs",
@@ -184,20 +185,20 @@
     "archive:interop:writer": "cargo run --locked --quiet -p fs-safe-archive-core --example directory-link-reproducer"
   },
   "optionalDependencies": {
-    "@openclaw/fs-safe-darwin-arm64": "0.27.1",
-    "@openclaw/fs-safe-darwin-x64": "0.27.1",
-    "@openclaw/fs-safe-freebsd-arm64": "0.27.1",
-    "@openclaw/fs-safe-freebsd-x64": "0.27.1",
-    "@openclaw/fs-safe-linux-arm64-gnu": "0.27.1",
-    "@openclaw/fs-safe-linux-arm64-musl": "0.27.1",
-    "@openclaw/fs-safe-linux-x64-gnu": "0.27.1",
-    "@openclaw/fs-safe-linux-x64-musl": "0.27.1",
-    "@openclaw/fs-safe-win32-arm64-msvc": "0.27.1",
-    "@openclaw/fs-safe-win32-x64-msvc": "0.27.1",
+    "@openclaw/fs-safe-darwin-arm64": "0.27.2",
+    "@openclaw/fs-safe-darwin-x64": "0.27.2",
+    "@openclaw/fs-safe-freebsd-arm64": "0.27.2",
+    "@openclaw/fs-safe-freebsd-x64": "0.27.2",
+    "@openclaw/fs-safe-linux-arm64-gnu": "0.27.2",
+    "@openclaw/fs-safe-linux-arm64-musl": "0.27.2",
+    "@openclaw/fs-safe-linux-x64-gnu": "0.27.2",
+    "@openclaw/fs-safe-linux-x64-musl": "0.27.2",
+    "@openclaw/fs-safe-win32-arm64-msvc": "0.27.2",
+    "@openclaw/fs-safe-win32-x64-msvc": "0.27.2",
     "jszip": "^3.10.2"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-beta.2",
+    "@emnapi/runtime": "2.0.0-beta.3",
     "@napi-rs/cli": "3.10.10",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "5.1.0",

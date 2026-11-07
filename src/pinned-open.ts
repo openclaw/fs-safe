@@ -9,11 +9,12 @@ import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-iden
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
+import type { OwnedFileDescriptorSync } from "./create-owned-file.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
 export type PinnedOpenSyncResult =
-  | { ok: true; path: string; fd: number; stat: fs.Stats; identity: fs.BigIntStats }
+  | { ok: true; path: string; fd: number; stat: fs.Stats; identity: fs.BigIntStats; close?: () => void }
   | { ok: false; reason: PinnedOpenSyncFailureReason; error?: unknown };
 
 export type PinnedOpenSyncAllowedType = "file" | "directory";
@@ -47,7 +48,7 @@ type PinnedOpenParams = {
   maxBytes?: number;
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs?: PinnedOpenSyncFs;
-  admittedFd?: number;
+  admittedFile?: OwnedFileDescriptorSync;
   finalAdmission?: (params: Parameters<PinnedOpenSyncFinalAdmission>[0]) => string | Promise<string>;
 };
 
@@ -72,7 +73,8 @@ function* openPinnedFileProcedure(params: PinnedOpenParams, asynchronous: boolea
     maxBytes: params.maxBytes,
   };
   const openReadFlags = resolveReadOpenFlags({ constants: ioFs.constants });
-  let fd: number | null = params.admittedFd ?? null;
+  const admittedFile = params.admittedFile;
+  let fd: number | null = admittedFile?.fd ?? null;
   try {
     assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
     if (resolvedPath !== undefined) {
@@ -116,7 +118,8 @@ function* openPinnedFileProcedure(params: PinnedOpenParams, asynchronous: boolea
     })) : realPath;
 
     const openedStat = numberStats(identity);
-    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat, identity };
+    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat, identity,
+      ...(admittedFile ? { close: admittedFile.close } : {}) };
     fd = null;
     return opened;
   } catch (error) {
@@ -128,7 +131,8 @@ function* openPinnedFileProcedure(params: PinnedOpenParams, asynchronous: boolea
   } finally {
     if (fd !== null) {
       try {
-        if (asynchronous) yield* wait(closeFd(fd));
+        if (admittedFile) admittedFile.close();
+        else if (asynchronous) yield* wait(closeFd(fd));
         else ioFs.closeSync(fd);
       } catch {
         // Preserve the failed admission result; success transfers fd above.

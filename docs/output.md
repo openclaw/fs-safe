@@ -1,5 +1,7 @@
 # External outputs
 
+
+For sibling staging, `allowDrvfsRenameRecovery` enables the [verified DrvFS exception](atomic.md#drvfs-hidden-rename-recovery). The callback output is hashed before rename and compared after recovery; the same identity, owner, mode, size and parent checks still apply.
 `@openclaw/fs-safe/output` covers the case where another library insists on
 writing to an absolute path you give it. Browser downloads, renderers, media
 tools, and native libraries often have this shape:

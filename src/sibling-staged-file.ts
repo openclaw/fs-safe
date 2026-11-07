@@ -11,9 +11,10 @@ import {
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
-import { openPublicationPin } from "./publication-pin.js";
+import { retainDrvfsParent } from "./drvfs-parent.js";
+import { sha256FileSync } from "./file-hash.js";
 import { hasErrorCode } from "./file-cleanup.js";
-import { admitsUnpinnedRenameRecovery, recoverAfterHiddenRename } from "./publication-recovery.js";
+import { assertRecoveredFile, recoverAfterHiddenRename, shouldPrepareDrvfsRecovery } from "./publication-recovery.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { cachedNoReplaceDevice, isNoReplaceUnavailable } from "./native-noreplace.js";
@@ -197,6 +198,7 @@ export async function writeCallbackSibling<T>(params: {
   maxBytes?: number;
   syncTempFile: boolean;
   syncParentDir: boolean;
+  allowDrvfsRenameRecovery?: boolean;
 }): Promise<{ filePath: string; result: T }> {
   const parent = resolveCallbackTempDirectory(params.tempDir);
   const tempPath = resolveCallbackTempPath(parent, params.tempName);
@@ -208,6 +210,7 @@ export async function writeCallbackSibling<T>(params: {
   const maxBytes = params.maxBytes;
   const syncTempFile = params.syncTempFile;
   const syncParentDir = params.syncParentDir;
+  const allowDrvfsRenameRecovery = params.allowDrvfsRenameRecovery === true;
   const rootBoundary = params.rootBoundary;
   const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
   const assertParent = () => {
@@ -223,6 +226,9 @@ export async function writeCallbackSibling<T>(params: {
       })) throw new FsSafeError("outside-workspace", "sibling parent resolves outside the root");
     }
   };
+  let recoveryParent: ReturnType<typeof retainDrvfsParent> | undefined;
+  let recoveryIdentity: BigIntStats | undefined;
+  let recoveryHash: string | undefined;
   let handle: FileHandle | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
@@ -318,6 +324,13 @@ export async function writeCallbackSibling<T>(params: {
         await syncFileBestEffort(handle!);
         assertCurrent(tempPath);
       }
+      if (shouldPrepareDrvfsRecovery(allowDrvfsRenameRecovery)) {
+        recoveryParent = retainDrvfsParent(parent);
+        if (recoveryParent) {
+          recoveryIdentity = fsSync.fstatSync(handle!.fd, { bigint: true });
+          recoveryHash = sha256FileSync(handle!.fd, { maxBytes }).digest;
+        }
+      }
       await fs.rename(tempPath, filePath);
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
@@ -327,15 +340,15 @@ export async function writeCallbackSibling<T>(params: {
       try {
         assertCurrent(filePath);
       } catch (error) {
-        if (!hasErrorCode(error, "ENOENT")) throw error;
-        // The pin retains the inode through verification on ordinary
-        // filesystems; DrvFS hides the renamed name behind any descriptor,
-        // so the admitted fallback closes every descriptor and re-verifies.
-        // Settlement runs while the pin (or the re-observed handle) still
-        // guards the published name, and keeps the full parent/size
-        // admission instead of leaf-only checks.
+        if (!hasErrorCode(error, "ENOENT") || !recoveryParent) throw error;
+        // Keep the recovered descriptor through parent synchronization and final admission.
         const assertPublishedCurrent = (reopened: FileHandle) => {
           assertParent();
+          recoveryParent!.assertCurrent();
+          assertRecoveredFile(reopened.fd, recoveryIdentity!);
+          if (sha256FileSync(reopened.fd, { maxBytes }).digest !== recoveryHash) {
+            throw new FsSafeError("path-mismatch", "sibling content changed during DrvFS recovery");
+          }
           const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
           const current = inspectPath(filePath, opened);
           if (maxBytes !== undefined && (opened.size > maxBytes || current.size > maxBytes)) {
@@ -347,11 +360,9 @@ export async function writeCallbackSibling<T>(params: {
         try {
           recoveredHandle = await recoverAfterHiddenRename({
             closeWriter: () => previous.close(),
-            openPin: () => openPublicationPin(previous.fd),
-            admitUnpinned: () => admitsUnpinnedRenameRecovery(parent),
+            parentFd: recoveryParent!.fd,
             reopen: async () => {
-              const access = syncTempFile ? fsSync.constants.O_RDWR : fsSync.constants.O_RDONLY;
-              const reopened = await fs.open(filePath, access | resolveReadOpenFlags());
+              const reopened = await fs.open(filePath, resolveReadOpenFlags());
               try {
                 assertPublishedCurrent(reopened);
                 return reopened;
@@ -389,6 +400,7 @@ export async function writeCallbackSibling<T>(params: {
     throw error;
   } finally {
     const settlementErrors: unknown[] = [];
+    try { recoveryParent?.close(); } catch (error) { settlementErrors.push(error); }
     if (cleanupWorkspace) {
       try {
         await cleanupWorkspace();

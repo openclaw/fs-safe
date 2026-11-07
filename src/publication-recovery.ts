@@ -1,226 +1,122 @@
-import fsSync from "node:fs";
-import path from "node:path";
+import fs from "node:fs";
+import type { NativeBinding } from "./native-binding.js";
+import { nativeOpenFlags } from "./native-operations.js";
+import { readFileDescriptorBoundedSync } from "./bounded-read.js";
+import { FsSafeError } from "./errors.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { sleep, sleepSync } from "./timing.js";
 
-// Unpinned recovery is only sound on backends whose identities carry a
-// generation: recreate-after-close must produce a device/inode pair the
-// previous file could never have. That property cannot be inferred from a
-// filesystem magic number, so admission runs a bounded behavioral probe
-// (create/stat/unlink rounds must all produce distinct non-zero identities)
-// and caches the verdict per device. Backends that recycle identities fail
-// the probe and keep the strict pinned contract.
-const IDENTITY_PROBE_ROUNDS = 48;
-const probeResults = new Map<bigint, boolean>();
+/** Other platforms keep their existing path even when the option is enabled. */
+export function shouldPrepareDrvfsRecovery(enabled: boolean | undefined): boolean {
+  return enabled === true && (process.platform === "linux" || getFsSafeTestHooks()?.drvfsMountObservation !== undefined);
+}
 
-export function admitsUnpinnedRenameRecovery(directoryPath: string): boolean {
-  const hook = getFsSafeTestHooks()?.admitUnpinnedRenameRecovery;
-  if (hook) return hook(directoryPath);
-  let device: bigint;
+/** No sampling or positive cache: the retained directory's exact mount owns admission. */
+export function admitsDrvfsRenameRecoveryAtFd(parentFd: number): boolean {
   try {
-    device = fsSync.lstatSync(directoryPath, { bigint: true }).dev;
+    const hook = getFsSafeTestHooks()?.drvfsMountObservation;
+    if (!hook && process.platform !== "linux") return false;
+    if (!Number.isInteger(parentFd) || parentFd < 0) return false;
+    const observation = hook ? hook(parentFd) : (() => {
+      if (fs.statfsSync("/proc/self/fd", { bigint: true }).type !== 0x9fa0n) return undefined;
+      // statfs follows this kernel-owned descriptor alias to the retained parent.
+      return {
+        magic: fs.statfsSync(`/proc/self/fd/${parentFd}`, { bigint: true }).type,
+        fdinfo: fs.readFileSync(`/proc/self/fdinfo/${parentFd}`, "utf8"),
+        mountinfo: fs.readFileSync("/proc/self/mountinfo", "utf8"),
+      };
+    })();
+    if (!observation || observation.magic !== 0x01021997n) return false;
+    const ids = [...observation.fdinfo.matchAll(/^mnt_id:\s*(\d+)\s*$/gm)];
+    if (ids.length !== 1) return false;
+    const entries = observation.mountinfo.split("\n").filter(line => line.split(" ")[0] === ids[0]![1]);
+    if (entries.length !== 1) return false;
+    const [before, after, extra] = entries[0]!.split(" - ");
+    if (!before || !after || extra !== undefined || before.split(" ").length < 6) return false;
+    const fields = after.split(" ");
+    return fields.length === 3 && fields[0] === "9p" &&
+      fields[2]!.split(",").some(option => option === "aname=drvfs" || option.startsWith("aname=drvfs;"));
   } catch {
     return false;
   }
-  return admittedForDevice(device, () => probeGenerationBearingIdentities(directoryPath));
 }
 
-/** Native publication paths hold a parent descriptor instead of a path. */
-export function admitsUnpinnedRenameRecoveryAtFd(parentFd: number): boolean {
-  if (process.platform !== "linux") return false;
-  const hook = getFsSafeTestHooks()?.admitUnpinnedRenameRecovery;
-  if (hook) return hook(`/proc/self/fd/${parentFd}`);
-  // The retained descriptor is the device identity; observing the procfs
-  // symlink instead would key the cache on procfs and leak verdicts across
-  // unrelated mounts.
-  let device: bigint;
-  try {
-    device = fsSync.fstatSync(parentFd, { bigint: true }).dev;
-  } catch {
-    return false;
+/** Exact metadata is necessary but cannot exclude inode reuse after the final close. */
+export function assertRecoveredPublication(actual: fs.BigIntStats, expected: fs.BigIntStats): void {
+  if (!actual.isFile() || actual.isSymbolicLink() || actual.nlink !== 1n ||
+    actual.dev !== expected.dev || actual.ino !== expected.ino || actual.size !== expected.size ||
+    actual.mode !== expected.mode || actual.uid !== expected.uid || actual.gid !== expected.gid) {
+    throw new FsSafeError("path-mismatch", "published file changed during DrvFS recovery");
   }
-  return admittedForDevice(device, () => probeGenerationBearingIdentities(`/proc/self/fd/${parentFd}`));
 }
 
-function admittedForDevice(device: bigint, probe: () => boolean): boolean {
-  const cached = probeResults.get(device);
-  if (cached !== undefined) return cached;
-  const admitted = probe();
-  probeResults.set(device, admitted);
-  return admitted;
-}
-
-function probeGenerationBearingIdentities(directoryPath: string): boolean {
-  const identities = new Set<string>();
-  for (let round = 0; round < IDENTITY_PROBE_ROUNDS; round += 1) {
-    const probePath = path.join(directoryPath, `.fs-safe-id-probe-${process.pid}-${round}`);
-    let fd = -1;
-    try {
-      fd = fsSync.openSync(probePath, fsSync.constants.O_CREAT | fsSync.constants.O_EXCL | fsSync.constants.O_WRONLY, 0o600);
-      const stat = fsSync.fstatSync(fd, { bigint: true });
-      if (stat.ino === 0n) return false;
-      const key = `${stat.dev}:${stat.ino}`;
-      if (identities.has(key)) return false;
-      identities.add(key);
-    } catch {
-      return false;
-    } finally {
-      if (fd >= 0) {
-        try {
-          fsSync.closeSync(fd);
-        } catch {
-          // Best effort; the probe file is removed below.
-        }
-      }
-    }
-    try {
-      fsSync.unlinkSync(probePath);
-    } catch {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * DrvFS bind mounts keep a renamed name invisible while ANY descriptor to the
- * renamed inode is open, including a metadata pin (openclaw/openclaw#193262),
- * so a pin cannot bridge the recovery window there. Ordinary filesystems need
- * the opposite: the pin retains the inode across the writer close so identity
- * verification can still detect a swapped or deleted file, which silently
- * recycles device/inode pairs there.
- *
- * Recovery therefore keeps the pin through settlement by default. The
- * close-everything fallback runs only when the mount still hides the name
- * behind the pin AND the filesystem is admitted by
- * `admitsUnpinnedRenameRecovery`; `reopen` must re-verify the published
- * identity so a mismatch still fails closed. `retain` runs settlement checks
- * while the pin (or the caller's recovered handle) still guards the name.
- */
 export async function recoverAfterHiddenRename<T>(params: {
   closeWriter: () => Promise<void>;
   reopen: () => Promise<T>;
-  openPin?: () => number;
-  admitUnpinned?: () => boolean;
+  parentFd: number;
   retain?: (recovered: T) => Promise<void>;
   dispose?: (recovered: T) => Promise<void>;
-  attempts?: number;
-  backoffMs?: number;
 }): Promise<T> {
-  let pin: number | undefined;
-  try {
-    if (params.openPin) pin = params.openPin();
-    await params.closeWriter();
+  if (!admitsDrvfsRenameRecoveryAtFd(params.parentFd)) {
+    throw new FsSafeError("path-mismatch", "hidden rename recovery requires a verified DrvFS mount");
+  }
+  await params.closeWriter();
+  for (let attempt = 0; ; attempt++) {
     let recovered: T;
-    try {
-      recovered = await params.reopen();
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT") || !params.admitUnpinned?.()) throw error;
-      if (pin !== undefined) {
-        closePublicationPin(pin);
-        pin = undefined;
-      }
-      recovered = await reopenAdmitted(params);
+    try { recovered = await params.reopen(); }
+    catch (error) {
+      if (!hasErrorCode(error, "ENOENT") || attempt === 4) throw error;
+      await sleep(20);
+      continue;
     }
-    if (params.retain) {
-      try {
-        await params.retain(recovered);
-      } catch (error) {
-        // Settlement failed; the caller never took ownership, so release the
-        // recovered resource instead of leaving it unowned.
-        if (params.dispose) await params.dispose(recovered).catch(() => undefined);
-        throw error;
-      }
-    }
+    try { await params.retain?.(recovered); }
+    catch (error) { await params.dispose?.(recovered).catch(() => undefined); throw error; }
     return recovered;
-  } finally {
-    if (pin !== undefined) closePublicationPin(pin);
   }
 }
 
-/** Synchronous counterpart for native and other sync publication paths. */
 export function recoverAfterHiddenRenameSync<T>(params: {
   closeWriter: () => void;
   reopen: () => T;
-  openPin?: () => number;
-  admitUnpinned?: () => boolean;
-  retain?: (recovered: T) => void;
-  dispose?: (recovered: T) => void;
-  attempts?: number;
-  backoffMs?: number;
+  parentFd: number;
 }): T {
-  let pin: number | undefined;
+  if (!admitsDrvfsRenameRecoveryAtFd(params.parentFd)) {
+    throw new FsSafeError("path-mismatch", "hidden rename recovery requires a verified DrvFS mount");
+  }
+  params.closeWriter();
+  for (let attempt = 0; ; attempt++) {
+    try { return params.reopen(); }
+    catch (error) {
+      if (!hasErrorCode(error, "ENOENT") || attempt === 4) throw error;
+      sleepSync(20);
+    }
+  }
+}
+
+export function assertRecoveredFile(fd: number, expected: fs.BigIntStats, content?: Uint8Array): void {
+  assertRecoveredPublication(fs.fstatSync(fd, { bigint: true }), expected);
+  if (content && !readFileDescriptorBoundedSync(fd, content.byteLength).equals(content)) {
+    throw new FsSafeError("path-mismatch", "published content changed during DrvFS recovery");
+  }
+  assertRecoveredPublication(fs.fstatSync(fd, { bigint: true }), expected);
+}
+
+export function reopenRecoveredNativeFile(
+  binding: NativeBinding, parentFd: number, basename: string, expected: fs.BigIntStats, content?: Uint8Array,
+): number {
+  if (!binding.openBeneath || !binding.closeOwnedFd || !binding.stagedFileMatches) {
+    throw new FsSafeError("helper-unavailable", "native DrvFS recovery requires descriptor-relative verification");
+  }
+  const fd = binding.openBeneath(parentFd, basename, nativeOpenFlags(fs.constants.O_RDONLY | fs.constants.O_NONBLOCK)).fd;
   try {
-    if (params.openPin) pin = params.openPin();
-    params.closeWriter();
-    let recovered: T;
-    try {
-      recovered = params.reopen();
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT") || !params.admitUnpinned?.()) throw error;
-      if (pin !== undefined) {
-        closePublicationPin(pin);
-        pin = undefined;
-      }
-      recovered = reopenAdmittedSync(params);
+    assertRecoveredFile(fd, expected, content);
+    if (!binding.stagedFileMatches(parentFd, basename, fd)) {
+      throw new FsSafeError("path-mismatch", "published name changed during DrvFS recovery");
     }
-    if (params.retain) {
-      try {
-        params.retain(recovered);
-      } catch (error) {
-        if (params.dispose) {
-          try {
-            params.dispose(recovered);
-          } catch {
-            // Best effort; the settlement error takes precedence.
-          }
-        }
-        throw error;
-      }
-    }
-    return recovered;
-  } finally {
-    if (pin !== undefined) closePublicationPin(pin);
-  }
-}
-
-async function reopenAdmitted<T>(params: {
-  reopen: () => Promise<T>;
-  attempts?: number;
-  backoffMs?: number;
-}): Promise<T> {
-  const maxAttempts = params.attempts ?? 5;
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      return await params.reopen();
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT") || attempt >= maxAttempts) throw error;
-      await sleep(params.backoffMs ?? 20);
-    }
-  }
-}
-
-function reopenAdmittedSync<T>(params: {
-  reopen: () => T;
-  attempts?: number;
-  backoffMs?: number;
-}): T {
-  const maxAttempts = params.attempts ?? 5;
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      return params.reopen();
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT") || attempt >= maxAttempts) throw error;
-      sleepSync(params.backoffMs ?? 20);
-    }
-  }
-}
-
-function closePublicationPin(pin: number): void {
-  try {
-    fsSync.closeSync(pin);
-  } catch {
-    // A pin we opened stays best-effort on cleanup; recovery must continue.
+    return fd;
+  } catch (error) {
+    binding.closeOwnedFd(fd);
+    throw error;
   }
 }

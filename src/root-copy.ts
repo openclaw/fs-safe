@@ -111,6 +111,7 @@ async function copyInputInRoot(
       const observer = createCopyPublicationObserver(pinned.targetPath, params.onDestinationPublished);
       try {
         await runPinnedWriteHelper({
+          allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
           rootPath: pinned.rootReal, relativeParentPath: pinned.relativeParentPath, basename: pinned.basename,
           mkdir: params.mkdir !== false, mode: pinned.mode, overwrite: params.overwrite !== false,
           rejectFinalSymlink: params.mutationSymlinks !== undefined, maxBytes: params.maxBytes,
