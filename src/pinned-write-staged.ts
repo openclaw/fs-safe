@@ -18,12 +18,14 @@ import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { publishCopyStage } from "./publish-copy-stage.js";
 import { openPublicationHandle } from "./publication-handle.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
-import { cleanupPinnedFilePath } from "./file-cleanup.js";
+import { cleanupPinnedFilePath, hasErrorCode } from "./file-cleanup.js";
 import { assertFinalSymlinkRejected } from "./root-symlink-policy.js";
 import { createStagedFileReceipt, settleStagedFile } from "./staged-file-settlement.js";
 import type { StagedFileFailureDetails, StagedFilePublication, StagedFileReceipt } from "./staged-file-types.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
+import { assertRecoveredFile, recoverAfterHiddenRename, shouldPrepareDrvfsRecovery } from "./publication-recovery.js";
+import { retainDrvfsParent } from "./drvfs-parent.js";
 
 export async function runPinnedStagedWrite(
   params: PinnedWriteParams,
@@ -47,11 +49,39 @@ export async function runPinnedStagedWrite(
   let readHandle: FileHandle | undefined;
   let handoffCloseFailure: { error: unknown } | undefined;
   let renamed = false;
+  let recoveryParent: ReturnType<typeof retainDrvfsParent> | undefined;
+  let recoveryIdentity: BigIntStats | undefined;
+  let recoveryContent: Buffer | undefined;
   const completeCreate = params.overwrite === false && params.input.kind !== "file" && params.input.stageBeforePublish === true;
   let receipt: StagedFileReceipt | undefined;
   let publication: StagedFilePublication = Object.freeze({ status: "not-published" });
   let phase: StagedFileFailureDetails["phase"] = "prepare";
   let failure: { error: unknown } | undefined;
+  const observePublished = (): BigIntStats | Promise<BigIntStats> => {
+    try {
+      return fsSync.lstatSync(targetPath, { bigint: true });
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT") || !handle || !recoveryParent) throw error;
+      const previous = handle!;
+      return (async () => {
+        // DrvFS reveals the name only after the operation releases its writer.
+        readHandle = await recoverAfterHiddenRename({
+          closeWriter: () => { handle = undefined; return previous.close(); },
+          parentFd: recoveryParent!.fd,
+          reopen: async () => {
+            recoveryParent!.assertCurrent();
+            const reopened = await openPublicationHandle(targetPath, recoveryIdentity!);
+            try {
+              assertRecoveredFile(reopened.fd, recoveryIdentity!, recoveryContent);
+              recoveryParent!.assertCurrent();
+              return reopened;
+            } catch (error) { await reopened.close(); throw error; }
+          },
+        });
+        return fsSync.lstatSync(targetPath, { bigint: true });
+      })();
+    }
+  };
   try {
     params.assertBeforeMutation?.();
     assertExclusiveCreateLeaf(tempPath);
@@ -98,6 +128,12 @@ export async function runPinnedStagedWrite(
     const canHandoff = process.platform !== "win32" &&
       ((params.mode & 0o400) !== 0 ||
         (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")));
+    if (shouldPrepareDrvfsRecovery(params.allowDrvfsRenameRecovery)) {
+      recoveryParent = retainDrvfsParent(parentPath);
+      if (recoveryParent) recoveryIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
+      if (recoveryParent && params.input.kind === "buffer") recoveryContent = typeof params.input.data === "string"
+        ? Buffer.from(params.input.data, params.input.encoding) : Buffer.from(params.input.data);
+    }
     phase = "publish";
     await withAsyncDirectoryGuards([parentGuard], async () => {
       assertFinalSymlinkRejected(targetPath, params.rejectFinalSymlink);
@@ -114,6 +150,7 @@ export async function runPinnedStagedWrite(
             if (receipt) publication = Object.freeze({ status: "published", staged: receipt, basename: params.basename, overwrite: false });
             params.onPublished?.(identity);
           },
+          afterRename: recoveryParent ? observePublished : undefined,
           beforeTemporaryUnlink: !canHandoff ? undefined : async () => {
             readHandle = await openPublicationHandle(targetPath, expectedTempStat);
             // Keep the destination pinned while closing the stage's NFS dentry.
@@ -131,7 +168,8 @@ export async function runPinnedStagedWrite(
       }
       await getFsSafeTestHooks()?.afterPinnedWriteFallbackRename?.(targetPath);
       if (params.sync !== false) await syncDirectoryBestEffort(parentPath);
-      const targetStat = fsSync.lstatSync(targetPath, { bigint: true });
+      const observed = observePublished();
+      const targetStat = observed instanceof Promise ? await observed : observed;
       if (targetStat.isSymbolicLink()) {
         throw new FsSafeError("path-mismatch", "fallback target changed during write");
       }
@@ -166,6 +204,7 @@ export async function runPinnedStagedWrite(
     failure = { error };
     throw error;
   } finally {
+    try {
     const preservedPreparation = params.private && !handle && hasPreservedCreationArtifacts(failure?.error);
     if (completeCreate || preservedPreparation) {
       await settleStagedFile({
@@ -194,5 +233,6 @@ export async function runPinnedStagedWrite(
       await readHandle?.close().catch(() => undefined);
       await handle?.close().catch(() => undefined);
     }
+    } finally { recoveryParent?.close(); }
   }
 }

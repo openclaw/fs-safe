@@ -17,6 +17,7 @@ export type JsonStoreLockOptions = Partial<FsSafeLockConfig & {
 }>;
 
 export type JsonFileStoreOptions = {
+  allowDrvfsRenameRecovery?: boolean;
   /** Overrides the parent store's durability for every JSON mutation. */
   durable?: boolean;
   trailingNewline?: boolean;
@@ -39,7 +40,7 @@ export type JsonStoreAdapter<T> = {
   prepareLock?: () => Promise<Root>;
   readIfExists(): Promise<T | undefined>;
   readRequired(): Promise<T>;
-  write(value: T, options?: { trailingNewline?: boolean; durable?: boolean }): Promise<void>;
+  write(value: T, options?: { trailingNewline?: boolean; durable?: boolean; allowDrvfsRenameRecovery?: boolean }): Promise<void>;
 };
 
 function cloneFallback<T>(value: T): T {
@@ -87,6 +88,7 @@ export function createJsonStore<T>(
     return {
       trailingNewline: options.trailingNewline ?? true,
       durable: options.durable,
+      allowDrvfsRenameRecovery: options.allowDrvfsRenameRecovery,
     };
   }
 

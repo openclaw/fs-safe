@@ -1,5 +1,7 @@
 # JSON store
 
+
+`jsonStore` and `fileStore().json()` accept `allowDrvfsRenameRecovery`, inherited from the parent store unless overridden. See [verified DrvFS recovery](atomic.md#drvfs-hidden-rename-recovery) before enabling this off-by-default exception.
 `jsonStore` is exported from `@openclaw/fs-safe/store`. It is the single-path
 convenience wrapper for `fileStore(...).json(...)`: a small read-modify-write
 handle around a single JSON file. It bakes in atomic writes, explicit fallback

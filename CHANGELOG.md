@@ -4,9 +4,13 @@
 
 ### Features
 
+- **Atomic writes:** add the explicit, off-by-default `allowDrvfsRenameRecovery` option for verified DrvFS mounts, with documented residual inode-reuse risk.
+
 - **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict. Using the exception emits a path-free `FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning once per process.
 
 ### Fixes
+
+- **DrvFS publication:** recover files hidden until the last descriptor closes on verified Windows-drive mounts, retaining exact identity, ownership, mode, size, link-count, parent, and available content checks. Thanks @om49967588 for the report and @lswang9 for the probes.
 
 - **File locks:** stage and sync complete owner records before exclusive publication so crashes cannot leave empty locks; fail closed on mounts without no-replace rename or hardlinks. Existing unverifiable locks remain untouched. Thanks @chrislro.
 

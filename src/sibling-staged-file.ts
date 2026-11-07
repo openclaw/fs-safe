@@ -11,6 +11,10 @@ import {
 import { syncDirectoryBestEffort } from "./directory-durability.js";
 import { isWindowsReservedDeviceName } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
+import { retainDrvfsParent } from "./drvfs-parent.js";
+import { sha256FileSync } from "./file-hash.js";
+import { hasErrorCode } from "./file-cleanup.js";
+import { assertRecoveredFile, recoverAfterHiddenRename, shouldPrepareDrvfsRecovery } from "./publication-recovery.js";
 import { getNativeBinding } from "./native.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { cachedNoReplaceDevice, isNoReplaceUnavailable } from "./native-noreplace.js";
@@ -194,6 +198,7 @@ export async function writeCallbackSibling<T>(params: {
   maxBytes?: number;
   syncTempFile: boolean;
   syncParentDir: boolean;
+  allowDrvfsRenameRecovery?: boolean;
 }): Promise<{ filePath: string; result: T }> {
   const parent = resolveCallbackTempDirectory(params.tempDir);
   const tempPath = resolveCallbackTempPath(parent, params.tempName);
@@ -205,6 +210,7 @@ export async function writeCallbackSibling<T>(params: {
   const maxBytes = params.maxBytes;
   const syncTempFile = params.syncTempFile;
   const syncParentDir = params.syncParentDir;
+  const allowDrvfsRenameRecovery = params.allowDrvfsRenameRecovery === true;
   const rootBoundary = params.rootBoundary;
   const guard = await createAsyncDirectoryGuard(parent, { bigint: true });
   const assertParent = () => {
@@ -220,6 +226,9 @@ export async function writeCallbackSibling<T>(params: {
       })) throw new FsSafeError("outside-workspace", "sibling parent resolves outside the root");
     }
   };
+  let recoveryParent: ReturnType<typeof retainDrvfsParent> | undefined;
+  let recoveryIdentity: BigIntStats | undefined;
+  let recoveryHash: string | undefined;
   let handle: FileHandle | undefined;
   let identity: BigIntStats | undefined;
   let unregister: TempPathRegistration | undefined;
@@ -230,7 +239,7 @@ export async function writeCallbackSibling<T>(params: {
     inspectStage(() => fsSync.lstatSync(pathname, { bigint: true }), expected);
   const assertCurrent = (pathname: string) => {
     assertParent();
-    const opened = inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity);
+    const opened = handle ? inspectStage(() => fsSync.fstatSync(handle!.fd, { bigint: true }), identity) : identity!;
     const current = inspectPath(pathname, opened);
     if (
       maxBytes !== undefined &&
@@ -315,14 +324,74 @@ export async function writeCallbackSibling<T>(params: {
         await syncFileBestEffort(handle!);
         assertCurrent(tempPath);
       }
+      if (shouldPrepareDrvfsRecovery(allowDrvfsRenameRecovery)) {
+        recoveryParent = retainDrvfsParent(parent);
+        if (recoveryParent) {
+          recoveryIdentity = fsSync.fstatSync(handle!.fd, { bigint: true });
+          recoveryHash = sha256FileSync(handle!.fd, { maxBytes }).digest;
+        }
+      }
       await fs.rename(tempPath, filePath);
       // A later verification failure never authorizes rollback of the final name.
       renamed = true;
       unregister!();
-      assertCurrent(filePath);
-      if (syncParentDir) {
-        await syncDirectoryBestEffort(parent);
+      let recoveredHandle: FileHandle | undefined;
+      let settled = false;
+      try {
         assertCurrent(filePath);
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT") || !recoveryParent) throw error;
+        // Keep the recovered descriptor through parent synchronization and final admission.
+        const assertPublishedCurrent = (reopened: FileHandle) => {
+          assertParent();
+          recoveryParent!.assertCurrent();
+          assertRecoveredFile(reopened.fd, recoveryIdentity!);
+          if (sha256FileSync(reopened.fd, { maxBytes }).digest !== recoveryHash) {
+            throw new FsSafeError("path-mismatch", "sibling content changed during DrvFS recovery");
+          }
+          const opened = inspectStage(() => fsSync.fstatSync(reopened.fd, { bigint: true }), identity);
+          const current = inspectPath(filePath, opened);
+          if (maxBytes !== undefined && (opened.size > maxBytes || current.size > maxBytes)) {
+            throw new FsSafeError("too-large", `sibling temp exceeds maxBytes (${maxBytes})`);
+          }
+        };
+        const previous = handle!;
+        handle = undefined;
+        try {
+          recoveredHandle = await recoverAfterHiddenRename({
+            closeWriter: () => previous.close(),
+            parentFd: recoveryParent!.fd,
+            reopen: async () => {
+              const reopened = await fs.open(filePath, resolveReadOpenFlags());
+              try {
+                assertPublishedCurrent(reopened);
+                return reopened;
+              } catch (verifyError) {
+                await reopened.close().catch(() => undefined);
+                throw verifyError;
+              }
+            },
+            retain: async (reopened) => {
+              if (syncParentDir) await syncDirectoryBestEffort(parent);
+              assertPublishedCurrent(reopened);
+            },
+            dispose: async (reopened) => { await reopened.close().catch(() => undefined); },
+          });
+        } catch (error) {
+          // Reclaim the writer if recovery failed before closing it; a
+          // second close on an already-closed handle is swallowed.
+          await previous.close().catch(() => undefined);
+          throw error;
+        }
+        settled = true;
+      }
+      try {
+        if (syncParentDir && !settled) {
+          await syncDirectoryBestEffort(parent);
+          assertCurrent(filePath);
+        }
+      } finally {
+        await recoveredHandle?.close().catch(() => undefined);
       }
     });
     return { filePath, result };
@@ -331,6 +400,7 @@ export async function writeCallbackSibling<T>(params: {
     throw error;
   } finally {
     const settlementErrors: unknown[] = [];
+    try { recoveryParent?.close(); } catch (error) { settlementErrors.push(error); }
     if (cleanupWorkspace) {
       try {
         await cleanupWorkspace();

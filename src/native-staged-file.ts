@@ -9,9 +9,9 @@ import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { assertSynchronousCallbackResult, isMutationAuthorityError } from "./mutation-authority.js";
 import type { FileIdentityStat } from "./file-identity.js";
-import { captureNativeFdClose, type NativeBinding } from "./native-binding.js";
+import { captureNativeFdClose } from "./native-binding.js";
 import { replayPinnedInput, writePinnedInput } from "./pinned-write-input.js";
-import { nativeStagedFileMode } from "./native-staged-file-metadata.js";
+import { assertNativeStaging, assertStagedFileBasename, nativeStagedFileMode, type NativeStagingBinding, type NativeStageOwner } from "./native-staged-file-metadata.js";
 import { assertNativeCopyCompleted, createNativeCopyFile } from "./copy-file-input.js";
 import type { PinnedWriteInput, PinnedWriteParams } from "./pinned-write-types.js";
 import { assertNativeStagedDirectoryCurrent, openStagedDirectory } from "./staged-directory.js";
@@ -24,53 +24,15 @@ import { noReplaceUnavailable, rememberNoReplaceUnavailable } from "./native-nor
 import { isFsSafeNativeRequired } from "./native-config.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
 import { annotateReadOnlyOpenError } from "./file-open-error.js";
+import { hasErrorCode } from "./file-cleanup.js";
+import { reopenRecoveredNativeFile, assertRecoveredPublication, recoverAfterHiddenRenameSync, shouldPrepareDrvfsRecovery } from "./publication-recovery.js";
 
-export type NativeStagingBinding = NativeBinding & Required<Pick<
-  NativeBinding,
-  "createStagedFile" | "stagedFileMatches" | "removeStagedFile" | "renameReplaceAsync" | "renameNoReplaceAsync"
->>;
-
-export function assertNativeStaging(binding: NativeBinding): asserts binding is NativeStagingBinding {
-  if ([
-    binding.closeOwnedFd,
-    binding.createStagedFile,
-    binding.stagedFileMatches,
-    binding.removeStagedFile,
-    binding.renameReplaceAsync,
-    binding.renameNoReplaceAsync,
-  ].some((fn) => typeof fn !== "function")) {
-    throw new FsSafeError("helper-unavailable", "native retained-directory staging is unavailable");
-  }
-}
-
-function assertBasename(name: string, portable: boolean): void {
-  if (
-    !name || name === "." || name === ".." || name.includes("/") || name.includes("\0") ||
-    (portable && /[\\:\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(name))
-  ) {
-    throw new FsSafeError("invalid-path", "publication requires one direct-child basename");
-  }
-}
+export { assertNativeStaging, type NativeStagingBinding } from "./native-staged-file-metadata.js";
 
 const NOT_PUBLISHED = Object.freeze({ status: "not-published" as const });
 type State =
   | { status: "open" | "closing"; fileFd?: number; publication: StagedFilePublication }
   | { status: "closed"; receipt: StagedFileCleanupReceipt; error?: FsSafeError };
-type StagedPermissionPolicy = "private-creation" | "mode-only";
-
-type NativeStageOwner = Readonly<{
-  binding: NativeStagingBinding;
-  parentFd: number;
-  closeParentFd: (fd: number) => void;
-  directory: StagedFileReceipt["directory"];
-  portableNames?: boolean;
-  mode: number;
-  sync?: boolean;
-  strictFileSync?: boolean;
-  assertBeforeMutation?: () => void;
-  permissionPolicy?: StagedPermissionPolicy;
-  name?: string;
-}>;
 
 class NativeStagedFile implements StagedFile {
   readonly #owner: NativeStageOwner & { name: string };
@@ -80,6 +42,9 @@ class NativeStagedFile implements StagedFile {
   readonly #verifyMode: boolean;
   #state: State = { status: "open", publication: NOT_PUBLISHED };
   #receipt?: StagedFileReceipt;
+  #recoveryIdentity?: BigIntStats;
+  #recoveryContent?: Buffer;
+  #recovered = false;
   #publicationTask?: Promise<PublishedFileReceipt>;
   #rejectFinalSymlink = false;
   #unsupportedNoReplace?: FsSafeError;
@@ -88,7 +53,7 @@ class NativeStagedFile implements StagedFile {
 
   constructor(owner: NativeStageOwner) {
     const name = owner.name ?? `.fs-safe-${randomUUID()}.tmp`;
-    assertBasename(name, owner.portableNames !== false);
+    assertStagedFileBasename(name, owner.portableNames !== false);
     this.#closeFd = captureNativeFdClose(owner.binding);
     this.#owner = { ...owner, name };
     this.#assertBeforeMutation = owner.assertBeforeMutation;
@@ -96,7 +61,6 @@ class NativeStagedFile implements StagedFile {
     this.#verifyMode = owner.permissionPolicy !== undefined;
   }
 
-  // Public staging supplies a Node parent; pinned writes supply a native parent.
   // The supplied closer owns parentFd even on construction or preparation failure.
   static async create(
     owner: NativeStageOwner,
@@ -113,6 +77,9 @@ class NativeStagedFile implements StagedFile {
         throw new AggregateError([error, closeError], "staged owner construction and close failed");
       }
       throw error;
+    }
+    if (shouldPrepareDrvfsRecovery(owner.allowDrvfsRenameRecovery) && input.kind === "buffer") {
+      staged.#recoveryContent = typeof input.data === "string" ? Buffer.from(input.data, input.encoding) : Buffer.from(input.data);
     }
     await staged.#prepare(input, maxBytes);
     return staged;
@@ -131,6 +98,7 @@ class NativeStagedFile implements StagedFile {
     // This owner never escapes; only the internal verifier borrows its fd.
     await using staged = await NativeStagedFile.create({
       binding, parentFd, closeParentFd, directory, mode: params.mode, sync: params.sync,
+      allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
       // Public staging uses portable names; existing POSIX writes accept literal names.
       portableNames: false, assertBeforeMutation: params.assertBeforeMutation,
       name: exclusive ? params.basename : undefined, strictFileSync: params.strictFileSync,
@@ -204,6 +172,7 @@ class NativeStagedFile implements StagedFile {
 
   #assertNamed(name: string, expectedMode: number): number {
     const fd = this.#file();
+    if (this.#recovered) assertRecoveredPublication(fs.fstatSync(fd, { bigint: true }), this.#recoveryIdentity!);
     const mode = !this.#private ? nativeStagedFileMode(this.#owner.binding, this.#owner.parentFd,
       name, fd, this.#verifyMode ? expectedMode : undefined) : undefined;
     if (mode !== undefined) return mode;
@@ -327,7 +296,7 @@ class NativeStagedFile implements StagedFile {
     const overwrite = options?.overwrite;
     try {
       const state = this.#open();
-      assertBasename(basename, this.#owner.portableNames !== false);
+      assertStagedFileBasename(basename, this.#owner.portableNames !== false);
       if (basename === this.#owner.name || typeof overwrite !== "boolean") {
         throw new FsSafeError("invalid-path", "publication needs a distinct basename and explicit overwrite policy");
       }
@@ -337,6 +306,11 @@ class NativeStagedFile implements StagedFile {
       if (this.#assertBeforeMutation) {
         this.#assertCurrent();
         assertFinalSymlinkRejected(path.join(this.#owner.directory.realPath, basename), this.#rejectFinalSymlink);
+      }
+      if (shouldPrepareDrvfsRecovery(this.#owner.allowDrvfsRenameRecovery)) {
+        // Apply restrictive modes before exposing the name or releasing its last fd.
+        if ((this.#owner.mode & 0o600) !== 0o600) fs.fchmodSync(this.#file(), this.#owner.mode);
+        this.#recoveryIdentity = fs.fstatSync(this.#file(), { bigint: true });
       }
       try {
         if (overwrite) {
@@ -379,12 +353,13 @@ class NativeStagedFile implements StagedFile {
     const receipt: PublishedFileReceipt = Object.freeze({ status: "published", staged: this.receipt, basename, overwrite });
     this.#open().publication = receipt;
     onPublished?.(receipt.staged.identity);
-    const stagedMode = this.#assertNamed(basename, 0o600);
+    const stagedMode = this.#publishedMode(basename);
     this.#assertDirectory();
     // Keep contents private until the name passes its identity fence. Mode
     // changes use the owned fd, including for final mode 000.
     const fd = this.#file();
     if (this.#owner.mode !== 0o600 || stagedMode !== 0o600) fs.fchmodSync(fd, this.#owner.mode);
+    if (this.#recovered) this.#recoveryIdentity!.mode = (this.#recoveryIdentity!.mode & ~0o7777n) | BigInt(this.#owner.mode);
     // Content was synced during preparation. A lost chmod leaves 0600, no wider
     // than modes retaining owner rw; restrictive modes still need a durable correction.
     const verify = () => {
@@ -400,6 +375,26 @@ class NativeStagedFile implements StagedFile {
       await syncFileBestEffort(this.#owner.parentFd);
       return verify();
     });
+  }
+
+  #publishedMode(basename: string): number {
+    try {
+      return this.#assertNamed(basename, this.#recoveryIdentity ? Number(this.#recoveryIdentity.mode & 0o7777n) : 0o600);
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT") || !this.#recoveryIdentity) throw error;
+      const state = this.#open();
+      const fd = this.#file();
+      return recoverAfterHiddenRenameSync({
+        parentFd: this.#owner.parentFd,
+        closeWriter: () => { state.fileFd = undefined; this.#closeFd(fd); this.#assertDirectory(); },
+        reopen: () => {
+          state.fileFd = reopenRecoveredNativeFile(this.#owner.binding, this.#owner.parentFd,
+            basename, this.#recoveryIdentity!, this.#recoveryContent);
+          this.#recovered = true;
+          return Number(this.#recoveryIdentity!.mode & 0o7777n);
+        },
+      });
+    }
   }
 
   #finalize(): Extract<State, { status: "closed" }> {
@@ -455,7 +450,6 @@ class NativeStagedFile implements StagedFile {
   }
 
   async cleanup(): Promise<StagedFileCleanupReceipt> {
-    // Native descriptors stay owned through the rename and all durability fences.
     if (this.#publicationTask) await this.#publicationTask.catch(() => {});
     const closed = this.#finalize();
     if (closed.error) {
@@ -481,6 +475,7 @@ export const writeNativeStage = NativeStagedFile.write;
 export async function stageFileInDirectory(options: {
   directory: string | DirectoryReceipt<Stats | BigIntStats>;
   content: string | Uint8Array;
+  allowDrvfsRenameRecovery?: boolean;
   /** Published mode; the unpublished stage stays at 0600. Defaults to 0600. */
   mode?: number;
 }): Promise<StagedFile> {
@@ -495,5 +490,6 @@ export async function stageFileInDirectory(options: {
   return await createNativeStage({
     binding, parentFd: parent.fd, closeParentFd: fs.closeSync,
     directory: parent.receipt, mode, permissionPolicy: "mode-only",
+    allowDrvfsRenameRecovery: options.allowDrvfsRenameRecovery,
   }, input);
 }

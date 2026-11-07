@@ -25,6 +25,8 @@ export type RootDefaults = {
   mode?: number;
   denyMutations?: DenyMutationPolicy;
   renameIdentity?: RenameIdentityPolicy;
+  /** Explicit verified-DrvFS close-all recovery; off by default. */
+  allowDrvfsRenameRecovery?: boolean;
   symlinks?: SymlinkPolicy;
   mutationSymlinks?: MutationSymlinkPolicy;
 };
@@ -36,7 +38,7 @@ export type RootReadOptions = Pick<
 
 export type RootOpenOptions = Omit<RootReadOptions, "maxBytes">;
 
-export type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "mkdir" | "mode" | "renameIdentity"> & {
+export type RootWriteOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "mkdir" | "mode" | "renameIdentity" | "allowDrvfsRenameRecovery"> & {
   encoding?: BufferEncoding;
   overwrite?: boolean;
 };
@@ -45,7 +47,7 @@ export type RootOpenWritableOptions = Pick<RootDefaults, "assertBeforeMutation" 
   writeMode?: WritableOpenMode;
 };
 
-export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "maxBytes" | "mkdir" | "mode"> & {
+export type RootCopyOptions = Pick<RootDefaults, "assertBeforeMutation" | "denyMutations" | "mutationSymlinks" | "durable" | "maxBytes" | "mkdir" | "mode" | "allowDrvfsRenameRecovery"> & {
   sourceHardlinks?: HardlinkPolicy;
   overwrite?: boolean;
   clone?: CopyCloneMode;

@@ -444,7 +444,8 @@
         "ReadRootJsonSyncOptions",
         "ReadRootStructuredFileSyncOptions",
         "RootStructuredFileReadResult",
-        "WriteJsonOptions"
+        "WriteJsonOptions",
+        "WriteJsonSyncOptions"
       ],
       "errorCodes": {}
     },
