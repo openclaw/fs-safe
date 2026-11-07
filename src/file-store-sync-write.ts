@@ -117,7 +117,7 @@ export function writeFileSyncAtomic(params: {
     if (params.durable) fs.fsyncSync(temp.file.fd);
     verifyStoreFile(temp.file.fd, owner.identity, tempPath);
     assertSyncStoreDirectoryReceipt(parentGuard);
-    if (params.allowDrvfsRenameRecovery === true) runSync(owner.prepareRecovery(params.content));
+    if (params.allowDrvfsRenameRecovery === true) runSync(owner.prepareRecovery(params.content, parentGuard.dir));
     fs.renameSync(tempPath, filePath);
     owner.markRenamed();
     assertSyncStoreDirectoryReceipt(parentGuard);

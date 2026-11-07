@@ -129,7 +129,7 @@ export function writeJsonSync(pathname: string, data: unknown, options?: WriteJs
     runSync(owner.assertCurrent());
     trySetSecureMode(temp.file.fd);
     fsSync.fsyncSync(temp.file.fd);
-    if (allowDrvfsRenameRecovery) runSync(owner.prepareRecovery(payload));
+    if (allowDrvfsRenameRecovery) runSync(owner.prepareRecovery(payload, path.dirname(filePath)));
     renameJsonFileWithFallback(owner, filePath);
     owner.markRenamed();
     runSync(owner.assertPublished(filePath));

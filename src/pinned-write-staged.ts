@@ -150,6 +150,7 @@ export async function runPinnedStagedWrite(
             if (receipt) publication = Object.freeze({ status: "published", staged: receipt, basename: params.basename, overwrite: false });
             params.onPublished?.(identity);
           },
+          afterRename: recoveryParent ? observePublished : undefined,
           beforeTemporaryUnlink: !canHandoff ? undefined : async () => {
             readHandle = await openPublicationHandle(targetPath, expectedTempStat);
             // Keep the destination pinned while closing the stage's NFS dentry.

@@ -251,7 +251,7 @@ function* replace(
       yield* assertDestinationHardlinkPolicy(io, filePath, options.destinationHardlinks);
       yield* tempOwner.assertCurrent();
     }
-    if (allowDrvfsRenameRecovery) yield* tempOwner.prepareRecovery(options.content);
+    if (allowDrvfsRenameRecovery) yield* tempOwner.prepareRecovery(options.content, dir);
     const result = yield* renameWithRetry(io, tempOwner, filePath, options, mutation);
     if (result.method === "rename") {
       tempOwner.markRenamed();

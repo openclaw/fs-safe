@@ -126,9 +126,9 @@ export class AtomicTempOwner {
     return this.resource.fd;
   }
 
-  *prepareRecovery(content: string | Uint8Array): Procedure<void> {
+  *prepareRecovery(content: string | Uint8Array, directory = path.dirname(this.pathname)): Procedure<void> {
     if (!shouldPrepareDrvfsRecovery(true)) return;
-    this.recoveryParent = retainDrvfsParent(path.dirname(this.pathname));
+    this.recoveryParent = retainDrvfsParent(directory);
     if (!this.recoveryParent) return;
     const observed = this.resource!.statExact();
     this.recoveryIdentity = (this.io.asynchronous ? yield observed : observed) as BigIntStats;
