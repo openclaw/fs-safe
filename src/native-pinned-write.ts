@@ -11,6 +11,7 @@ import type { PinnedWriteParams } from "./pinned-write-types.js";
 import { cachedNoReplaceUnavailable } from "./native-noreplace.js";
 import { isFsSafeNativeRequired } from "./native-config.js";
 import type { describeStagedDirectory } from "./staged-directory.js";
+import { writeSidecarAtParent } from "./sidecar-lock-write.js";
 import { copyLinkAtParent } from "./copy-link.js";
 
 const writeCapabilities = ["openBeneath", "mkdirBeneath", "renameNoReplace", "renameReplace"] as const;
@@ -99,6 +100,9 @@ export async function runPinnedWriteNative(
           throw error;
         }
       }
+    }
+    if (params.input.kind === "buffer" && params.input.sidecar) {
+      return await writeSidecarAtParent(params, verificationGuard, { fd: parentFd, binding });
     }
     if (windows) {
       // The Windows leaf owns both directories after admission.

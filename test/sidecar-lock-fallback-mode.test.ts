@@ -40,7 +40,7 @@ describe("raw asynchronous sidecar fallback modes", () => {
 
       const lock = await manager.acquire({ targetPath, payload: () => ({ owner: scenario }) });
       try {
-        expect(open).toHaveBeenCalledWith(lockPath, "wx", 0o600);
+        expect(open).toHaveBeenCalledWith(expect.stringMatching(/\.fs-safe-lock-.*\.tmp$/), "wx", 0o600);
         expect((await fs.lstat(lockPath)).isFile()).toBe(true);
         await expect(lock.verifyStillHeld()).resolves.toBe(true);
       } finally {

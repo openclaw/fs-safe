@@ -1,10 +1,32 @@
 import path from "node:path";
+import { cleanupSidecarStages, sidecarPublicationPending } from "./sidecar-lock-staging.js";
+import { admitFileLockSyncRootPath, assertFileLockSyncRootMutationAllowed, assertFileLockSyncRootPathsCurrent, assertFileLockSyncRootResolvedPathCurrent, captureFileLockSyncRootAuthority } from "./file-lock-sync-root.js";
+import { assertRetainedParentCurrent, observeDirectory } from "./file-lock-sync-root-io.js";
 import { inspectDirectoryIdentity } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import type { OpenResult, Root } from "./root-impl.js";
 import { resolveRootPath } from "./root-path.js";
+
+export async function rootSidecarPublicationPending(lockRoot: Root, relative: string, cleanAbandoned = false): Promise<boolean> {
+  const resolved = await lockRoot.resolve(relative);
+  const parent = path.dirname(resolved);
+  const identity = await inspectDirectoryIdentity(parent);
+  if (cleanAbandoned) {
+    const admitted = admitFileLockSyncRootPath(captureFileLockSyncRootAuthority(lockRoot), resolved);
+    const receipt = observeDirectory(path.dirname(admitted.path));
+    cleanupSidecarStages(admitted.path, candidate => {
+      assertFileLockSyncRootPathsCurrent([admitted]);
+      assertFileLockSyncRootResolvedPathCurrent(admitted);
+      assertRetainedParentCurrent(admitted, receipt);
+      if (candidate) assertFileLockSyncRootMutationAllowed(candidate, admitted.authority.denyMutations);
+    });
+  }
+  const pending = sidecarPublicationPending(resolved);
+  await inspectDirectoryIdentity(parent, identity);
+  return pending && await lockRoot.resolve(relative) === resolved;
+}
 
 export async function openSidecarRoot(
   lockRoot: Root,
@@ -44,6 +66,8 @@ export async function openSidecarRoot(
     }
     return opened;
   } catch (error) {
+    if (discardObservation && error instanceof FsSafeError && error.code === "hardlink" &&
+      await rootSidecarPublicationPending(lockRoot, relative)) return null;
     const openFailed = observation.has(error, `open:${resolved}`);
     if (openFailed) onOpenFailure?.(error);
     const missing = openFailed && error instanceof FsSafeError && error.code === "not-found";

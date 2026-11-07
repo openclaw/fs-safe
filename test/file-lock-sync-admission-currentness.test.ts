@@ -171,7 +171,7 @@ describe("synchronous admission boundary currentness", () => {
     vi.spyOn(fs, "openSync").mockImplementation(((candidate, flags, mode) => {
       if (String(candidate) === lockPath) {
         lockOpens += 1;
-        if (stage === "removalObservation" && lockOpens === 3) mutate();
+        if (stage === "removalObservation" && lockOpens === 2) mutate();
       }
       return originalOpen(candidate, flags, mode);
     }) as typeof fs.openSync);
