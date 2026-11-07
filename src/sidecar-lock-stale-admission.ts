@@ -113,7 +113,7 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     throw error;
   }
   // An incomplete owner can still be writing; age is not liveness evidence.
-  if (!snapshot || snapshot.payload === null || isIncompleteSidecarLockRecord(snapshot.raw)) {
+  if (!snapshot || (!params.parserState.parser && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw)) {
     await params.waitForRetry();
     return;
   }

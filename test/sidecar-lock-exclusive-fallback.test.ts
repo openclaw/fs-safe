@@ -177,18 +177,24 @@ it.for(modes)("Root reclaim guards use the exclusive fallback (%s)", async (mode
   expect(await fsp.readdir(directory)).toEqual([]);
 });
 
-it.each(kinds)("%s retains caller-defined non-JSON legacy reclaim", async kind => {
+it.each(kinds.flatMap(kind => ["object", "null", "undefined"].map(result => ({ kind, result }))))(
+  "$kind retains caller-defined non-JSON legacy reclaim ($result)", async ({ kind, result }) => {
   configureFsSafeNative({ mode: "off" });
   const directory = await tempRoot("fs-safe-exclusive-legacy-");
   const target = path.join(directory, "state");
   fs.writeFileSync(`${target}.lock`, "pid=123\n");
   const opts = {
     ...await options(directory, kind), timeoutMs: Infinity, retry: { retries: 1, minTimeout: 0, maxTimeout: 0 },
-    parsePayload: (raw: string) => raw.startsWith("pid=") ? { pid: 123 } : JSON.parse(raw),
+    parsePayload: (raw: string) => raw.startsWith("pid=")
+      ? result === "null" ? null : result === "undefined" ? undefined : { pid: 123 }
+      : JSON.parse(raw),
     shouldReclaim: () => true,
   };
   const owner = kind.endsWith("async") ? await acquireFileLock(target, opts) : acquireFileLockSync(target, opts);
   try { expect(await owner.verifyStillHeld()).toBe(true); }
   finally { await owner.release(); }
   expect(opts.shouldRemoveStaleLock).toHaveBeenCalledOnce();
+  expect(opts.shouldRemoveStaleLock).toHaveBeenCalledWith(expect.objectContaining({
+    payload: result === "null" ? null : result === "undefined" ? undefined : { pid: 123 },
+  }));
 });

@@ -309,7 +309,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         }
         const snapshot = current.snapshot;
         // An incomplete owner can still be writing; never reclaim it by age.
-        if (snapshot.payload === null || isIncompleteSidecarLockRecord(snapshot.raw)) {
+        if ((!options.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw)) {
           acquisition.waitForRetry();
           continue;
         }
