@@ -160,7 +160,11 @@ for (const boundary of ["final-fence", "stage-unlink"] as const) {
       }
       return unlink(name);
     });
-    await expect(acquire(target, kind)).rejects.toBe(failure);
+    if (kind === "root-async" && process.platform !== "win32") {
+      await expect(acquire(target, kind)).rejects.toMatchObject({ name: "FsSafeError", code: "invalid-path", cause: failure });
+    } else {
+      await expect(acquire(target, kind)).rejects.toBe(failure);
+    }
     expect(injected).toBe(true);
     expect(await promises.readdir(directory)).toEqual([]);
   });
@@ -199,7 +203,11 @@ it.each(kinds)("%s preserves a replacement after a post-publication failure", as
     }
     return Reflect.apply(lstat, fs, args);
   });
-  await expect(acquire(target, kind)).rejects.toBe(failure);
+  if (kind === "root-async" && process.platform !== "win32") {
+    await expect(acquire(target, kind)).rejects.toMatchObject({ name: "FsSafeError", code: "invalid-path", cause: failure });
+  } else {
+    await expect(acquire(target, kind)).rejects.toBe(failure);
+  }
   expect(replaced).toBe(true);
   expect(await promises.readFile(final, "utf8")).toBe('{"owner":"successor"}');
   expect(await promises.readdir(directory)).toEqual(["state.lock"]);
