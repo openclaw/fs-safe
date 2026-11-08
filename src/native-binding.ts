@@ -330,6 +330,8 @@ export interface NativeBinding {
     dev: bigint, ino: bigint, kind: "file" | "directory" | "symlink",
   ): NativeWindowsEntryPublication;
   entryPublicationFilesystem?(parentFd: number): string;
+  /** Internal negative-only DrvFS preparation probe; never grants recovery. */
+  is9pFilesystem?(parentFd: number): boolean;
   publishRetainedEntryNoReplace?(
     sourceParentFd: number, sourceBasename: string, sourceFd: number,
     targetParentFd: number, targetBasename: string,

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **DrvFS opt-in writes:** skip recovery preparation on known non-9p filesystems, caching only negative observations so later writes add no filesystem calls while recovery keeps full mount and identity verification.
+
 ## 0.28.0 - 2026-11-07
 
 **Highlights:** Crash-safe lock publication and working writes on Docker Desktop Windows bind mounts through the new opt-in `allowDrvfsRenameRecovery`. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076), [#1074](https://github.com/openclaw/fs-safe/pull/1074))

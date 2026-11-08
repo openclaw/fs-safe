@@ -33,6 +33,21 @@ fn filesystem(fd: i32) -> NativeResult<String> {
     Ok(name.to_owned())
 }
 
+// The caller already owns an admitted parent; this only rules out 9p.
+#[napi(js_name = "is9pFilesystem")]
+pub fn is_9p_filesystem(env: Env, parent_fd: i32) -> Result<bool> {
+    let result = (|| {
+        unix::nonnegative_fd(parent_fd, "inspect publication filesystem")?;
+        let _info = rustix::fs::fstatfs(unix::borrowed(parent_fd))
+            .map_err(|e| unix::os_error(e, "inspect publication filesystem"))?;
+        #[cfg(target_os = "linux")]
+        return Ok(_info.f_type as u64 == 0x0102_1997);
+        #[cfg(target_os = "macos")]
+        return Ok(false);
+    })();
+    into_napi(env, result)
+}
+
 #[napi(js_name = "entryPublicationFilesystem")]
 pub fn entry_publication_filesystem(env: Env, fd: i32) -> Result<String> {
     into_napi(env, filesystem(fd))

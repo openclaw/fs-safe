@@ -6,10 +6,33 @@ import { FsSafeError } from "./errors.js";
 import { hasErrorCode } from "./file-cleanup.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { sleep, sleepSync } from "./timing.js";
+import { getNativeBinding } from "./native.js";
+
+const non9pDevices = new Set<bigint>();
 
 /** Other platforms keep their existing path even when the option is enabled. */
-export function shouldPrepareDrvfsRecovery(enabled: boolean | undefined): boolean {
-  return enabled === true && (process.platform === "linux" || getFsSafeTestHooks()?.drvfsMountObservation !== undefined);
+export function shouldPrepareDrvfsRecovery(enabled: boolean | undefined, dev?: bigint): boolean {
+  if (enabled !== true) return false;
+  // Synthetic mount evidence must not inherit observations from the real host.
+  if (getFsSafeTestHooks()?.drvfsMountObservation) return true;
+  if (process.platform !== "linux") return false;
+  if (dev === undefined) return true;
+  // Linux 9p allocates anonymous devices (major zero), never block devices.
+  if (((dev >> 8n) & 0xfffn) !== 0n || ((dev >> 32n) & 0xfffff000n) !== 0n) return false;
+  return !non9pDevices.has(dev);
+}
+
+/** Negative evidence only: a stale/reused device number can only disable recovery. */
+export function mayPrepareDrvfsRecoveryAtFd(parentFd: number, dev: bigint): boolean {
+  if (!shouldPrepareDrvfsRecovery(true, dev)) return false;
+  if (getFsSafeTestHooks()?.drvfsMountObservation) return true;
+  try {
+    if (getNativeBinding()?.is9pFilesystem?.(parentFd) === false) {
+      non9pDevices.add(dev);
+      return false;
+    }
+  } catch { /* Unavailable evidence preserves full recovery-time verification. */ }
+  return true;
 }
 
 /** No sampling or positive cache: the retained directory's exact mount owns admission. */

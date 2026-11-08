@@ -102,8 +102,16 @@ concurrent namespace mutation.
 
 `allowDrvfsRenameRecovery: true` permits recovery only after a successful rename
 is followed by `ENOENT`. It is off by default. Omitting it preserves strict
-behavior and adds no filesystem calls. Enabling it retains the parent directory
-for that operation; healthy publications still use their ordinary verification.
+behavior and adds no filesystem calls. On Linux, enabling it first rules out
+non-9p filesystems using the existing device identity or one native `fstatfs`
+on an already-open parent descriptor. Only negative results are cached by
+exact device number; device reuse can therefore only retain strict behavior,
+never enable recovery. After a negative observation, subsequent writes on that
+filesystem add no filesystem calls. Writers without an existing parent descriptor
+reuse their ordinary recovery-parent acquisition for the first observation.
+Unavailable native probes keep the existing preparation path (except known
+block-device filesystems, which cannot be 9p). Healthy publications still use
+their ordinary verification.
 
 The retained parent's backing filesystem must have statfs magic `0x01021997`
 (9p). Its `/proc/self/fdinfo/<fd>` mount ID must select exactly one entry in

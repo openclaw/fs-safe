@@ -4,6 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-node.js";
 import type { AtomicMutation } from "./replace-file-mutation.js";
+import { mayPrepareDrvfsRecoveryAtFd } from "./publication-recovery.js";
 import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open">;
@@ -52,6 +53,7 @@ async function pinDirectoryForMode(params: {
   ignoreChmodError?: boolean;
   mutation?: AtomicMutation;
   expectedIdentity?: BigIntStats;
+  allowDrvfsRenameRecovery?: boolean;
 }): Promise<DirectoryModeOwner | undefined> {
   // Node does not enforce POSIX directory modes on Windows, and its directory
   // descriptors are not consistently openable. mkdir(mode) remains the only
@@ -80,6 +82,7 @@ async function pinDirectoryForMode(params: {
       ignoreChmodError: params.ignoreChmodError,
     });
     await owner.verify();
+    if (params.allowDrvfsRenameRecovery) mayPrepareDrvfsRecoveryAtFd(handle.fd, expected.dev);
     return owner;
   } catch (error) {
     try { await handle.close(); }
@@ -92,6 +95,7 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
   dirPath: string;
   mode: number | "preserve";
   expectedIdentity?: BigIntStats;
+  allowDrvfsRenameRecovery?: boolean;
   ignoreChmodError?: boolean;
   mutation?: AtomicMutation;
 }): Procedure<void> {
@@ -120,6 +124,7 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
   let primary: { error: unknown } | undefined;
   try {
     inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
+    if (params.allowDrvfsRenameRecovery) mayPrepareDrvfsRecoveryAtFd(file.fd, expected.dev);
     if (params.mode !== "preserve") {
       params.mutation?.assert();
       file.chmod(params.mode & 0o7777);
