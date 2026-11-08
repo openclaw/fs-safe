@@ -25,7 +25,7 @@ import { isFsSafeNativeRequired } from "./native-config.js";
 import { restoreCopyMetadata } from "./copy-metadata.js";
 import { annotateReadOnlyOpenError } from "./file-open-error.js";
 import { hasErrorCode } from "./file-cleanup.js";
-import { reopenRecoveredNativeFile, assertRecoveredPublication, recoverAfterHiddenRenameSync, shouldPrepareDrvfsRecovery } from "./publication-recovery.js";
+import { reopenRecoveredNativeFile, assertRecoveredPublication, recoverAfterHiddenRenameSync, shouldPrepareDrvfsRecovery, mayPrepareDrvfsRecoveryAtFd } from "./publication-recovery.js";
 
 export { assertNativeStaging, type NativeStagingBinding } from "./native-staged-file-metadata.js";
 
@@ -45,6 +45,7 @@ class NativeStagedFile implements StagedFile {
   #recoveryIdentity?: BigIntStats;
   #recoveryContent?: Buffer;
   #recovered = false;
+  readonly #prepareRecovery: boolean;
   #publicationTask?: Promise<PublishedFileReceipt>;
   #rejectFinalSymlink = false;
   #unsupportedNoReplace?: FsSafeError;
@@ -59,6 +60,8 @@ class NativeStagedFile implements StagedFile {
     this.#assertBeforeMutation = owner.assertBeforeMutation;
     this.#private = owner.permissionPolicy === "private-creation";
     this.#verifyMode = owner.permissionPolicy !== undefined;
+    this.#prepareRecovery = shouldPrepareDrvfsRecovery(owner.allowDrvfsRenameRecovery, owner.directory.identity.dev) &&
+      mayPrepareDrvfsRecoveryAtFd(owner.parentFd, owner.directory.identity.dev);
   }
 
   // The supplied closer owns parentFd even on construction or preparation failure.
@@ -78,7 +81,7 @@ class NativeStagedFile implements StagedFile {
       }
       throw error;
     }
-    if (shouldPrepareDrvfsRecovery(owner.allowDrvfsRenameRecovery) && input.kind === "buffer") {
+    if (staged.#prepareRecovery && input.kind === "buffer") {
       staged.#recoveryContent = typeof input.data === "string" ? Buffer.from(input.data, input.encoding) : Buffer.from(input.data);
     }
     await staged.#prepare(input, maxBytes);
@@ -307,7 +310,7 @@ class NativeStagedFile implements StagedFile {
         this.#assertCurrent();
         assertFinalSymlinkRejected(path.join(this.#owner.directory.realPath, basename), this.#rejectFinalSymlink);
       }
-      if (shouldPrepareDrvfsRecovery(this.#owner.allowDrvfsRenameRecovery)) {
+      if (this.#prepareRecovery) {
         // Apply restrictive modes before exposing the name or releasing its last fd.
         if ((this.#owner.mode & 0o600) !== 0o600) fs.fchmodSync(this.#file(), this.#owner.mode);
         this.#recoveryIdentity = fs.fstatSync(this.#file(), { bigint: true });

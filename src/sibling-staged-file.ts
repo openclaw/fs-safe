@@ -325,7 +325,7 @@ export async function writeCallbackSibling<T>(params: {
         assertCurrent(tempPath);
       }
       if (shouldPrepareDrvfsRecovery(allowDrvfsRenameRecovery)) {
-        recoveryParent = retainDrvfsParent(parent);
+        recoveryParent = retainDrvfsParent(parent, guard.stat.dev);
         if (recoveryParent) {
           recoveryIdentity = fsSync.fstatSync(handle!.fd, { bigint: true });
           recoveryHash = sha256FileSync(handle!.fd, { maxBytes }).digest;

@@ -12,6 +12,7 @@ export function* prepareDirectoryMode(io: AtomicIo, params: {
   mode: number | "preserve";
   mutation?: AtomicMutation;
   ignoreChmodError?: boolean;
+  allowDrvfsRenameRecovery?: boolean;
 }): Procedure<void> {
   if (params.mode !== "preserve") {
     params.mutation?.assert();
@@ -38,7 +39,7 @@ export function* prepareDirectoryMode(io: AtomicIo, params: {
     }
     const parent = path.dirname(params.dirPath);
     if (parent === params.dirPath) throw error;
-    yield* prepareDirectoryMode(io, { ...params, dirPath: parent });
+    yield* prepareDirectoryMode(io, { ...params, dirPath: parent, allowDrvfsRenameRecovery: false });
     params.mutation?.assert();
     try {
       yield* io.mkdirExclusive(params.dirPath, 0o700);

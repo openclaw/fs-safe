@@ -129,7 +129,7 @@ export async function runPinnedStagedWrite(
       ((params.mode & 0o400) !== 0 ||
         (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")));
     if (shouldPrepareDrvfsRecovery(params.allowDrvfsRenameRecovery)) {
-      recoveryParent = retainDrvfsParent(parentPath);
+      recoveryParent = retainDrvfsParent(parentPath, parentGuard.stat.dev);
       if (recoveryParent) recoveryIdentity = fsSync.fstatSync(handle.fd, { bigint: true });
       if (recoveryParent && params.input.kind === "buffer") recoveryContent = typeof params.input.data === "string"
         ? Buffer.from(params.input.data, params.input.encoding) : Buffer.from(params.input.data);

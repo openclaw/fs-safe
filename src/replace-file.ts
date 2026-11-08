@@ -230,7 +230,7 @@ function* replace(
   const tempOwner = new AtomicTempOwner(tempPath, io);
   let originalFailure: AtomicTempFailure | undefined;
   try {
-    yield* prepareDirectoryMode(io, { dirPath: dir, mode: dirMode, mutation });
+    yield* prepareDirectoryMode(io, { dirPath: dir, mode: dirMode, mutation, allowDrvfsRenameRecovery });
     tempOwner.start();
     tempOwner.adopt(yield* writeTempFile(io, {
       tempPath,
@@ -251,7 +251,7 @@ function* replace(
       yield* assertDestinationHardlinkPolicy(io, filePath, options.destinationHardlinks);
       yield* tempOwner.assertCurrent();
     }
-    if (allowDrvfsRenameRecovery) yield* tempOwner.prepareRecovery(options.content, dir);
+    if (allowDrvfsRenameRecovery) yield* tempOwner.prepareRecovery(options.content, dir, true);
     const result = yield* renameWithRetry(io, tempOwner, filePath, options, mutation);
     if (result.method === "rename") {
       tempOwner.markRenamed();
