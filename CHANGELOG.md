@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal.
+
 - **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity.
 
 ## 0.28.0 - 2026-11-07
