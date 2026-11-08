@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity.
+
 ## 0.28.0 - 2026-11-07
 
 **Highlights:** Crash-safe lock publication and working writes on Docker Desktop Windows bind mounts through the new opt-in `allowDrvfsRenameRecovery`. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076), [#1074](https://github.com/openclaw/fs-safe/pull/1074))
