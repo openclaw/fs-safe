@@ -29,7 +29,11 @@ it.runIf(process.platform !== "win32").each(kinds.flatMap(kind => ["EACCES", "EI
     });
     const acquire = async () => kind.endsWith("async") ? await acquireFileLock(target, options) : acquireFileLockSync(target, options);
     if (code === "EIO") {
-      await expect(acquire()).rejects.toBe(failure);
+      if (kind === "root-async") {
+        await expect(acquire()).rejects.toMatchObject({ name: "FsSafeError", code: "invalid-path", cause: failure });
+      } else {
+        await expect(acquire()).rejects.toBe(failure);
+      }
       expect(fs.existsSync(final)).toBe(false);
     } else {
       const owner = await acquire();
