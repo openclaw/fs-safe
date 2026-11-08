@@ -253,6 +253,7 @@ describe("synchronous file-lock failure handling", () => {
     };
     const realpath = vi.spyOn(canonicalPath.realpathSync, "native");
     const first = acquireFileLockSync(path.join(directory, "state.json"), options);
+    expect(realpath).toHaveBeenCalledTimes(5);
     const firstAcquireRealpaths = realpath.mock.calls.length;
     let second: ReturnType<typeof acquireFileLockSync> | undefined;
     try {

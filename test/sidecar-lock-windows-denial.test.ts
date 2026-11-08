@@ -1,25 +1,19 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTempDirs } from "./helpers/vitest.js";
 import { acquireFileLock } from "../src/file-lock.js";
 import { configureFsSafeNative } from "../src/native-config.js";
 
 const { tempRoot } = useTempDirs();
-const isStage = (name: unknown) => typeof name === "string" && path.basename(name).startsWith(".fs-safe-lock-");
-const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  Object.defineProperty(process, "platform", platform);
   configureFsSafeNative({ mode: "auto" });
 });
 
-describe("Windows sidecar lock denials (synthetic classification; real files)", () => {
-  beforeEach(() => {
-    configureFsSafeNative({ mode: "off" });
-    Object.defineProperty(process, "platform", { value: "win32" });
-  });
+describe.runIf(process.platform === "win32")("Windows sidecar lock denials", () => {
   // Windows denies access to a lock file while a just-unlinked directory entry is
   // still being torn down. Both touch points below observed it in CI as EPERM.
   const denial = (lockPath: string) =>
@@ -41,7 +35,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
 
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && args[1] === "wx") throw denial(String(args[0]));
+      if (args[0] === lockPath && args[1] === "wx") throw denial(lockPath);
       return await realOpen(...args);
     }) as typeof fsp.open);
 
@@ -53,7 +47,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
         retry: { retries: 0 },
         payload: async () => ({ pid: process.pid }),
       }),
-    ).rejects.toMatchObject({ code: "EPERM", path: expect.stringContaining(".fs-safe-lock-") });
+    ).rejects.toMatchObject({ code: "EPERM", path: lockPath });
   });
 
   it("propagates an EPERM that names the lock parent", async () => {
@@ -66,7 +60,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     let payloadCalls = 0;
 
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && args[1] === "wx") throw denial(base);
+      if (args[0] === `${targetPath}.lock` && args[1] === "wx") throw denial(base);
       return await realOpen(...args);
     }) as typeof fsp.open);
 
@@ -117,9 +111,9 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
     let injected = 0;
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && args[1] === "wx" && injected === 0) {
+      if (args[0] === lockPath && args[1] === "wx" && injected === 0) {
         injected += 1;
-        throw denial(String(args[0]));
+        throw denial(lockPath);
       }
       return await realOpen(...args);
     }) as typeof fsp.open);
@@ -146,9 +140,9 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     let deniedCreates = 0;
     let payloadCalls = 0;
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && args[1] === "wx") {
+      if (args[0] === lockPath && args[1] === "wx") {
         deniedCreates += 1;
-        throw denial(String(args[0]));
+        throw denial(lockPath);
       }
       return await realOpen(...args);
     }) as typeof fsp.open);
@@ -164,7 +158,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
           return { pid: process.pid };
         },
       }),
-    ).rejects.toMatchObject({ code: "EPERM", path: expect.stringContaining(".fs-safe-lock-") });
+    ).rejects.toMatchObject({ code: "EPERM", path: lockPath });
     expect(deniedCreates).toBe(9);
     expect(payloadCalls).toBe(9);
   });
@@ -185,7 +179,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
         injected += 1;
         // The holder's unlink lands while the reader is being denied.
         await fsp.rm(lockPath, { force: true });
-        throw denial(String(args[0]));
+        throw denial(lockPath);
       }
       return await realOpen(...args);
     }) as typeof fsp.open);

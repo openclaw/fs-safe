@@ -84,7 +84,7 @@ describe("batch queue transition failures", () => {
     const failure = Object.assign(new Error("lock denied"), { code: "EACCES" });
     const realOpen = fs.open.bind(fs);
     vi.spyOn(fs, "open").mockImplementation(async (...args) => {
-      if (path.basename(args[0].toString()).startsWith(".fs-safe-lock-")) throw failure;
+      if (path.basename(args[0].toString()).startsWith(".fs-safe-transfer-")) throw failure;
       return await realOpen(...args);
     });
 

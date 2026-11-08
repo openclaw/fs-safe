@@ -70,7 +70,8 @@ describe("asynchronous same-manager sidecar retry compatibility", () => {
         await holderRelease;
         expect(payload).toHaveBeenCalledTimes(calls);
         expect(waitDelays).toEqual(Array(expectedWaits).fill(0));
-        const candidateOpens = open.mock.calls.filter(([, flags]) => flags === "wx");
+        const candidateOpens = open.mock.calls.filter(([candidateFile]) =>
+          String(candidateFile) === candidatePath);
         expect(candidateOpens).toHaveLength(succeeds ? 1 : 0);
         if (candidate) expect(await candidate.verifyStillHeld()).toBe(true);
         else {

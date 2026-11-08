@@ -48,7 +48,6 @@ for (const synchronous of [false, true]) {
     const realFstat = fs.fstatSync.bind(fs);
     const realLstat = fs.lstatSync.bind(fs);
     let creatorClosed = false;
-    let createdPath = "";
     const statOptions: unknown[] = [];
     vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
       statOptions.push(options);
@@ -56,25 +55,19 @@ for (const synchronous of [false, true]) {
     }) as typeof fs.fstatSync);
     vi.spyOn(fs, "lstatSync").mockImplementation(((candidate, options) => {
       const stat = realLstat(candidate, options);
-      if ((String(candidate) !== lockPath && String(candidate) !== createdPath) || !stat) return stat;
+      if (String(candidate) !== lockPath || !stat) return stat;
       statOptions.push(options);
       return project(stat, component, replacementId);
     }) as typeof fs.lstatSync);
     const swap = () => {
       if (creatorClosed) return;
       creatorClosed = true;
-      fs.renameSync(createdPath, displacedPath);
+      fs.renameSync(lockPath, displacedPath);
       fs.renameSync(replacementPath, lockPath);
     };
     const closed: number[] = [];
     const options = { payload: () => ({ owner: "creator" }), retry, timeoutMs: 0 };
     if (synchronous) {
-      const realOpen = fs.openSync.bind(fs);
-      vi.spyOn(fs, "openSync").mockImplementation((pathname, flags, mode) => {
-        const fd = realOpen(pathname, flags, mode);
-        if (String(pathname).includes(".fs-safe-lock-")) createdPath = String(pathname);
-        return fd;
-      });
       vi.spyOn(fs, "writeFileSync").mockImplementationOnce(() => { throw failure; });
       const realClose = fs.closeSync.bind(fs);
       vi.spyOn(fs, "closeSync").mockImplementation(fd => { realClose(fd); closed.push(fd); swap(); });
@@ -83,7 +76,6 @@ for (const synchronous of [false, true]) {
       const realOpen = fsp.open.bind(fsp);
       vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
         const handle = await realOpen(...args);
-        if (String(args[0]).includes(".fs-safe-lock-")) createdPath = String(args[0]);
         if (!creatorClosed) vi.spyOn(handle, "writeFile").mockRejectedValueOnce(failure);
         const realClose = handle.close.bind(handle);
         vi.spyOn(handle, "close").mockImplementation(async () => {
@@ -100,10 +92,10 @@ for (const synchronous of [false, true]) {
     }
     expect(fs.readFileSync(lockPath, "utf8")).toBe("successor");
     expect(fs.readFileSync(displacedPath, "utf8")).toBe("");
-    expect(closed).toHaveLength(1);
+    expect(closed).toHaveLength(2);
     for (const fd of closed) expect(() => realFstat(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
-    expect(statOptions.length).toBeGreaterThanOrEqual(1);
-    expect(statOptions.filter(options => (options as { bigint?: boolean } | undefined)?.bigint === true).length).toBeGreaterThanOrEqual(1);
+    expect(statOptions.length).toBeGreaterThanOrEqual(4);
+    expect(statOptions.filter(options => (options as { bigint?: boolean } | undefined)?.bigint === true).length).toBeGreaterThanOrEqual(4);
   });
 }
 
@@ -119,7 +111,7 @@ it.each(["dev", "ino"] as const)("reclaims an unchanged Root sidecar with a larg
   const fstat = fs.fstatSync.bind(fs), lstat = fs.lstatSync.bind(fs);
   vi.spyOn(fs, "openSync").mockImplementation(((candidate, flags, mode) => {
     const fd = open(candidate, flags, mode);
-    if (String(candidate) === lockPath || String(candidate).includes(".fs-safe-lock-")) descriptors.add(fd);
+    if (String(candidate) === lockPath) descriptors.add(fd);
     return fd;
   }) as typeof fs.openSync);
   vi.spyOn(fs, "closeSync").mockImplementation(fd => { descriptors.delete(fd); close(fd); });
@@ -129,7 +121,7 @@ it.each(["dev", "ino"] as const)("reclaims an unchanged Root sidecar with a larg
   }) as typeof fs.fstatSync);
   vi.spyOn(fs, "lstatSync").mockImplementation(((candidate, options) => {
     const stat = lstat(candidate, options);
-    return (String(candidate) === lockPath || String(candidate).includes(".fs-safe-lock-")) && stat ? project(stat, component, originalId) : stat;
+    return String(candidate) === lockPath && stat ? project(stat, component, originalId) : stat;
   }) as typeof fs.lstatSync);
   let approved = 0;
   const handle = acquireFileLockSync(targetPath, {

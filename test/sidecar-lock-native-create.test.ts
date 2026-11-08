@@ -83,7 +83,7 @@ describe.skipIf(!native || process.platform === "win32")("native Root lock exclu
     expect(await fs.readdir(directory)).toEqual([path.basename(winnerPath)]);
   });
 
-  it("removes only its incomplete private stage after a write failure", async () => {
+  it("removes only its incomplete direct claim after a write failure", async () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-lock-write-failure-");
     const lockRoot = await root(directory);
