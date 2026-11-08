@@ -1208,7 +1208,11 @@ async function commitPinnedWriteInRoot(
       },
     });
   } catch (error) {
-    if (error instanceof SidecarFallbackWriteError) throw error.failure;
+    if (error instanceof SidecarFallbackWriteError) {
+      // Windows keeps its historical direct-write error identity.
+      if (process.platform === "win32") throw error.failure;
+      error = error.failure;
+    }
     if (verifyingPublication) throw error;
     const errorCode = (error as { code?: unknown })?.code;
     if (errorCode === "file_lock_stale" || errorCode === "file_lock_timeout") {
