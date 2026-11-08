@@ -35,19 +35,14 @@ describe("synchronous file-lock release retries", () => {
       let closedFd: number | undefined;
       let unrelatedFd: number | undefined;
       let unrelatedOpen = false;
-      const spareFds: number[] = [];
       const close = vi.spyOn(fs, "closeSync").mockImplementation((fd) => {
         realClose(fd);
         // Track accidental closes so fixture cleanup cannot mask the failure.
         if (fd === unrelatedFd) unrelatedOpen = false;
         if (closedFd === undefined) {
           closedFd = fd;
-          for (let attempt = 0; attempt < 16; attempt++) {
-            const opened = fs.openSync(unrelatedPath, "r");
-            if (opened === closedFd) { unrelatedFd = opened; break; }
-            spareFds.push(opened);
-          }
-          unrelatedOpen = unrelatedFd !== undefined;
+          unrelatedFd = fs.openSync(unrelatedPath, "r");
+          unrelatedOpen = true;
           throw failure;
         }
       });
@@ -85,7 +80,6 @@ describe("synchronous file-lock release retries", () => {
         } finally {
           close.mockRestore();
           if (unrelatedOpen && unrelatedFd !== undefined) realClose(unrelatedFd);
-          for (const fd of spareFds) realClose(fd);
         }
       }
     },

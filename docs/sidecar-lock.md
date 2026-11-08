@@ -2,17 +2,7 @@
 
 For [Linux kernel write leases](platform-capabilities.md#linux-write-leases), `FileWriteLease.isHeld() === false` means “do not act on the file,” including while the kernel is still processing a lease break. The caller’s `SIGIO` handler still owns break notification.
 
-`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is a sidecar file (e.g. `state.json` ↔ `state.json.lock`). Each contender writes and syncs the complete owner record, including its ownership token, to a private same-directory staging file before claiming the final name with native no-replace rename or a hardlink. Exactly one contender can publish; neither operation replaces an existing lock. This applies to raw and Root-backed acquisition, both async and sync.
-
-With either publication primitive, a crash before publication leaves no final lock; a crash after publication leaves a complete owner record. The containing directory is synced where supported. These are process-crash guarantees, not a promise against every filesystem or storage device's power-loss behavior. Hardlink publication briefly has two names for the same complete file. Root-backed contenders recognize a matching staging inode and retry without reading or reclaiming that linked record; ordinary Root readers retain their hardlink policy. The staging link is removed before acquisition succeeds.
-
-Directory persistence remains best-effort when directory read access or directory fsync is unavailable; this does not prevent otherwise permitted lock acquisition. Other I/O errors and revoked mutation authority still fail acquisition. After a crash leaves both hardlinks, guarded staging cleanup can remove the abandoned link before the existing stale-owner policy inspects the complete final record.
-
-When native no-replace rename is unavailable and the filesystem refuses hardlinks with a recognized unsupported-operation error, acquisition falls back to exclusive creation (`O_EXCL`) of the final lock and writes and syncs the owner record through that descriptor. This preserves mutual exclusion on mounts such as FUSE, exFAT, SMB, and Android/Termux without hardlink support. A hardlink permission refusal also has to pass this exclusive open; actual directory permission errors, identity failures, and Root policy failures still propagate. Existing locks are never replaced.
-
-This compatibility fallback has a small crash window: contenders can see an empty or partial owner record while it is being written, and a crash can leave that record behind. Unwritten bytes remain NUL-padded until the complete record is written, so even a finished JSON prefix with an unfinished ownership token remains unparseable. Empty records and records containing unwritten NUL padding remain contention and are never reclaimed by age, including through stale-recovery admission and custom parsers. Custom parsers are skipped for empty or NUL-padded records and otherwise retain their legacy-format and exception behavior; without a custom parser, malformed JSON also remains contention. Existing empty or incomplete locks remain untouched and require application-owned offline recovery after proving every possible writer has stopped (for example, Doctor can name the lock needing recovery).
-
-Staging files use a reserved `.fs-safe-lock-<namespace>-<pid>-<random>.tmp` name. Before staging, an acquisition examines at most 64 directory entries for abandoned stages in its own target/hostname namespace. If the final record has a second link, publication recognition can scan farther and select at most one exact matching stage for the same guarded cleanup. It removes only identity-verified regular files whose local PID is confirmed absent; live or reused PIDs, other targets, unknown ownership, and ambiguous identities are preserved. Root mutation policies are checked against each candidate staging path before removal. A crash during hardlink publication can leave a second staging link; cleanup removes that link only, never the final lock. This bounded, best-effort cleanup may leave unrelated artifacts outside the opportunistic scan or artifacts on filesystems with inconclusive identity. Applications may remove remaining staging artifacts during explicit offline recovery after stopping every owner, including other hosts sharing the directory. No age-based lock or staging reclamation is used.
+`acquireFileLock()` and `withFileLock()` provide a cross-process file lock with retry and process-exit cleanup. The lock is implemented as a sidecar file (e.g. `state.json` ↔ `state.json.lock`) — only one acquirer can create the sidecar with `O_CREAT | O_EXCL` at a time.
 
 On Windows, both the target and an explicitly supplied `lockPath` reject NTFS
 alternate-stream and directory-index namespace spellings before parent creation,
@@ -21,7 +11,12 @@ normal meaning, and ordinary colon-bearing POSIX paths remain valid.
 
 JavaScript raw-sidecar creation passes mode `0o600` to that exclusive open. On POSIX, the process umask may further restrict the new file but cannot add group or other access. No pathname `chmod` fallback is used.
 
-Root-backed lock records and reclaim guards retain their admitted parent and native cleanup receipt through publication. Their internal create path uses the same complete-record publication and the same exclusive-create compatibility fallback, while preserving Root mutation policy and exact identity checks. Ordinary Root creates retain their existing publication contract.
+Root-backed lock records and reclaim guards also claim their final name
+exclusively, including with the native backend. The native path retains the
+admitted parent descriptor and removes incomplete claims only while their exact
+identity remains owned. Ordinary Root creates still stage privately; lock records
+use this internal exclusive-create path so racing contenders can retry without
+an ambiguous rename outcome.
 
 ```ts
 import { acquireFileLock } from "@openclaw/fs-safe/file-lock";

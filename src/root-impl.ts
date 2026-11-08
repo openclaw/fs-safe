@@ -1,4 +1,3 @@
-import { SidecarFallbackWriteError } from "./sidecar-lock-write.js";
 import { exactFileIdentity, numberStats, type ExactFileIdentity } from "./exact-identity.js";
 import type { BigIntStats, Stats } from "node:fs";
 import { registerRootHandleContext } from "./root-handle-context.js";
@@ -1128,12 +1127,9 @@ async function writeFileInRoot(
     params = { ...params, private: permissions.private, mode: permissions.mode };
   }
   const input = rootWriteInput(params);
-  if (input.kind === "buffer" && input.sidecar) {
-    params = { ...params, ...snapshotPinnedMutationPolicy(params.denyMutations, params.mutationSymlinks) };
-  }
   await serializePathWrite(rootWriteQueueKey(root, params.relativePath), async () => {
     if (
-      !params.private && input.kind === "buffer" && !input.sidecar && !input.stageBeforePublish && process.platform === "win32" &&
+      !params.private && input.kind === "buffer" && !input.stageBeforePublish && process.platform === "win32" &&
       (params.renameIdentity === "verify-content-with-lock" || !getPinnedWriteNativeBinding({ input }))
     ) {
       await writeFileFallback(root, { ...params, data: input.data });
@@ -1191,8 +1187,6 @@ async function commitPinnedWriteInRoot(
       rootIdentity: root.rootIdentity,
       mutationAdmission: pinned.mutationAdmission,
       assertBeforeMutation: params.assertBeforeMutation,
-      assertSidecarCleanupCandidate: input.kind === "buffer" && input.sidecar
-        ? candidate => assertMutationNotDenied(candidate, params.denyMutations) : undefined,
       verifyPublished: async (fd, expectedIdentity, parentGuard, nativeParent) => {
         verifyingPublication = true;
         try {
@@ -1208,7 +1202,6 @@ async function commitPinnedWriteInRoot(
       },
     });
   } catch (error) {
-    if (error instanceof SidecarFallbackWriteError) throw error.failure;
     if (verifyingPublication) throw error;
     const errorCode = (error as { code?: unknown })?.code;
     if (errorCode === "file_lock_stale" || errorCode === "file_lock_timeout") {

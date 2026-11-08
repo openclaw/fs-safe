@@ -1,6 +1,5 @@
 import fs, { type BigIntStats } from "node:fs";
-import { createSidecarFileSync } from "./sidecar-lock-publication.js";
-import { sidecarPublicationPending } from "./sidecar-lock-staging.js";
+import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
 import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
@@ -100,10 +99,9 @@ function ensureParent(pathAuthority: FileLockSyncRootPath) {
 
 export function createFileLockSyncRootFile(
   pathAuthority: FileLockSyncRootPath,
-  raw: string,
   options: {
     assertBeforeOpen: () => void;
-    onOpenFailure: (error: unknown, pathname?: string) => void;
+    onOpenFailure: (error: unknown) => void;
   },
 ): { fd: number; receipt: FileLockSyncRootFileReceipt } {
   const parent = ensureParent(pathAuthority);
@@ -117,29 +115,25 @@ export function createFileLockSyncRootFile(
   let fd: number | undefined;
   let receipt: FileLockSyncRootFileReceipt | undefined;
   try {
-    const assertCurrent = () => {
-      assertFileLockSyncRootResolvedPathCurrent(pathAuthority);
-      assertRetainedParentCurrent(pathAuthority, parent);
-      options.assertBeforeOpen();
-    };
-    assertCurrent();
-    const created = createSidecarFileSync(pathForWindowsFilesystem(pathAuthority.path), raw, pathname => {
-      assertCurrent();
-      try {
-        return fs.openSync(pathname,
-          fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow, 0o600);
-      } catch (error) {
-        options.onOpenFailure(error, pathname);
-        throw error;
-      }
-    }, {
-      assertCurrent, onConflict: options.onOpenFailure, requireExactIdentity: true,
-      assertCleanupCandidate: candidate => assertFileLockSyncRootMutationAllowed(candidate, pathAuthority.authority.denyMutations),
-    });
-    fd = created.fd;
-    const opened = created.identity;
-    receipt = Object.freeze({ identity: exactFileIdentity(opened), parent });
+    options.assertBeforeOpen();
+    try { assertExclusiveCreateLeaf(pathForWindowsFilesystem(pathAuthority.path)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") options.onOpenFailure(error);
+      throw error;
+    }
+    try {
+      fd = fs.openSync(
+        pathForWindowsFilesystem(pathAuthority.path),
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+        0o600,
+      );
+    } catch (error) {
+      options.onOpenFailure(error);
+      throw error;
+    }
+    const opened = inspectFileIdentitySync(() => fs.fstatSync(fd!, { bigint: true }));
     assertRegularFile(opened, pathAuthority.authority.hardlinks);
+    receipt = Object.freeze({ identity: exactFileIdentity(opened), parent });
     if (!fileReceiptCurrentAfterParentCheck(pathAuthority, receipt)) {
       throw new FsSafeError("path-mismatch", "created sidecar lock changed before admission");
     }
@@ -202,9 +196,9 @@ export function removeFileLockSyncRootFile(
     if (isNotFoundPathError(error)) return true;
     throw error;
   }
+  assertRegularFile(successorStat, pathAuthority.authority.hardlinks);
   assertRetainedParentCurrent(pathAuthority, receipt.parent);
   if (!sameExactIdentity(exactFileIdentity(successorStat), receipt.identity)) return true;
-  assertRegularFile(successorStat, pathAuthority.authority.hardlinks);
   if (expected) {
     const successor = readFileLockSyncRootSnapshot(pathAuthority);
     assertRetainedParentCurrent(pathAuthority, receipt.parent);
@@ -227,9 +221,9 @@ export function removeFileLockSyncRootFile(
         }
         throw error;
       }
+      assertRegularFile(current, pathAuthority.authority.hardlinks);
       assertRetainedParentCurrent(pathAuthority, receipt.parent);
       if (!sameExactIdentity(exactFileIdentity(current), receipt.identity)) return true;
-      assertRegularFile(current, pathAuthority.authority.hardlinks);
     }
   }
   throw new FsSafeError("path-mismatch", "sidecar lock was replaced during removal");
@@ -255,19 +249,14 @@ export function fileLockSyncRootGuardExists(
   if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
     throw directoryComponentNotDirectoryError();
   }
-  const assertGuardFile = (current: BigIntStats) => {
-    if (current.nlink !== 2n || !sidecarPublicationPending(pathAuthority.path)) {
-      assertRegularFile(current, pathAuthority.authority.hardlinks);
-    }
-  };
-  if (stat.isFile()) assertGuardFile(stat);
+  if (stat.isFile()) assertRegularFile(stat, pathAuthority.authority.hardlinks);
   const parent = observeDirectory(path.dirname(pathAuthority.path));
   if (stat.isFile()) {
     const current = inspectFileIdentitySync(
       () => fs.lstatSync(pathForWindowsFilesystem(pathAuthority.path), { bigint: true }),
       exactFileIdentity(stat),
     );
-    assertGuardFile(current);
+    assertRegularFile(current, pathAuthority.authority.hardlinks);
   } else {
     inspectDirectoryIdentitySync(pathAuthority.path, exactFileIdentity(stat));
   }

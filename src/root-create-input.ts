@@ -5,7 +5,7 @@ import type { NativeWriteParent, PinnedWriteInput, PublishedWriteIdentity } from
 import type { RootCreateOptions, RootCreateStreamOptions, RootWriteOptions } from "./root-options.js";
 import type { AnyAsyncDirectoryGuard } from "./directory-guard.js";
 
-// Lock records require complete exclusive publication.
+// Lock records need exclusive creation, not private-before-visible publication.
 // Keep this composition hook off the public Root options and package exports.
 const exclusiveSidecarCreate = Symbol("exclusiveSidecarCreate");
 export const sidecarExclusiveCreate = Object.freeze({ [exclusiveSidecarCreate]: true as const });
@@ -70,7 +70,7 @@ export function rootWriteInput(params: RootWriteParams): PinnedWriteInput {
   const data = params.data;
   if (typeof data === "string" || Buffer.isBuffer(data)) {
     return {
-      kind: "buffer", data, encoding: params.encoding, sidecar: params[exclusiveSidecarCreate],
+      kind: "buffer", data, encoding: params.encoding,
       stageBeforePublish: params[exclusiveSidecarCreate] ? false : params.atomic === true ? true : undefined,
     };
   }

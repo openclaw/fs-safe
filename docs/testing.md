@@ -247,7 +247,6 @@ as numbers or bigints.
 | `beforeRootListObservation` | `directoryPath, withFileTypes` | After `Root.list()` admits the selected directory, before collecting names and optional metadata. |
 | `afterPinnedWriteFallbackRename` | `targetPath` | After fallback rename commits, before post-commit identity checks. |
 | `beforeSiblingTempWrite` | `tempPath` | Before the `writeViaSiblingTempPath` producer runs, with its selected output pathname still absent. |
-| `beforeSidecarLockPublish` (**sync**) | `lockPath, temporaryPath` | After the complete staging record is synced, immediately before exclusive publication. |
 | `beforeSidecarLockSnapshotOpen` | `lockPath` | After sidecar inspection, before opening it for a bounded snapshot read. |
 | `beforeRegularFileAppendOpen` | `filePath` | After append preflight and the initial size-budget check, before async open. |
 | `beforeRegularFileAppendOpenSync` (**sync**) | `filePath` | The corresponding sync append point, before `openSync`. |

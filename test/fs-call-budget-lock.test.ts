@@ -32,7 +32,7 @@ describe("uncontended raw sidecar acquisition budgets", () => {
       expect(guardErrors).toBe(0);
       expect(mkdir).not.toHaveBeenCalled();
       expect(open).toHaveBeenCalledTimes(sync ? 0 : 1);
-      expect(syncFile).toHaveBeenCalledTimes(process.platform === "win32" ? 1 : 2);
+      expect(syncFile).toHaveBeenCalledTimes(sync ? 1 : 0);
     } finally {
       lstat.mockRestore(); mkdir.mockRestore(); open.mockRestore(); syncFile.mockRestore();
       await held?.release();

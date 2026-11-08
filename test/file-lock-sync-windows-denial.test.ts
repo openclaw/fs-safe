@@ -1,13 +1,11 @@
-import { configureFsSafeNative } from "../src/native-config.js";
 import fs from "node:fs";
 import path from "node:path";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
-const isStage = (name: unknown) => typeof name === "string" && path.basename(name).startsWith(".fs-safe-lock-");
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 const defaults = {
   payload: () => ({ pid: process.pid }),
@@ -28,11 +26,7 @@ async function fixture(rooted = false) {
   return { directory, target, lockPath: `${target}.lock`, options: { ...defaults, lockRoot } };
 }
 
-beforeEach(() => {
-  configureFsSafeNative({ mode: "off" });
-});
 afterEach(() => {
-  configureFsSafeNative({ mode: "auto" });
   vi.restoreAllMocks();
   Object.defineProperty(process, "platform", platform);
 });
@@ -47,12 +41,12 @@ describe("synchronous Windows lock-file open denials", () => {
     const parsePayload = vi.fn(JSON.parse);
     let creates = 0, denials = 0;
     vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-      if (exclusive(flags) ? isStage(file) : file === lockPath) {
+      if (file === lockPath) {
         if (exclusive(flags)) creates += 1;
         if (!denials && exclusive(flags) === (stage === "create")) {
           denials += 1;
           if (stage === "snapshot") fs.unlinkSync(lockPath);
-          throw failure(String(file));
+          throw failure(lockPath);
         }
       }
       return open(file, flags, mode);
@@ -105,8 +99,8 @@ describe("synchronous Windows lock-file open denials", () => {
       expect(() => acquireFileLockSync(target, { ...options, payload })).toThrow(error);
       expect(inspect).toHaveBeenCalledTimes(1);
       expect(payload).toHaveBeenCalledTimes(1);
-      expect(fs.existsSync(lockPath)).toBe(false);
-      expect(fs.readdirSync(path.dirname(lockPath))).toHaveLength(1);
+      expect(fs.existsSync(lockPath)).toBe(true);
+      fs.unlinkSync(lockPath);
     },
   );
 
@@ -122,9 +116,9 @@ describe("synchronous Windows lock-file open denials", () => {
       const open = fs.openSync.bind(fs);
       let denied = 0, lastError: Error | undefined;
       vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-        if ((stage === "create" ? isStage(file) : file === lockPath) && exclusive(flags) === (stage === "create")) {
+        if (file === lockPath && exclusive(flags) === (stage === "create")) {
           denied += 1;
-          lastError = failure(String(file));
+          lastError = failure(lockPath);
           throw lastError;
         }
         return open(file, flags, mode);
@@ -150,10 +144,10 @@ describe("synchronous Windows lock-file open denials", () => {
     const open = fs.openSync.bind(fs);
     let denials = 0;
     vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-      if ((exclusive(flags) ? isStage(file) : file === lockPath) && (denials < 4 || !exclusive(flags))) {
+      if (file === lockPath && (denials < 4 || !exclusive(flags))) {
         denials += 1;
         if (denials === 4) fs.writeFileSync(lockPath, "{}");
-        throw failure(String(file));
+        throw failure(lockPath);
       }
       return open(file, flags, mode);
     });
@@ -174,9 +168,8 @@ describe("synchronous Windows lock-file open denials", () => {
       const error = Object.assign(failure(lockPath, code), { path: pathname });
       let calls = 0;
       const spy = vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-        if ((stage === "create" ? isStage(file) : file === lockPath) && exclusive(flags) === (stage === "create")) {
+        if (file === lockPath && exclusive(flags) === (stage === "create")) {
           calls += 1;
-          if (pathname === lockPath && stage === "create") error.path = String(file);
           throw error;
         }
         return open(file, flags, mode);
@@ -207,25 +200,20 @@ describe("synchronous Windows lock-file open denials", () => {
         })).toThrow(error);
         expect(fail).toHaveBeenCalledTimes(1);
         expect(payload).toHaveBeenCalledTimes(stage === "parent" ? 0 : 1);
-        if (["parser", "read", "fstat"].includes(stage)) expect(close).toHaveBeenCalledTimes(stage === "fstat" ? 1 : 2);
+        if (["parser", "read", "fstat"].includes(stage)) expect(close).toHaveBeenCalledTimes(1);
         vi.restoreAllMocks();
         expect(fs.existsSync(lockPath)).toBe(["parser", "read", "fstat"].includes(stage));
       }
     },
   );
 
-  it.each([1, 2])("does not classify post-staging lstat %s as an open denial", async (observation) => {
+  it.each([1, 2])("does not classify snapshot lstat %s as an open denial", async (observation) => {
     const { target, lockPath, options } = await fixture();
     fs.writeFileSync(lockPath, "{}");
     const error = failure(lockPath), lstat = fs.lstatSync.bind(fs);
-    let calls = 0, publicationAttempted = false;
-    const link = fs.linkSync;
-    vi.spyOn(fs, "linkSync").mockImplementation((...args) => {
-      publicationAttempted = true;
-      return link(...args);
-    });
+    let calls = 0;
     vi.spyOn(fs, "lstatSync").mockImplementation((file, opts) => {
-      if (publicationAttempted && file === lockPath && ++calls === observation) throw error;
+      if (file === lockPath && ++calls === observation) throw error;
       return lstat(file, opts as never);
     });
     const payload = vi.fn(options.payload);
@@ -283,15 +271,11 @@ describe("synchronous Windows lock-file open denials", () => {
       } else if (stage === "identity") {
         // Large Windows inode numbers can round away +1; use distinct known identities.
         const lstat = fs.lstatSync.bind(fs), fstat = fs.fstatSync.bind(fs);
-        const identity = fs.statSync(lockPath).ino;
         vi.spyOn(fs, "lstatSync").mockImplementation((file, opts) => {
           const stat = lstat(file, opts as never);
           return file === lockPath ? Object.assign(stat, { ino: 1 }) : stat;
         });
-        vi.spyOn(fs, "fstatSync").mockImplementation((fd, opts) => {
-          const stat = fstat(fd, opts as never);
-          return Number(stat.ino) === identity ? Object.assign(stat, { ino: opts?.bigint ? 2n : 2 }) : stat;
-        });
+        vi.spyOn(fs, "fstatSync").mockImplementation((fd) => Object.assign(fstat(fd), { ino: 2 }));
       } else {
         const lstat = fs.lstatSync.bind(fs);
         let calls = 0;

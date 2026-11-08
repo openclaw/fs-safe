@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **File locks:** revert the staged owner-record publication from 0.28.0 ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076)); lock acquisition again creates and writes the lock exclusively. The rare crash between create and write can still leave an empty lock, which OpenClaw's Doctor reports with its offline recovery step.
+
 ## 0.28.0 - 2026-11-07
 
 **Highlights:** Crash-safe lock publication and working writes on Docker Desktop Windows bind mounts through the new opt-in `allowDrvfsRenameRecovery`. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076), [#1074](https://github.com/openclaw/fs-safe/pull/1074))

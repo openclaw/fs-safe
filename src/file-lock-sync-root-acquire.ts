@@ -1,4 +1,3 @@
-import { isIncompleteSidecarLockRecord } from "./sidecar-lock-reclaim.js";
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
@@ -193,20 +192,22 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       let fd: number | undefined;
       let rootReceipt: FileLockSyncRootFileReceipt | undefined;
       let unpublishedTimer: NodeJS.Timeout | undefined;
-      let lockFileCreateOpenFailure: { error: unknown; pathname: string } | undefined;
+      let lockFileCreateOpenFailure: { error: unknown } | undefined;
       try {
-        const created = createFileLockSyncRootFile(lockRootPath, raw, {
+        const created = createFileLockSyncRootFile(lockRootPath, {
           assertBeforeOpen: () => {
             acquisition.assert();
             if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
             if (currentTargetHolder() !== undefined) throw new FileLockSyncRootArbitrationCollision();
           },
-          onOpenFailure: (error, pathname = lockPath) => {
-            lockFileCreateOpenFailure = { error, pathname };
+          onOpenFailure: (error) => {
+            lockFileCreateOpenFailure = { error };
           },
         });
         fd = created.fd;
         rootReceipt = created.receipt;
+        fs.writeFileSync(fd, raw, "utf8");
+        fs.fsyncSync(fd);
         const snapshot: SidecarLockSnapshot = {
           raw,
           payload,
@@ -266,9 +267,8 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         }
         const fromLockFileOpen = lockFileCreateOpenFailure !== undefined &&
           lockFileCreateOpenFailure.error === error;
-        if (fromLockFileOpen && acquisition.retryDenial(error, lockFileCreateOpenFailure!.pathname)) continue;
-        if (!fromLockFileOpen || lockFileCreateOpenFailure!.pathname !== lockPath ||
-          (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (fromLockFileOpen && acquisition.retryDenial(error)) continue;
+        if (!fromLockFileOpen || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         if (ownedReclaimGuard) {
           releaseReclaimGuard();
           const reused = reuseCurrentHeld();
@@ -308,11 +308,6 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
           continue;
         }
         const snapshot = current.snapshot;
-        // An incomplete owner can still be writing; never reclaim it by age.
-        if ((!options.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw)) {
-          acquisition.waitForRetry();
-          continue;
-        }
         const nowMs = Date.now();
         let reclaim: boolean;
         if (options.shouldReclaim) {

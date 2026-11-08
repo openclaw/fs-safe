@@ -34,7 +34,7 @@ describe("synchronous Root callback admission", () => {
       if (stage === "exclusive-open") {
         const open = fs.openSync.bind(fs);
         vi.spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
-          if (String(args[0]).startsWith(path.join(directory, ".fs-safe-lock-")) && typeof args[1] === "number" &&
+          if (String(args[0]) === lockPath && typeof args[1] === "number" &&
             (args[1] & fs.constants.O_CREAT)) attemptNested();
           return open(...args);
         }) as typeof fs.openSync);

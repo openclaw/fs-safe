@@ -48,8 +48,7 @@ it.skipIf(darwin && !nativeAvailable).each(cases)(
       // Wait until creation has a real, single-linked temporary file. Windows
       // first publishes this name from its private directory through a hardlink.
       if (!temporaryPath && path.dirname(candidate) === directory &&
-        /^\.fs-safe-.*\.tmp$/.test(path.basename(candidate)) &&
-        !path.basename(candidate).startsWith(".fs-safe-lock-") && stat?.isFile() &&
+        /^\.fs-safe-.*\.tmp$/.test(path.basename(candidate)) && stat?.isFile() &&
         (stat.nlink === 1 || stat.nlink === 1n)) {
         temporaryPath = candidate;
         throw failure;

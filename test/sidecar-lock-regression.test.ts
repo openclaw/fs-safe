@@ -356,7 +356,7 @@ describe("sidecar lock regressions", () => {
         retry: { retries: 0 },
         payload: async () => ({ createdAt: new Date().toISOString() }),
       }),
-    ).rejects.toMatchObject({ code: "file_lock_timeout" });
+    ).rejects.toMatchObject({ code: "file_lock_stale" });
     await expect(fsp.readFile(lockPath, "utf8")).resolves.toBe("{");
   });
 
