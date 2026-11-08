@@ -102,10 +102,11 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     throw error;
   }
   // An incomplete owner can still be writing; age is not liveness evidence.
-  if (!snapshot || (!params.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw)) {
+  if (!snapshot) {
     acquisition.waitForRetry();
     return;
   }
+  const incomplete = (!params.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw);
   const nowMs = Date.now();
   let reclaim: boolean;
   try {
@@ -120,7 +121,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
             nowMs,
             heldByThisProcess: false,
           }])
-        : defaultSidecarLockShouldReclaim(snapshot, params.staleMs, nowMs);
+        : !incomplete && defaultSidecarLockShouldReclaim(snapshot, params.staleMs, nowMs);
       assertSynchronousCallbackResult(reclaim, "shouldReclaim");
     } finally {
       assertUnheld();
@@ -133,6 +134,8 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     acquisition.waitForRetry();
     return;
   }
+  // Policy may diagnose an incomplete record, but can never authorize its removal.
+  if (incomplete) throw sidecarLockStale(acquisition.lockPath, acquisition.normalizedTargetPath);
   if (
     params.staleRecovery === "remove-if-unchanged" &&
     snapshot.raw !== undefined &&
