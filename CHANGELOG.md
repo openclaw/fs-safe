@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal.
+
 ## 0.28.0 - 2026-11-07
 
 **Highlights:** Crash-safe lock publication and working writes on Docker Desktop Windows bind mounts through the new opt-in `allowDrvfsRenameRecovery`. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076), [#1074](https://github.com/openclaw/fs-safe/pull/1074))

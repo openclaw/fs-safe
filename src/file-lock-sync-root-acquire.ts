@@ -309,10 +309,7 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         }
         const snapshot = current.snapshot;
         // An incomplete owner can still be writing; never reclaim it by age.
-        if ((!options.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw)) {
-          acquisition.waitForRetry();
-          continue;
-        }
+        const incomplete = (!options.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw);
         const nowMs = Date.now();
         let reclaim: boolean;
         if (options.shouldReclaim) {
@@ -330,9 +327,11 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             throw new FsSafeError("path-mismatch", "sidecar changed during reclaim policy callback");
           }
         } else {
-          reclaim = defaultSidecarLockShouldReclaim(snapshot, options.staleMs, nowMs);
+          reclaim = !incomplete && defaultSidecarLockShouldReclaim(snapshot, options.staleMs, nowMs);
         }
         if (reclaim) {
+          // Policy may diagnose an incomplete record, but can never authorize its removal.
+          if (incomplete) throw sidecarLockStale(lockPath, normalizedTargetPath);
           if (
             options.staleRecovery === "remove-if-unchanged" &&
             snapshot.raw !== undefined &&
