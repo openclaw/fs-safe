@@ -16,33 +16,21 @@ const suspend = (final, temporary) => {
   stdout(1, `${JSON.stringify({ final, temporary, pid: process.pid })}\n`);
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 };
-const truncate = fs.ftruncateSync;
-fs.ftruncateSync = (...args) => {
-  if (boundary === "exclusive" && fs.existsSync(lockPath)) suspend(lockPath, lockPath);
-  return Reflect.apply(truncate, fs, args);
-};
-const beforeWrite = (fd, data) => {
-  if (fs.existsSync(lockPath)) {
-    if (boundary === "partial") stdout(fd, '{"owner":');
-    if (boundary === "json-prefix") {
-      const raw = Buffer.isBuffer(data) ? data.toString("utf8") : data;
-      stdout(fd, raw.slice(0, raw.indexOf("\n\t")));
-    }
-    suspend(lockPath, lockPath);
-  }
+const beforeWrite = () => {
+  if (fs.existsSync(lockPath)) suspend(lockPath, lockPath);
 };
 // The old implementation has no publication hook: catch its empty final lock
 // immediately before payload persistence instead, at the same crash boundary.
 for (const method of ["writeSync", "write", "writeFileSync"]) {
   const original = fs[method];
-  fs[method] = (...args) => { beforeWrite(args[0], args[1]); return Reflect.apply(original, fs, args); };
+  fs[method] = (...args) => { beforeWrite(); return Reflect.apply(original, fs, args); };
 }
 const open = fsp.open;
 fsp.open = async (...args) => {
   const handle = await Reflect.apply(open, fsp, args);
   for (const method of ["write", "writeFile"]) {
     const original = handle[method];
-    handle[method] = (...values) => { beforeWrite(handle.fd, values[0]); return Reflect.apply(original, handle, values); };
+    handle[method] = (...values) => { beforeWrite(); return Reflect.apply(original, handle, values); };
   }
   return handle;
 };
@@ -52,14 +40,6 @@ if (boundary === "linked") {
     link(source, destination);
     if (destination === lockPath) suspend(destination, source);
   };
-} else if (["exclusive", "partial", "json-prefix"].includes(boundary)) {
-  const unsupported = () => { throw Object.assign(new Error("unsupported mount"), { code: "ENOTSUP" }); };
-  fs.linkSync = unsupported;
-  if (mode === "require") {
-    const { __loadBundledNativeForTest, __setNativeLoaderForTest } = await import(`${location}native.js`);
-    const native = __loadBundledNativeForTest();
-    __setNativeLoaderForTest(() => ({ ...native, renameNoReplace: unsupported, linkBeneath: unsupported }));
-  }
 } else __setFsSafeTestHooksForTest({ beforeSidecarLockPublish: suspend });
 const options = {
   payload: () => ({ pid: process.pid, owner: "child" }), timeoutMs: 0,

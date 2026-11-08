@@ -73,8 +73,7 @@ class SidecarPublication {
       throw new FsSafeError("path-mismatch", "sidecar publication parent changed");
     }
   }
-  remember(fd: number, exclusive = false): BigIntStats {
-    this.published = exclusive;
+  remember(fd: number): BigIntStats {
     this.identity = fs.fstatSync(fd, { bigint: true });
     if (this.options.requireExactIdentity && (!this.identity.isFile() || this.identity.nlink !== 1n ||
       !sameFileIdentityForCleanup(this.identity, this.identity))) {
@@ -105,7 +104,7 @@ class SidecarPublication {
     else this.publishedIdentity ??= named;
   }
 
-  publish(fd: number): boolean {
+  publish(fd: number): void {
     this.assertNamed(this.temporaryPath, fd, 1n);
     getFsSafeTestHooks()?.beforeSidecarLockPublish?.(this.targetPath, this.temporaryPath);
     this.assertNamed(this.temporaryPath, fd, 1n);
@@ -128,9 +127,11 @@ class SidecarPublication {
         else fs.linkSync(this.temporaryPath, this.targetPath);
         this.published = true;
       } catch (error) {
-        // These errors establish that linking cannot publish here. Permission
-        // refusals still have to pass the final exclusive open; never mask it.
-        if (isHardlinkFallbackError(error)) return false;
+        if (isHardlinkFallbackError(error)) {
+          throw new FsSafeError("helper-unavailable",
+            "sidecar lock publication requires no-replace rename or hardlinks on this filesystem",
+            { cause: error });
+        }
         if ((error as NodeJS.ErrnoException).code === "EEXIST") this.options.onConflict?.(error);
         throw error;
       }
@@ -138,12 +139,7 @@ class SidecarPublication {
       this.assertNamed(this.temporaryPath, fd, 2n);
       this.removeTemporary(fd);
     }
-    this.finish(fd);
-    return true;
-  }
-  finish(fd: number): void {
     this.assertNamed(this.targetPath, fd, 1n);
-    const native = this.options.nativeParent;
     const parent = native?.fd ?? (process.platform !== "win32" ? openPublicationParent(this.targetPath) : undefined);
     if (parent !== undefined) {
       try {
@@ -191,26 +187,11 @@ export function createSidecarFileSync(
   try {
     publication.assertParent();
     fd = open(publication.temporaryPath);
-    let identity = publication.remember(fd);
+    const identity = publication.remember(fd);
     options.prepare?.(fd);
     fs.writeFileSync(fd, raw, "utf8");
     fs.fsyncSync(fd);
-    if (!publication.publish(fd)) {
-      publication.removeTemporary(fd);
-      const stagedFd = fd;
-      fd = undefined;
-      fs.closeSync(stagedFd);
-      publication.assertParent();
-      fd = open(targetPath);
-      identity = publication.remember(fd, true);
-      options.prepare?.(fd);
-      // Unwritten NUL padding keeps even a complete JSON prefix unverifiable
-      // until the trailing ownership token has also been written.
-      fs.ftruncateSync(fd, Buffer.byteLength(raw));
-      fs.writeFileSync(fd, raw, "utf8");
-      fs.fsyncSync(fd);
-      publication.finish(fd);
-    }
+    publication.publish(fd);
     return { fd, identity };
   } catch (error) {
     if (fd !== undefined) {
@@ -233,24 +214,11 @@ export async function createSidecarFile<T extends { fd: number; close(): Promise
   try {
     publication.assertParent();
     handle = await open(publication.temporaryPath);
-    let identity = publication.remember(handle.fd);
+    const identity = publication.remember(handle.fd);
     options.prepare?.(handle.fd);
     await handle.writeFile(raw, "utf8");
     fs.fsyncSync(handle.fd);
-    if (!publication.publish(handle.fd)) {
-      publication.removeTemporary(handle.fd);
-      const stagedHandle = handle;
-      handle = undefined;
-      await stagedHandle.close();
-      publication.assertParent();
-      handle = await open(targetPath);
-      identity = publication.remember(handle.fd, true);
-      options.prepare?.(handle.fd);
-      fs.ftruncateSync(handle.fd, Buffer.byteLength(raw));
-      await handle.writeFile(raw, "utf8");
-      fs.fsyncSync(handle.fd);
-      publication.finish(handle.fd);
-    }
+    publication.publish(handle.fd);
     return { handle, identity };
   } catch (error) {
     if (handle) {

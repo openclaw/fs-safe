@@ -77,7 +77,7 @@ describe("synchronous file-lock failure handling", () => {
     expect(fsSync.existsSync(lockPath)).toBe(false);
   });
 
-  it("keeps corrupt legacy locks as contention regardless of age", async () => {
+  it("uses file age for corrupt legacy locks and preserves them on stale failure", async () => {
     const root = await tempRoot("fs-safe-sync-lock-corrupt-");
     const targetPath = path.join(root, "state.json");
     const lockPath = `${targetPath}.lock`;
@@ -86,7 +86,7 @@ describe("synchronous file-lock failure handling", () => {
 
     expect(() =>
       acquireFileLockSync(targetPath, { ...lockOptions(), staleMs: 1 }),
-    ).toThrow(expect.objectContaining({ code: "file_lock_timeout" }));
+    ).toThrow(expect.objectContaining({ code: "file_lock_stale" }));
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("{");
   });
 

@@ -58,8 +58,7 @@ async function writeAtParent(
     };
     if (!native) {
       let handle: Awaited<ReturnType<typeof promises.open>>;
-      try { handle = await promises.open(pathname, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
-        (process.platform !== "win32" ? fs.constants.O_NOFOLLOW ?? 0 : 0), params.mode); }
+      try { handle = await promises.open(pathname, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, params.mode); }
       catch (error) { return failedOpen(error); }
       return {
         fd: handle.fd,

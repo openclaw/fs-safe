@@ -41,7 +41,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
 
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && (typeof args[1] === "number" && (args[1] & fsp.constants.O_EXCL) !== 0)) throw denial(String(args[0]));
+      if (isStage(args[0]) && args[1] === "wx") throw denial(String(args[0]));
       return await realOpen(...args);
     }) as typeof fsp.open);
 
@@ -66,7 +66,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     let payloadCalls = 0;
 
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && (typeof args[1] === "number" && (args[1] & fsp.constants.O_EXCL) !== 0)) throw denial(base);
+      if (isStage(args[0]) && args[1] === "wx") throw denial(base);
       return await realOpen(...args);
     }) as typeof fsp.open);
 
@@ -117,7 +117,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     const realOpen = fsp.open.bind(fsp) as typeof fsp.open;
     let injected = 0;
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && (typeof args[1] === "number" && (args[1] & fsp.constants.O_EXCL) !== 0) && injected === 0) {
+      if (isStage(args[0]) && args[1] === "wx" && injected === 0) {
         injected += 1;
         throw denial(String(args[0]));
       }
@@ -146,7 +146,7 @@ describe("Windows sidecar lock denials (synthetic classification; real files)", 
     let deniedCreates = 0;
     let payloadCalls = 0;
     vi.spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
-      if (isStage(args[0]) && (typeof args[1] === "number" && (args[1] & fsp.constants.O_EXCL) !== 0)) {
+      if (isStage(args[0]) && args[1] === "wx") {
         deniedCreates += 1;
         throw denial(String(args[0]));
       }

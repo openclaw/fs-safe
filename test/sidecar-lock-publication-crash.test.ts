@@ -7,7 +7,6 @@ import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { acquireFileLock, acquireFileLockSync } from "../src/file-lock.js";
 import { root } from "../src/root.js";
-import { __loadBundledNativeForTest } from "../src/native.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -116,65 +115,6 @@ it.each([
       expect((await fs.readdir(directory)).filter(name => !name.startsWith("unrelated-"))).toEqual(["state.lock"]);
       expect(JSON.parse(await fs.readFile(publication.final, "utf8"))).toEqual({ owner: "recovered" });
     } finally { await owner.release(); }
-  } finally {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    await exited;
-  }
-});
-
-it.for(["exclusive", "partial", "json-prefix"].flatMap(boundary => ["off", "require"].flatMap(mode =>
-  ["raw-async", "raw-sync", "root-async", "root-sync"].map(kind => ({ boundary, mode, kind })),
-)))("$kind preserves a killed $boundary fallback writer ($mode)", async ({ boundary, mode, kind }, ctx) => {
-  if (mode === "require") {
-    try { __loadBundledNativeForTest(); } catch { return ctx.skip(); }
-  }
-  const directory = await tempRoot("fs-safe-exclusive-crash-");
-  const child = spawn(process.execPath, [fixture, directory, kind, mode, boundary], {
-    env: { ...process.env, NODE_ENV: "test" }, stdio: ["ignore", "pipe", "pipe"],
-  });
-  const exited = once(child, "exit");
-  let stderr = "";
-  child.stderr.on("data", data => { stderr += data; });
-  try {
-    const publication = await new Promise<{ final: string; pid: number }>((resolve, reject) => {
-      let output = "";
-      child.stdout.on("data", data => {
-        output += data;
-        if (output.includes("\n")) resolve(JSON.parse(output.split("\n")[0]));
-      });
-      child.once("error", reject);
-      child.once("exit", code => reject(new Error(`child exited ${code}: ${stderr}`)));
-    });
-    expect(publication.pid).toBe(child.pid);
-    const raw = await fs.readFile(publication.final, "utf8");
-    if (boundary === "exclusive") expect(raw).toBe("");
-    else expect(raw).toContain("\0");
-    if (boundary === "partial") expect(raw.startsWith('{"owner":')).toBe(true);
-    if (boundary === "json-prefix") expect(JSON.parse(raw.slice(0, raw.indexOf("\0")))).toMatchObject({ owner: "child" });
-    expect(await fs.readdir(directory)).toEqual(["state.lock"]);
-    const original = await fs.lstat(publication.final, { bigint: true });
-    const shouldRemoveStaleLock = vi.fn(() => true);
-    const options = {
-      ...(kind.startsWith("root") ? { lockRoot: await root(directory) } : {}),
-      payload: () => ({ owner: "contender" }), staleMs: 0, timeoutMs: 0,
-      retry: { retries: 0 }, staleRecovery: "remove-if-unchanged" as const, shouldRemoveStaleLock,
-    };
-    const contend = async (parsePayload?: (raw: string) => unknown) => kind.endsWith("async")
-      ? await acquireFileLock(path.join(directory, "state"), { ...options, parsePayload })
-      : acquireFileLockSync(path.join(directory, "state"), { ...options, parsePayload });
-    for (const parser of [undefined, () => ({}), () => undefined, JSON.parse]) {
-      await expect(contend(parser)).rejects.toMatchObject({ code: "file_lock_timeout" });
-    }
-    child.kill("SIGKILL");
-    await exited;
-    await fs.utimes(publication.final, 1, 1);
-    for (const parser of [undefined, () => ({}), () => undefined, JSON.parse]) {
-      await expect(contend(parser)).rejects.toMatchObject({ code: "file_lock_timeout" });
-    }
-    expect(shouldRemoveStaleLock).not.toHaveBeenCalled();
-    expect(await fs.readFile(publication.final, "utf8")).toBe(raw);
-    const current = await fs.lstat(publication.final, { bigint: true });
-    expect([current.dev, current.ino]).toEqual([original.dev, original.ino]);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     await exited;

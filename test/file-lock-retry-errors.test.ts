@@ -41,7 +41,7 @@ for (const kind of ["sync", "async"] as const) {
         } else {
           const open = fsp.open.bind(fsp);
           vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-            if (isStage(args[0]) && (typeof args[1] === "number" && (args[1] & fs.constants.O_EXCL) !== 0)) {
+            if (isStage(args[0]) && args[1] === "wx") {
               denials += 1;
               denial.path = String(args[0]);
               throw denial;
