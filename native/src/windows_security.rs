@@ -202,7 +202,7 @@ mod windows {
         SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
     };
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
+        ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_CALLBACK_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
         CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
         GetSecurityDescriptorControl, GetTokenInformation, InitializeSecurityDescriptor,
         IsValidSid, IsWellKnownSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
@@ -239,11 +239,14 @@ mod windows {
     const PRIVATE_PARENT_CREATE_ACCESS: u32 =
         FILE_READ_ATTRIBUTES | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE;
     const PRIVATE_PARENT_METADATA_ACCESS: u32 = FILE_READ_ATTRIBUTES;
-    const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
-    const ACCESS_DENIED_ACE_TYPE: u8 = 1;
-    const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 = 9;
+    const ACCESS_ALLOWED_ACE_TYPE: u8 =
+        windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE as u8;
+    const ACCESS_DENIED_ACE_TYPE: u8 =
+        windows_sys::Win32::System::SystemServices::ACCESS_DENIED_ACE_TYPE as u8;
+    const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 =
+        windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_CALLBACK_ACE_TYPE as u8;
     const CALLBACK_READ_EXECUTE_MASK: u32 = 0xa012_00a9;
-    const INHERIT_ONLY_ACE_FLAG: u8 = 0x08;
+    const INHERIT_ONLY_ACE_FLAG: u8 = windows_sys::Win32::Security::INHERIT_ONLY_ACE as u8;
     const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
     const FINAL_PATH_STACK_WCHARS: usize = 512;
     const MAX_FINAL_PATH_WCHARS: usize = 32 * 1024;
@@ -462,12 +465,18 @@ mod windows {
             return None;
         }
         let (mask, sid) = match header.AceType {
-            ACCESS_ALLOWED_ACE_TYPE | ACCESS_ALLOWED_CALLBACK_ACE_TYPE => {
+            ACCESS_ALLOWED_ACE_TYPE => {
                 let ace = unsafe { &*(raw.cast::<ACCESS_ALLOWED_ACE>()) };
+                (
+                    ace.Mask,
+                    (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
+                )
+            }
+            ACCESS_ALLOWED_CALLBACK_ACE_TYPE => {
+                let ace = unsafe { &*(raw.cast::<ACCESS_ALLOWED_CALLBACK_ACE>()) };
                 // Type 9 conditions may only restrict these read/execute grants.
                 // Do not infer the result of a condition or support mutation bits.
-                if header.AceType == ACCESS_ALLOWED_CALLBACK_ACE_TYPE
-                    && (ace.Mask & !CALLBACK_READ_EXECUTE_MASK != 0 || header.AceFlags & !0x1f != 0)
+                if ace.Mask & !CALLBACK_READ_EXECUTE_MASK != 0 || header.AceFlags & !0x1f != 0
                 {
                     return None;
                 }
