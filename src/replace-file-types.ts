@@ -1,4 +1,5 @@
 import type syncFs from "node:fs";
+import type { DirectoryMode } from "./directory-mode-options.js";
 import type fs from "node:fs/promises";
 import type { RenameIdentityPolicy } from "./pinned-write-types.js";
 import type { AtomicMutationOptions } from "./replace-file-mutation.js";
@@ -44,7 +45,7 @@ export type ReplaceFileAtomicSyncFileSystem = Pick<
 export type ReplaceFileAtomicBaseOptions = AtomicMutationOptions & {
   filePath: string;
   content: string | Uint8Array;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   mode?: number;
   /** Inherit only rwx bits from an existing non-symlink regular file. */
   preserveExistingMode?: boolean;
@@ -57,6 +58,8 @@ export type ReplaceFileAtomicBaseOptions = AtomicMutationOptions & {
   destinationHardlinks?: ReplaceFileDestinationHardlinkPolicy;
   /** Strict by default; locked content verification is an explicit FUSE compatibility policy. */
   renameIdentity?: RenameIdentityPolicy;
+  /** Opt in to close-all recovery only on a verified DrvFS mount; identity reuse remains possible. */
+  allowDrvfsRenameRecovery?: boolean;
   syncTempFile?: boolean;
   syncParentDir?: boolean;
   throwOnCleanupError?: boolean;

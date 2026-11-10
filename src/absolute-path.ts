@@ -9,7 +9,7 @@ import {
 } from "./directory-guard.js";
 import { FsSafeError, type FsSafeErrorCode } from "./errors.js";
 import { pathExists } from "./fs.js";
-import { realpathSync } from "./realpath.js";
+import { realpathNative, realpathSync } from "./realpath.js";
 import { resolveRootPath } from "./root-path.js";
 import {
   assertNoWindowsPathAlias,
@@ -344,7 +344,7 @@ export async function resolveAbsolutePathForRead(
   const normalized = assertAbsolutePathInput(filePath);
   let canonicalPath: string;
   try {
-    canonicalPath = realpathSync.native(
+    canonicalPath = await realpathNative(
       pathForWindowsFilesystem(normalized),
     );
     assertNoWindowsPathAlias(canonicalPath);

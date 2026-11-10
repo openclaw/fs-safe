@@ -1,5 +1,7 @@
 ---
 title: Retained-directory staging
+
+`stageFileInDirectory` accepts `allowDrvfsRenameRecovery`. It is off by default and retains exact staged bytes for the [verified DrvFS recovery check](atomic.md#drvfs-hidden-rename-recovery). Restrictive modes are applied before rename when this option is enabled.
 description: "Prepare and publish one file while retaining its original directory for abort cleanup."
 ---
 

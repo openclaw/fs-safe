@@ -72,7 +72,7 @@ export function warnUnmappedTempWorkspaceAncestor(): void {
   if (warned) return;
   warned = true;
   process.emitWarning(
-    "Temp workspace ancestor ownership is unverifiable in this user namespace; trusting the host directory hierarchy while enforcing ancestor modes and a process-owned private root.",
+    "Temp workspace ancestor ownership is unverifiable in this user namespace; trusting the host directory hierarchy while enforcing the configured ancestor policy and a process-owned private root.",
     { code: "FS_SAFE_UNMAPPED_TEMP_ANCESTOR", type: "FsSafeWarning" },
   );
 }

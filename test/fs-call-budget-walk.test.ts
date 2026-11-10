@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHook } from "node:async_hooks";
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
 import { expect, it } from "vitest";
 import { configureFsSafeNative } from "../src/config.js";
 import { root } from "../src/root.js";
@@ -22,6 +22,7 @@ it("bounds flat-walk promises without adding filesystem observations", async () 
         fsSync.writeFileSync(path.join(directory, `${index}`), "");
       }
       let promises = 0, asyncFs = 0, lstat = 0, readdir = 0;
+      const measuredWalk = new AsyncLocalStorage<boolean>();
       const lstatDescriptor = Object.getOwnPropertyDescriptor(fsSync, "lstatSync")!;
       const readdirDescriptor = Object.getOwnPropertyDescriptor(fs, "readdir")!;
       Object.defineProperty(fsSync, "lstatSync", {
@@ -33,15 +34,20 @@ it("bounds flat-walk promises without adding filesystem observations", async () 
         value: (...args: unknown[]) => { readdir++; return Reflect.apply(readdirDescriptor.value, fs, args); },
       });
       const hook = createHook({ init(_id, type) {
+        // Other runner work can create promises while the directory read is pending.
+        if (!measuredWalk.getStore()) return;
         if (type === "PROMISE") promises++;
         if (type === "FSREQPROMISE") asyncFs++;
       } });
       hook.enable();
       let entries = 0;
       try {
-        for await (const _entry of capability.walk("", { symlinkPolicy: "skip" })) entries++;
+        await measuredWalk.run(true, async () => {
+          for await (const _entry of capability.walk("", { symlinkPolicy: "skip" })) entries++;
+        });
       } finally {
         hook.disable();
+        measuredWalk.disable();
         Object.defineProperty(fsSync, "lstatSync", lstatDescriptor);
         Object.defineProperty(fs, "readdir", readdirDescriptor);
       }

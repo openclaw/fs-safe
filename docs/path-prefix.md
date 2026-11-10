@@ -1,13 +1,13 @@
 # Resolving an existing path prefix
 
-`resolvePathPrefixSync()` follows filesystem path components until the first
+`resolvePathPrefix()` and `resolvePathPrefixSync()` follow filesystem path components until the first
 missing entry. It returns a canonical existing prefix and the unprocessed
 suffix separately, including dangling symlink targets.
 
 ```ts
-import { resolvePathPrefixSync, type ResolvedPathPrefix } from "@openclaw/fs-safe/advanced";
+import { resolvePathPrefix, type ResolvedPathPrefix } from "@openclaw/fs-safe/advanced";
 
-const observed: ResolvedPathPrefix = resolvePathPrefixSync("/srv/data/future/file.json");
+const observed: ResolvedPathPrefix = await resolvePathPrefix("/srv/data/future/file.json");
 // When /srv/data exists but future does not:
 // observed.existingPath is the canonical spelling of /srv/data.
 // observed.unresolvedSegments is ["future", "file.json"].
@@ -63,8 +63,18 @@ suffix for every component. The fixed small-queue bound limits repeated front
 removal while retaining legacy shift-based consumption for shallow paths. This
 asymptotic bound is not a platform performance result; performance acceptance
 requires separate benchmark evidence. Callers should still apply their own
-input-size limits: the helper is synchronous, retains the raw suffix, and
+input-size limits: both helpers retain the raw suffix and
 performs filesystem work for each non-empty existing component.
+
+The async form uses asynchronous component `lstat` and `readlink`, and native
+Node `realpath`. On Node POSIX, fully existing paths use a kernel `lstat` traversal
+and canonicalization without separately inspecting each ancestor. A final symlink
+also checks target search permissions before canonicalization. For a clean missing path, it probes parents only until the nearest existing directory.
+Raw dot/separator forms, dangling links, and uncertain failures fall through to the
+component walker, retaining its missing-suffix and error contract. The synchronous form retains its existing contract. Bun POSIX
+canonicalization and Windows AppContainer fallback still use fs-safe's
+synchronous native-realpath owner to preserve its platform guarantees; these
+fallbacks are not a promise of nonblocking filesystem work on those runtimes.
 
 This is a read-only path observation. It neither pins files nor creates a root
 boundary, authorizes access, or guarantees a consistent snapshot during

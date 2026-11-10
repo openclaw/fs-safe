@@ -2,6 +2,8 @@ import fsSync, { type BigIntStats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createDirectoryWithAdmission } from "./create.js";
+import { AtomicIo, runAsync } from "./atomic-io.js";
+import { applyDirectoryMode } from "./replace-file-descriptor.js";
 import {
   assertDirectoryGuard,
   captureDirectoryGuard,
@@ -158,6 +160,8 @@ export async function mkdirPathComponentsWithGuards(params: {
   createMissing?: boolean;
   synchronousMkdir?: boolean;
   mode?: number;
+  /** Correct only directories this walk exclusively creates; never change existing entries. */
+  finalizeCreatedMode?: boolean;
   private?: boolean;
   rejectSymlinks?: boolean;
   revalidateParentAfterBeforeComponent?: boolean;
@@ -358,6 +362,13 @@ export async function mkdirPathComponentsWithGuards(params: {
     );
     if (!createdAuthorization || !createdEvidence) {
       assertDirectoryGuard(parentGuard, "native");
+    }
+    if (created && params.finalizeCreatedMode && params.mode !== undefined) {
+      await runAsync(applyDirectoryMode(AtomicIo.async(fs), {
+        dirPath: currentGuard.dir, mode: params.mode, expectedIdentity: currentGuard.stat,
+      }));
+      assertDirectoryGuard(parentGuard, "native");
+      assertDirectoryGuard(currentGuard, "native");
     }
     current = admittedNextPath;
   }

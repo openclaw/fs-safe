@@ -2,6 +2,89 @@
 
 ## Unreleased
 
+### Fixes
+
+- **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal.
+
+- **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity.
+
+- **DrvFS opt-in writes:** skip recovery preparation on known non-9p filesystems, caching only negative observations so later writes add no filesystem calls while recovery keeps full mount and identity verification.
+
+## 0.28.0 - 2026-11-07
+
+**Highlights:** Crash-safe lock publication and working writes on Docker Desktop Windows bind mounts through the new opt-in `allowDrvfsRenameRecovery`. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076), [#1074](https://github.com/openclaw/fs-safe/pull/1074))
+
+### Features
+
+- **Atomic writes:** add the explicit, off-by-default `allowDrvfsRenameRecovery` option for verified DrvFS mounts, with documented residual inode-reuse risk. ([#1074](https://github.com/openclaw/fs-safe/pull/1074))
+
+- **Temp workspaces:** add opt-in `trustedWritableAncestors` for externally isolated deployments. Exact named ancestors may be group/world writable while ownership, private-directory permissions, and path-integrity checks remain enforced; defaults stay strict. Using the exception emits a path-free `FS_SAFE_TRUSTED_WRITABLE_ANCESTOR` warning once per process. Thanks @Kimiyu-186. ([#1073](https://github.com/openclaw/fs-safe/pull/1073))
+
+### Fixes
+
+- **DrvFS publication:** recover files hidden until the last descriptor closes on verified Windows-drive mounts, retaining exact identity, ownership, mode, size, link-count, parent, and available content checks. Thanks @om49967588 for the report and @lswang9 for the probes. ([#1074](https://github.com/openclaw/fs-safe/pull/1074))
+
+- **File locks:** stage and sync complete owner records before exclusive publication; retain mutually exclusive create-and-write on mounts without no-replace rename or hardlinks, where a crash can leave an empty or partial lock requiring offline recovery. Existing unverifiable locks remain untouched. Thanks @chrislro. ([#1066](https://github.com/openclaw/fs-safe/pull/1066), [#1076](https://github.com/openclaw/fs-safe/pull/1076))
+
+- **Windows batch reads:** retain the native descriptor's matching closer through admission and return it as optional `close()` on successful reads; use it to avoid Worker descriptor warnings. Thanks @shenghu7358 for the OpenClaw report. ([#1071](https://github.com/openclaw/fs-safe/pull/1071))
+
+## 0.27.2 - 2026-11-05
+
+**Highlights:** POSIX reads stay responsive on slow storage; Windows public-path inspection keeps TrustedInstaller trust narrow, and release verification dependencies include denial-of-service fixes.
+
+### Fixes
+
+- **POSIX reads:** keep root acquisition, root-file opens, and Root read admission off the JavaScript thread while preserving pinned-descriptor identity and final root/path checks; retain Windows and custom synchronous adapter behavior.
+- **Windows permissions:** trust exact TrustedInstaller ownership and serviced read-only sources for public inspection while rejecting servicing write grants on user-owned or user-writable profiles and retaining strict private-file checks. Thanks @paulcam206.
+- **Temporary filenames:** preserve safe Unicode names, including CJK text and accents, while retaining path/control filtering, Windows device protection, and portable byte limits. Thanks @beeven.
+- **Release verification:** patch denial-of-service issues in the provenance verifier's dependency chain.
+
+## 0.27.1 - 2026-10-31
+
+**Highlights:** Native POSIX staged file creation, atomic publication, small-buffer writes, path-prefix canonicalization, and awaited root-path traversal no longer block the JavaScript thread, so slow storage cannot stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052), [#1053](https://github.com/openclaw/fs-safe/pull/1053), [#1054](https://github.com/openclaw/fs-safe/pull/1054))
+
+### Features
+
+- **Path prefixes:** add `resolvePathPrefix` for asynchronous component traversal and make `resolveAbsolutePathForRead` use asynchronous Node canonicalization, keeping filesystem waits off the JavaScript thread while preserving physical symlink and missing-suffix semantics. ([#1053](https://github.com/openclaw/fs-safe/pull/1053))
+
+### Fixes
+
+- **Root traversal:** keep awaited POSIX root-path metadata and canonicalization off the JavaScript thread so slow component lookups do not stall the event loop; preserve synchronous APIs, identity fences, and Windows publication behavior. ([#1054](https://github.com/openclaw/fs-safe/pull/1054))
+- **Async writes:** keep native POSIX staged creation, atomic publication, and small-buffer writes off the JavaScript thread so slow storage does not stall the event loop. ([#1052](https://github.com/openclaw/fs-safe/pull/1052))
+
+## 0.27.0 - 2026-10-30
+
+**Highlights:** Use `dirMode: "preserve"` for shared workspaces to keep verified existing write parents unchanged while creating new directories at `0700`. ([#1050](https://github.com/openclaw/fs-safe/pull/1050))
+
+### Features
+
+- **Directory modes:** add `dirMode: "preserve"` to keep verified existing write parents unchanged while creating new directories at `0700`. Thanks @rbartoli for the OpenClaw PR motivated by [openclaw/openclaw#184867](https://github.com/openclaw/openclaw/issues/184867). ([#1050](https://github.com/openclaw/fs-safe/pull/1050))
+
+## 0.26.15 - 2026-10-30
+
+**Highlights:** Awaited authority checks for borrowed-handle overwrites, so callers can move currentness checks off the main thread. ([#1049](https://github.com/openclaw/fs-safe/pull/1049))
+
+### Features
+
+- **In-place writes:** add `overwriteFileHandleWithAuthority` for awaited authority preparation followed by a synchronous final assertion before writing a borrowed handle. Existing `overwriteFileHandle` behavior is unchanged. ([#1049](https://github.com/openclaw/fs-safe/pull/1049))
+
+### Performance
+
+- **Watch hint admission:** reduce repeated admission of unrelated canonical parents within a batch while retaining per-hint identity checks and conservative alias reconciliation. Thanks @wr-web for reporting [openclaw#186752](https://github.com/openclaw/openclaw/issues/186752) and @DonnieFi for [#1046](https://github.com/openclaw/fs-safe/pull/1046).
+
+## 0.26.14 - 2026-10-30
+
+**Highlights:** Clearer errors for denied Root traversal and reliable async file-lock contention. ([#1044](https://github.com/openclaw/fs-safe/pull/1044), [#1045](https://github.com/openclaw/fs-safe/pull/1045))
+
+### Fixes
+
+- **Root errors:** report denied path traversal as operational `permission-denied`, preserving the original errno and path instead of implying a path-alias violation. Thanks @LiuwqGit for [openclaw/openclaw#184115](https://github.com/openclaw/openclaw/issues/184115). ([#1044](https://github.com/openclaw/fs-safe/pull/1044))
+- **File lock contention:** use the admitted record's timestamp for async stale detection so ordinary owner release and re-creation do not trigger spurious `path-mismatch` failures. ([#1045](https://github.com/openclaw/fs-safe/pull/1045))
+
+### Security
+
+- **Archive dependencies:** update zstd to 0.14.3, zstd-safe to 8.2.0, and zstd-sys to 2.1.2 for native and WASM archive builds, retaining the custom WASM allocator and allocation-failure checks. ([#1039](https://github.com/openclaw/fs-safe/pull/1039))
+
 ## 0.26.13 - 2026-10-24
 
 **Highlights:** Reliable file publication on NFS mounts.

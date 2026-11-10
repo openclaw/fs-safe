@@ -1,3 +1,4 @@
+import { runSync } from "../src/atomic-io.js";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -189,7 +190,7 @@ itPosix("defends a direct canonical alias-walk caller before any foreign share l
   const directory = await tempRoot("fs-safe-share-walk-");
   const spies = spyOnSyncFilesystem();
   Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
-  expect(rawPathRelativeToCanonicalRoot(`//${canary}/share/secret.txt`, directory)).toBeUndefined();
+  expect(runSync(rawPathRelativeToCanonicalRoot(`//${canary}/share/secret.txt`, directory))).toBeUndefined();
   expectNoCanaryCalls(spies);
 });
 

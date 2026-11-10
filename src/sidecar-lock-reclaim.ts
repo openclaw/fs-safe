@@ -92,6 +92,7 @@ export function parseSidecarLockPayload(
   raw: string,
   parser?: (raw: string) => unknown,
 ): unknown {
+  if (isIncompleteSidecarLockRecord(raw)) return null;
   if (parser) {
     return parser(raw);
   }
@@ -101,6 +102,12 @@ export function parseSidecarLockPayload(
   } catch {
     return null;
   }
+}
+
+// Compatibility writes reserve their length before writing, so unwritten bytes
+// remain NULs. Legacy formats still belong to the caller's parser.
+export function isIncompleteSidecarLockRecord(raw: string | undefined): boolean {
+  return raw === undefined || raw.length === 0 || raw.includes("\0");
 }
 
 async function readSidecarLockComparisonSnapshot(
@@ -207,7 +214,7 @@ export function readSidecarLockSnapshotSync(
 
 export function readSidecarLockRawSnapshotSync(
   lockPath: string,
-  options: { rejectNonFile?: boolean; onOpenFailure?: (error: unknown) => void } = {},
+  options: { rejectNonFile?: boolean; allowDescriptorIdentityDrift?: boolean; onOpenFailure?: (error: unknown) => void } = {},
 ): SidecarLockRawSnapshot | null {
   let fd: number | undefined;
   try {
@@ -235,7 +242,8 @@ export function readSidecarLockRawSnapshotSync(
     }
     const raw = readFileDescriptorBoundedSync(fd, MAX_LOCK_PAYLOAD_BYTES).toString("utf8");
     const after = lstatSidecarLockSync(lockPath);
-    if (!after || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) return null;
+    if (!after || !after.isFile() || after.isSymbolicLink() || !sameFileIdentity(before, after) ||
+      (!options.allowDescriptorIdentityDrift && (!sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)))) return null;
     return {
       raw,
       stat: after,

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, vi } from "vitest";
 import { realpathSync } from "../src/realpath.js";
+import * as realpathOwner from "../src/realpath.js";
 import { root, type Root, type SymlinkPolicy } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { expectClosedWithoutReading, observeOpenedHandle } from "./helpers/root-read-observer.js";
@@ -210,9 +211,9 @@ itPosix.each([
 itPosix("closes without reading when the fresh canonical target disappears", async () => {
   const fixture = await replacementFixture("fs-safe-root-read-final-missing-");
   const observed = observeOpenedHandle(fixture.filePath);
-  const realpath = realpathSync.native;
+  const realpath = realpathOwner.realpathNative;
   let finalFence = false;
-  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+  vi.spyOn(realpathOwner, "realpathNative").mockImplementation(async (...args) => {
     if (finalFence && String(args[0]) === fixture.filePath) {
       throw Object.assign(new Error("final canonical target disappeared"), { code: "ENOENT" });
     }
@@ -232,11 +233,11 @@ itPosix("closes without reading when the fresh canonical target disappears", asy
 itPosix("preserves a fresh canonical failure when descriptor close also fails", async () => {
   const fixture = await replacementFixture("fs-safe-root-read-final-close-failure-");
   const observed = observeOpenedHandle(fixture.filePath);
-  const realpath = realpathSync.native;
+  const realpath = realpathOwner.realpathNative;
   const closeFailure = new Error("injected close failure");
   let finalFence = false;
   let actualClose: (() => Promise<void>) | undefined;
-  vi.spyOn(realpathSync, "native").mockImplementation((...args) => {
+  vi.spyOn(realpathOwner, "realpathNative").mockImplementation(async (...args) => {
     if (finalFence && String(args[0]) === fixture.filePath) {
       throw Object.assign(new Error("final canonical target disappeared"), { code: "ENOENT" });
     }

@@ -154,6 +154,7 @@ describe("documentation contract", () => {
       "not-empty",
       "not-found",
       "not-removable",
+      "permission-denied",
       "permission-unverified",
       "read-failed",
       "timeout",

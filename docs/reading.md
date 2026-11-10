@@ -12,13 +12,20 @@ const opened = await fs.open("large.log");               // FileHandle for strea
 
 ## What every read does
 
-Identity and containment checks use brief synchronous metadata calls, like Node's module resolution, while file data is read asynchronously. Canonical paths retain Node's native realpath spelling, including expansion of Windows short paths.
+On POSIX, `root()` acquisition and `Root.open()`/read admission use asynchronous
+metadata and canonicalization, including `~` expansion and bounded-read size
+observations. Bun uses the native resolver on a worker to preserve physical path,
+permission, and record-lock semantics. The optional native addon can still load
+synchronously on first use. File data is read asynchronously.
+Canonical paths retain native realpath spelling, including Windows short paths.
 
-The same observation rule applies to archive extraction, copy, publication, move,
-directory modes, and supporting lock, queue, and secret-file operations. Opens,
-data transfers, durability syncs, filesystem mutations, and closes retain their
-existing asynchronous behavior. Custom filesystem adapters retain their async
-metadata interface.
+Windows retains synchronous metadata and final admission to preserve native
+namespace and delete-sharing behavior. Explicit synchronous APIs and custom
+`openRootFile` `ioFs` adapters also retain their synchronous contract. This does
+not make every fs-safe operation nonblocking: stat/list/walk observation guards,
+archive extraction, copy, publication, move, directory modes, and supporting lock,
+queue, and secret-file operations may still use synchronous metadata or durability
+calls.
 
 Regardless of shape, every read goes through the same boundary checks:
 
@@ -197,7 +204,8 @@ for (const absolutePath of sourceFiles) {
   try {
     consume(fs.readFileSync(opened.fd));
   } finally {
-    fs.closeSync(opened.fd);
+    if (opened.close) opened.close();
+    else fs.closeSync(opened.fd);
   }
 }
 ```
@@ -213,7 +221,14 @@ are never cached. Other platforms, unavailable native support, other path
 spellings, explicit canonical-root hints, custom filesystem adapters, and
 symlink-following policies retain the ordinary per-open admission path.
 
-Successful opens transfer descriptor ownership to the caller. `close()` and
+Successful native batch opens include an idempotent `opened.close()` bound to
+the descriptor's originating native closer. Always use it when present, including
+after changing native configuration; otherwise close the Node-opened descriptor
+with `fs.closeSync(opened.fd)`. The optional method preserves the existing result
+fields and ordinary one-shot/fallback results. Do not close the same descriptor
+through both methods.
+
+Successful opens transfer descriptor ownership to the caller. Batch `close()` and
 `Symbol.dispose` release retained root descriptors, are idempotent, and do not close
 previously returned descriptors. Opening after close returns a validation
 failure with code `invalid-path`. Keep batches scoped to one operation rather

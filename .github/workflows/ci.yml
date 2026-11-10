@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      windows_package_capacity_proof:
+        description: Compare package consumers on standard Windows and the 16-core control using the same build
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -21,11 +26,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Capacity dispatch proves only the Windows producer/consumer closure.
+  # Ordinary CI and the independently opted-in credential proof keep their owners.
   freebsd-native:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     name: FreeBSD targets
     uses: ./.github/workflows/freebsd.yml
 
   lint-workflows:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     name: Lint workflows
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -68,7 +77,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 12.15.0
           run_install: false
@@ -194,7 +203,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 12.15.0
           run_install: false
@@ -949,9 +958,10 @@ jobs:
           retention-days: 1
 
   check:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     # Preserve the required status identifier while changing the actual runner.
     name: Node ${{ matrix.node }} check (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -971,6 +981,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1002,6 +1014,13 @@ jobs:
       - name: Check JavaScript fallback
         run: pnpm check:runtime
 
+      - name: Check archive interoperability with built WASM
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: |
+          pnpm archive:interop:fixtures
+          git diff --exit-code -- archive-core/tests/fixtures
+          pnpm archive:interop:wasm ./dist/archive-parser.wasm
+
       - name: Smoke method benchmarks with JavaScript fallback
         if: matrix.node == 24
         run: pnpm benchmark:methods --mode off --iterations 1 --samples 1 --warmup 0
@@ -1031,9 +1050,10 @@ jobs:
         run: node scripts/regular-append-windows-proof.mjs
 
   native-check:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     # The arm64 status name is part of the main branch protection contract.
     name: Native check (${{ matrix.label || (matrix.os == 'xcode-27' && 'macos-15' || matrix.os) }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.runner || matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1057,11 +1077,13 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The 16-core contract belongs to the custom latest runner. Server 2022
-      # deliberately uses the standard hosted image to exercise its OS behavior.
+      # Both Windows versions use standard hosted images. Keep latest's explicit
+      # admission separate from Server 2022's existing OS compatibility lane.
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1088,8 +1110,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Preserve the former 16-core lane's Rust test concurrency on smaller hardware.
       - name: Test native crate
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked${{ matrix.os == 'windows-latest' && ' -- --test-threads=16' || '' }}
 
       - name: Build package
         run: pnpm build
@@ -1542,7 +1565,7 @@ jobs:
       - name: Test Root sidecar admission with required native binding
         env:
           FS_SAFE_NATIVE_MODE: require
-        run: pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts
+        run: pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-mtime-handoff.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts
 
       - name: Test canonical archive filter paths with required native binding
         env:
@@ -1555,6 +1578,7 @@ jobs:
         run: pnpm test test/archive-zip-admission.test.ts test/archive-zip-metadata.test.ts test/archive-zip-integrity.test.ts
 
   native-gnu-floor:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     name: Native glibc 2.28 (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
@@ -1613,6 +1637,7 @@ jobs:
         run: bash scripts/test-linux-glibc-floor.sh
 
   native-musl:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     name: Native check (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -1659,7 +1684,7 @@ jobs:
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-remove-native-integration.test.ts test/root-move-replace-native-integration.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/file-hash-options.test.ts
             node scripts/sidecar-contention-proof.mjs require
-            FS_SAFE_NATIVE_MODE=require pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts
+            FS_SAFE_NATIVE_MODE=require pnpm test test/root-create-only-preflight.test.ts test/sidecar-lock-mtime-handoff.test.ts test/sidecar-lock-root-admission.test.ts test/sidecar-lock-root-ancestry.test.ts test/sidecar-lock-root-budget.test.ts test/sidecar-lock-root-resolver.test.ts test/sidecar-lock-root-unlink.test.ts test/sidecar-lock-unlink-siblings.test.ts test/file-lock-sync-stale.test.ts test/file-lock-sync-release.test.ts
             FS_SAFE_PAX_REQUIRE_NATIVE=1 pnpm test test/native-unix-descriptor-admission.test.ts test/native-owned-tree.test.ts test/native-write-containment.test.ts test/native-staging-regression.test.ts test/staged-file.test.ts test/staged-file-failures.test.ts test/staged-symlink.test.ts test/staged-symlink-error-settlement.test.ts test/native-archive-equivalence.test.ts test/native-publish-equivalence.test.ts test/archive-unified.test.ts test/archive-wasm-abi.test.ts test/archive-pax.test.ts test/archive-pax-compressed.test.ts test/archive-tar-strip.test.ts test/archive-tar-framing.test.ts test/archive-tar-framing-compressed.test.ts test/archive-gzip-integrity.test.ts test/archive-gzip-container.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/root-write-mode.test.ts test/root-write-verification.test.ts test/root-write-lifetime.test.ts test/root-write-exact-identity.test.ts test/secret-write-publication.test.ts test/secret-write-preparation.test.ts test/native-write-mode-ownership.test.ts test/native-created-cleanup.test.ts test/file-mode-facades.test.ts test/native-private-creation.test.ts
             FS_SAFE_NATIVE_MODE=require pnpm test test/copy-root-file-sync.test.ts test/root-copy-options.test.ts test/root-copy-read-identity.test.ts test/root-copy-symlink-policy.test.ts test/root-copy-windows-publication.test.ts test/root-parent-symlink-policy.test.ts test/root-mutation-authority.test.ts test/root-mutation-dispatch.test.ts test/native-mutation-policy-admission.test.ts test/native-mutation-policy-integration.test.ts test/native-parent-captured-identity.test.ts test/pinned-mutation-receipt-walk.test.ts test/root-shared-js-mutation-policy.test.ts test/root-windows-legacy-policy-boundaries.test.ts
@@ -1677,6 +1702,7 @@ jobs:
           if-no-files-found: error
 
   cargo-quality:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     name: Cargo clippy and audit
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1699,6 +1725,7 @@ jobs:
         run: cargo audit --deny warnings
 
   windows-arm64:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_package_capacity_proof
     name: Windows ARM64 host (Node ${{ matrix.arch }})
     runs-on: windows-11-arm
     timeout-minutes: 35
@@ -1803,15 +1830,12 @@ jobs:
 
   package-smoke-build:
     name: Bundled package build (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - xcode-27
-          - windows-latest
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && '["windows-latest"]' || '["ubuntu-latest","xcode-27","windows-latest"]') }}
     steps:
       - name: Check out exact package-proof source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1823,6 +1847,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: "4"
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1854,7 +1880,12 @@ jobs:
       - name: Build and stage host binding
         run: pnpm native:build
 
-      # The ES2022 output and napi8 binding are shared across Node 22/24.
+      - name: Pack exact-source root and host artifacts once
+        env:
+          FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: pnpm package:collect --allow-host-only --pack-only --output release-artifacts-package-smoke
+
+      # The ES2022 output and napi8 binding are shared across supported Node runtimes.
       # Each consumer checks out this same PR head; merge-ref builds stay separate.
       - name: Upload exact-source package build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1865,28 +1896,38 @@ jobs:
             src/windows-security-helper.exe
             native/*.node
             packages/*/fs-safe-native.node
+            release-artifacts-package-smoke/
           if-no-files-found: error
           retention-days: 1
 
   package-smoke:
     # Artifact routing still uses matrix.os; only the required status name is stable.
-    name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})
+    name: Bundled package smoke (${{ matrix.os == 'xcode-27' && 'macos-15' || matrix.os }}, Node ${{ matrix.node }})${{ matrix.capacity == 'control' && ' [16-core control]' || '' }}
     # Required consumer checks must fail on missing artifacts, rather than
     # being skipped when any build in the producer matrix fails.
     if: ${{ !cancelled() }}
-    runs-on: ${{ matrix.os == 'windows-latest' && 'fs-safe-windows-16core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-latest' && (matrix.capacity == 'control' && 'fs-safe-windows-16core' || 'windows-latest') || matrix.os }}
     timeout-minutes: 30
     needs: package-smoke-build
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - xcode-27
-          - windows-latest
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && '["windows-latest"]' || '["ubuntu-latest","xcode-27","windows-latest"]') }}
         node:
           - 22
           - 24
+        include:
+          - os: windows-latest
+            node: "26.13.0"
+            capacity: standard
+        # Manual controls consume the same immutable artifact as standard rows.
+        # Preserve the six required checks and add the reporter's Windows runtime.
+        capacity: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_package_capacity_proof && '["standard","control"]' || '["standard"]') }}
+        exclude:
+          - os: ubuntu-latest
+            capacity: control
+          - os: xcode-27
+            capacity: control
     steps:
       - name: Check out exact package-proof source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1898,6 +1939,8 @@ jobs:
       - name: Verify Windows CI runner
         if: matrix.os == 'windows-latest'
         uses: ./.github/actions/verify-windows-ci-runner
+        with:
+          minimum-logical-processors: ${{ matrix.capacity == 'control' && '16' || '4' }}
 
       - name: Set up Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -1920,7 +1963,7 @@ jobs:
       - name: Verify root-only npm and pnpm consumer installs
         env:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: pnpm package:smoke
+        run: pnpm package:smoke --packed-input release-artifacts-package-smoke
 
       - name: Verify Windows native PE imports
         if: runner.os == 'Windows'
@@ -1938,6 +1981,32 @@ jobs:
           FS_SAFE_NATIVE_MODE: require
         run: pnpm test test/root-file-open-batch-sync.test.ts
 
+      # This negative control qualifies the read-owner change against its exact
+      # pre-fix base; it is not an ongoing old-runtime compatibility requirement.
+      - name: Check out native batch-read negative control
+        if: matrix.node == '26.13.0' && github.event_name == 'pull_request' && github.event.pull_request.base.sha == '7d307d46028de5c7dcf37cf511b2fe94d5896821'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 7d307d46028de5c7dcf37cf511b2fe94d5896821
+          path: artifacts/native-batch-read-baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove native batch-read baseline failure and candidate ownership
+        if: matrix.node == '26.13.0' && github.event_name == 'pull_request' && github.event.pull_request.base.sha == '7d307d46028de5c7dcf37cf511b2fe94d5896821'
+        env:
+          FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+          FS_SAFE_NATIVE_MODE: require
+        run: node scripts/native-batch-read-regression-proof.mjs
+
+      - name: Upload native batch-read comparison receipt
+        if: always() && matrix.node == '26.13.0' && github.event_name == 'pull_request' && github.event.pull_request.base.sha == '7d307d46028de5c7dcf37cf511b2fe94d5896821'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-batch-read-node26-${{ github.event.pull_request.head.sha }}
+          path: artifacts/native-batch-read-proof.json
+          if-no-files-found: error
+
       - name: Test Windows owner benchmark control with required native binding
         if: runner.os == 'Windows'
         env:
@@ -1947,9 +2016,10 @@ jobs:
       - name: Upload behavior proof
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: platform-package-proof-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node }}
+          name: platform-package-proof-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node }}${{ matrix.capacity == 'control' && '-16-core-control' || '' }}
           path: |
             release-artifacts/manifest.json
             release-artifacts/consumer-proof.json
             release-artifacts/windows-native-pe.json
+            release-artifacts/package-build-proof.json
           if-no-files-found: error

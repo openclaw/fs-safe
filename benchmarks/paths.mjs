@@ -151,20 +151,20 @@ export async function registerPaths({
     verify: (result) => assert.equal(result.canonicalPath, input),
   });
   add("resolvePathViaExistingAncestorSync", () => a.resolvePathViaExistingAncestorSync(input), { sync: true });
-  add("resolvePathPrefixSync", () => a.resolvePathPrefixSync(input), {
-    sync: true,
-    skip: typeof a.resolvePathPrefixSync !== "function"
-      ? "Not exported by this explicitly selected older comparison build."
-      : undefined,
-    verify: result => assert.deepEqual(result.unresolvedSegments, []),
-  });
-  add("resolvePathPrefixSync/missing", () => a.resolvePathPrefixSync(`${w}${path.sep}future${path.sep}..${path.sep}input.json`), {
-    sync: true,
-    skip: typeof a.resolvePathPrefixSync !== "function"
-      ? "Not exported by this explicitly selected older comparison build."
-      : undefined,
-    verify: result => assert.deepEqual(result.unresolvedSegments, ["future", "..", "input.json"]),
-  });
+  for (const name of ["resolvePathPrefixSync", "resolvePathPrefix"]) {
+    const options = {
+      sync: name.endsWith("Sync"),
+      skip: typeof a[name] !== "function"
+        ? "Not exported by this explicitly selected older comparison build."
+        : undefined,
+    };
+    add(name, () => a[name](input), {
+      ...options, verify: result => assert.deepEqual(result.unresolvedSegments, []),
+    });
+    add(`${name}/missing`, () => a[name](`${w}${path.sep}future${path.sep}..${path.sep}input.json`), {
+      ...options, verify: result => assert.deepEqual(result.unresolvedSegments, ["future", "..", "input.json"]),
+    });
+  }
   for (const name of ["resolveLocalPathFromRootsSync", "readLocalFileFromRoots"]) add(name, () => a[name]({ filePath: input, roots: [w] }), { sync: name.endsWith("Sync") });
   const base = { rootDir: w, scopeLabel: "benchmark" };
   for (const name of ["resolvePathWithinRoot", "resolveWritablePathWithinRoot", "ensureDirectoryWithinRoot"]) add(name, () => a[name]({ ...base, requestedPath: name === "ensureDirectoryWithinRoot" ? "tree" : "input.json" }), { sync: name === "resolvePathWithinRoot" });

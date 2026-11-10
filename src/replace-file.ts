@@ -5,7 +5,8 @@ import path from "node:path";
 import type { RenameIdentityPolicy } from "./pinned-write-types.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { assertDestinationHardlinkPolicy, copyFallbackReplace } from "./replace-file-copy-fallback.js";
-import { applyDirectoryMode, syncDirectoryBestEffort, writeTempFile } from "./replace-file-descriptor.js";
+import { syncDirectoryBestEffort, writeTempFile } from "./replace-file-descriptor.js";
+import { prepareDirectoryMode } from "./prepare-directory-mode.js";
 import { inheritedRegularFileMode } from "./replace-file-mode.js";
 import {
   atomicExpectedContentHash,
@@ -134,21 +135,24 @@ export async function replaceFileAtomicWithDirectorySync(
   const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery === true;
   validateRenameIdentity(renameIdentity);
   return await serializePathWrite(path.resolve(filePath), async () => {
     if (renameIdentity !== "verify-content-with-lock") {
-      return await replaceAsync(options, filePath, renameIdentity, mutation, syncParent);
+      return await replaceAsync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery, syncParent);
     }
     const fsModule = options.fileSystem?.promises ?? fs;
     const dir = path.dirname(filePath);
     mutation.assert();
-    await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
-      recursive: true,
-      mode: options.dirMode ?? 0o700,
+    const dirMode = options.dirMode ?? 0o700;
+    if (dirMode === "preserve") {
+      await runAsync(prepareDirectoryMode(AtomicIo.async(fsModule), { dirPath: dir, mode: "preserve", mutation }));
+    } else await fsModule.mkdir(fsModule === fs ? recursiveMkdirPath(dir) : dir, {
+      recursive: true, mode: dirMode,
     });
     mutation.assert();
     return await withAtomicRenameIdentityLock(filePath, () =>
-      replaceAsync(options, filePath, renameIdentity, mutation, syncParent));
+      replaceAsync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery, syncParent));
   });
 }
 
@@ -157,10 +161,11 @@ function replaceAsync(
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
   mutation: AtomicMutation,
+  allowDrvfsRenameRecovery: boolean,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Promise<ReplaceFileAtomicResult> {
   return runAsync(replace(AtomicIo.async(options.fileSystem?.promises ?? fs), options,
-    filePath, renameIdentity, mutation, syncParent));
+    filePath, renameIdentity, mutation, allowDrvfsRenameRecovery, syncParent));
 }
 
 export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): ReplaceFileAtomicResult {
@@ -168,20 +173,23 @@ export function replaceFileAtomicSync(options: ReplaceFileAtomicSyncOptions): Re
   const filePath = validateReplaceFilePath(options.filePath);
   validateRestoreOptions(options);
   const renameIdentity = options.renameIdentity;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery === true;
   validateRenameIdentity(renameIdentity);
   if (renameIdentity !== "verify-content-with-lock") {
-    return replaceSync(options, filePath, renameIdentity, mutation);
+    return replaceSync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery);
   }
   const fsModule = options.fileSystem ?? syncFs;
   const dir = path.dirname(filePath);
   mutation.assert();
-  fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
-    recursive: true,
-    mode: options.dirMode ?? 0o700,
+  const dirMode = options.dirMode ?? 0o700;
+  if (dirMode === "preserve") {
+    runSync(prepareDirectoryMode(AtomicIo.sync(fsModule, fsModule.fchmodSync), { dirPath: dir, mode: "preserve", mutation }));
+  } else fsModule.mkdirSync(fsModule === syncFs ? recursiveMkdirPath(dir) : dir, {
+    recursive: true, mode: dirMode,
   });
   mutation.assert();
   return withAtomicRenameIdentityLockSync(filePath, () =>
-    replaceSync(options, filePath, renameIdentity, mutation));
+    replaceSync(options, filePath, renameIdentity, mutation, allowDrvfsRenameRecovery));
 }
 
 function replaceSync(
@@ -189,9 +197,10 @@ function replaceSync(
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
   mutation: AtomicMutation,
+  allowDrvfsRenameRecovery: boolean,
 ): ReplaceFileAtomicResult {
   return runSync(replace(AtomicIo.sync(options.fileSystem ?? syncFs), options,
-    filePath, renameIdentity, mutation));
+    filePath, renameIdentity, mutation, allowDrvfsRenameRecovery));
 }
 
 function* replace(
@@ -200,6 +209,7 @@ function* replace(
   filePath: string,
   renameIdentity: RenameIdentityPolicy | undefined,
   mutation: AtomicMutation,
+  allowDrvfsRenameRecovery: boolean,
   syncParent?: (directoryPath: string) => Promise<unknown>,
 ): Procedure<ReplaceFileAtomicResult> {
   const dir = path.dirname(filePath);
@@ -212,7 +222,7 @@ function* replace(
       syncOptions.fileSystem === undefined ? syncFs.fchmodSync : undefined
     );
     if (!io.fchmodSync && (options.mode !== undefined || options.preserveExistingMode === true ||
-      (process.platform !== "win32" && options.dirMode !== undefined))) {
+      (process.platform !== "win32" && typeof options.dirMode === "number"))) {
       throw new TypeError("fileSystem.fchmodSync is required when mode, dirMode, or preserveExistingMode is specified");
     }
   }
@@ -220,9 +230,7 @@ function* replace(
   const tempOwner = new AtomicTempOwner(tempPath, io);
   let originalFailure: AtomicTempFailure | undefined;
   try {
-    mutation.assert();
-    yield* io.mkdir(dir, dirMode);
-    yield* applyDirectoryMode(io, { dirPath: dir, mode: dirMode, mutation });
+    yield* prepareDirectoryMode(io, { dirPath: dir, mode: dirMode, mutation, allowDrvfsRenameRecovery });
     tempOwner.start();
     tempOwner.adopt(yield* writeTempFile(io, {
       tempPath,
@@ -243,6 +251,7 @@ function* replace(
       yield* assertDestinationHardlinkPolicy(io, filePath, options.destinationHardlinks);
       yield* tempOwner.assertCurrent();
     }
+    if (allowDrvfsRenameRecovery) yield* tempOwner.prepareRecovery(options.content, dir, true);
     const result = yield* renameWithRetry(io, tempOwner, filePath, options, mutation);
     if (result.method === "rename") {
       tempOwner.markRenamed();

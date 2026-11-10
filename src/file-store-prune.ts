@@ -6,6 +6,8 @@ import { literalStoreRootPath } from "./file-store-boundary.js";
 import { isPathInside } from "./path.js";
 import { realpathSync } from "./realpath.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
+import { AtomicIo, runAsync } from "./atomic-io.js";
+import { prepareDirectoryMode } from "./prepare-directory-mode.js";
 import { root } from "./root.js";
 import type { RootRemoveOptions } from "./root-options.js";
 import { nonrecursiveRemovalKind } from "./root-remove.js";
@@ -26,7 +28,7 @@ const REMOVE_EMPTY_DIRECTORY_OPTIONS: RootRemoveOptions & {
 
 export async function pruneExpiredStoreEntries(params: {
   rootDir: string;
-  dirMode: number;
+  dirMode: number | "preserve";
   options: FileStorePruneOptions;
 }): Promise<void> {
   const now = Date.now();
@@ -34,7 +36,9 @@ export async function pruneExpiredStoreEntries(params: {
   const maxDepth = params.options.maxDepth;
   const pruneEmptyDirs =
     (recursive || maxDepth !== undefined) && (params.options.pruneEmptyDirs ?? false);
-  await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
+  if (params.dirMode === "preserve") {
+    await runAsync(prepareDirectoryMode(AtomicIo.async(fs), { dirPath: params.rootDir, mode: "preserve" }));
+  } else await fs.mkdir(recursiveMkdirPath(params.rootDir), { recursive: true, mode: params.dirMode });
   const rootReal = realpathSync.native(params.rootDir);
   const scopedRoot = await root(rootReal);
   const rootGuard = {

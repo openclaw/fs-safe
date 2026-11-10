@@ -1,5 +1,7 @@
 # root()
 
+
+Root defaults and buffered write/create options accept `allowDrvfsRenameRecovery`. See the [verified DrvFS exception and residual reuse risk](atomic.md#drvfs-hidden-rename-recovery); the default remains strict.
 `root()` is the primary entry point. It takes a trusted directory and returns a capability-style `Root` handle whose methods accept relative paths and refuse to escape the directory.
 
 ```ts

@@ -7,6 +7,7 @@ import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
+const isStage = (name: unknown) => typeof name === "string" && path.basename(name).startsWith(".fs-safe-lock-");
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(() => {
   vi.restoreAllMocks();
@@ -30,8 +31,9 @@ for (const kind of ["sync", "async"] as const) {
         if (kind === "sync") {
           const open = fs.openSync.bind(fs);
           vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
-            if (file === lockPath && typeof flags === "number" && (flags & fs.constants.O_EXCL) !== 0) {
+            if (isStage(file) && typeof flags === "number" && (flags & fs.constants.O_EXCL) !== 0) {
               denials += 1;
+              denial.path = String(file);
               throw denial;
             }
             return open(file, flags, mode);
@@ -39,8 +41,9 @@ for (const kind of ["sync", "async"] as const) {
         } else {
           const open = fsp.open.bind(fsp);
           vi.spyOn(fsp, "open").mockImplementation(async (...args) => {
-            if (args[0] === lockPath && args[1] === "wx") {
+            if (isStage(args[0]) && (typeof args[1] === "number" && (args[1] & fs.constants.O_EXCL) !== 0)) {
               denials += 1;
+              denial.path = String(args[0]);
               throw denial;
             }
             return await open(...args);

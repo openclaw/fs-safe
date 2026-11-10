@@ -266,11 +266,23 @@ describe.runIf(nativeAvailable)("retained-directory staging", () => {
 
   it.each(["publish-first", "cleanup-first"])("serializes %s and fences use after close", async (order) => {
     const directory = await tempRoot("fs-safe-stage-concurrent-");
+    const native = __loadBundledNativeForTest(), release = Promise.withResolvers<void>();
+    let dispatched = false;
+    __setNativeLoaderForTest(() => ({ ...native, async renameNoReplaceAsync(...args) {
+      dispatched = true;
+      await release.promise;
+      await native.renameNoReplaceAsync!(...args);
+    } }));
     const staged = await stageFileInDirectory({ directory, content: "owned" });
     const actions = order === "publish-first"
       ? [staged.publish("final", { overwrite: false }), staged.assertCurrent(), staged.cleanup(), staged.cleanup()]
       : [staged.cleanup(), staged.publish("final", { overwrite: false }), staged.assertCurrent(), staged.cleanup()];
-    const results = await Promise.allSettled(actions);
+    const pending = Promise.allSettled(actions);
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatched).toBe(order === "publish-first");
+    } finally { release.resolve(); }
+    const results = await pending;
     expect(results[0]?.status).toBe("fulfilled");
     if (order === "cleanup-first") {
       expect(results.slice(1, 3).every((r) => r.status === "rejected")).toBe(true);

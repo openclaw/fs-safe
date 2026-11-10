@@ -9,6 +9,7 @@ export {
   type ReplaceFileAtomicSyncOptions,
 } from "./replace-file.js";
 export type { RenameIdentityPolicy } from "./pinned-write-types.js";
+export type { DirectoryMode } from "./directory-mode-options.js";
 export type {
   ReplaceFileAtomicRestoreCleanup,
   ReplaceFileAtomicRestoreFailureDetails,

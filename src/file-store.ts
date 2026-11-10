@@ -1,4 +1,6 @@
+import { snapshotWriteOptions } from "./file-store-write-options.js";
 import syncFs from "node:fs";
+import { rejectPrivateDirectoryPreservation, type DirectoryMode } from "./directory-mode-options.js";
 import type { Readable } from "node:stream";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
@@ -33,36 +35,19 @@ import {
 export type FileStoreOptions = {
   rootDir: string;
   private?: boolean;
+  allowDrvfsRenameRecovery?: boolean;
   /** Default for writes, streams, and copies; true syncs file and parent where supported. */
   durable?: boolean;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   mode?: number;
   maxBytes?: number;
 };
 
-export type FileStoreWriteOptions = Partial<Pick<FileStoreOptions, "dirMode" | "mode" | "maxBytes"> & {
+export type FileStoreWriteOptions = Partial<Pick<FileStoreOptions, "dirMode" | "mode" | "maxBytes" | "allowDrvfsRenameRecovery"> & {
   /** Override store durability; defaults to the store option, then true. */
   durable: boolean;
   tempPrefix: string;
 }>;
-
-function snapshotWriteOptions(
-  options?: FileStoreWriteOptions,
-  durabilityFirst = true,
-): FileStoreWriteOptions | undefined {
-  if (options == null) return undefined;
-  return durabilityFirst ? {
-    maxBytes: options.maxBytes,
-    durable: options.durable,
-    dirMode: options.dirMode,
-    mode: options.mode,
-  } : {
-    maxBytes: options.maxBytes,
-    dirMode: options.dirMode,
-    mode: options.mode,
-    durable: options.durable,
-  };
-}
 
 export type FileStoreReadOptions = RootReadOptions & { encoding?: BufferEncoding };
 
@@ -148,8 +133,9 @@ async function copyIntoRoot(params: {
   rootDir: string;
   relativePath: string;
   sourcePath: string;
+  allowDrvfsRenameRecovery?: boolean;
   durable: boolean;
-  dirMode: number;
+  dirMode: number | "preserve";
   maxBytes?: number;
   mode: number;
   tempPrefix?: string;
@@ -170,6 +156,7 @@ async function copyIntoRoot(params: {
   await ensureParentInRoot(scopedRoot, relativePath, params.dirMode);
   await scopedRoot.copyIn(literalStoreRootPath(relativePath), params.sourcePath, {
     durable: params.durable,
+    allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
     maxBytes: params.maxBytes,
     mkdir: false,
     mode: params.mode,
@@ -183,7 +170,9 @@ export function fileStore(options: FileStoreOptions): FileStore {
   const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery;
   const dirMode = options.dirMode ?? 0o700;
+  if (privateMode) rejectPrivateDirectoryPreservation(dirMode);
   const mode = options.mode ?? 0o600;
   const durable = options.durable ?? true;
   const maxBytes = normalizeMaxBytes(options.maxBytes);
@@ -206,6 +195,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         rootDir,
         filePath: destination,
         content,
+        allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery ?? allowDrvfsRenameRecovery,
         durable: writeOptions?.durable ?? durable,
         dirMode: writeOptions?.dirMode ?? dirMode,
         mode: writeOptions?.mode ?? mode,
@@ -225,6 +215,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
       mkdir: false,
       mode: writeMode,
       durable: writeDurable,
+      allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery ?? allowDrvfsRenameRecovery,
     });
     return destination;
   }
@@ -256,6 +247,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
           filePath: destination,
           content: Buffer.concat(chunks),
           durable: writeDurable,
+          allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery ?? allowDrvfsRenameRecovery,
           dirMode: writeDirMode,
           mode: writeMode,
         });
@@ -275,6 +267,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
           relativePath,
           sourcePath: staged.path,
           durable: writeDurable,
+          allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery ?? allowDrvfsRenameRecovery,
           maxBytes: limit,
           mode: writeMode,
           tempPrefix: writeOptions?.tempPrefix,
@@ -291,6 +284,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         const policy = writeOptions == null
           ? undefined
           : {
+              allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery,
               maxBytes: configuredLimit,
               durable: writeOptions?.durable,
               dirMode: writeOptions?.dirMode,
@@ -307,6 +301,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
         relativePath,
         sourcePath,
         durable: writeOptions?.durable ?? durable,
+        allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery ?? allowDrvfsRenameRecovery,
         dirMode: writeOptions?.dirMode ?? dirMode,
         maxBytes: configuredLimit,
         mode: writeOptions?.mode ?? mode,
@@ -394,7 +389,7 @@ export function fileStore(options: FileStoreOptions): FileStore {
             await write(
               relativePath,
               options?.trailingNewline === false ? json : `${json}\n`,
-              { durable: options?.durable },
+              { durable: options?.durable, allowDrvfsRenameRecovery: options?.allowDrvfsRenameRecovery },
             );
           },
         },
@@ -413,7 +408,9 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
   const rootDir = resolvePathPreservingWindowsRoot(rootDirInput);
   assertNoWindowsPathAlias(rootDir, "filesystem", "store root uses a Windows filesystem namespace alias");
   const privateMode = options.private ?? false;
+  const allowDrvfsRenameRecovery = options.allowDrvfsRenameRecovery;
   const dirMode = options.dirMode ?? 0o700;
+  if (privateMode) rejectPrivateDirectoryPreservation(dirMode);
   const mode = options.mode ?? 0o600;
   const durable = options.durable ?? true;
   const maxBytes = normalizeMaxBytes(options.maxBytes);
@@ -432,6 +429,7 @@ export function fileStoreSync(options: FileStoreOptions): FileStoreSync {
       filePath: destination,
       content,
       privateMode,
+      allowDrvfsRenameRecovery: writeOptions?.allowDrvfsRenameRecovery ?? allowDrvfsRenameRecovery,
       durable: writeOptions?.durable ?? durable,
       dirMode: writeOptions?.dirMode ?? dirMode,
       mode: writeOptions?.mode ?? mode,

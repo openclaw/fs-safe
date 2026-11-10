@@ -1,5 +1,7 @@
 # Security model
 
+
+The off-by-default [`allowDrvfsRenameRecovery` exception](atomic.md#drvfs-hidden-rename-recovery) releases continuous inode retention only after post-rename ENOENT on a descriptor-verified DrvFS mount. Exact metadata and available content must match afterward. Recycled identities and identical replacement content remain a residual risk; bounded retries do not bound scheduling pauses.
 `fs-safe` is a library-level guardrail: a capability-style root handle for Node.js code that handles untrusted relative paths. It assumes the calling process already has whatever filesystem permissions it needs and aims to stop trivial path tricks from broadening that authority. It is not a sandbox and does not replace operating-system isolation.
 
 The same shape exists in other languages: Go's [`os.Root` / `OpenInRoot`](https://go.dev/blog/osroot) and Rust's [`cap-std`](https://github.com/bytecodealliance/cap-std) both expose a root handle whose operations refuse to escape it. `fs-safe` is the Node-side equivalent: a single `root()` capability that carries the boundary across every read, write, move, and remove, instead of leaving each call site to redo `path.resolve(...).startsWith(...)` and hope.

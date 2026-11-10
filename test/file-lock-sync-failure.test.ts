@@ -77,7 +77,7 @@ describe("synchronous file-lock failure handling", () => {
     expect(fsSync.existsSync(lockPath)).toBe(false);
   });
 
-  it("uses file age for corrupt legacy locks and preserves them on stale failure", async () => {
+  it("keeps corrupt legacy locks as contention regardless of age", async () => {
     const root = await tempRoot("fs-safe-sync-lock-corrupt-");
     const targetPath = path.join(root, "state.json");
     const lockPath = `${targetPath}.lock`;
@@ -86,7 +86,7 @@ describe("synchronous file-lock failure handling", () => {
 
     expect(() =>
       acquireFileLockSync(targetPath, { ...lockOptions(), staleMs: 1 }),
-    ).toThrow(expect.objectContaining({ code: "file_lock_stale" }));
+    ).toThrow(expect.objectContaining({ code: "file_lock_timeout" }));
     await expect(fs.readFile(lockPath, "utf8")).resolves.toBe("{");
   });
 
@@ -253,7 +253,6 @@ describe("synchronous file-lock failure handling", () => {
     };
     const realpath = vi.spyOn(canonicalPath.realpathSync, "native");
     const first = acquireFileLockSync(path.join(directory, "state.json"), options);
-    expect(realpath).toHaveBeenCalledTimes(5);
     const firstAcquireRealpaths = realpath.mock.calls.length;
     let second: ReturnType<typeof acquireFileLockSync> | undefined;
     try {

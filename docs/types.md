@@ -2,7 +2,11 @@
 
 The types most callers reach for. Shared data shapes are exported from `@openclaw/fs-safe/types`; method-specific option/result types live next to their subpath.
 
-For atomic replacement, `ReplaceFileAtomicFileSystem` and `ReplaceFileAtomicSyncFileSystem` are exported from `@openclaw/fs-safe/atomic`. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation. The synchronous type adds optional `fchmodSync(fd, mode)`; custom sync adapters that explicitly request `mode` or `preserveExistingMode` must implement it. See [Atomic writes](atomic.md#test-injection).
+For atomic replacement, `ReplaceFileAtomicFileSystem` and `ReplaceFileAtomicSyncFileSystem` are exported from `@openclaw/fs-safe/atomic`. Async adapters use `chmod()` on the `FileHandle` returned by their required `open()` operation. The synchronous type adds optional `fchmodSync(fd, mode)`; custom sync adapters that explicitly request `mode`, numeric `dirMode`, or `preserveExistingMode` must implement it. `dirMode: "preserve"` requires it when creating directories. See [Atomic writes](atomic.md#test-injection).
+
+`DirectoryMode = number | "preserve"` is exported from `/types` and `/atomic`.
+Each accepting API documents whether preservation applies to existing parents
+or is a creation-default alias. Private secret/store APIs reject `"preserve"`.
 
 `ReplaceFileAtomicDestinationState` is also exported from that subpath. It is a
 readonly union of `{ state: "removed", path }` and

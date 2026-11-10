@@ -41,8 +41,12 @@ describe("sidecar parent preparation", () => {
     configureFsSafeNative({ mode: "off" });
     const directory = await tempRoot("sidecar-parent-observation-");
     const stat = fs.statSync;
+    let inspected = false;
     vi.spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
-      if (args[0] === directory) throw Object.assign(new Error("inspection unavailable"), { code: "EIO" });
+      if (args[0] === directory && !inspected) {
+        inspected = true;
+        throw Object.assign(new Error("inspection unavailable"), { code: "EIO" });
+      }
       return Reflect.apply(stat, fs, args);
     }) as typeof fs.statSync);
     const held = await acquire(path.join(directory, "state"));

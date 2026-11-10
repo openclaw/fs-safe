@@ -135,6 +135,11 @@ export class AtomicIo {
     }
   }
 
+  *mkdirExclusive(directory: string, mode: number): Procedure<void> {
+    if (this.asyncFs) yield* wait(this.asyncFs.mkdir!(directory, { recursive: false, mode }));
+    else this.syncFs!.mkdirSync!(directory, { recursive: false, mode });
+  }
+
   *rename(source: string, destination: string): Procedure<void> {
     if (this.asyncFs) yield* wait(this.asyncFs.rename!(source, destination));
     else this.syncFs!.renameSync!(source, destination);
@@ -210,6 +215,16 @@ export class AtomicFile {
     } else {
       return this.resource.writeFile(data);
     }
+  }
+
+  *readFileBounded(maxBytes: number): Procedure<Buffer> {
+    if (typeof this.resource !== "number") return yield* wait(readFileHandleBounded(this.resource, maxBytes));
+    let position = 0;
+    return readBoundedSync(maxBytes, (buffer, length) => {
+      const bytes = this.io.syncFs!.readSync!(this.resource as number, buffer, 0, length, position);
+      position += bytes;
+      return bytes;
+    });
   }
 
   *readFile(sizeHint?: number): Procedure<Buffer> {

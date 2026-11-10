@@ -1,5 +1,6 @@
 import { defaultSidecarLockShouldReclaim, isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
 import {
+  isIncompleteSidecarLockRecord,
   readSidecarLockRawSnapshot,
   removeStaleSidecarLockIfAllowed,
   sidecarLockSnapshotStillPresent,
@@ -111,10 +112,12 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     if (await retryChangedBoundary()) return;
     throw error;
   }
+  // An incomplete owner can still be writing; age is not liveness evidence.
   if (!snapshot) {
     await params.waitForRetry();
     return;
   }
+  const incomplete = (!params.parserState.parser && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw);
   const staleOptions = params.staleOptionsState;
   try {
     if (!staleOptions.shouldReclaimObserved) {
@@ -140,12 +143,13 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     if (await retryChangedBoundary()) return;
     throw error;
   }
-  const shouldReclaim = staleOptions.shouldReclaim ?? defaultSidecarLockShouldReclaim;
+  const shouldReclaim = staleOptions.shouldReclaim;
   let reclaim: boolean;
   try {
     reclaim = await admission.run(async () => {
       assertUnheld();
       try {
+        if (!shouldReclaim) return !incomplete && defaultSidecarLockShouldReclaim(snapshot, params.staleMs, Date.now());
         return await Reflect.apply(shouldReclaim, undefined, [{
           lockPath,
           normalizedTargetPath,
@@ -184,6 +188,8 @@ export async function handleStaleSidecarAdmission<TPayload extends Record<string
     await params.waitForRetry();
     return;
   }
+  // Policy may diagnose an incomplete record, but can never authorize its removal.
+  if (incomplete) throw sidecarLockStale(lockPath, normalizedTargetPath);
   if ((staleOptions.staleRecovery ?? "fail-closed") === "remove-if-unchanged") {
     const acquiredGuard = await admission.run(() => tryAcquireSidecarReclaimGuard(
       params.reclaimGuards,

@@ -106,7 +106,10 @@ export function tryReadJsonSync<T = unknown>(
   }
 }
 
-export function writeJsonSync(pathname: string, data: unknown) {
+export type WriteJsonSyncOptions = { allowDrvfsRenameRecovery?: boolean };
+
+export function writeJsonSync(pathname: string, data: unknown, options?: WriteJsonSyncOptions) {
+  const allowDrvfsRenameRecovery = options?.allowDrvfsRenameRecovery === true;
   const filePath = admitStandalonePublicationPath(pathname);
   // Keep literal parent segments so staging follows the same symlinks as the target.
   const tmpPath = path.format({ ...path.parse(filePath), base: `.fs-safe-${randomUUID()}.tmp` });
@@ -126,10 +129,11 @@ export function writeJsonSync(pathname: string, data: unknown) {
     runSync(owner.assertCurrent());
     trySetSecureMode(temp.file.fd);
     fsSync.fsyncSync(temp.file.fd);
+    if (allowDrvfsRenameRecovery) runSync(owner.prepareRecovery(payload, path.dirname(filePath)));
     renameJsonFileWithFallback(owner, filePath);
     owner.markRenamed();
     runSync(owner.assertPublished(filePath));
-    trySetSecureMode(temp.file.fd);
+    trySetSecureMode(owner.fd);
     runSync(syncDirectoryBestEffort(io, path.dirname(filePath)));
     runSync(owner.assertPublished(filePath));
   } catch (error) {
@@ -367,7 +371,7 @@ export function readJsonSync<T = unknown>(
 
 export type WriteJsonOptions = Pick<
   WriteTextAtomicOptions,
-  "dirMode" | "durable" | "mode" | "trailingNewline"
+  "dirMode" | "durable" | "mode" | "trailingNewline" | "allowDrvfsRenameRecovery"
 >;
 
 export async function writeJson(
@@ -381,6 +385,7 @@ export async function writeJson(
     mode: options?.mode,
     dirMode: options?.dirMode,
     trailingNewline: options?.trailingNewline,
+    allowDrvfsRenameRecovery: options?.allowDrvfsRenameRecovery,
     durable: options?.durable,
   });
 }

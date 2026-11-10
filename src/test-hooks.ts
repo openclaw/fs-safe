@@ -34,6 +34,7 @@ export type FsSafeTestHooks = {
   ) => Promise<void> | void;
   afterPinnedWriteFallbackRename?: (targetPath: string) => Promise<void> | void;
   beforeSiblingTempWrite?: (tempPath: string) => Promise<void> | void;
+  beforeSidecarLockPublish?: (lockPath: string, temporaryPath: string) => void;
   beforeSidecarLockSnapshotOpen?: (lockPath: string) => Promise<void> | void;
   beforeRegularFileAppendOpen?: (filePath: string) => Promise<void> | void;
   beforeRegularFileAppendOpenSync?: (filePath: string) => void;
@@ -46,6 +47,7 @@ export type FsSafeTestHooks = {
     identity: FileIdentityStat,
   ) => Promise<void> | void;
   beforePublishDirectorySync?: NonNullable<FsSafeTestHooks["afterPublishTargetCreated"]>;
+  drvfsMountObservation?: (parentFd: number) => { magic: bigint; fdinfo: string; mountinfo: string } | undefined;
 };
 
 let fsSafeTestHooks: FsSafeTestHooks | undefined;

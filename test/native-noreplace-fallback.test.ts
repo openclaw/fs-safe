@@ -21,7 +21,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
     const directory = await tempRoot("fs-safe-noreplace-fallback-");
     const rename = vi.fn(() => { throw Object.assign(new Error("rename without replacement"), { code }); });
     const remove = vi.fn(native!.removeStagedFile);
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: rename, removeStagedFile: remove }));
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync: rename, removeStagedFile: remove }));
     const scoped = await root(directory);
     await scoped.create("target", "complete content");
     expect(await scoped.readText("target")).toBe("complete content");
@@ -39,7 +39,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
   it("replays completed streamed bytes without consuming the producer twice", async () => {
     configureFsSafeNative({ mode: "auto" });
     const directory = await tempRoot("fs-safe-noreplace-fallback-");
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace() {
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync() {
       throw Object.assign(new Error("rename without replacement"), { code: "EINVAL" });
     } }));
     const scoped = await root(directory);
@@ -57,7 +57,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
   it("requires native capability and cleans the definitely unpublished stage", async () => {
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-noreplace-fallback-");
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace() {
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync() {
       throw Object.assign(new Error("rename without replacement"), { code: "EINVAL" });
     } }));
     await expect((await root(directory)).create("target", "content")).rejects.toMatchObject({
@@ -76,7 +76,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
       // rather than the platform clone primitive, is under test here.
       return native!.copyFileExclusive!(fd, parent, name, "never", maxBytes, signal);
     });
-    __setNativeLoaderForTest(() => ({ ...native!, copyFileExclusive: copy, renameNoReplace() {
+    __setNativeLoaderForTest(() => ({ ...native!, copyFileExclusive: copy, renameNoReplaceAsync() {
       throw Object.assign(new Error("unsupported"), { code: "EINVAL" });
     } }));
     const scoped = await root(directory);
@@ -98,8 +98,8 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
 
   it("retains native publication on a supporting filesystem", async () => {
     const directory = await tempRoot("fs-safe-noreplace-normal-");
-    const rename = vi.fn(native!.renameNoReplace);
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: rename }));
+    const rename = vi.fn(native!.renameNoReplaceAsync);
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync: rename }));
     await (await root(directory)).create("target", "native");
     expect(rename).toHaveBeenCalledOnce();
     expect(await fs.readdir(directory)).toEqual(["target"]);
@@ -132,7 +132,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
     else await expect(scoped.move("source", "destination/target")).rejects.toMatchObject({ code: "helper-unavailable" });
     configureFsSafeNative({ mode: "require" });
     await scoped.create("target", "native still available");
-    expect(rename).toHaveBeenCalledTimes(2);
+    expect(rename).toHaveBeenCalledOnce();
     expect(await scoped.readText("target")).toBe("native still available");
     expect(await scoped.readText(process.platform === "linux" ? "destination/target" : "source")).toBe("source");
     expect(await fs.readdir(destination)).toEqual(process.platform === "linux" ? ["target"] : []);
@@ -144,13 +144,13 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
     try {
       const device = (await fs.stat(directory, { bigint: true })).dev;
       if (device === (await fs.stat(tmpfs, { bigint: true })).dev) return;
-      const rename = vi.fn<NonNullable<typeof native>["renameNoReplace"]>((...args) => {
+      const rename = vi.fn<NonNullable<typeof native>["renameNoReplaceAsync"]>(async (...args) => {
         if (fsSync.fstatSync(args[0], { bigint: true }).dev === device) {
           throw Object.assign(new Error("unsupported"), { code: "EINVAL" });
         }
-        native!.renameNoReplace(...args);
+        await native!.renameNoReplaceAsync!(...args);
       });
-      __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: rename }));
+      __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync: rename }));
       await (await root(directory)).create("fallback", "fallback");
       await (await root(tmpfs)).create("native", "native");
       expect(rename).toHaveBeenCalledTimes(2);
@@ -160,7 +160,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
 
   it("keeps a competing target created between rejection and fallback", async () => {
     const directory = await tempRoot("fs-safe-noreplace-competitor-");
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace() {
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync() {
       // The actual syscall rejected the flag; a competing writer wins next.
       fsSync.writeFileSync(path.join(directory, "target"), "competitor");
       throw Object.assign(new Error("unsupported"), { code: "EINVAL" });
@@ -173,7 +173,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
   it("does not retry after identity-checked cleanup fails and keeps publication primary", async () => {
     const directory = await tempRoot("fs-safe-noreplace-cleanup-");
     const remove = vi.fn(() => { throw Object.assign(new Error("unlink failed"), { code: "EIO" }); });
-    __setNativeLoaderForTest(() => ({ ...native!, removeStagedFile: remove, renameNoReplace() {
+    __setNativeLoaderForTest(() => ({ ...native!, removeStagedFile: remove, renameNoReplaceAsync() {
       throw Object.assign(new Error("unsupported"), { code: "EINVAL" });
     } }));
     await expect((await root(directory)).create("target", "ours")).rejects.toMatchObject({
@@ -189,7 +189,7 @@ describe.skipIf(!native || process.platform === "win32")("unsupported native no-
     configureFsSafeNative({ mode: "require" });
     const directory = await tempRoot("fs-safe-noreplace-fallback-");
     const cause = Object.assign(new Error("rename without replacement: I/O error"), { code: "EIO" });
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace() { throw cause; } }));
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync() { throw cause; } }));
     await expect((await root(directory)).create("target", "content")).rejects.toMatchObject({
       code: "helper-failed", message: "staged file publish failed",
     });

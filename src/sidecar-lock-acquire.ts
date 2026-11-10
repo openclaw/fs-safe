@@ -4,9 +4,9 @@ import { FsSafeError } from "./errors.js";
 import { fileObservation } from "./file-observation.js";
 import { sameFileIdentityForCleanup } from "./file-identity.js";
 import { readFileHandleBounded } from "./bounded-read.js";
-import { openSidecarRoot } from "./sidecar-lock-root.js";
+import { openSidecarRoot, rootSidecarPublicationPending } from "./sidecar-lock-root.js";
 import { createNativeExclusiveFile } from "./native-operations.js";
-import { assertExclusiveCreateLeaf } from "./exclusive-create.js";
+import { createSidecarFile } from "./sidecar-lock-publication.js";
 import {
   sidecarLockRetryDelay,
   sidecarLockTimeout,
@@ -268,9 +268,17 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
               }),
             }));
           } catch (error) {
+            let cause: unknown = error;
+            for (let depth = 0; depth < 4 && cause && typeof cause === "object"; depth++) {
+              if (observation.has(cause, "hardlink") && await rootSidecarPublicationPending(lockRoot, relativeLockPath, true)) {
+                exclusiveCreateConflict = true;
+                throw Object.assign(new Error("sidecar publication in progress"), { code: "EEXIST" });
+              }
+              cause = Object.getOwnPropertyDescriptor(cause, "cause")?.value;
+            }
             // Only this invocation's failed exclusive open grants denial retry authority.
-            lockFileCreateDenied = observation.has(error, `exclusive-create:${lockPath}`) &&
-              isTransientLockFileDenial(error, lockPath);
+            lockFileCreateDenied = observation.has(error, `sidecar-create-denial:${lockPath}`) ||
+              (observation.has(error, `exclusive-create:${lockPath}`) && isTransientLockFileDenial(error, lockPath));
             if (error instanceof FsSafeError && error.code === "already-exists") {
               exclusiveCreateConflict = true;
               throw Object.assign(new Error("sidecar lock exists"), { code: "EEXIST" });
@@ -296,21 +304,18 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           }
           handle = opened.handle;
         } else {
-          const failedOpen = (createError: unknown): never => {
-            lockFileCreateDenied = isTransientLockFileDenial(createError, lockPath);
-            exclusiveCreateConflict = (createError as NodeJS.ErrnoException).code === "EEXIST";
+          const failedOpen = (createError: unknown, pathname = lockPath): never => {
+            lockFileCreateDenied = isTransientLockFileDenial(createError, pathname);
+            exclusiveCreateConflict = pathname === lockPath && (createError as NodeJS.ErrnoException).code === "EEXIST";
             throw createError;
           };
-          handle = await createNativeExclusiveFile(lockPath, 0o600).catch(failedOpen) ?? null;
-          if (!handle) {
-            try { assertExclusiveCreateLeaf(lockPath); }
-            catch (error) {
-              exclusiveCreateConflict = (error as NodeJS.ErrnoException).code === "EEXIST";
-              throw error;
-            }
-            handle = await fs.open(lockPath, "wx", 0o600).catch(failedOpen);
-          }
-          await handle.writeFile(raw, "utf8");
+          const created = await createSidecarFile(lockPath, raw, async pathname => {
+            try { return await createNativeExclusiveFile(pathname, 0o600) ?? await fs.open(pathname, fsSync.constants.O_WRONLY | fsSync.constants.O_CREAT | fsSync.constants.O_EXCL |
+              (process.platform !== "win32" ? fsSync.constants.O_NOFOLLOW ?? 0 : 0), 0o600); }
+            catch (error) { return failedOpen(error, pathname); }
+          }, { onConflict: failedOpen });
+          handle = created.handle;
+          createdSnapshot = { raw, payload, stat: created.identity, ownershipToken };
         }
         const snapshot = { raw, payload, stat: fsSync.fstatSync(handle.fd, { bigint: true }), ownershipToken };
         createdSnapshot = snapshot;

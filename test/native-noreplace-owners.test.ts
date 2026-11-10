@@ -25,7 +25,7 @@ afterEach(() => {
 describe.skipIf(!native || process.platform === "win32")("no-replace publication owners", () => {
   it.each(["auto", "require"] as const)("handles private producer workspace promotion in %s", async mode => {
     configureFsSafeNative({ mode });
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: fail }));
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync: fail, renameNoReplace: fail }));
     const directory = await tempRoot("fs-safe-noreplace-producer-");
     let produced = 0;
     const write = () => writeSiblingTempFile({
@@ -47,7 +47,7 @@ describe.skipIf(!native || process.platform === "win32")("no-replace publication
 
   it.each(["auto", "require"] as const)("fails closed for native-only file publication in %s", async mode => {
     configureFsSafeNative({ mode });
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: fail }));
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync: fail, renameNoReplace: fail }));
     const directory = await tempRoot("fs-safe-noreplace-owners-");
     const stage = await stageFileInDirectory({ directory, content: "content" });
     await expect(stage.publish("target", { overwrite: false })).rejects.toMatchObject(expected);
@@ -112,7 +112,7 @@ describe.skipIf(!native || process.platform === "win32")("no-replace publication
 
   it.each(["auto", "require", "require-bounded"] as const)("settles unsupported workspace quarantine in %s", async mode => {
     configureFsSafeNative({ mode: mode === "require" ? "require" : "auto" });
-    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplace: fail, ownedTreeRemovalAvailable: () => true }));
+    __setNativeLoaderForTest(() => ({ ...native!, renameNoReplaceAsync: fail, renameNoReplace: fail, ownedTreeRemovalAvailable: () => true }));
     const directory = await tempRoot("fs-safe-noreplace-workspace-");
     const workspace = await tempWorkspace({ rootDir: directory, prefix: "test-", cleanupSafety: mode === "require-bounded" ? "require-bounded" : "compatible" });
     if (mode === "auto") {

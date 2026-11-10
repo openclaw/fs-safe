@@ -28,6 +28,7 @@ it.each([false, true])("keeps root failure ahead of the final parent fence after
   const rootFailure = Object.assign(new Error("root fence denied"), { code: "EACCES" });
   const parentFailure = Object.assign(new Error("parent fence denied"), { code: "EIO" });
   const lstat = fsSync.lstatSync.bind(fsSync);
+  const asyncLstat = fs.lstat.bind(fs);
   const events: string[] = [];
   let initialCalls = 0, observationCalls = 0;
   __setFsSafeTestHooksForTest({
@@ -36,7 +37,7 @@ it.each([false, true])("keeps root failure ahead of the final parent fence after
       expect(candidate).toBe(target);
       observationCalls += 1;
       // Arm both failures only after admission; the final leaf sample stays real.
-      vi.spyOn(fsSync, "lstatSync").mockImplementation((file, options) => {
+      const observe = (file: fsSync.PathLike) => {
         const pathname = path.resolve(String(file));
         if (pathname === capability.rootReal) {
           events.push("root-fence");
@@ -46,9 +47,15 @@ it.each([false, true])("keeps root failure ahead of the final parent fence after
           events.push("parent-fence");
           throw parentFailure;
         }
-        const stat = lstat(file, options as never);
         if (pathname === target) events.push("leaf-sample");
-        return stat;
+      };
+      vi.spyOn(fsSync, "lstatSync").mockImplementation((file, options) => {
+        observe(file);
+        return lstat(file, options as never);
+      });
+      vi.spyOn(fs, "lstat").mockImplementation(async (file, options) => {
+        observe(file);
+        return asyncLstat(file, options as never);
       });
     },
   });

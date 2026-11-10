@@ -9,6 +9,7 @@ import {
   type AnyAsyncDirectoryGuard,
 } from "./directory-guard.js";
 import { FsSafeError } from "./errors.js";
+import { recordFileObservationFailure } from "./file-observation.js";
 import { isNotFoundPathError } from "./path.js";
 import { assertNoPathAliasEscape } from "./path-policy.js";
 import {
@@ -19,7 +20,7 @@ import type { PinnedWriteMutationAdmission } from "./pinned-write-types.js";
 import { admitPathInsideRoot, sameNormalizedPathSpelling } from "./root-boundary.js";
 import type { RootContext } from "./root-context.js";
 import { resolvePathInRoot } from "./root-context.js";
-import { errorCauseOptions, hardlinkedPathNotAllowedError, outsideWorkspaceError } from "./root-errors.js";
+import { errorCauseOptions, hardlinkedPathNotAllowedError, outsideWorkspaceError, pathTraversalPermissionError } from "./root-errors.js";
 import { inheritWriteTargetMode } from "./root-write-mode.js";
 import {
   mutationSymlinkResolution,
@@ -305,6 +306,8 @@ export async function resolveGuardedWritePathInRoot(
         boundaryLabel: "root",
       });
     } catch (error) {
+      const permissionError = pathTraversalPermissionError(error, resolvedPath.resolved);
+      if (permissionError) throw permissionError;
       throw new FsSafeError("path-alias", "path alias escape blocked", errorCauseOptions(error));
     }
   }
@@ -403,7 +406,11 @@ export async function resolvePinnedWriteTargetInRoot(
       const existing = fsSync.statSync(resolved, { throwIfNoEntry: false });
       if (existing) {
         if (!existing.isFile() && !existing.isDirectory()) throw new FsSafeError("not-file", "not a file");
-        if (existing.isFile() && existing.nlink > 1) throw hardlinkedPathNotAllowedError();
+        if (existing.isFile() && existing.nlink > 1) {
+          const error = hardlinkedPathNotAllowedError();
+          recordFileObservationFailure(error, "hardlink");
+          throw error;
+        }
         throw new FsSafeError("already-exists", "file already exists");
       }
     } catch (error) {

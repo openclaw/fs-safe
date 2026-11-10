@@ -33,7 +33,12 @@ function facts(): NativeWindowsSecurityFacts {
     ownerSid: "s-1-5-21-42", currentUserSid: "s-1-5-21-42", ownerClass: "current-user",
     worldWritable: true, groupWritable: true, worldReadable: true, groupReadable: true,
     fallbackRequired: false, daclPresent: true, isLocal: true, aceListComplete: true,
-    unsupportedAceTypes: [], aces: [],
+    unsupportedAceTypes: [], aces: ["s-1-1-0", "s-1-5-21-99"].map(sid => ({
+      sid, mask: 3, aceType: "allow", flags: {
+        raw: 0, objectInherit: false, containerInherit: false, noPropagateInherit: false,
+        inheritOnly: false, inherited: false, successfulAccess: false, failedAccess: false,
+      },
+    })),
   };
 }
 

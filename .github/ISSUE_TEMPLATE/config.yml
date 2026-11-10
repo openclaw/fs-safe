@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/openclaw/fs-safe/security/advisories/new
     about: Report vulnerabilities privately.
   - name: OpenClaw community support
-    url: https://discord.gg/clawd
+    url: https://openclaw.ai/discord?from=github-fs-safe-issue-chooser
     about: Ask usage and integration questions in the OpenClaw community.

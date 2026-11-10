@@ -32,9 +32,9 @@ function observeStage() {
   const close = vi.fn(native!.closeOwnedFd);
   __setNativeLoaderForTest(() => ({
     ...native!, closeOwnedFd: close,
-    createStagedFile(parent, name) {
+    async createStagedFile(parent, name) {
       basename = name;
-      fd = native!.createStagedFile!(parent, name);
+      fd = await native!.createStagedFile!(parent, name);
       return fd;
     },
     removeStagedFile(parent, name, file) {
@@ -390,8 +390,8 @@ describe.runIf(native)("native private creation permission verification", () => 
       const removedBytes: number[] = [];
       const binding = {
         ...native!,
-        createStagedFile(fd: number, name: string) {
-          targetFd = native!.createStagedFile!(fd, name);
+        async createStagedFile(fd: number, name: string) {
+          targetFd = await native!.createStagedFile!(fd, name);
           return targetFd;
         },
         removeStagedFile(fd: number, name: string, target: number) {

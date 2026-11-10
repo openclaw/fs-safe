@@ -1,6 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { rejectPrivateDirectoryPreservation, type DirectoryMode } from "./directory-mode-options.js";
 import { recursiveMkdirPath } from "./recursive-mkdir-path.js";
 import { canonicalPathFromExistingAncestor } from "./absolute-path.js";
 import { readFileDescriptorBoundedSync } from "./bounded-read.js";
@@ -238,11 +239,12 @@ async function ensurePrivateDirectory(
 }
 
 type SecretFileWriteParams = {
+  allowDrvfsRenameRecovery?: boolean;
   rootDir: string;
   filePath: string;
   content: string | Uint8Array;
   mode?: number;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   durable?: boolean;
 };
 
@@ -262,6 +264,7 @@ function snapshotSecretFileWriteParams(
     rootDir,
     filePath,
     content: params.content,
+    allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
     mode: params.mode,
     dirMode: params.dirMode,
     durable: params.durable,
@@ -300,6 +303,7 @@ export async function prepareSecretFileWrite(
   assertNoWindowsPathAlias(filePath, "filesystem", "private secret path uses a Windows filesystem namespace alias");
   const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;
   const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;
+  rejectPrivateDirectoryPreservation(dirMode);
   const resolvedRoot = resolvePathPreservingWindowsRoot(rootDir);
   const resolvedFile = path.resolve(filePath);
   assertNoWindowsPathAlias(resolvedRoot, "filesystem", "private secret root uses a Windows filesystem namespace alias");
@@ -356,6 +360,7 @@ async function materializeSecretFileAtomic(
     mkdir: false,
     mode,
     verifyPosixMode: true,
+    allowDrvfsRenameRecovery: params.allowDrvfsRenameRecovery,
     sync: params.durable !== false,
     strictFileSync: createOnly && params.durable === "file",
     overwrite: !createOnly,

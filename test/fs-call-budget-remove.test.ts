@@ -49,6 +49,13 @@ describe("recursive removal observation budgets", () => {
       }
       return lstat(...args);
     }) as typeof fsSync.lstatSync);
+    const asyncLstat = fs.lstat.bind(fs);
+    const asyncStatSpy = vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+      if (boundaries.has(String(args[0]))) {
+        observations[(args[1] as { bigint?: boolean } | undefined)?.bigint ? "exact" : "numeric"]++;
+      }
+      return asyncLstat(...args);
+    }) as typeof fs.lstat);
     const realpathSpy = vi.spyOn(fsSync.realpathSync, "native").mockImplementation((...args) => {
       if (boundaries.has(String(args[0]))) observations.canonical++;
       return realpath(...args);
@@ -66,6 +73,7 @@ describe("recursive removal observation budgets", () => {
       }
     } finally {
       statSpy.mockRestore();
+      asyncStatSpy.mockRestore();
       realpathSpy.mockRestore();
       configureFsSafeNative({ mode: "auto" });
     }

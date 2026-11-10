@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import asyncFs from "node:fs/promises";
 import path from "node:path";
+import { runAsync, runSync, wait, type Procedure } from "./atomic-io.js";
 import { FsSafeError } from "./errors.js";
 import { formatErrorDetail } from "./error-detail.js";
 import { isNotFoundPathError, isPathInside, isSymlinkOpenError } from "./path.js";
-import { realpathSync } from "./realpath.js";
+import { realpathNative, realpathSync } from "./realpath.js";
 import {
   assertNoWindowsPathAlias,
   isForeignWindowsShareOrDevicePath,
@@ -13,6 +15,11 @@ import {
 } from "./windows-path-alias.js";
 import { admitPathInsideRoot, type RootBoundaryIdentity } from "./root-boundary.js";
 import { errorCauseOptions } from "./root-errors.js";
+
+// Windows native realpath denies delete sharing. Preserve read/publication
+// scheduling until canonicalization can safely overlap replacement.
+export const synchronousRootTraversal = process.platform === "win32";
+export const runRootTraversal = synchronousRootTraversal ? runSync : runAsync;
 
 export function absolutePathWithRawSegments(candidate: string): string {
   if (path.sep !== "\\") {
@@ -29,7 +36,7 @@ export function absolutePathWithRawSegments(candidate: string): string {
   return `${base}${base.endsWith(path.sep) ? "" : path.sep}${raw.slice(drive.length)}`;
 }
 
-export function rawPathRelativeToCanonicalRoot(
+export function* rawPathRelativeToCanonicalRoot(
   candidate: string,
   rootCanonicalPath: string,
   options: {
@@ -37,7 +44,8 @@ export function rawPathRelativeToCanonicalRoot(
     rejectFinalSymlink?: boolean;
     rootIdentity?: RootBoundaryIdentity;
   } = {},
-): string | undefined {
+  synchronous = true,
+): Procedure<string | undefined> {
   assertNoWindowsPathAlias(candidate);
   assertNoWindowsPathAlias(rootCanonicalPath);
   const absolute = absolutePathWithRawSegments(candidate);
@@ -55,7 +63,7 @@ export function rawPathRelativeToCanonicalRoot(
     let isSymlink = false;
     try {
       const operationPath = pathForWindowsFilesystem(prefix);
-      const stat = fs.lstatSync(operationPath);
+      const stat = synchronous ? fs.lstatSync(operationPath) : yield* wait(asyncFs.lstat(operationPath));
       isSymlink = stat.isSymbolicLink();
       // Check the original leaf before canonicalization can erase an entry alias.
       if (isSymlink && options.rejectFinalSymlink && index === finalComponentIndex) {
@@ -63,11 +71,12 @@ export function rawPathRelativeToCanonicalRoot(
       }
       if (!isSymlink && !stat.isDirectory() && index < segments.length - 1) return undefined;
       traversedSymlink ||= isSymlink;
-      canonical = realpathSync.native(operationPath);
+      canonical = synchronous ? realpathSync.native(operationPath) : yield* wait(realpathNative(operationPath));
       assertNoWindowsPathAlias(canonical);
       if (
         isSymlink && index < segments.length - 1 &&
-        !fs.statSync(pathForWindowsFilesystem(canonical)).isDirectory()
+        !(synchronous ? fs.statSync(pathForWindowsFilesystem(canonical))
+          : yield* wait(asyncFs.stat(pathForWindowsFilesystem(canonical)))).isDirectory()
       ) return undefined;
       if (isSymlink && !isPathInside(rootCanonicalPath, canonical) && !isPathInside(canonical, rootCanonicalPath)) {
         throw new FsSafeError("outside-workspace", `symlink prefix resolves outside the root ancestry: ${formatErrorDetail(candidate)}`);
@@ -93,9 +102,10 @@ export function rawPathRelativeToCanonicalRoot(
   return undefined;
 }
 
-function pathExists(targetPath: string): boolean {
+function* pathExists(targetPath: string, synchronous: boolean): Procedure<boolean> {
   try {
-    return fs.lstatSync(pathForWindowsFilesystem(targetPath), { throwIfNoEntry: false }) !== undefined;
+    return (synchronous ? fs.lstatSync(pathForWindowsFilesystem(targetPath), { throwIfNoEntry: false })
+      : yield* wait(asyncFs.lstat(pathForWindowsFilesystem(targetPath)))) !== undefined;
   } catch (error) {
     if (isNotFoundPathError(error)) {
       return false;
@@ -105,10 +115,10 @@ function pathExists(targetPath: string): boolean {
 }
 
 export async function resolvePathViaExistingAncestor(targetPath: string): Promise<string> {
-  return resolveExistingAncestor(targetPath, "native");
+  return runRootTraversal(resolveExistingAncestorProcedure(targetPath, "native", synchronousRootTraversal));
 }
 
-function pathExistsSync(targetPath: string): boolean {
+function* ordinaryExists(targetPath: string): Procedure<boolean> {
   return fs.existsSync(pathForWindowsFilesystem(targetPath));
 }
 
@@ -124,8 +134,18 @@ export function resolveExistingAncestor(
   preserveRawSegments = false,
   remainingHops = 64,
 ): string {
-  const exists = mode === "native" || preserveRawSegments ? pathExists : pathExistsSync;
-  const canonicalize = realpathSync.native;
+  return runSync(resolveExistingAncestorProcedure(targetPath, mode, true, preserveRawSegments, remainingHops));
+}
+
+export function* resolveExistingAncestorProcedure(
+  targetPath: string,
+  mode: RootPathMetadataMode,
+  synchronous: boolean,
+  preserveRawSegments = false,
+  remainingHops = 64,
+): Procedure<string> {
+  const exists = (pathname: string) => mode === "native" || preserveRawSegments
+    ? pathExists(pathname, synchronous) : ordinaryExists(pathname);
   assertNoWindowsPathAlias(targetPath);
   const normalized = resolvePathPreservingWindowsRoot(targetPath);
   assertNoWindowsPathAlias(normalized);
@@ -135,22 +155,23 @@ export function resolveExistingAncestor(
 
   while (
     cursor !== filesystemRoot &&
-    !exists(cursor)
+    !(yield* exists(cursor))
   ) {
     cursor = path.dirname(cursor);
   }
 
-  if (!exists(cursor)) {
+  if (!(yield* exists(cursor))) {
     return normalized;
   }
 
   let rawResolvedAncestor: string;
   try {
-    rawResolvedAncestor = canonicalize(pathForWindowsFilesystem(cursor));
+    rawResolvedAncestor = synchronous ? realpathSync.native(pathForWindowsFilesystem(cursor))
+      : yield* wait(realpathNative(pathForWindowsFilesystem(cursor)));
   } catch (error) {
     if (!preserveRawSegments) return normalized;
     if (!isNotFoundPathError(error)) throw error;
-    rawResolvedAncestor = resolveSymlinkHopPath(cursor, mode, false, remainingHops);
+    rawResolvedAncestor = yield* resolveSymlinkHopPath(cursor, mode, false, remainingHops, synchronous);
   }
   assertNoWindowsPathAlias(rawResolvedAncestor);
   const resolvedAncestor = resolvePathPreservingWindowsRoot(rawResolvedAncestor);
@@ -167,15 +188,16 @@ export function resolveExistingAncestor(
   return resolved;
 }
 
-export function resolveSymlinkHopPath(
+export function* resolveSymlinkHopPath(
   symlinkPath: string,
   mode: RootPathMetadataMode,
   rejectUnresolved?: boolean,
   remainingHops = 64,
-): string {
+  synchronous = true,
+): Procedure<string> {
   try {
-    const canonicalize = realpathSync.native;
-    const rawRealPath = canonicalize(symlinkPath);
+    const rawRealPath = synchronous ? realpathSync.native(symlinkPath)
+      : yield* wait(realpathNative(symlinkPath));
     assertNoWindowsPathAlias(rawRealPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     const realPath = resolvePathPreservingWindowsRoot(rawRealPath);
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
@@ -186,14 +208,14 @@ export function resolveSymlinkHopPath(
     }
     if (!isNotFoundPathError(error)) throw error;
     if (remainingHops <= 0) throw new FsSafeError("symlink", "too many unresolved symlink hops");
-    const linkTarget = fs.readlinkSync(symlinkPath);
+    const linkTarget = synchronous ? fs.readlinkSync(symlinkPath) : yield* wait(asyncFs.readlink(symlinkPath));
     assertNoWindowsPathAlias(linkTarget, "filesystem", "symlink target uses a Windows filesystem namespace alias");
     const linkDir = resolvePathPreservingWindowsRoot(path.dirname(symlinkPath));
     // Keep parent segments until the kernel has resolved the existing prefix.
     const targetPath = path.isAbsolute(linkTarget) ? linkTarget
       : path.parse(linkTarget).root ? resolvePathFromBasePreservingWindowsRoot(linkDir, linkTarget)
       : `${linkDir}${path.sep}${linkTarget}`;
-    const resolved = resolveExistingAncestor(targetPath, mode, true, remainingHops - 1);
+    const resolved = yield* resolveExistingAncestorProcedure(targetPath, mode, synchronous, true, remainingHops - 1);
     assertNoWindowsPathAlias(resolved, "filesystem", "resolved symlink path uses a Windows filesystem namespace alias");
     return resolved;
   }

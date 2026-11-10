@@ -23,7 +23,21 @@ bits still require descriptor mode correction before publication.
 
 On POSIX, the parent is opened with no-follow and directory-only flags, checked against its exact pre-open device/inode identity, and mode-adjusted through that descriptor. A replacement symlink is rejected rather than followed. If the directory cannot be opened for descriptor access, the operation fails closed instead of retrying by pathname. Windows does not enforce POSIX directory modes and Node cannot consistently open directory descriptors there, so `dirMode` is passed only to `mkdir`; no pathname `chmod` fallback is attempted.
 
+Pass `dirMode: "preserve"` when the parent is shared or owned by another user.
+A verified existing parent is still opened and identity-checked, but no chmod
+or mode-equality probe is attempted. Each directory the operation exclusively
+creates finishes at `0o700`, independent of umask; a concurrent `mkdir` winner
+is verified as an existing directory and left unchanged. On Windows,
+`"preserve"` uses the default mkdir mode (`0o700`) without POSIX mode enforcement.
+Omitted and numeric values retain their current behavior, including tightening
+an existing parent to `0o700` by default. File `mode` and `preserveExistingMode`
+are independent of this directory policy.
+
 Async replacements to the same destination are serialized inside the current process, so two overlapping `replaceFileAtomic()` calls do not interleave their temp-write/rename phases. Use a sidecar lock when multiple processes may write the same target.
+
+On DrvFS mounts that hide renamed files while any descriptor is open, the
+strict default rejects post-rename `ENOENT`. See the explicit
+[`allowDrvfsRenameRecovery` exception](#drvfs-hidden-rename-recovery).
 
 Relative paths retain their literal suffix so `.` and `..` keep Node's existing
 filesystem semantics. On Windows, an ordinary drive-relative destination such
@@ -51,7 +65,7 @@ await replaceFileAtomic({
 type ReplaceFileAtomicOptions = {
   filePath: string;                 // destination
   content: string | Uint8Array;
-  dirMode?: number;                 // parent-directory mode (POSIX; default 0o700)
+  dirMode?: number | "preserve";    // parent policy (POSIX; default 0o700)
   mode?: number;                    // new-file mode (default 0o600)
   preserveExistingMode?: boolean;   // inherit existing regular-file rwx bits; default false
   tempPrefix?: string;              // default ".fs-safe-replace"
@@ -62,6 +76,7 @@ type ReplaceFileAtomicOptions = {
   maxRestoreBytes?: number;          // required with "restore-original"
   destinationHardlinks?: "reject"; // default unset (no destination nlink policy)
   renameIdentity?: "strict" | "verify-content-with-lock"; // default "strict"
+  allowDrvfsRenameRecovery?: boolean; // default false; verified DrvFS only
   syncTempFile?: boolean;           // fsync(temp) before rename, or the final file after copy fallback; default false
   syncParentDir?: boolean;          // fsync(parent) after rename, POSIX only; default false
   throwOnCleanupError?: boolean;    // report temp cleanup failure; default false
@@ -82,6 +97,65 @@ inode; an in-place copy fallback can retain metadata already attached to its
 pinned destination. The snapshot does not make replacement a compare-and-swap
 operation, so the destination parent must still be protected from untrusted
 concurrent namespace mutation.
+
+### DrvFS hidden-rename recovery
+
+`allowDrvfsRenameRecovery: true` permits recovery only after a successful rename
+is followed by `ENOENT`. It is off by default. Omitting it preserves strict
+behavior and adds no filesystem calls. On Linux, enabling it first rules out
+non-9p filesystems using the existing device identity or one native `fstatfs`
+on an already-open parent descriptor. Only negative results are cached by
+exact device number; device reuse can therefore only retain strict behavior,
+never enable recovery. After a negative observation, subsequent writes on that
+filesystem add no filesystem calls. Writers without an existing parent descriptor
+reuse their ordinary recovery-parent acquisition for the first observation.
+Unavailable native probes keep the existing preparation path (except known
+block-device filesystems, which cannot be 9p). Healthy publications still use
+their ordinary verification.
+
+The retained parent's backing filesystem must have statfs magic `0x01021997`
+(9p). Its `/proc/self/fdinfo/<fd>` mount ID must select exactly one entry in
+`/proc/self/mountinfo` with filesystem type `9p` and `aname=drvfs` in the super
+options. This includes the reporter's Docker Desktop Windows-drive bind mount.
+Unavailable, malformed, ambiguous, or different mount evidence never enables
+recovery. No create/unlink sampling, path-name heuristics, or positive mount
+cache is used.
+
+Recovery closes the operation's file descriptors, then reopens the published
+name through guarded helpers. It requires the pre-rename exact bigint device
+and inode, regular-file type, one link, size, mode, owner and group. Parent
+identity/confinement checks remain in force. Byte-backed writes compare content
+as well; callback staging compares a SHA-256 digest captured before rename.
+There are at most five reopen attempts, retrying only `ENOENT` with 20 ms delays.
+A swap, deletion or ownership change fails. A mode that prevents the required
+read also fails; recovery never widens permissions to read the file. Descriptors
+owned by other code can keep the name hidden and exhaust the retry budget.
+
+**Residual risk:** closing the last descriptor gives up continuous inode
+retention. If an inode is deleted and its complete identity is recycled before
+verification, identity alone cannot distinguish it. NTFS file references include
+a 16-bit sequence that wraps after 65,536 reuses of the same record; DrvFS
+admission does not prove the underlying Windows filesystem is NTFS. Content
+comparison narrows this risk but cannot distinguish an identical replacement.
+Scheduling pauses are not bounded by retry counts or delays. Enable this option
+only when accepting that tradeoff for the affected mount.
+
+| API | Where to enable | Content check after recovery |
+| --- | --- | --- |
+| `replaceFileAtomic`, `replaceFileAtomicSync` | options | exact bytes |
+| `writeTextAtomic`, `writeJson`, `writeJsonSync` | options | exact serialized bytes |
+| `Root.write`, `writeJson`, `create`, `createJson` | Root defaults or per-call options | exact bytes for buffered input |
+| `Root.copyIn`, streamed `Root.create` | Root defaults or per-call options | metadata; bytes are not retained |
+| `fileStore`, `fileStoreSync` | store defaults or write options | exact bytes for buffered/JSON writes |
+| `jsonStore`, `fileStore().json()` | JSON-store options or parent store defaults | exact serialized bytes |
+| `writeSiblingTempFile`, sibling `writeExternalFileWithinRoot` | options | pre-rename digest |
+| `stageFileInDirectory` | staging options | exact bytes |
+| `writeSecretFileAtomic`, `createSecretFileAtomic` | options | exact bytes |
+
+The same admission and metadata requirements apply to native and TypeScript
+implementations and synchronous and asynchronous writes. This option is separate
+from `renameIdentity: "verify-content-with-lock"`, which addresses changed inode
+identities on other filesystems; DrvFS recovery never accepts a changed identity.
 
 ### `beforeRename`
 
@@ -406,7 +480,7 @@ Options:
 ```ts
 type WriteTextAtomicOptions = {
   mode?: number;             // file mode (default 0o600)
-  dirMode?: number;          // parent mode (default 0o777 masked by process umask)
+  dirMode?: number | "preserve"; // parent policy (default 0o777 masked by process umask)
   trailingNewline?: boolean; // append "\n" if missing; default false
   durable?: boolean;         // default true; false skips temp/parent fsync
   beforeRename?: (params: { filePath: string; tempPath: string }) => Promise<void>;
@@ -423,6 +497,9 @@ separators.
 `durable: false` keeps the sibling-temp replace/rename behavior but skips the
 temp-file and parent-directory `fsync` calls. Use it only for reconstructible
 metadata where lower latency matters more than crash-durability.
+
+`dirMode: "preserve"` has the same existing-parent and new-directory behavior
+as `replaceFileAtomic`, including its `0o700` creation default.
 
 ## `movePathWithCopyFallback`
 
@@ -612,7 +689,7 @@ type ReplaceFileAtomicSyncFileSystem = {
 };
 ```
 
-The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. The async temp owner consumes its retained handle before awaiting `close()` during publication handoff and terminal settlement: if a custom adapter releases the resource and then rejects, that rejection is reported without calling `close()` on the same retained handle again. If publication verification opened a replacement handle before the previous retained handle failed to close, the replacement receives one best-effort close attempt. On POSIX, `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. Existing synchronous adapters that request none of those options may omit it; their parent is still opened and identity-checked through a no-follow directory descriptor. Injecting plain `node:fs` supports explicit file and directory modes. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
+The async interface already requires `open()`, whose `FileHandle` supplies `chmod()`, so injecting `node:fs` or another conforming adapter needs no new async member. The async temp owner consumes its retained handle before awaiting `close()` during publication handoff and terminal settlement: if a custom adapter releases the resource and then rejects, that rejection is reported without calling `close()` on the same retained handle again. If publication verification opened a replacement handle before the previous retained handle failed to close, the replacement receives one best-effort close attempt. On POSIX, `open()` must support no-follow directory descriptors as Node does. A custom synchronous filesystem that passes `mode`, numeric `dirMode`, or `preserveExistingMode` must supply `fchmodSync`; omission fails before any file or directory is created and never falls back to a pathname `chmod`. With `dirMode: "preserve"`, it may omit `fchmodSync` only if every parent already exists and no explicit file mode or file-mode preservation is requested; a missing parent fails before creation. Existing synchronous adapters that request none of those options may omit it; their parent is still opened and identity-checked through a no-follow directory descriptor. Injecting plain `node:fs` supports explicit file and directory modes. Copy fallback applies the file mode through its pinned destination descriptor as well, preserving exact modes despite the process umask.
 
 ## See also
 

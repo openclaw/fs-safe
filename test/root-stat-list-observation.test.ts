@@ -35,6 +35,12 @@ it.skipIf(process.platform === "win32")("uses ordinary metadata within unchanged
     project(originalStat(candidate, options as never)));
   const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) =>
     project(originalLstat(candidate, options as never)));
+  const originalAsyncStat = fs.stat.bind(fs);
+  const originalAsyncLstat = fs.lstat.bind(fs);
+  vi.spyOn(fs, "stat").mockImplementation(async (candidate, options) =>
+    project(await originalAsyncStat(candidate, options as never)));
+  const asyncLstat = vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) =>
+    project(await originalAsyncLstat(candidate, options as never)));
   const capability = await root(rootDir);
   const realpath = vi.spyOn(realpathSync, "native");
   const operations = [
@@ -46,11 +52,12 @@ it.skipIf(process.platform === "win32")("uses ordinary metadata within unchanged
   ];
   for (const operation of operations) {
     lstat.mockClear();
+    asyncLstat.mockClear();
     realpath.mockClear();
     await operation.run();
-    expect(lstat).toHaveBeenCalledTimes(operation.lstats);
+    expect(lstat.mock.calls.length + asyncLstat.mock.calls.length).toBe(operation.lstats);
     expect(realpath).toHaveBeenCalledTimes(operation.canonical);
-    expect(lstat.mock.calls.every(call => call.length === 1 || call[1]?.bigint === true)).toBe(true);
+    expect([...lstat.mock.calls, ...asyncLstat.mock.calls].every(call => call.length === 1 || call[1]?.bigint === true)).toBe(true);
   }
 });
 

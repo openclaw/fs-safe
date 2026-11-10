@@ -41,6 +41,7 @@ type DirectorySnapshot = {
   numericIdentity: NumericIdentity | undefined;
   realPath: string;
   privateDirectory: boolean;
+  allowWritableAncestor: boolean;
 };
 type InspectedDirectorySnapshot = { entry: DirectorySnapshot; stat: BigIntStats };
 export type TempWorkspaceRootAdmission = {
@@ -96,15 +97,16 @@ function snapshotFromExactObservation(
   realPath: string,
   stat: ExactDirectoryObservation,
   privateDirectory = false,
+  allowWritableAncestor = false,
 ): DirectorySnapshot {
   if (stat.symbolicLink || !stat.directory) {
     throw new FsSafeError("not-file", "temp workspace root component must be a real directory");
   }
-  assertTrustedTempWorkspaceDirectory(stat, uid, privateDirectory, dir);
+  assertTrustedTempWorkspaceDirectory(stat, uid, privateDirectory, dir, allowWritableAncestor);
   const identity = Object.freeze({ dev: stat.dev, ino: stat.ino });
   // Retain copied immutable scalars, never a mutable Stats object supplied by
   // an observation hook. Every later permission check uses a fresh snapshot.
-  return Object.freeze({ dir, identity, numericIdentity: safeNumericIdentity(stat), realPath, privateDirectory });
+  return Object.freeze({ dir, identity, numericIdentity: safeNumericIdentity(stat), realPath, privateDirectory, allowWritableAncestor });
 }
 
 function canonicalTempWorkspacePath(dir: string): string {
@@ -119,10 +121,11 @@ function snapshot(
   uid: number | undefined,
   realPath = canonicalTempWorkspacePath(dir),
   privateDirectory = false,
+  allowWritableAncestor = false,
 ): InspectedDirectorySnapshot {
   const stat = inspectDirectoryIdentitySync(dir);
   const observation = copyExactDirectoryObservation(stat);
-  return { entry: snapshotFromExactObservation(dir, uid, realPath, observation, privateDirectory), stat };
+  return { entry: snapshotFromExactObservation(dir, uid, realPath, observation, privateDirectory, allowWritableAncestor), stat };
 }
 
 function hasCompleteExactIdentity(stat: ExactDirectoryObservation): boolean {
@@ -162,7 +165,7 @@ function inspectSnapshotIdentity(entry: DirectorySnapshot): BigIntStats | Stats 
 
 function assertSnapshot(entry: DirectorySnapshot, uid: number | undefined): void {
   const stat = inspectSnapshotIdentity(entry);
-  assertTrustedTempWorkspaceDirectory(stat, uid, entry.privateDirectory, entry.dir);
+  assertTrustedTempWorkspaceDirectory(stat, uid, entry.privateDirectory, entry.dir, entry.allowWritableAncestor);
   assertCanonicalRoot(entry);
 }
 
@@ -177,7 +180,7 @@ function snapshotMissingRootComponent(
     return snapshot(dir, ownerUid, undefined, privateDirectory);
   }
   const current = inspectSnapshotIdentity(parent);
-  assertTrustedTempWorkspaceDirectory(current, ownerUid, parent.privateDirectory, parent.dir);
+  assertTrustedTempWorkspaceDirectory(current, ownerUid, parent.privateDirectory, parent.dir, parent.allowWritableAncestor);
   let realPath: string;
   try {
     realPath = canonicalTempWorkspacePath(dir);
@@ -198,7 +201,7 @@ function snapshotMissingRootComponent(
 function assertChain(chain: DirectorySnapshot[], uid: number | undefined): void {
   for (const entry of chain) {
     const current = inspectSnapshotIdentity(entry);
-    assertTrustedTempWorkspaceDirectory(current, uid, entry.privateDirectory, entry.dir);
+    assertTrustedTempWorkspaceDirectory(current, uid, entry.privateDirectory, entry.dir, entry.allowWritableAncestor);
   }
   const last = chain[chain.length - 1]!;
   assertCanonicalRoot(last);
@@ -233,7 +236,7 @@ function associateTempWorkspaceRoot(
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new FsSafeError("not-file", "temp workspace cleanup parent must be a real directory");
   }
-  assertTrustedTempWorkspaceDirectory(stat, ownerUid, entry.privateDirectory, entry.dir);
+  assertTrustedTempWorkspaceDirectory(stat, ownerUid, entry.privateDirectory, entry.dir, entry.allowWritableAncestor);
 }
 
 function discoverMissingTempWorkspaceAncestor(
@@ -273,13 +276,30 @@ function discoverMissingTempWorkspaceAncestor(
   }
 }
 
-function rootPlan(rootDir: string): {
+function trustedAncestorPaths(values: readonly string[] | undefined): ReadonlySet<string> {
+  if (values === undefined) return new Set();
+  if (!Array.isArray(values)) throw new TypeError("trustedWritableAncestors must be an array of canonical absolute paths");
+  const paths = new Set<string>();
+  for (const value of values) {
+    if (
+      typeof value !== "string" || !path.isAbsolute(value) ||
+      path.normalize(value) !== value || canonicalTempWorkspacePath(value) !== value
+    ) {
+      throw new TypeError("trustedWritableAncestors must contain canonical absolute paths");
+    }
+    paths.add(value);
+  }
+  return paths;
+}
+
+function rootPlan(rootDir: string, trustedWritableAncestors?: readonly string[]): {
   admission?: TempWorkspaceRootAdmission;
   chain?: DirectorySnapshot[];
   missing: string[];
   ownerUid: number | undefined;
 } {
   assertNoWindowsPathAlias(rootDir, "filesystem");
+  const trusted = trustedAncestorPaths(trustedWritableAncestors);
   const ownerUid = effectiveOwner();
   let ancestor = resolvePathPreservingWindowsRoot(rootDir);
   assertNoWindowsPathAlias(ancestor, "filesystem");
@@ -301,13 +321,13 @@ function rootPlan(rootDir: string): {
   if (existingCanonicalRoot) {
     const discovery = snapshotFromExactObservation(ancestor, ownerUid, ancestor, initial, true);
     return {
-      admission: canonicalRootAdmission(discovery, ownerUid),
+      admission: canonicalRootAdmission(discovery, ownerUid, trusted),
       missing,
       ownerUid,
     };
   }
   const chain = canonicalAncestry(ancestor).map((dir) =>
-    snapshot(dir, ownerUid, dir, missing.length === 0 && dir === ancestor).entry);
+    snapshot(dir, ownerUid, dir, missing.length === 0 && dir === ancestor, trusted.has(dir)).entry);
   // Missing-component creation needs a replay before its first mutation. When
   // the complete root already exists through an alias, retain the historical
   // guarded route because discovery and mutation use different path spellings.
@@ -345,6 +365,7 @@ function rootAdmission(chain: DirectorySnapshot[], ownerUid: number | undefined)
 function canonicalRootAdmission(
   discovery: DirectorySnapshot,
   ownerUid: number | undefined,
+  trusted: ReadonlySet<string>,
 ): TempWorkspaceRootAdmission {
   let admittedChain: DirectorySnapshot[] | undefined;
   const chain = (): DirectorySnapshot[] => {
@@ -371,7 +392,7 @@ function canonicalRootAdmission(
       const ancestry = canonicalAncestry(discovery.dir);
       const candidate = ancestry.map((dir, index) => {
         if (!TEMP_WORKSPACE_NUMERIC_IDENTITY_REPLAY || index !== ancestry.length - 1) {
-          return snapshot(dir, ownerUid, dir, index === ancestry.length - 1 && discovery.privateDirectory).entry;
+          return snapshot(dir, ownerUid, dir, index === ancestry.length - 1 && discovery.privateDirectory, trusted.has(dir)).entry;
         }
         const current = inspectSnapshotIdentity(discovery);
         assertTrustedTempWorkspaceDirectory(current, ownerUid, discovery.privateDirectory, discovery.dir);
@@ -414,8 +435,8 @@ export function admitExistingTempWorkspaceRoot(rootDir: string): TempWorkspaceRo
   return admission ?? rootAdmission(chain!, ownerUid);
 }
 
-export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorkspaceRootAdmission> {
-  const { admission, chain, missing, ownerUid } = rootPlan(rootDir);
+export async function admitTempWorkspaceRoot(rootDir: string, trustedWritableAncestors?: readonly string[]): Promise<TempWorkspaceRootAdmission> {
+  const { admission, chain, missing, ownerUid } = rootPlan(rootDir, trustedWritableAncestors);
   if (admission) return admission;
   const guardedChain = chain!;
   for (const [index, segment] of missing.entries()) {
@@ -441,8 +462,8 @@ export async function admitTempWorkspaceRoot(rootDir: string): Promise<TempWorks
   return rootAdmission(guardedChain, ownerUid);
 }
 
-export function admitTempWorkspaceRootSync(rootDir: string): TempWorkspaceRootAdmission {
-  const { admission, chain, missing, ownerUid } = rootPlan(rootDir);
+export function admitTempWorkspaceRootSync(rootDir: string, trustedWritableAncestors?: readonly string[]): TempWorkspaceRootAdmission {
+  const { admission, chain, missing, ownerUid } = rootPlan(rootDir, trustedWritableAncestors);
   if (admission) return admission;
   const guardedChain = chain!;
   for (const [index, segment] of missing.entries()) {

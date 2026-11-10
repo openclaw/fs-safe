@@ -3,7 +3,8 @@
     "normal": {
       "off": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 42,
+          "FSREQPROMISE": 3
         },
         "syscalls": {
           "statx": 15,
@@ -28,7 +29,8 @@
       },
       "auto": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 42,
+          "FSREQPROMISE": 3
         },
         "syscalls": {
           "statx": 15,
@@ -40,7 +42,8 @@
     "fallback": {
       "off": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 42,
+          "FSREQPROMISE": 3
         },
         "syscalls": {
           "statx": 15,
@@ -64,7 +67,8 @@
       },
       "auto": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 42,
+          "FSREQPROMISE": 3
         },
         "syscalls": {
           "statx": 15,
@@ -78,7 +82,8 @@
     "normal": {
       "off": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 77,
+          "FSREQPROMISE": 10
         },
         "syscalls": {
           "statx": 57,
@@ -103,7 +108,8 @@
       },
       "auto": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 77,
+          "FSREQPROMISE": 10
         },
         "syscalls": {
           "statx": 57,
@@ -115,7 +121,8 @@
     "fallback": {
       "off": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 77,
+          "FSREQPROMISE": 10
         },
         "syscalls": {
           "statx": 57,
@@ -139,7 +146,8 @@
       },
       "auto": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 77,
+          "FSREQPROMISE": 10
         },
         "syscalls": {
           "statx": 57,
@@ -153,7 +161,8 @@
     "normal": {
       "off": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 197,
+          "FSREQPROMISE": 34
         },
         "syscalls": {
           "statx": 201,
@@ -178,7 +187,8 @@
       },
       "auto": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 197,
+          "FSREQPROMISE": 34
         },
         "syscalls": {
           "statx": 201,
@@ -190,7 +200,8 @@
     "fallback": {
       "off": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 197,
+          "FSREQPROMISE": 34
         },
         "syscalls": {
           "statx": 201,
@@ -214,7 +225,8 @@
       },
       "auto": {
         "resources": {
-          "PROMISE": 21
+          "PROMISE": 197,
+          "FSREQPROMISE": 34
         },
         "syscalls": {
           "statx": 201,

@@ -27,6 +27,22 @@ export function assertOwnedDirectory(expected: Stats | BigIntStats, actual: Stat
   }
 }
 
+/** The caller retains a verified native mkdir receipt and owns the descriptor lifetime. */
+export function finalizeCreatedDirectoryModeSync(
+  child: { fd: number; created: boolean },
+  mode: number | undefined,
+): void {
+  if (mode === undefined || !child.created || process.platform === "win32") return;
+  const expected = inspectFileIdentitySync(() => fsSync.fstatSync(child.fd, { bigint: true }));
+  assertOwnedDirectory(expected, expected);
+  fsSync.fchmodSync(child.fd, mode & 0o7777);
+  const finalized = inspectFileIdentitySync(() => fsSync.fstatSync(child.fd, { bigint: true }), expected);
+  assertOwnedDirectory(expected, finalized);
+  if ((finalized.mode & 0o7777n) !== BigInt(mode & 0o7777)) {
+    throw new FsSafeError("path-mismatch", "created directory mode could not be finalized");
+  }
+}
+
 /** Serializes use and close: even a queued path-based fd operation retains its descriptor. */
 export function ownDirectoryMode(params: {
   inspect: () => Promise<number>;

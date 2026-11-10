@@ -273,6 +273,13 @@ function installLstatFailure(context: ScenarioContext, pathname: string, code: s
     }
     return realLstat(...args);
   }) as typeof fsSync.lstatSync);
+  const asyncLstat = fs.lstat.bind(fs);
+  vi.spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+    if (context.armed() && path.resolve(String(args[0])) === path.resolve(pathname)) {
+      throw errno(code, "lstat", pathname);
+    }
+    return asyncLstat(...args);
+  }) as typeof fs.lstat);
 }
 
 const scenarios: readonly PreparationFailureScenario[] = [
@@ -290,7 +297,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   },
   {
     name: "complete-parent observation loses permission",
-    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "EACCES" },
+    expectedReceipt: { name: "FsSafeError", code: "permission-denied", causeCode: "EACCES" },
     async setup({ parent }) {
       await fs.mkdir(parent, { recursive: true });
     },
@@ -300,7 +307,7 @@ const scenarios: readonly PreparationFailureScenario[] = [
   },
   {
     name: "target observation loses permission",
-    expectedReceipt: { name: "FsSafeError", code: "path-alias", causeCode: "EPERM" },
+    expectedReceipt: { name: "FsSafeError", code: "permission-denied", causeCode: "EPERM" },
     async setup({ parent, target }) {
       await fs.mkdir(parent, { recursive: true });
       await fs.writeFile(target, "original");

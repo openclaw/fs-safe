@@ -4,6 +4,7 @@ import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { ownDirectoryMode, type DirectoryModeOwner } from "./directory-mode-node.js";
 import type { AtomicMutation } from "./replace-file-mutation.js";
+import { mayPrepareDrvfsRecoveryAtFd } from "./publication-recovery.js";
 import { inspectAtomicIdentity, wait, type AtomicFile, type AtomicIo, type Procedure } from "./atomic-io.js";
 
 type AsyncTempFileSystem = Pick<typeof fs, "lstat" | "open">;
@@ -51,6 +52,8 @@ async function pinDirectoryForMode(params: {
   /** Compatibility for best-effort directory modes; admission and close still fail closed. */
   ignoreChmodError?: boolean;
   mutation?: AtomicMutation;
+  expectedIdentity?: BigIntStats;
+  allowDrvfsRenameRecovery?: boolean;
 }): Promise<DirectoryModeOwner | undefined> {
   // Node does not enforce POSIX directory modes on Windows, and its directory
   // descriptors are not consistently openable. mkdir(mode) remains the only
@@ -59,9 +62,9 @@ async function pinDirectoryForMode(params: {
     return;
   }
 
-  const expected = params.fsModule === fs
+  const expected = params.expectedIdentity ?? (params.fsModule === fs
     ? inspectFileIdentitySync(() => assertDirectory(syncFs.lstatSync(params.dirPath, { bigint: true }), params.dirPath))
-    : await inspectFileIdentity(async () => assertDirectory(await params.fsModule.lstat(params.dirPath, { bigint: true }), params.dirPath));
+    : await inspectFileIdentity(async () => assertDirectory(await params.fsModule.lstat(params.dirPath, { bigint: true }), params.dirPath)));
   const handle = await params.fsModule.open(params.dirPath, directoryOpenFlags());
   try {
     const owner = ownDirectoryMode({
@@ -79,6 +82,7 @@ async function pinDirectoryForMode(params: {
       ignoreChmodError: params.ignoreChmodError,
     });
     await owner.verify();
+    if (params.allowDrvfsRenameRecovery) mayPrepareDrvfsRecoveryAtFd(handle.fd, expected.dev);
     return owner;
   } catch (error) {
     try { await handle.close(); }
@@ -89,7 +93,9 @@ async function pinDirectoryForMode(params: {
 
 export function* applyDirectoryMode(io: AtomicIo, params: {
   dirPath: string;
-  mode: number;
+  mode: number | "preserve";
+  expectedIdentity?: BigIntStats;
+  allowDrvfsRenameRecovery?: boolean;
   ignoreChmodError?: boolean;
   mutation?: AtomicMutation;
 }): Procedure<void> {
@@ -100,7 +106,7 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
     }));
     let primary: { error: unknown } | undefined;
     try {
-      if (owner) yield* wait(owner.apply(params.mode));
+      if (owner && params.mode !== "preserve") yield* wait(owner.apply(params.mode));
     } catch (error) {
       primary = { error };
       throw error;
@@ -112,14 +118,17 @@ export function* applyDirectoryMode(io: AtomicIo, params: {
   }
   if (process.platform === "win32") return;
   const admit = (stat: BigIntStats) => assertDirectory(stat, params.dirPath);
-  const expected = inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
+  const expected = params.expectedIdentity ?? inspectAtomicIdentity(io, () => io.lstatExact(params.dirPath),
     undefined, false, admit) as BigIntStats;
   const file = yield* io.open(params.dirPath, directoryOpenFlags());
   let primary: { error: unknown } | undefined;
   try {
     inspectAtomicIdentity(io, () => file.statExact(), expected, false, admit);
-    params.mutation?.assert();
-    file.chmod(params.mode & 0o7777);
+    if (params.allowDrvfsRenameRecovery) mayPrepareDrvfsRecoveryAtFd(file.fd, expected.dev);
+    if (params.mode !== "preserve") {
+      params.mutation?.assert();
+      file.chmod(params.mode & 0o7777);
+    }
   } catch (error) {
     primary = { error };
     throw error;

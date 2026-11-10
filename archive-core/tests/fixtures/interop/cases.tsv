@@ -1,0 +1,22 @@
+id	sha256	bytes	posix	windows	reference	entries	metadata	decoded	manifest
+ordinary-file	1b4060de7be6f3e2f64e4f03c7c9a17f318cda5b39760bbaf214f7f6575940a5	2048	ok	ok	accept	64	4096	65536	65536
+directory-link-pax	5e59c03329b628a4e6376aa7ee7ca315e1f8bd5c51ea6019b87eeda4741d6b42	2560	archive-header-invalid: unsupported or malformed PAX metadata	archive-header-invalid: unsupported or malformed PAX metadata	accept	64	4096	65536	65536
+rust-tar-directory-link	8b4b6bba6a384601d2a320d6358cd9e8917691d9a6caaf55b0cd8905a6e8b697	2560	archive-header-invalid: entry path is empty	archive-header-invalid: entry path is empty	accept	64	4096	65536	65536
+plain-symlink	79c899f41add11aa11975ed409263ae12a929e1374b4a7fa29b760aa5020c4f1	1536	ok	ok	accept	64	4096	65536	65536
+plain-hardlink	108bf6dc18b92cd164dd43fab6087a21b0d2d0d41637ee51f42309179bb43cdf	1536	ok	ok	accept	64	4096	65536	65536
+long-pax-path	ec27bc5bcb185182ee60ed5bb78876fb4584fcb43cd1c06f54d73612ff210862	3072	ok	ok	accept	64	4096	65536	65536
+long-gnu-path	22c417171ac3bc2f37e22800d7ce79bca042dd48a276d277da68e2e241ffe44a	3072	ok	ok	accept	64	4096	65536	65536
+unicode-spelling	c1ab00bbdeb0296c1317c3cd58e6d5ef27c39685bac3fdb14300041d41e7d411	5120	ok	ok	accept	64	4096	65536	65536
+raw-non-utf8	b7eff466f86969d61668640a5e16bdbf408c96a08d76f638cd261a3ae3bea46d	2048	archive-entry-path-invalid	archive-entry-path-invalid	accept	64	4096	65536	65536
+missing-eof	9ea947d27341338aba63241cea7d00467d3834edb9f3a4ed24fe10f0f1f9cf5c	1024	archive-header-invalid: missing two-block TAR EOF	archive-header-invalid: missing two-block TAR EOF	accept	64	4096	65536	65536
+single-eof	35d101375c5eea511abb9dd434dcbcde70c88ab928eac297b2a54c955740963c	1536	archive-header-invalid: missing two-block TAR EOF	archive-header-invalid: missing two-block TAR EOF	accept	64	4096	65536	65536
+nonzero-after-eof	23e217070490a4ee704f6b6c521a455c2db5ae0087b942d5e0b7e3a8bc07b0c0	2049	archive-header-invalid: nonzero data after TAR EOF	archive-header-invalid: nonzero data after TAR EOF	accept	64	4096	65536	65536
+truncated-header	e0540cb8e25331fde2cba3203e9f1d9bb3eec18a6ff320c07eb5504b3de45a2c	200	archive-header-invalid: truncated TAR header	archive-header-invalid: truncated TAR header	reject	64	4096	65536	65536
+truncated-data	c477f627183ae198c81f72e0aee2d5f55ea13fefce34a0e7364144418d73d85c	515	archive-header-invalid: truncated TAR entry data	archive-header-invalid: truncated TAR entry data	reject	64	4096	65536	65536
+empty-archive	5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef	1024	ok	ok	accept	64	4096	65536	65536
+case-spelling	36589560945abbd5b176003ad8dd40bdd110ac7b270984e8f8f9417c4f9d9965	3072	ok	ok	accept	64	4096	65536	65536
+colon-name	1db962edf981f3974012da160113c6093c8554bed1fb7b4ff0be659dc230a36b	2048	ok	archive-entry-path-invalid	accept	64	4096	65536	65536
+entry-budget	1b4060de7be6f3e2f64e4f03c7c9a17f318cda5b39760bbaf214f7f6575940a5	2048	archive-entry-count-exceeds-limit	archive-entry-count-exceeds-limit	accept	0	4096	65536	65536
+metadata-budget	ec27bc5bcb185182ee60ed5bb78876fb4584fcb43cd1c06f54d73612ff210862	3072	archive-meta-entry-size-exceeds-limit	archive-meta-entry-size-exceeds-limit	accept	64	1	65536	65536
+decoded-budget	1b4060de7be6f3e2f64e4f03c7c9a17f318cda5b39760bbaf214f7f6575940a5	2048	archive-decoded-size-exceeds-limit	archive-decoded-size-exceeds-limit	accept	64	4096	2047	65536
+manifest-budget	1b4060de7be6f3e2f64e4f03c7c9a17f318cda5b39760bbaf214f7f6575940a5	2048	archive-manifest-size-exceeds-limit	archive-manifest-size-exceeds-limit	accept	64	4096	65536	0

@@ -9,6 +9,31 @@ export const creationProbeFiles = [
   "consumer-creation-probe.mjs", "consumer-creation-contract.mjs",
   "consumer-creation-observer.mjs", "consumer-creation-acl.ps1",
 ];
+
+function assertCreationAclPaths(paths) {
+  assert.ok(Array.isArray(paths) && paths.length >= 1 && paths.length <= 3);
+  assert.equal(new Set(paths).size, paths.length);
+  for (const file of paths) assert.ok(typeof file === "string" && file.length > 0 && !file.includes("\0"));
+}
+
+export function encodeCreationAclBatch(paths) {
+  assertCreationAclPaths(paths);
+  return Buffer.from(JSON.stringify({ paths }), "utf8").toString("base64");
+}
+
+export function decodeCreationAclBatch(paths, stdout) {
+  assertCreationAclPaths(paths);
+  const reply = JSON.parse(stdout);
+  assert.ok(reply && Array.isArray(reply.rows));
+  assert.equal(reply.rows.length, paths.length);
+  return reply.rows.map((row, index) => {
+    assert.ok(row && typeof row === "object" && !Array.isArray(row));
+    assert.equal(row.index, index);
+    assert.equal(row.pathBase64, Buffer.from(paths[index], "utf8").toString("base64"));
+    return row;
+  });
+}
+
 const creationScenarios = [
   "root-private-directory", "root-private-file", "root-private-json",
   "root-atomic-buffer", "root-atomic-json", "root-stream-publication",

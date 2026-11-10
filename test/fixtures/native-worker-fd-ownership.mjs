@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { root } from "../../dist/root.js";
-import { stageFileInDirectory, writeSiblingTempFile } from "../../dist/advanced.js";
+import { createRootFileOpenBatchSync, stageFileInDirectory, writeSiblingTempFile } from "../../dist/advanced.js";
 import { configureFsSafeNative } from "../../dist/config.js";
+import { __loadBundledNativeForTest, __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../../dist/native.js";
 
 const { directory } = workerData;
 const warnings = [];
 const completed = [];
+let failure;
 process.on("warning", (warning) => warnings.push(warning.message));
 configureFsSafeNative({ mode: "require" });
 
@@ -75,6 +79,93 @@ await assert.rejects(scoped.create("moved.txt", "replacement"), { code: "already
 assert.equal(await fs.readFile(path.join(directory, "moved.txt"), "utf8"), "create");
 completed.push("create-collision");
 
+if (process.platform === "win32") {
+  const native = __loadBundledNativeForTest();
+  assert.equal(typeof native.openBeneath, "function");
+  const binary = createRequire(import.meta.url).resolve(`@openclaw/fs-safe-win32-${process.arch}-msvc`);
+  const nativeIdentity = {
+    node: process.version, napi: process.versions.napi, modules: process.versions.modules,
+    binarySha256: createHash("sha256").update(fsSync.readFileSync(binary)).digest("hex"),
+    nativeLoaded: process.report.getReport().sharedObjects.some(file => file.endsWith(".node") &&
+      fsSync.realpathSync.native(file) === fsSync.realpathSync.native(binary)),
+  };
+  assert.equal(nativeIdentity.nativeLoaded, true);
+  let leaf;
+  let disableAfterOpen = false;
+  const binding = {
+    ...native,
+    openBeneath(...args) {
+      const opened = native.openBeneath(...args);
+      assert.equal(args[1], "sentinel.txt");
+      assert.equal(leaf, undefined);
+      leaf = { fd: opened.fd, closes: 0 };
+      if (disableAfterOpen) configureFsSafeNative({ mode: "off" });
+      return opened;
+    },
+    closeOwnedFd(fd) {
+      assert.equal(this, binding);
+      assert.equal(fd, leaf.fd);
+      assert.equal(++leaf.closes, 1);
+      native.closeOwnedFd(fd);
+    },
+  };
+  __setNativeLoaderForTest(() => binding);
+  const options = { rootPath: directory, absolutePath: path.join(directory, "sentinel.txt"), boundaryLabel: "Worker read" };
+  const reportLeaf = scenario => {
+    let leafClosed = false;
+    try { fsSync.fstatSync(leaf.fd); }
+    catch (error) { if (error.code !== "EBADF") throw error; leafClosed = true; }
+    parentPort.postMessage({ kind: "batch-read", scenario, originCloses: leaf.closes, leafClosed, ...nativeIdentity });
+  };
+  try {
+    if (workerData.batchReadScenario !== "rejection") {
+      const batch = createRootFileOpenBatchSync();
+      try {
+        const opened = batch.openFile(options);
+        assert.equal(opened.ok, true);
+        assert.equal(opened.fd, leaf.fd); // A fallback cannot supply this native receipt.
+        configureFsSafeNative({ mode: "off" });
+        batch.close();
+        batch[Symbol.dispose]();
+        assert.equal(leaf.closes, 0);
+        assert.equal(fsSync.readFileSync(opened.fd, "utf8"), "node-owned");
+        if (opened.close) { opened.close(); opened.close(); }
+        else fsSync.closeSync(opened.fd); // Exercise the existing consumer on the pre-fix base.
+        reportLeaf("transfer");
+        assert.equal(leaf.closes, 1, "native batch-read transfer bypassed originating closer");
+        assert.throws(() => fsSync.fstatSync(opened.fd), { code: "EBADF" });
+      } finally { batch.close(); }
+      completed.push("batch-read-transfer");
+    }
+
+    if (workerData.batchReadScenario !== "transfer") {
+      configureFsSafeNative({ mode: "require" });
+      leaf = undefined;
+      disableAfterOpen = true;
+      const rejectedBatch = createRootFileOpenBatchSync();
+      try {
+        const rejected = rejectedBatch.openFile({ ...options, maxBytes: 0 });
+        assert.equal(rejected.ok, false);
+        assert.equal(rejected.reason, "validation");
+        assert.equal(rejected.error.code, "too-large");
+        reportLeaf("rejection");
+        assert.equal(leaf.closes, 1, "native batch-read rejection bypassed originating closer");
+        assert.throws(() => fsSync.fstatSync(leaf.fd), { code: "EBADF" });
+        rejectedBatch.close();
+        assert.equal(leaf.closes, 1);
+      } finally { rejectedBatch.close(); }
+      completed.push("batch-read-rejection");
+    }
+  } catch (error) {
+    if (!workerData.batchReadScenario) throw error;
+    failure = { code: error.code, message: error.message };
+    process.exitCode = 1;
+  } finally {
+    __resetNativeLoaderForTest();
+    configureFsSafeNative({ mode: "require" });
+  }
+}
+
 if (process.platform !== "win32") {
   const staged = await stageFileInDirectory({ directory, content: "staged" });
   try {
@@ -90,5 +181,5 @@ if (process.platform !== "win32") {
 
 assert.equal(fsSync.readFileSync(sentinel, "utf8"), "node-owned");
 await new Promise((resolve) => setImmediate(resolve));
-parentPort.postMessage({ kind: "result", completed, warnings });
+parentPort.postMessage({ kind: "result", completed, warnings, failure });
 // Intentionally leave the Node-owned sentinel to the default Worker fd tracker.

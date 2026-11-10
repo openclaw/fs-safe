@@ -1,5 +1,7 @@
 # File store
 
+
+Store defaults and write options accept `allowDrvfsRenameRecovery`, including synchronous stores and private writes. Buffered/JSON writes compare bytes during [verified DrvFS recovery](atomic.md#drvfs-hidden-rename-recovery); streamed copies retain metadata checks.
 `fileStore` is exported from `@openclaw/fs-safe/store`. It is a managed wrapper around `root()` for the common "store files under a directory at known modes, prune old ones, hand back absolute paths" pattern. Useful for caches, ingest staging, generated artifacts, anywhere the consumer wants object-style access plus stream and copy primitives.
 
 ```ts
@@ -36,7 +38,7 @@ const cache = fileStore({
 |---|---|---|
 | `rootDir` | Required | Store directory. |
 | `private` | `false` | Use the secret-file atomic path. |
-| `mode` / `dirMode` | `0o600` / `0o700` | File and parent-directory modes. |
+| `mode` / `dirMode` | `0o600` / `0o700` | File and parent-directory modes; non-private stores also accept `dirMode: "preserve"`. |
 | `maxBytes` | Unset | Store read/write byte limit. |
 | `durable` | `true` | Sync the written file and its parent directory; see method support below. |
 
@@ -144,6 +146,18 @@ descriptors, with the platform limitations described under [Writes](#writes).
 Writes use guarded sibling-temp publication: apply file and directory modes,
 then rename into place. By default, the file and parent directory are synced
 where supported by the platform and writer.
+
+Non-private stores accept `dirMode: "preserve"` at construction or per write,
+including streams, copies, and JSON writes. Verified existing root and parent
+directories are never chmoded; each exclusively created directory finishes at
+`0o700` on POSIX, including intermediate directories. Concurrent mkdir winners
+are verified and preserved. The same policy applies when pruning creates a
+missing store root. On Windows this uses mkdir's default handling.
+Required-native stores retain handle-relative parent creation and finalize only
+directories reported as exclusively created through their retained descriptors.
+The TypeScript backend uses the guarded root walk with the same mode policy.
+Private stores reject `"preserve"` with `FsSafeError("invalid-path")`, including
+per-write overrides: their explicit permission policy must remain numeric.
 
 `durable: false` keeps the sibling-temp replace/rename behavior but skips the
 temp-file and parent-directory `fsync` calls. Use it only for reconstructible
@@ -265,7 +279,7 @@ it does not control the publication policy.
 ```ts
 type FileStoreWriteOptions = {
   durable?: boolean;   // store default, otherwise true
-  dirMode?: number;
+  dirMode?: number | "preserve";
   mode?: number;
   maxBytes?: number;
   tempPrefix?: string;  // override the default "." + basename

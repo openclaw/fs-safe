@@ -164,7 +164,7 @@ describe.runIf(process.platform !== "win32" && !process.versions.bun)(
         const stopBeforeStage = new Error("stop before native staging");
         const candidate: NativeBinding = {
           ...binding,
-          createStagedFile() {
+          async createStagedFile() {
             throw stopBeforeStage;
           },
         };

@@ -1,9 +1,10 @@
 import { replaceFileAtomic, type ReplaceFileAtomicOptions } from "./replace-file.js";
+import type { DirectoryMode } from "./directory-mode-options.js";
 import { admitStandalonePublicationPath } from "./windows-path-alias.js";
 
-export type WriteTextAtomicOptions = Pick<ReplaceFileAtomicOptions, "beforeRename" | "tempPrefix"> & {
+export type WriteTextAtomicOptions = Pick<ReplaceFileAtomicOptions, "beforeRename" | "tempPrefix" | "allowDrvfsRenameRecovery"> & {
   mode?: number;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   trailingNewline?: boolean;
   /** Defaults to true; false skips file and parent fsync without changing replacement. */
   durable?: boolean;
@@ -27,5 +28,6 @@ export async function writeTextAtomic(
     syncParentDir: durable,
     beforeRename: options?.beforeRename,
     tempPrefix: options?.tempPrefix,
+    allowDrvfsRenameRecovery: options?.allowDrvfsRenameRecovery,
   });
 }

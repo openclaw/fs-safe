@@ -202,6 +202,32 @@ pnpm build
 pnpm test --config scripts/slow-package-copy.config.ts
 ```
 
+### Windows public-permission/browser boundary proof
+
+After `pnpm native:build` and `pnpm build`, Windows x64 contributors with Node
+26 can run:
+
+```powershell
+$env:FS_SAFE_NATIVE_MODE = "require"
+pnpm test test/permissions-windows-native.test.ts
+node scripts/windows-permissions-browser-proof.mjs
+```
+
+The regression suite applies real ACLs only to task-owned temporary fixtures.
+The browser proof downloads and SHA-256-verifies the affected core's pinned
+layout module, strips TypeScript syntax, and executes the entire module with
+real filesystem operations and this checkout's built permission inspector.
+Its existing dependency seam redirects state and browser-profile roots into
+temporary storage; it never consults an installed OpenClaw or Chrome profile.
+Filesystem wrappers count and forward copy/profile-read operations.
+
+The proof creates user-owned source, destination, and profile fixtures with
+TrustedInstaller and other untrusted write grants. It checks refusal before
+copying or reading profile bytes, and verifies private secure reads remain
+strict. Ownership acceptance is covered by synthetic native/fallback descriptor
+tests; changing a real fixture to TrustedInstaller ownership requires privileges
+and is not attempted by this non-elevated proof.
+
 ## Checks
 
 Run the complete repository gate before handoff:
@@ -318,14 +344,14 @@ OS/CPU/libc selection, a native-required SHA-256 operation, and fresh-process
 optionals. Omitted-optionals installs also verify that all public subpaths can
 be imported, without implying every operation remains available.
 
-Host-only smoke supplies the seven foreign packages using their unchanged real
-manifests and clearly marked synthetic, non-executable payloads. Every foreign
+Host-only smoke supplies foreign packages from the native target map using
+their unchanged real manifests and clearly marked synthetic, non-executable payloads. Every foreign
 metadata/tarball endpoint is checked before installation, so a missing fixture
 cannot masquerade as successful platform filtering. These temporary fixtures
 never enter `packages/`, release artifacts, or the publish manifest. They prove
 installer filtering, not foreign native compilation or execution. Full release
-collection uses the actual eight collected native tarballs instead. Run it with
-`pnpm package:collect` after assembling all eight real bindings; missing targets
+collection uses all actual collected native tarballs instead. Run it with
+`pnpm package:collect` after assembling every mapped native binding; missing targets
 fail collection. `pnpm package:collect --allow-host-only` exercises the same
 lifecycle boundary locally but proves only the host. Both collection commands
 require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standalone
@@ -333,7 +359,15 @@ require the pnpm lifecycle CLI path; JavaScript CLIs run through Node and standa
 direct `node` invocation without lifecycle metadata is unsupported. Archive
 codecs and their dependencies are packed from the installed dependency graph.
 
-PR CI builds and executes all eight shipped bindings. The existing check names
+CI's bundled-package producer runs `pnpm package:collect --allow-host-only --pack-only --output release-artifacts-package-smoke`
+after building. Node 22/24 consumers use `pnpm package:smoke --packed-input <directory>`
+to verify and install those same root and host tarballs. The input includes the
+manifest and its clean source/host receipt; missing or mismatched input fails
+without repacking. Consumer proof still goes to `--output` (default `release-artifacts`).
+Both reuse modes require host-only collection; default release collection and
+Windows signing continue to pack and verify their own artifacts.
+
+PR CI builds and executes every mapped native binding. The existing check names
 stay stable; extra runner/runtime combinations add checks without changing the
 repository ruleset. Native lanes run Node 24; the GNU host lanes also exercise
 Bun 1.4.4 (as do macOS and Windows).
@@ -342,20 +376,21 @@ Bun 1.4.4 (as do macOS and Windows).
 | --- | --- | --- | --- |
 | JavaScript check | `ubuntu-latest` | x64 / glibc | Node 22, 24, 26 |
 | JavaScript check | `xcode-27` | arm64 | Node 22, 24, 26 |
-| JavaScript check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 22, 24, 26 |
+| JavaScript check | `windows-latest` (standard hosted) | x64 | Node 22, 24, 26 |
 | Native check | `ubuntu-latest` | x64 / glibc | Node 24, Bun 1.4.4 |
 | Native check (forced no-openat2) | `ubuntu-latest` | x64 / glibc | Node 24 |
 | Native check | `ubuntu-24.04-arm` | arm64 / glibc | Node 24, Bun 1.4.4 |
 | Native check | `xcode-27` | arm64 | Node 24, Bun 1.4.4 |
 | Native check | `xcode-27` under Rosetta (`x64`) | x64 | Node 24, Bun 1.4.4 |
-| Native check | `fs-safe-windows-16core` (`windows-latest`) | x64 | Node 24, Bun 1.4.4 |
+| Native check | `windows-latest` (standard hosted) | x64 | Node 24, Bun 1.4.4 |
 | Native check | `windows-2022` (standard hosted) | x64 | Node 24, Bun 1.4.4 |
 | Windows ARM64 host | `windows-11-arm` | arm64 native and x64 emulated | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-latest` | x64 / musl | Node 24 |
 | Native check (Alpine 3.24) | `ubuntu-24.04-arm` | arm64 / musl | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-latest` | x64 / glibc | Node 24 |
 | GNU glibc 2.28 build + Rocky Linux 8 load | `ubuntu-24.04-arm` | arm64 / glibc | Node 24 |
-| Bundled package smoke | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22, 24 |
+| Bundled package build | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 24 |
+| Bundled package smoke (artifact consumers) | `ubuntu-latest`, `xcode-27`, `windows-latest` (standard hosted) | host | Node 22, 24 |
 | Coverage | `ubuntu-latest`, `xcode-27`, `fs-safe-windows-16core` | host | Node 22 |
 
 All macOS jobs use the arm64 `xcode-27` image. Required status-check names

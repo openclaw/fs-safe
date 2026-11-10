@@ -20,6 +20,7 @@ export async function publishCopyStage(params: {
   onPublicationAttempt?: () => void;
   onPublished?: (identity: PublishedWriteIdentity) => void;
   beforeTemporaryUnlink?: () => Promise<void>;
+  afterRename?: () => BigIntStats | Promise<BigIntStats>;
 }): Promise<void> {
   const { identity, temporaryPath, targetPath } = params;
   const assertCurrent = () => {
@@ -63,7 +64,8 @@ export async function publishCopyStage(params: {
       if (fs.lstatSync(temporaryPath, { throwIfNoEntry: false })) {
         throw new FsSafeError("path-mismatch", "renamed copy stage still exists");
       }
-      const target = fs.lstatSync(targetPath, { bigint: true });
+      const observed = params.afterRename?.();
+      const target = observed instanceof Promise ? await observed : observed ?? fs.lstatSync(targetPath, { bigint: true });
       if (!target.isFile() || target.isSymbolicLink() || target.nlink !== 1n ||
         !sameFileIdentityForCleanup(target, identity)) {
         throw new FsSafeError("path-mismatch", "renamed copy target changed after publication");

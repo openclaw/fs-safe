@@ -10,6 +10,10 @@ export default {
     include: [
       "test/pipe.test.ts",
       "test/realpath.test.ts",
+      "test/root-read-responsive.test.ts",
+      "test/root-read-await-fence.test.ts",
+      "test/root-read-admission-order.test.ts",
+      "test/root-read-final-fence.test.ts",
       "test/relative-publication.test.ts",
       "test/replace-directory-authority.test.ts",
       "test/replace-directory-retained-admission.test.ts",

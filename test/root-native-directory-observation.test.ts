@@ -72,13 +72,18 @@ async function measuredCalls<T>(
   lstat.mockClear();
   canonical.mockClear();
   observeDirectory.mockClear();
-  const value = await run();
-  return {
-    value,
-    lstats: lstat.mock.calls.length,
-    canonical: canonical.mock.calls.length,
-    observations: observeDirectory.mock.calls.length,
-  };
+  const asyncLstat = vi.spyOn(fs, "lstat");
+  try {
+    const value = await run();
+    return {
+      value,
+      lstats: lstat.mock.calls.length + asyncLstat.mock.calls.length,
+      canonical: canonical.mock.calls.length,
+      observations: observeDirectory.mock.calls.length,
+    };
+  } finally {
+    asyncLstat.mockRestore();
+  }
 }
 
 it.each(["auto", "require"] as const)(

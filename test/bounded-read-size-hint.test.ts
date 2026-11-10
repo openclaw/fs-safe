@@ -41,11 +41,11 @@ describe("admitted bounded-read size hint", () => {
     const filePath = path.join(dir, "input");
     await fs.writeFile(filePath, "abcd");
     const handle = await fs.open(filePath, "r");
-    const stat = vi.spyOn(fsSync, "fstatSync");
+    const stat = vi.spyOn(fsSync, "fstat");
     try {
       expect(await readFileHandleBoundedWithSize(handle, 4, 4)).toEqual(Buffer.from("abcd"));
       expect(stat).toHaveBeenCalledTimes(1);
-      expect(stat).toHaveBeenCalledWith(handle.fd);
+      expect(stat).toHaveBeenCalledWith(handle.fd, expect.any(Function));
     } finally {
       await handle.close();
     }

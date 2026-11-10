@@ -22,7 +22,7 @@ async function fixture(platform: "win32" | "linux", reportCloseErrors = false) {
   const native = windowsPolicyBinding(rootPath);
   const staging = vi.fn((): never => { throw new Error("unexpected file staging"); });
   Object.assign(native.binding, {
-    createStagedFile: staging, stagedFileMatches: staging, removeStagedFile: staging,
+    renameReplaceAsync: staging, renameNoReplaceAsync: staging, createStagedFile: staging, stagedFileMatches: staging, removeStagedFile: staging,
   });
   const rootOpened: number[] = [];
   const rootClosed: number[] = [];

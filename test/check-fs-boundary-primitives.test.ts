@@ -41,21 +41,21 @@ function checkSyntheticSource(tempTarget: string, atomicIo = "export {};\n") {
 it.each([
   {
     name: "accepts both shared temp filename helpers",
-    source: 'import { normalizeSafePathSegment, isSafePathSegment } from "./safe-path-segment.js";\n',
+    source: 'import { fitFileNameToPortableComponent, suffixWindowsReservedDeviceName } from "./filename.js";\n',
     exitCode: 0,
     diagnostic: "",
   },
   {
-    name: "reports only the missing normalization helper",
-    source: 'import { isSafePathSegment } from "./safe-path-segment.js";\n',
+    name: "reports only the missing filename budget helper",
+    source: 'import { suffixWindowsReservedDeviceName } from "./filename.js";\n',
     exitCode: 1,
-    diagnostic: "src/temp-target.ts: temp filenames must use the shared normalizeSafePathSegment helper\n",
+    diagnostic: "src/temp-target.ts: temp filenames must use the shared portable filename budget\n",
   },
   {
-    name: "reports only the missing validation helper",
-    source: 'import { normalizeSafePathSegment } from "./safe-path-segment.js";\n',
+    name: "reports only the missing device-name helper",
+    source: 'import { fitFileNameToPortableComponent } from "./filename.js";\n',
     exitCode: 1,
-    diagnostic: "src/temp-target.ts: temp filenames must use the shared isSafePathSegment helper\n",
+    diagnostic: "src/temp-target.ts: temp filenames must use the shared Windows device-name protection\n",
   },
 ])("$name", ({ source, exitCode, diagnostic }) => {
   const result = checkSyntheticSource(source);
@@ -74,7 +74,7 @@ it.each([
   { source: "this.syncFs.copyFileSync!(source, destination);\n", forbidden: true },
 ])("enforces admitted atomic I/O writes (forbidden=$forbidden): $source", ({ source, forbidden }) => {
   const result = checkSyntheticSource(
-    'import { normalizeSafePathSegment, isSafePathSegment } from "./safe-path-segment.js";\n',
+    'import { fitFileNameToPortableComponent, suffixWindowsReservedDeviceName } from "./filename.js";\n',
     source,
   );
   expect(result.error).toBeUndefined();

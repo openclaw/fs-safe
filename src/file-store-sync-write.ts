@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
+import { rejectPrivateDirectoryPreservation } from "./directory-mode-options.js";
 import { syncDirectorySync } from "./directory-durability.js";
 import { createDirectoryReceiptFromIdentity } from "./directory-receipt.js";
 import { FsSafeError } from "./errors.js";
@@ -18,6 +19,7 @@ import { AtomicTempOwner, type AtomicTempFailure } from "./replace-file-temp-own
 import { errorCauseOptions } from "./root-errors.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
+import { hasErrorCode } from "./file-cleanup.js";
 
 function verifyStoreFile(fd: number, expected: BigIntStats, filePath: string): void {
   const assertFile = (stat: BigIntStats, allowUnknown = false): boolean => {
@@ -53,8 +55,9 @@ export function writeFileSyncAtomic(params: {
   filePath: string;
   content: string | Uint8Array;
   privateMode: boolean;
+  allowDrvfsRenameRecovery?: boolean;
   durable: boolean;
-  dirMode: number;
+  dirMode: number | "preserve";
   mode: number;
 }): string {
   const filePath = path.resolve(params.filePath);
@@ -63,6 +66,7 @@ export function writeFileSyncAtomic(params: {
   }
   let parentGuard: SyncParentGuard;
   if (params.privateMode) {
+    rejectPrivateDirectoryPreservation(params.dirMode);
     parentGuard = ensureStoreDirectorySync({
       rootDir: params.rootDir,
       targetDir: path.dirname(filePath),
@@ -113,11 +117,17 @@ export function writeFileSyncAtomic(params: {
     if (params.durable) fs.fsyncSync(temp.file.fd);
     verifyStoreFile(temp.file.fd, owner.identity, tempPath);
     assertSyncStoreDirectoryReceipt(parentGuard);
+    if (params.allowDrvfsRenameRecovery === true) runSync(owner.prepareRecovery(params.content, parentGuard.dir));
     fs.renameSync(tempPath, filePath);
     owner.markRenamed();
     assertSyncStoreDirectoryReceipt(parentGuard);
     try {
-      verifyStoreFile(temp.file.fd, owner.identity, filePath);
+      try {
+        verifyStoreFile(temp.file.fd, owner.identity, filePath);
+      } catch (error) {
+        if (!owner.canRecoverHiddenRename || !hasErrorCode(error, "ENOENT")) throw error;
+        runSync(owner.assertPublished(filePath));
+      }
     } catch (error) {
       if (error instanceof FsSafeError) {
         throw error;

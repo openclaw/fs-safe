@@ -6,6 +6,7 @@ import { FsSafeError } from "../src/errors.js";
 import { createFileLockManager } from "../src/file-lock.js";
 import { root } from "../src/root.js";
 import { realpathSync } from "../src/realpath.js";
+import * as realpathOwner from "../src/realpath.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { readSidecarLockSnapshot } from "./helpers/sidecar-snapshot.js";
 import { useTempDirs } from "./helpers/vitest.js";
@@ -30,6 +31,7 @@ function interceptFinalResolution(
   lockPath: string,
   resolve: (handle: FileHandle) => string,
   active = () => true,
+  windows = false,
 ) {
   const realpath = realpathSync.native;
   let armed = false, descriptor: FileHandle | undefined;
@@ -40,12 +42,23 @@ function interceptFinalResolution(
     }
     return realpath(...args);
   });
+  const resolveAsync = realpathOwner.realpathNative;
+  vi.spyOn(realpathOwner, "realpathNative").mockImplementation(async candidate => {
+    if (armed && candidate === lockPath) {
+      armed = false;
+      return resolve(descriptor!);
+    }
+    return resolveAsync(candidate);
+  });
   __setFsSafeTestHooksForTest({
     afterOpen(candidate, handle) {
       if (candidate === lockPath && active()) descriptor = handle;
     },
     beforeRootReadFinalFence(candidate) {
-      if (candidate === lockPath && active()) armed = true;
+      if (candidate === lockPath && active()) {
+        armed = true;
+        if (windows) Object.defineProperty(process, "platform", { value: "win32" });
+      }
     },
   });
   return { get descriptor() { return descriptor; } };
@@ -77,6 +90,7 @@ it.each(["EPERM", "EBADF"])("does not brand a final canonical identity %s as a r
     if (candidate !== lockPath) return;
     descriptor = handle;
     armed = true;
+    Object.defineProperty(process, "platform", { value: "win32" });
   } });
   const parsePayload = vi.fn(JSON.parse);
   await expect(readSidecarLockSnapshot(lockPath, {
@@ -103,7 +117,7 @@ it.each(finalResolverOutcomes)("retries a final %s resolution failure only with 
       throw Object.assign(new Error("final resolver failure"), { code: outcome });
     }
     return outsidePath;
-  }, () => !injected);
+  }, () => !injected, outcome !== "outside");
   const open = capability.open.bind(capability);
   vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
     try {
@@ -156,7 +170,7 @@ it.each(finalResolverOutcomes.flatMap(
         throw Object.assign(new Error("final resolver failure"), { code: outcome });
       }
       return outsidePath;
-    });
+    }, undefined, outcome !== "outside");
     const open = capability.open.bind(capability);
     vi.spyOn(capability, "open").mockImplementationOnce(async (...args) => {
       try {
@@ -207,7 +221,7 @@ it.each(finalResolverOutcomes)("ordinary Root.open preserves a final %s rejectio
       throw Object.assign(new Error("final resolver failure"), { code: outcome });
     }
     return outsidePath;
-  });
+  }, undefined, outcome !== "outside");
 
   try {
     await expect(capability.open("state.lock")).rejects.toMatchObject({

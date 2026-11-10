@@ -188,6 +188,7 @@ export interface NativeBinding {
   inspectDarwinAcl?(fd: number, inheritanceTarget?: "file" | "directory"): NativeDarwinAclFacts;
   /** POSIX system canonicalization; confinement and identity policy stay with callers. */
   canonicalizePath?(path: string, ordinary: boolean): { path?: string; errno?: number };
+  canonicalizePathAsync?(path: string, ordinary: boolean): Promise<{ path?: string; errno?: number }>;
   /** Internal Windows normalized name resolution after a denied DOS-name query. */
   resolveWindowsCanonicalPath?(path: string): string | null;
   /** Internal immutable primary-token membership, cached across Workers. */
@@ -223,7 +224,10 @@ export interface NativeBinding {
   stagedSymlinkMatches?(parentFd: number, basename: string, linkFd: number): boolean;
   publishStagedSymlink?(parentFd: number, basename: string, linkFd: number, destination: string): void;
   removeStagedSymlink?(parentFd: number, basename: string, linkFd: number): "removed" | "name-absent" | "preserved";
-  createStagedFile?(parentFd: number, basename: string): number;
+  createStagedFile?(parentFd: number, basename: string): Promise<number>;
+  /** POSIX staging: caller retains both parents until the worker settles. */
+  renameReplaceAsync?(sourceFd: number, source: string, targetFd: number, target: string): Promise<void>;
+  renameNoReplaceAsync?(sourceFd: number, source: string, targetFd: number, target: string): Promise<void>;
   stagedFileMetadata?(parentFd: number, basename: string, fd: number): { mode: bigint; nlink: bigint } | null;
   stagedFileMatches?(parentFd: number, basename: string, fileFd: number): boolean;
   stagedDirectoryMatches?(fd: number, path: string, dev: bigint, ino: bigint): boolean;
@@ -326,6 +330,8 @@ export interface NativeBinding {
     dev: bigint, ino: bigint, kind: "file" | "directory" | "symlink",
   ): NativeWindowsEntryPublication;
   entryPublicationFilesystem?(parentFd: number): string;
+  /** Internal negative-only DrvFS preparation probe; never grants recovery. */
+  is9pFilesystem?(parentFd: number): boolean;
   publishRetainedEntryNoReplace?(
     sourceParentFd: number, sourceBasename: string, sourceFd: number,
     targetParentFd: number, targetBasename: string,

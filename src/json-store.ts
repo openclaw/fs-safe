@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { DirectoryMode } from "./directory-mode-options.js";
 import { fileStore } from "./file-store.js";
 import {
   type JsonFileStoreOptions,
@@ -9,7 +10,7 @@ import { admitStandalonePublicationPath, assertNoWindowsPathAlias } from "./wind
 
 export type JsonStoreOptions<T> = JsonFileStoreOptions & {
   filePath: string;
-  dirMode?: number;
+  dirMode?: DirectoryMode;
   mode?: number;
 };
 
@@ -22,6 +23,7 @@ export function jsonStore<T>(options: JsonStoreOptions<T>): JsonStore<T> {
   return fileStore({
     rootDir: path.dirname(filePath),
     private: true,
+    allowDrvfsRenameRecovery: options.allowDrvfsRenameRecovery,
     mode: options.mode,
     dirMode: options.dirMode,
   }).json<T>(path.basename(filePath), options);

@@ -86,6 +86,7 @@
           "outside-workspace",
           "path-alias",
           "path-mismatch",
+          "permission-denied",
           "permission-unverified",
           "read-failed",
           "secret-exists",
@@ -278,6 +279,7 @@
         "openRootFile",
         "openRootFileSync",
         "overwriteFileHandle",
+        "overwriteFileHandleWithAuthority",
         "parseIcaclsOutput",
         "pathExists",
         "pathExistsSync",
@@ -298,6 +300,7 @@
         "resolveExistingPathsWithinRoot",
         "resolveHomeRelativePath",
         "resolveLocalPathFromRootsSync",
+        "resolvePathPrefix",
         "resolvePathPrefixSync",
         "resolvePathViaExistingAncestorSync",
         "resolvePathWithinRoot",
@@ -441,7 +444,8 @@
         "ReadRootJsonSyncOptions",
         "ReadRootStructuredFileSyncOptions",
         "RootStructuredFileReadResult",
-        "WriteJsonOptions"
+        "WriteJsonOptions",
+        "WriteJsonSyncOptions"
       ],
       "errorCodes": {}
     },
@@ -644,6 +648,7 @@
         "writeTextAtomic"
       ],
       "types": [
+        "DirectoryMode",
         "MovePathPublicationReceipt",
         "MovePathWithCopyFallbackOptions",
         "RenameIdentityPolicy",
@@ -803,6 +808,7 @@
           "outside-workspace",
           "path-alias",
           "path-mismatch",
+          "permission-denied",
           "permission-unverified",
           "read-failed",
           "secret-exists",
@@ -819,6 +825,7 @@
       "types": [
         "BasePathOptions",
         "DirEntry",
+        "DirectoryMode",
         "ExactFileIdentity",
         "FastPathMode",
         "PathStat",

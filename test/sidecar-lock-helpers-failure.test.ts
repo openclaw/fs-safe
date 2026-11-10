@@ -270,8 +270,7 @@ describe("sidecar lock helper failure handling", () => {
     expect(sidecarLockPayloadCreatedAtMs({ createdAt: "invalid" })).toBeNull();
     expect(sidecarLockPayloadCreatedAtMs(null)).toBeNull();
 
-    const missing = path.join(await tempRoot("fs-safe-sidecar-policy-"), "missing.lock");
-    await expect(defaultSidecarLockShouldReclaim({ lockPath: missing, payload: {}, staleMs: 60_000, nowMs: Date.now() })).resolves.toBe(true);
+    expect(defaultSidecarLockShouldReclaim({ payload: {} }, 60_000, Date.now())).toBe(true);
   });
 
   it("rejects a snapshot whose opened descriptor is not a regular file", async () => {

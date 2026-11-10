@@ -1,16 +1,20 @@
 import { numberStats } from "./exact-identity.js";
 import fs from "node:fs";
+import asyncFs from "node:fs/promises";
+import { promisify } from "node:util";
+import { runAsync, runSync, wait, type Procedure } from "./atomic-io.js";
 import { isUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
-import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
 import { realpathSync } from "./realpath.js";
+import type { OwnedFileDescriptorSync } from "./create-owned-file.js";
 
 export type PinnedOpenSyncFailureReason = "path" | "validation" | "io";
 
 export type PinnedOpenSyncResult =
-  | { ok: true; path: string; fd: number; stat: fs.Stats; identity: fs.BigIntStats }
+  | { ok: true; path: string; fd: number; stat: fs.Stats; identity: fs.BigIntStats; close?: () => void }
   | { ok: false; reason: PinnedOpenSyncFailureReason; error?: unknown };
 
 export type PinnedOpenSyncAllowedType = "file" | "directory";
@@ -25,13 +29,17 @@ export type PinnedOpenSyncFs = Pick<
   "constants" | "lstatSync" | "realpathSync" | "openSync" | "fstatSync" | "closeSync"
 >;
 
+const openFd = promisify(fs.open);
+const statFd = promisify(fs.fstat);
+const closeFd = promisify(fs.close);
+
 export function isExpectedPathError(error: unknown): boolean {
   const code =
     typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
   return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
 }
 
-export function openPinnedFileSync(params: {
+type PinnedOpenParams = {
   filePath: string;
   resolvedPath?: string;
   rejectPathSymlink?: boolean;
@@ -40,21 +48,33 @@ export function openPinnedFileSync(params: {
   maxBytes?: number;
   allowedType?: PinnedOpenSyncAllowedType;
   ioFs?: PinnedOpenSyncFs;
-  admittedFd?: number;
-  finalAdmission?: PinnedOpenSyncFinalAdmission;
-}): PinnedOpenSyncResult {
+  admittedFile?: OwnedFileDescriptorSync;
+  finalAdmission?: (params: Parameters<PinnedOpenSyncFinalAdmission>[0]) => string | Promise<string>;
+};
+
+export function openPinnedFileSync(params: PinnedOpenParams & { finalAdmission?: PinnedOpenSyncFinalAdmission }): PinnedOpenSyncResult {
+  return runSync(openPinnedFileProcedure(params, false));
+}
+
+export function openPinnedFile(params: PinnedOpenParams): Promise<PinnedOpenSyncResult> {
+  return runAsync(openPinnedFileProcedure(params, true));
+}
+
+function* openPinnedFileProcedure(params: PinnedOpenParams, asynchronous: boolean): Procedure<PinnedOpenSyncResult> {
   const filePath = params.filePath;
   const resolvedPath = params.resolvedPath;
   const ioFs = params.ioFs ?? fs;
   const allowedType = params.allowedType ?? "file";
   const rejectPathSymlink = params.rejectPathSymlink === true;
+  const finalAdmission = params.finalAdmission;
   const statPolicy = {
     rejectHardlinks: params.rejectHardlinks,
     rejectLeafSymlinks: params.rejectLeafSymlinks,
     maxBytes: params.maxBytes,
   };
   const openReadFlags = resolveReadOpenFlags({ constants: ioFs.constants });
-  let fd: number | null = params.admittedFd ?? null;
+  const admittedFile = params.admittedFile;
+  let fd: number | null = admittedFile?.fd ?? null;
   try {
     assertNoWindowsPathAlias(filePath, "filesystem", "file path uses a Windows filesystem namespace alias");
     if (resolvedPath !== undefined) {
@@ -64,42 +84,42 @@ export function openPinnedFileSync(params: {
       return { ok: false, reason: "validation" };
     }
     if (rejectPathSymlink) {
-      const candidateStat = ioFs.lstatSync(filePath);
+      const candidateStat = asynchronous ? yield* wait(asyncFs.lstat(filePath)) : ioFs.lstatSync(filePath);
       if (candidateStat.isSymbolicLink()) {
         return { ok: false, reason: "validation" };
       }
     }
 
-    const realPath = resolvedPath ??
-      (ioFs === fs ? realpathSync(filePath) : ioFs.realpathSync(filePath));
+    const realPath = resolvedPath ?? (asynchronous ? yield* wait(asyncFs.realpath(filePath)) :
+      (ioFs === fs ? realpathSync(filePath) : ioFs.realpathSync(filePath)));
     assertNoWindowsPathAlias(realPath, "filesystem", "resolved path uses a Windows filesystem namespace alias");
     if (isUnsafeDeviceReadPath(realPath)) {
       return { ok: false, reason: "validation" };
     }
-    const preOpenStat = inspectFileIdentitySync(() => {
-      const stat = ioFs.lstatSync(realPath, { bigint: true });
+    const admitStat = (stat: fs.BigIntStats) => {
       assertAllowedStat(stat, allowedType, statPolicy);
       return stat;
-    });
-    fd ??= ioFs.openSync(realPath, openReadFlags);
-    const identity = inspectFileIdentitySync(() => {
-      const stat = ioFs.fstatSync(fd!, { bigint: true });
-      assertAllowedStat(stat, allowedType, statPolicy);
-      return stat;
-    }, preOpenStat);
-    inspectFileIdentitySync(() => {
-      const stat = ioFs.lstatSync(realPath, { bigint: true });
-      assertAllowedStat(stat, allowedType, statPolicy);
-      return stat;
-    }, identity);
+    };
+    function* inspectPath(expected?: fs.BigIntStats): Procedure<fs.BigIntStats> {
+      return asynchronous
+        ? yield* wait(inspectFileIdentity(async () => admitStat(await asyncFs.lstat(realPath, { bigint: true })), expected))
+        : inspectFileIdentitySync(() => admitStat(ioFs.lstatSync(realPath, { bigint: true })), expected);
+    }
+    const preOpenStat = yield* inspectPath();
+    fd ??= asynchronous ? yield* wait(openFd(realPath, openReadFlags)) : ioFs.openSync(realPath, openReadFlags);
+    const identity = asynchronous
+      ? yield* wait(inspectFileIdentity(async () => admitStat(await statFd(fd!, { bigint: true })), preOpenStat))
+      : inspectFileIdentitySync(() => admitStat(ioFs.fstatSync(fd!, { bigint: true })), preOpenStat);
+    yield* inspectPath(identity);
 
-    const admittedPath = params.finalAdmission?.({
+    const admittedPath = finalAdmission ? yield* wait(finalAdmission({
       path: realPath,
       descriptorIdentity: identity,
-    }) ?? realPath;
+    })) : realPath;
 
     const openedStat = numberStats(identity);
-    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat, identity };
+    const opened = { ok: true as const, path: admittedPath, fd, stat: openedStat, identity,
+      ...(admittedFile ? { close: admittedFile.close } : {}) };
     fd = null;
     return opened;
   } catch (error) {
@@ -111,7 +131,9 @@ export function openPinnedFileSync(params: {
   } finally {
     if (fd !== null) {
       try {
-        ioFs.closeSync(fd);
+        if (admittedFile) admittedFile.close();
+        else if (asynchronous) yield* wait(closeFd(fd));
+        else ioFs.closeSync(fd);
       } catch {
         // Preserve the failed admission result; success transfers fd above.
       }

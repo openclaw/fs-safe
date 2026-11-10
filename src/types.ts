@@ -30,3 +30,4 @@ export type BasePathOptions = {
 };
 
 export type { ExactFileIdentity } from "./exact-identity.js";
+export type { DirectoryMode } from "./directory-mode-options.js";

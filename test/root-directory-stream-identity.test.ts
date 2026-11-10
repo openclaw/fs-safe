@@ -109,6 +109,15 @@ it.each(cases)(
         return Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
       });
     }
+    for (const operation of ["stat", "lstat"] as const) {
+      const original = fs[operation].bind(fs);
+      vi.spyOn(fs, operation).mockImplementation(async (...args) => {
+        const stat = await original(...args);
+        if (String(args[0]) !== f.directory) return stat;
+        const ino = changed ? first + 1n : first;
+        return Object.assign(Object.create(stat), { ino: typeof stat.ino === "bigint" ? ino : Number(ino) });
+      });
+    }
     const iterator = await beginIteration(await root(f.directory), method, order, relativePath);
     try {
       await fs.rename(f.directory, `${f.directory}-original`);

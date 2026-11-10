@@ -15,17 +15,18 @@ vi.mock("../src/root-path.js", () => ({
     observeRoot("/real/root");
     return resolveRootPathSyncMock(params, observeRoot);
   },
-  resolveRootPathWithCanonicalRootObservation: (
+  resolveRootPathWithCanonicalRootObservation: async (
     params: unknown,
-    observeRoot: (rootPath: string) => void,
+    observeRoot: (rootPath: string) => void | Promise<void>,
   ) => {
-    observeRoot("/real/root");
+    await observeRoot("/real/root");
     return resolveRootPathMock(params, observeRoot);
   },
 }));
 
 vi.mock("../src/pinned-open.js", () => ({
   openPinnedFileSync: (...args: unknown[]) => openPinnedFileSyncMock(...args),
+  openPinnedFile: async (...args: unknown[]) => openPinnedFileSyncMock(...args),
 }));
 
 vi.mock("../src/root-file-final-admission.js", () => ({
@@ -34,7 +35,11 @@ vi.mock("../src/root-file-final-admission.js", () => ({
     path: rootPath,
     identity: { dev: 1n, ino: 2n },
   }),
+  observeCanonicalRootAsync: async (rootPath: string) => ({
+    ok: true, path: rootPath, identity: { dev: 1n, ino: 2n },
+  }),
   createRootFileFinalAdmission: () => () => "/real/admitted",
+  createRootFileFinalAdmissionAsync: () => async () => "/real/admitted",
 }));
 
 let canUseRootFileOpen: typeof import("../src/root-file.js").canUseRootFileOpen;

@@ -1,16 +1,16 @@
 import fs from "node:fs";
 import type { FileLockSyncAcquireOptions } from "./file-lock-sync.js";
-import { defaultSyncShouldReclaim } from "./file-lock-sync-admission.js";
 import type { SyncLockAcquisition } from "./file-lock-sync-acquisition.js";
 import {
   parseSidecarLockSnapshot,
+  isIncompleteSidecarLockRecord,
   readSidecarLockRawSnapshotSync,
   removeSidecarLockIfUnchangedSync,
   type SidecarLockSnapshot,
 } from "./sidecar-lock-reclaim.js";
 import type { SidecarLockStaleRecovery } from "./sidecar-lock-types.js";
 import { assertSynchronousCallbackResult } from "./mutation-authority.js";
-import { sidecarLockStale } from "./sidecar-lock-policy.js";
+import { defaultSidecarLockShouldReclaim, sidecarLockStale } from "./sidecar-lock-policy.js";
 
 export type SyncStaleOptionsState<TPayload extends Record<string, unknown>> = {
   shouldReclaimObserved?: boolean;
@@ -101,10 +101,12 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     if (retryHolderChange(error)) return;
     throw error;
   }
+  // An incomplete owner can still be writing; age is not liveness evidence.
   if (!snapshot) {
     acquisition.waitForRetry();
     return;
   }
+  const incomplete = (!params.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw);
   const nowMs = Date.now();
   let reclaim: boolean;
   try {
@@ -119,7 +121,7 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
             nowMs,
             heldByThisProcess: false,
           }])
-        : defaultSyncShouldReclaim(snapshot, params.staleMs, nowMs);
+        : !incomplete && defaultSidecarLockShouldReclaim(snapshot, params.staleMs, nowMs);
       assertSynchronousCallbackResult(reclaim, "shouldReclaim");
     } finally {
       assertUnheld();
@@ -132,6 +134,8 @@ export function handleSyncStaleAdmission<TPayload extends Record<string, unknown
     acquisition.waitForRetry();
     return;
   }
+  // Policy may diagnose an incomplete record, but can never authorize its removal.
+  if (incomplete) throw sidecarLockStale(acquisition.lockPath, acquisition.normalizedTargetPath);
   if (
     params.staleRecovery === "remove-if-unchanged" &&
     snapshot.raw !== undefined &&

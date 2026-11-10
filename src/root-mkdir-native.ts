@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { inspectDirectoryIdentitySync } from "./directory-guard.js";
-import { nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
+import { finalizeCreatedDirectoryModeSync, nodeDirectorySearchOnlyFlags } from "./directory-mode-node.js";
 import { FsSafeError } from "./errors.js";
 import { getNativeBinding } from "./native.js";
 import { captureNativeFdClose } from "./native-binding.js";
@@ -16,16 +16,16 @@ import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { getFsSafeTestHooks } from "./test-hooks.js";
 import { pathForWindowsFilesystem } from "./windows-path-alias.js";
 
-export function tryMkdirNativeParents(root: RootContext, relativePath: string): boolean {
+export function tryMkdirNativeParents(root: RootContext, relativePath: string, mode?: number): boolean {
   try {
-    return mkdirOrdinaryNativeParents(root, relativePath);
+    return mkdirOrdinaryNativeParents(root, relativePath, mode);
   } catch (error) {
     if (hasNodeErrorCode(error, "ENOTDIR")) throw directoryComponentNotDirectoryError(error);
     throw error;
   }
 }
 
-function mkdirOrdinaryNativeParents(root: RootContext, relativePath: string): boolean {
+function mkdirOrdinaryNativeParents(root: RootContext, relativePath: string, mode?: number): boolean {
   if (getFsSafeTestHooks()?.beforeRootFallbackMutation) return false;
   const segments = relativePath.split(path.sep === "\\" ? /[\\/]/ : "/");
   if (segments.length < 2 || segments.some(segment =>
@@ -44,18 +44,18 @@ function mkdirOrdinaryNativeParents(root: RootContext, relativePath: string): bo
   } catch (error) {
     // Reuse this exact Root snapshot and failed parent observation without an
     // intervening await. All opened ancestors still receive fresh native fences.
-    return hasNodeErrorCode(error, "ENOENT") ? mkdirMissingParents(root, segments, rootStat) : false;
+    return hasNodeErrorCode(error, "ENOENT") ? mkdirMissingParents(root, segments, rootStat, mode) : false;
   }
   try {
     if (realpathSync.native(pathForWindowsFilesystem(parentPath)) !== parentPath) return false;
   } catch { return false; }
-  return mkdirExistingParent(root, segments, parentIdentity);
+  return mkdirExistingParent(root, segments, parentIdentity, mode);
 }
 
 /** Ordinary missing suffixes need no policy callbacks or repeated path resolution. */
-function mkdirMissingParents(root: RootContext, segments: string[], rootStat: fs.BigIntStats): boolean {
+function mkdirMissingParents(root: RootContext, segments: string[], rootStat: fs.BigIntStats, mode?: number): boolean {
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
-  if (!binding?.openBeneath || !binding.mkdirOpenChildBeneath) return false;
+  if (!binding?.openBeneath || !binding.mkdirChildBeneath || (!binding.mkdirOpenChildBeneath && mode === undefined)) return false;
   let parentDepth = segments.length - 2;
   let parentPath: string;
   let parentIdentity: fs.BigIntStats;
@@ -84,7 +84,7 @@ function mkdirMissingParents(root: RootContext, segments: string[], rootStat: fs
       }
       if (errors.length) throw new AggregateError(errors, "mkdir directory close failed");
     } };
-    const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |
+    const flags = (mode === undefined ? nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY : fs.constants.O_RDONLY) |
       (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
     let current = rootOwner.fd;
     if (parentDepth > 0) {
@@ -99,12 +99,21 @@ function mkdirMissingParents(root: RootContext, segments: string[], rootStat: fs
     };
     assertCurrent();
     for (const segment of segments.slice(parentDepth)) {
-      const child = binding.mkdirOpenChildBeneath(current, segment, 0o777, flags);
+      const child = binding.mkdirOpenChildBeneath
+        ? binding.mkdirOpenChildBeneath(current, segment, mode ?? 0o777, flags)
+        : {
+          created: binding.mkdirChildBeneath(current, segment, mode ?? 0o777),
+          fd: binding.openBeneath(current, segment, flags).fd,
+        };
       parentPath = path.join(parentPath, segment);
       directories.push({ fd: child.fd, pathname: parentPath });
       // Retain every ancestor until the complete suffix is admitted. The
       // post-create fence also precedes the next synchronous child mutation.
       assertCurrent();
+      if (mode !== undefined && child.created) {
+        finalizeCreatedDirectoryModeSync(child, mode);
+        assertCurrent();
+      }
       current = child.fd;
     }
     return true;
@@ -114,7 +123,7 @@ function mkdirMissingParents(root: RootContext, segments: string[], rootStat: fs
   }
 }
 
-function mkdirExistingParent(root: RootContext, segments: string[], parentIdentity: fs.BigIntStats): boolean {
+function mkdirExistingParent(root: RootContext, segments: string[], parentIdentity: fs.BigIntStats, mode?: number): boolean {
   const target = path.join(root.rootReal, ...segments);
   const parentPath = path.dirname(target);
   const binding = getNativeBinding("openBeneath", "mkdirChildBeneath");
@@ -125,7 +134,7 @@ function mkdirExistingParent(root: RootContext, segments: string[], parentIdenti
     rootPath: root.rootReal, rootIdentity: root.rootIdentity,
   });
   verifyMkdirDirectory(binding, rootOwner.fd, root.rootReal);
-  const flags = (nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY) |
+  const flags = (mode === undefined ? nodeDirectorySearchOnlyFlags()?.flags ?? fs.constants.O_RDONLY : fs.constants.O_RDONLY) |
     (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
   const close = captureNativeFdClose(binding);
   const parent = binding.openBeneath(rootOwner.fd, segments.slice(0, -1).join("/"), flags).fd;
@@ -135,13 +144,23 @@ function mkdirExistingParent(root: RootContext, segments: string[], parentIdenti
   assertRootIdentityCurrentSync(root);
   const name = segments.at(-1)!;
   const child = binding.mkdirOpenChildBeneath
-    ? binding.mkdirOpenChildBeneath(parent, name, 0o777, flags).fd
-    : (binding.mkdirChildBeneath(parent, name, 0o777), binding.openBeneath(parent, name, flags).fd);
-  using childOwner = { [Symbol.dispose]() { close(child); } };
+    ? binding.mkdirOpenChildBeneath(parent, name, mode ?? 0o777, flags)
+    : {
+      created: binding.mkdirChildBeneath(parent, name, mode ?? 0o777),
+      fd: binding.openBeneath(parent, name, flags).fd,
+    };
+  using childOwner = { [Symbol.dispose]() { close(child.fd); } };
   assertRootIdentityCurrentSync(root);
-  verifyMkdirDirectory(binding, child, target);
+  verifyMkdirDirectory(binding, child.fd, target);
   inspectDirectoryIdentitySync(parentPath, parentIdentity);
   verifyMkdirDirectory(binding, parent, parentPath);
   verifyMkdirDirectory(binding, rootOwner.fd, root.rootReal);
+  if (mode !== undefined && child.created) {
+    finalizeCreatedDirectoryModeSync(child, mode);
+    verifyMkdirDirectory(binding, child.fd, target);
+    verifyMkdirDirectory(binding, parent, parentPath);
+    verifyMkdirDirectory(binding, rootOwner.fd, root.rootReal);
+    assertRootIdentityCurrentSync(root);
+  }
   return true;
 }

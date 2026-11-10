@@ -13,7 +13,8 @@ fn result(code: usize) -> Result<usize, &'static str> {
 
 impl Decoder {
     pub fn new() -> Result<Self, &'static str> {
-        // The upstream WASM malloc shim does not check allocation failure.
+        // Retain the shared allocator so zstd and bzip2 follow the same OOM
+        // and release contract, including the isolated allocator-test counters.
         let context = unsafe { sys::ZSTD_createDCtx_advanced(sys::ZSTD_customMem {
             customAlloc: Some(allocation::allocate),
             customFree: Some(allocation::release),

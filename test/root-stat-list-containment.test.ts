@@ -128,28 +128,38 @@ it.skipIf(process.platform === "win32")(
       project(originalStat(candidate, options as never)));
     const lstat = vi.spyOn(fsSync, "lstatSync").mockImplementation((candidate, options) =>
       project(originalLstat(candidate, options as never)));
+    const originalAsyncStat = fs.stat.bind(fs);
+    const originalAsyncLstat = fs.lstat.bind(fs);
+    const asyncStat = vi.spyOn(fs, "stat").mockImplementation(async (candidate, options) =>
+      project(await originalAsyncStat(candidate, options as never)));
+    const asyncLstat = vi.spyOn(fs, "lstat").mockImplementation(async (candidate, options) =>
+      project(await originalAsyncLstat(candidate, options as never)));
     const capability = await root(rootDir);
     const realpath = vi.spyOn(realpathSync, "native");
     try {
       await expect(capability.stat("direct")).resolves.toMatchObject({ isFile: true });
-      expect(lstat).toHaveBeenCalledTimes(4);
+      expect(lstat.mock.calls.length + asyncLstat.mock.calls.length).toBe(4);
       expect(realpath).toHaveBeenCalledTimes(1);
 
       lstat.mockClear();
+      asyncLstat.mockClear();
       realpath.mockClear();
       await expect(capability.stat("selected/value")).resolves.toMatchObject({ isFile: true });
-      expect(lstat).toHaveBeenCalledTimes(6);
+      expect(lstat.mock.calls.length + asyncLstat.mock.calls.length).toBe(6);
       expect(realpath).toHaveBeenCalledTimes(2);
 
       lstat.mockClear();
+      asyncLstat.mockClear();
       realpath.mockClear();
       await expect(capability.list("selected", { withFileTypes: true })).resolves.toEqual([
         expect.objectContaining({ name: "value", isFile: true }),
       ]);
-      expect(lstat).toHaveBeenCalledTimes(5);
+      expect(lstat.mock.calls.length + asyncLstat.mock.calls.length).toBe(5);
       expect(realpath).toHaveBeenCalledTimes(2);
     } finally {
       stat.mockRestore();
+      asyncStat.mockRestore();
+      asyncLstat.mockRestore();
       lstat.mockRestore();
       realpath.mockRestore();
     }

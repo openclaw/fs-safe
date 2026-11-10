@@ -1,3 +1,4 @@
+import { isIncompleteSidecarLockRecord } from "./sidecar-lock-reclaim.js";
 import fs from "node:fs";
 import path from "node:path";
 import { FsSafeError } from "./errors.js";
@@ -6,9 +7,9 @@ import type {
   FileLockSyncHandle,
 } from "./file-lock-sync.js";
 import { captureRootSyncAcquireOptions } from "./file-lock-sync-root-options.js";
-import { defaultSyncShouldReclaim, foreignSyncHeldLock } from "./file-lock-sync-admission.js";
+import { foreignSyncHeldLock } from "./file-lock-sync-admission.js";
 import type { Root } from "./root-impl.js";
-import { isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
+import { defaultSidecarLockShouldReclaim, isTransientLockFileDenial, sidecarLockStale } from "./sidecar-lock-policy.js";
 import {
   serializeSidecarLockPayload,
   type SidecarLockSnapshot,
@@ -192,22 +193,20 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
       let fd: number | undefined;
       let rootReceipt: FileLockSyncRootFileReceipt | undefined;
       let unpublishedTimer: NodeJS.Timeout | undefined;
-      let lockFileCreateOpenFailure: { error: unknown } | undefined;
+      let lockFileCreateOpenFailure: { error: unknown; pathname: string } | undefined;
       try {
-        const created = createFileLockSyncRootFile(lockRootPath, {
+        const created = createFileLockSyncRootFile(lockRootPath, raw, {
           assertBeforeOpen: () => {
             acquisition.assert();
             if (ownedReclaimGuard) assertOwnedReclaimGuardCurrent();
             if (currentTargetHolder() !== undefined) throw new FileLockSyncRootArbitrationCollision();
           },
-          onOpenFailure: (error) => {
-            lockFileCreateOpenFailure = { error };
+          onOpenFailure: (error, pathname = lockPath) => {
+            lockFileCreateOpenFailure = { error, pathname };
           },
         });
         fd = created.fd;
         rootReceipt = created.receipt;
-        fs.writeFileSync(fd, raw, "utf8");
-        fs.fsyncSync(fd);
         const snapshot: SidecarLockSnapshot = {
           raw,
           payload,
@@ -267,8 +266,9 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
         }
         const fromLockFileOpen = lockFileCreateOpenFailure !== undefined &&
           lockFileCreateOpenFailure.error === error;
-        if (fromLockFileOpen && acquisition.retryDenial(error)) continue;
-        if (!fromLockFileOpen || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (fromLockFileOpen && acquisition.retryDenial(error, lockFileCreateOpenFailure!.pathname)) continue;
+        if (!fromLockFileOpen || lockFileCreateOpenFailure!.pathname !== lockPath ||
+          (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         if (ownedReclaimGuard) {
           releaseReclaimGuard();
           const reused = reuseCurrentHeld();
@@ -308,6 +308,8 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
           continue;
         }
         const snapshot = current.snapshot;
+        // An incomplete owner can still be writing; never reclaim it by age.
+        const incomplete = (!options.parsePayload && snapshot.payload === null) || isIncompleteSidecarLockRecord(snapshot.raw);
         const nowMs = Date.now();
         let reclaim: boolean;
         if (options.shouldReclaim) {
@@ -325,9 +327,11 @@ export function acquireFileLockSyncWithRoot<TPayload extends Record<string, unkn
             throw new FsSafeError("path-mismatch", "sidecar changed during reclaim policy callback");
           }
         } else {
-          reclaim = defaultSyncShouldReclaim(snapshot, options.staleMs, nowMs);
+          reclaim = !incomplete && defaultSidecarLockShouldReclaim(snapshot, options.staleMs, nowMs);
         }
         if (reclaim) {
+          // Policy may diagnose an incomplete record, but can never authorize its removal.
+          if (incomplete) throw sidecarLockStale(lockPath, normalizedTargetPath);
           if (
             options.staleRecovery === "remove-if-unchanged" &&
             snapshot.raw !== undefined &&

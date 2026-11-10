@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe",
-  "version": "0.26.13",
+  "version": "0.28.0",
   "description": "Capability-style filesystem roots for Node.js apps that handle untrusted relative paths.",
   "keywords": [
     "filesystem",
@@ -157,6 +157,7 @@
     "test:coverage:collect": "pnpm build && pnpm archive:wasm:allocator-tests && vitest run --coverage --coverage.reporter=json --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.branches=0",
     "test:coverage:merge": "node scripts/merge-coverage.mjs",
     "test:security": "vitest run test/fs-safe.test.ts test/read-boundary-bypass.test.ts test/write-boundary-bypass.test.ts test/additional-boundary-bypass.test.ts test/adversarial-boundary-payloads.test.ts",
+    "proof:temp-isolation": "node scripts/verify-temp-workspace-isolation.mjs",
     "check": "pnpm lint:file-size && pnpm lint:fs-boundary && pnpm check:runtime",
     "check:runtime": "pnpm build && pnpm archive:wasm:allocator-tests && pnpm docs:check && pnpm test && node scripts/check-pack.mjs",
     "docs:check": "node scripts/check-doc-examples.mjs",
@@ -177,36 +178,40 @@
     "crabbox:warmup": "crabbox warmup",
     "archive:wasm": "node scripts/build-archive-wasm.mjs",
     "archive:wasm:allocator-tests": "node scripts/build-archive-wasm.mjs --allocator-tests",
-    "archive:producer-smoke": "node scripts/archive-producer-smoke.mjs"
+    "archive:producer-smoke": "node scripts/archive-producer-smoke.mjs",
+    "archive:interop:fixtures": "node archive-core/tests/fixtures/generate-interop.mjs",
+    "archive:interop:test": "cargo test --locked -p fs-safe-archive-core --test interoperability",
+    "archive:interop:wasm": "node archive-core/tests/wasm-interoperability.mjs",
+    "archive:interop:writer": "cargo run --locked --quiet -p fs-safe-archive-core --example directory-link-reproducer"
   },
   "optionalDependencies": {
-    "@openclaw/fs-safe-darwin-arm64": "0.26.13",
-    "@openclaw/fs-safe-darwin-x64": "0.26.13",
-    "@openclaw/fs-safe-freebsd-arm64": "0.26.13",
-    "@openclaw/fs-safe-freebsd-x64": "0.26.13",
-    "@openclaw/fs-safe-linux-arm64-gnu": "0.26.13",
-    "@openclaw/fs-safe-linux-arm64-musl": "0.26.13",
-    "@openclaw/fs-safe-linux-x64-gnu": "0.26.13",
-    "@openclaw/fs-safe-linux-x64-musl": "0.26.13",
-    "@openclaw/fs-safe-win32-arm64-msvc": "0.26.13",
-    "@openclaw/fs-safe-win32-x64-msvc": "0.26.13",
+    "@openclaw/fs-safe-darwin-arm64": "0.28.0",
+    "@openclaw/fs-safe-darwin-x64": "0.28.0",
+    "@openclaw/fs-safe-freebsd-arm64": "0.28.0",
+    "@openclaw/fs-safe-freebsd-x64": "0.28.0",
+    "@openclaw/fs-safe-linux-arm64-gnu": "0.28.0",
+    "@openclaw/fs-safe-linux-arm64-musl": "0.28.0",
+    "@openclaw/fs-safe-linux-x64-gnu": "0.28.0",
+    "@openclaw/fs-safe-linux-x64-musl": "0.28.0",
+    "@openclaw/fs-safe-win32-arm64-msvc": "0.28.0",
+    "@openclaw/fs-safe-win32-x64-msvc": "0.28.0",
     "jszip": "^3.10.2"
   },
   "devDependencies": {
-    "@emnapi/runtime": "2.0.0-beta.2",
-    "@napi-rs/cli": "3.10.9",
-    "@types/node": "^26.6.5",
-    "@vitest/coverage-v8": "5.0.5",
+    "@emnapi/runtime": "2.0.0-beta.3",
+    "@napi-rs/cli": "3.10.12",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
     "acorn": "8.19.0",
     "fast-check": "^4.10.2",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
-    "sigstore": "5.0.0",
+    "sigstore": "5.0.1",
     "tar": "7.5.22",
     "typescript": "^7.0.2",
     "vite": "8.3.5",
-    "vitest": "^5.0.3"
+    "vitest": "^5.1.0"
   },
   "engines": {
     "node": ">=22"

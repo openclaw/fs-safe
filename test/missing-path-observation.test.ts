@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import asyncFs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { observeMutationPath } from "../src/pinned-mutation-observation.js";
@@ -41,6 +42,11 @@ it("keeps non-directory and permission failures distinct from missing evidence",
     if (name === denied) throw failure;
     return lstat(name, options);
   }) as typeof fs.lstatSync);
+  const asyncLstat = asyncFs.lstat.bind(asyncFs);
+  vi.spyOn(asyncFs, "lstat").mockImplementation((async (name, options) => {
+    if (name === denied) throw failure;
+    return asyncLstat(name, options);
+  }) as typeof asyncFs.lstat);
   expect(observeMutationPath(denied)).toBeUndefined();
   await expect(resolvePathViaExistingAncestor(denied)).rejects.toBe(failure);
 });
