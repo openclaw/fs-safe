@@ -6,6 +6,8 @@
 
 - **Windows permissions:** inspect read-only allow-callback ACEs conservatively in native and fallback public reporting, instead of rejecting serviced sources solely for that bounded ACE form. Raw observations mark callbacks explicitly; mutation/deny callbacks and private admission remain fail-closed.
 
+- **Guest filesystem:** generate temporary names with OS randomness without importing Python hashing or TLS modules; preserve name entropy and exclusive-create behavior.
+
 - **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal.
 
 - **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity.
