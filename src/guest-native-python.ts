@@ -5,7 +5,7 @@ export const GUEST_FILESYSTEM_CREATE_STAGING_PYTHON = [
   "    # also rewrite the destination immediately after publication.",
   "    prefix = '.openclaw-create-'",
   "    for _ in range(128):",
-  "        candidate = prefix + secrets.token_hex(6)",
+  "        candidate = prefix + os.urandom(6).hex()",
   "        try:",
   "            os.mkdir(candidate, 0o700, dir_fd=parent_fd)",
   "        except FileExistsError:",
