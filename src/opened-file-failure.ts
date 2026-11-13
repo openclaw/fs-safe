@@ -2,7 +2,7 @@ import fsSync, { type BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { FsSafeError } from "./errors.js";
 import { inspectFileIdentity } from "./strict-file-identity.js";
-import { isFileObservationFailure, recordFileObservationFailure } from "./file-observation.js";
+import { isFileObservationFailure, observedFilePublicationPending, recordFileObservationFailure } from "./file-observation.js";
 
 export function recordFileOpenFailure(error: unknown, filePath: string): never {
   recordFileObservationFailure(error, `open:${filePath}`);
@@ -29,15 +29,23 @@ export async function recordPreOpenFileChange(
   opened: BigIntStats | undefined,
 ): Promise<void> {
   if (!isFileObservationFailure(error, "identity") || !before?.isFile() || !opened?.isFile() ||
-    ![0n, 1n].includes(before.nlink) || ![0n, 1n].includes(opened.nlink)) return;
+    ![0n, 1n].includes(before.nlink) || ![0n, 1n, 2n].includes(opened.nlink)) return;
   try {
     await inspectFileIdentity(async () => before);
-    const current = await inspectFileIdentity(() => process.platform === "win32"
+    // A fresh exact descriptor distinguishes a completed handoff from a
+    // still-linked generation that needs separate publication proof.
+    const inspectCurrent = () => inspectFileIdentity(() => process.platform === "win32"
       ? fsSync.fstatSync(handle.fd, { bigint: true }) : handle.stat({ bigint: true }), opened);
-    if (current.isFile() && [0n, 1n].includes(current.nlink) &&
-      (before.dev !== current.dev || before.ino !== current.ino)) {
+    let current = await inspectCurrent();
+    let publication = false;
+    if (current.isFile() && current.nlink === 2n) {
+      publication = await observedFilePublicationPending(filePath, current);
+      current = await inspectCurrent();
+    }
+    if (current.isFile() && (before.dev !== current.dev || before.ino !== current.ino)) {
       // A stale pathname sample is not proof that its former inode was unlinked.
-      recordFileObservationFailure(error, `changed:${filePath}`);
+      if ([0n, 1n].includes(current.nlink)) recordFileObservationFailure(error, `changed:${filePath}`);
+      else if (current.nlink === 2n && publication) recordFileObservationFailure(error, `linked-change:${filePath}`);
     }
   } catch {
     // Unknown, changed, or closed descriptor evidence never permits a discard.

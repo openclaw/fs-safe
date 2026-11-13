@@ -76,14 +76,16 @@ export function cleanupSidecarStages(
 // the one matching stage; recognition streams past the opportunistic budget.
 export function sidecarPublicationPending(
   target: string, onStage?: (name: string, identity: fs.BigIntStats) => void,
+  options: { requireStage?: boolean; identity?: { dev: bigint; ino: bigint } } = {},
 ): boolean {
   let entries: fs.Dir | undefined;
   let callbackFailure: { error: unknown } | undefined;
   try {
     const current = fs.lstatSync(target, { bigint: true, throwIfNoEntry: false });
-    if (!current) return true;
+    if (!current) return !options.requireStage;
+    if (options.identity && !sameFileIdentityForCleanup(current, options.identity)) return false;
     if (!current.isFile() || current.isSymbolicLink()) return false;
-    if (current.nlink === 1n) return true;
+    if (current.nlink === 1n) return !options.requireStage;
     if (current.nlink !== 2n) return false;
     const prefix = stagingPrefix(target);
     entries = fs.opendirSync(path.dirname(target));
@@ -99,7 +101,7 @@ export function sidecarPublicationPending(
       }
     }
     const after = fs.lstatSync(target, { bigint: true, throwIfNoEntry: false });
-    return !after || !sameFileIdentityForCleanup(after, current) || after.nlink === 1n;
+    return !options.requireStage && (!after || !sameFileIdentityForCleanup(after, current) || after.nlink === 1n);
   } catch { if (callbackFailure) throw callbackFailure.error; return false; }
   finally { try { entries?.closeSync(); } catch { /* Observation remains inconclusive. */ } }
 }
