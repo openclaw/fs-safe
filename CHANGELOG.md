@@ -2,15 +2,19 @@
 
 ## Unreleased
 
+## 0.28.1 - 2026-11-13
+
+**Highlights:** Fixes for Root lock contention, stale-lock diagnostics, guest temporary names, and opt-in DrvFS writes.
+
 ### Fixes
 
-- **Guest filesystem:** generate temporary names with OS randomness without importing Python hashing or TLS modules; preserve name entropy and exclusive-create behavior.
+- **Guest filesystem:** generate temporary names with OS randomness without importing Python hashing or TLS modules; preserve name entropy and exclusive-create behavior. ([#1085](https://github.com/openclaw/fs-safe/pull/1085))
 
-- **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal.
+- **File locks:** restore custom stale-policy diagnostics for empty or malformed owner records while keeping unverifiable owners ineligible for automatic removal. ([#1079](https://github.com/openclaw/fs-safe/pull/1079))
 
-- **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity. Retry verified concurrent publication handoffs to avoid spurious `path-mismatch` and `outside-workspace` failures.
+- **Root file locks:** restore POSIX acquisition I/O errors as `FsSafeError` with the existing `invalid-path` code and original cause; retain raw-lock and Windows fallback error identity. Retry verified concurrent publication handoffs to avoid spurious `path-mismatch` and `outside-workspace` failures. ([#1081](https://github.com/openclaw/fs-safe/pull/1081), [#1087](https://github.com/openclaw/fs-safe/pull/1087))
 
-- **DrvFS opt-in writes:** skip recovery preparation on known non-9p filesystems, caching only negative observations so later writes add no filesystem calls while recovery keeps full mount and identity verification.
+- **DrvFS opt-in writes:** skip recovery preparation on known non-9p filesystems, caching only negative observations so later writes add no filesystem calls while recovery keeps full mount and identity verification. ([#1080](https://github.com/openclaw/fs-safe/pull/1080))
 
 ## 0.28.0 - 2026-11-07
 
