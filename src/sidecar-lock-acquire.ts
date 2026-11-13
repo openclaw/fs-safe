@@ -270,7 +270,7 @@ export async function acquireSidecarLock<TPayload extends Record<string, unknown
           } catch (error) {
             let cause: unknown = error;
             for (let depth = 0; depth < 4 && cause && typeof cause === "object"; depth++) {
-              if (observation.has(cause, "hardlink") && await rootSidecarPublicationPending(lockRoot, relativeLockPath, true)) {
+              if (observation.has(cause, "hardlink") && await rootSidecarPublicationPending(lockRoot, relativeLockPath, { cleanAbandoned: true })) {
                 exclusiveCreateConflict = true;
                 throw Object.assign(new Error("sidecar publication in progress"), { code: "EEXIST" });
               }
