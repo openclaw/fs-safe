@@ -9,11 +9,14 @@ import { isNotFoundPathError } from "./path.js";
 import type { OpenResult, Root } from "./root-impl.js";
 import { resolveRootPath } from "./root-path.js";
 
-export async function rootSidecarPublicationPending(lockRoot: Root, relative: string, cleanAbandoned = false): Promise<boolean> {
+export async function rootSidecarPublicationPending(
+  lockRoot: Root, relative: string,
+  options: { cleanAbandoned?: boolean; requireStage?: boolean; identity?: { dev: bigint; ino: bigint } } = {},
+): Promise<boolean> {
   const resolved = await lockRoot.resolve(relative);
   const parent = path.dirname(resolved);
   const identity = await inspectDirectoryIdentity(parent);
-  if (cleanAbandoned) {
+  if (options.cleanAbandoned) {
     const admitted = admitFileLockSyncRootPath(captureFileLockSyncRootAuthority(lockRoot), resolved);
     const receipt = observeDirectory(path.dirname(admitted.path));
     cleanupSidecarStages(admitted.path, candidate => {
@@ -23,7 +26,7 @@ export async function rootSidecarPublicationPending(lockRoot: Root, relative: st
       if (candidate) assertFileLockSyncRootMutationAllowed(candidate, admitted.authority.denyMutations);
     });
   }
-  const pending = sidecarPublicationPending(resolved);
+  const pending = sidecarPublicationPending(resolved, undefined, options);
   await inspectDirectoryIdentity(parent, identity);
   return pending && await lockRoot.resolve(relative) === resolved;
 }
@@ -57,7 +60,10 @@ export async function openSidecarRoot(
       if (dir === lockRoot.rootReal) break;
     }
   }
-  const observation = fileObservation();
+  const observation = fileObservation({
+    publicationPending: async (candidate, identity) => discardObservation === "changed" && candidate === resolved &&
+      await rootSidecarPublicationPending(lockRoot, relative, { requireStage: true, identity }),
+  });
   try {
     const opened = await observation.run(() => lockRoot.open(relative));
     if (opened.realPath !== expectedRealPath) {
@@ -74,12 +80,18 @@ export async function openSidecarRoot(
     if (missing && !discardObservation) return null;
     const discardable = observation.has(error, `unlinked:${resolved}`) ||
       (discardObservation === "changed" && observation.has(error, `changed:${resolved}`));
-    if (!discardObservation || (!missing && (!completeParents || !discardable))) throw error;
+    const linkedChange = discardObservation === "changed" && observation.has(error, `linked-change:${resolved}`);
+    if (!discardObservation || (!missing && (!completeParents || (!discardable && !linkedChange)))) throw error;
     try {
+      // Linked-change receipts already proved a matching stage while the exact
+      // descriptor was open; retained ancestry and the current path still fence it.
       const probe = fileObservation();
       try {
         const current = await probe.run(() => lockRoot.stat(relative));
-        if (!current.isFile || current.isSymbolicLink || current.nlink !== 1) throw error;
+        // A successor can still hold its matching publication-stage link.
+        // Discard only the old read; retained ancestry is revalidated below.
+        if (!current.isFile || current.isSymbolicLink || (current.nlink !== 1 &&
+          !(current.nlink === 2 && await rootSidecarPublicationPending(lockRoot, relative)))) throw error;
       } catch (probeError) {
         if (!(probeError instanceof FsSafeError && probeError.code === "not-found") &&
           !probe.has(probeError, `stat-leaf-missing:${expectedRealPath}`) &&

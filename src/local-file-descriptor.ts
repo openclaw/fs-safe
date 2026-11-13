@@ -98,7 +98,7 @@ export async function openLocalFileDescriptor(
         ? inspectFileIdentitySync(() => inspect(fsSync.fstatSync(handle.fd, { bigint: true })), expected)
         : await inspectFileIdentity(async () => inspect(await handle.stat({ bigint: true })), expected);
     } catch (error) {
-      if (openedIdentity && [0n, 1n].includes(openedIdentity.nlink)) {
+      if (openedIdentity && [0n, 1n, 2n].includes(openedIdentity.nlink)) {
         await recordPreOpenFileChange(error, handle, filePath, preOpenStat, openedIdentity);
       }
       throw error;
