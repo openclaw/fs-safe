@@ -64,7 +64,7 @@ jobs:
         if: matrix.label == 'freebsd-arm64'
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build and prove inside FreeBSD (ARM64 uses QEMU CPU emulation)
-        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
         env:
           FS_SAFE_EXPECTED_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           FS_SAFE_FREEBSD_TARGET: ${{ matrix.label }}

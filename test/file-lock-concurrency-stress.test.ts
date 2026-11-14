@@ -128,7 +128,8 @@ describe("file-lock concurrency stress", () => {
     }
     expect(manager.heldEntries()).toEqual([]);
     await expect(fs.stat(`${targetPath}.lock`)).rejects.toMatchObject({ code: "ENOENT" });
-  });
+    // Allow the 10-second lock deadlines to settle before the harness aborts.
+  }, 15_000);
 
   describe("real child processes", () => {
     let directory: string | undefined;
