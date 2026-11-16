@@ -263,6 +263,10 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, artif
           publicationProbeSha256: createHash("sha256").update(publicationProbeSource).digest("hex"),
           retainedProbeSha256: createHash("sha256").update(retainedProbeSource).digest("hex"),
           creation: creationExpected,
+          tempFile: process.platform === "win32" ? {
+            compiledSha256: sha256("dist/temp-target.js"),
+            probeSha256: sha256(new URL("./consumer-temp-file-probe.mjs", import.meta.url)),
+          } : undefined,
           ...suffixExpected,
         }));
         writeFileSync(join(directory, "probe.mjs"), readFileSync(new URL("./consumer-install-probe.mjs", import.meta.url)));
@@ -371,6 +375,22 @@ export async function consumerInstallSmoke({ rootPkg, manifest, outputDir, artif
           for (const mode of ["off", "require"]) {
             cases.secretDirectories.push(JSON.parse(await run([process.execPath, secretProbe], [mode], directory, env)));
             cases.sidecarSnapshots.push(JSON.parse(await run([process.execPath, sidecarProbe], [mode], directory, env)));
+          }
+          if (process.platform === "win32") {
+            const probe = join(directory, "consumer-temp-file-probe.mjs");
+            writeFileSync(probe, readFileSync(new URL("./consumer-temp-file-probe.mjs", import.meta.url)));
+            cases.tempFiles = [];
+            for (const mode of ["off", "require"]) {
+              const receipt = JSON.parse(await run([process.execPath, probe], [mode], directory, env));
+              assert.equal(receipt.mode, mode);
+              assert.equal(receipt.nativeLoaded, mode === "require");
+              assert.equal(receipt.rows.length, mode === "require" ? 40 : 20);
+              assert.deepEqual(receipt.source, source);
+              assert.equal(receipt.rootIntegrity, rootArtifact.integrity);
+              assert.equal(receipt.compiledSha256, sha256("dist/temp-target.js"));
+              assert.equal(receipt.hostBinarySha256, suffixExpected.hostBinarySha256);
+              cases.tempFiles.push(receipt);
+            }
           }
           renameSync(installed.binary, `${installed.binary}.removed`);
           cases.missingBinaryAuto = await hash("auto");
