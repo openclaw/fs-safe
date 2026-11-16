@@ -170,8 +170,10 @@ are advisory; use the operation methods for identity checks at the time of I/O.
 
 The main entry point collects the common root, config, output, lock, native-mode,
 and error exports. Prefer focused subpaths when a consumer needs a narrower
-contract. Low-level helpers that OpenClaw needs to compose higher-level APIs are grouped under
-`@openclaw/fs-safe/advanced` instead of being separate public leaf contracts.
+contract. Use `/file-identity`, `/file-io`, `/regular-file`, and `/root-path`
+for focused filesystem composition without importing the full Root implementation.
+These subpaths expose the same guarded implementations as `/advanced`.
+Other low-level composition helpers remain under `@openclaw/fs-safe/advanced`.
 
 Use [`@openclaw/fs-safe/pipe`](docs/pipe.md) for native-owned, reopenable anonymous pipes and one-shot child input.
 

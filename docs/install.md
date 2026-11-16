@@ -102,6 +102,10 @@ Use the main entry for the common surface, or the focused subpaths when you want
 | `@openclaw/fs-safe/guest` | [Guest filesystem protocol](guest.md): Python source and exit constants for caller-owned transports. |
 | `@openclaw/fs-safe/config` | Process-global native helper and lock defaults. |
 | `@openclaw/fs-safe/path` | `isPathInside`, `safeRealpathSync`, `isWithinDir`, error helpers. |
+| `@openclaw/fs-safe/file-identity` | File identity comparison and exact identity types. |
+| `@openclaw/fs-safe/file-io` | Guarded root-file opens and copies, bounded and positional reads, descriptor transfers and writes. |
+| `@openclaw/fs-safe/regular-file` | Regular-file reads, stats, and appends with their existing path and identity checks. |
+| `@openclaw/fs-safe/root-path` | Root-path resolution, existing-prefix resolution, and suffix-alias probes. |
 | `@openclaw/fs-safe/output` | Guarded staging/finalization for libraries that require an absolute output path. |
 | `@openclaw/fs-safe/json` | `tryReadJson`, `readJson`, `readJsonIfExists`, `writeJson`, sync variants. |
 | `@openclaw/fs-safe/store` | `fileStore()`, `fileStoreSync()`, and `jsonStore<T>()`. |
