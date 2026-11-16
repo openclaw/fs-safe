@@ -1,6 +1,7 @@
 import {
   copyFileSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -8,6 +9,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nativePackageDirectory, nativeTargets } from "./native-targets.mjs";
+import { verifyWindowsRuntime } from "./windows-runtime.mjs";
 
 const sourceIndex = process.argv.indexOf("--source");
 const destinationIndex = process.argv.indexOf("--destination");
@@ -31,6 +33,7 @@ for (const target of nativeTargets) {
   }
   const [source] = matches;
   if (statSync(source).size === 0) throw new Error(`${target.artifact} is empty`);
+  if (target.os === "win32") verifyWindowsRuntime(readFileSync(source), target.cpu);
   const packageDirectory = fileURLToPath(nativePackageDirectory(target));
   const destination = destinationRoot
     ? join(destinationRoot, target.label, "fs-safe-native.node")

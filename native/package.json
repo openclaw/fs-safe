@@ -27,7 +27,7 @@
     ]
   },
   "scripts": {
-    "build": "napi build --platform --release && node ../scripts/stage-host-native.mjs",
-    "build:debug": "napi build --platform && node ../scripts/stage-host-native.mjs"
+    "build": "node ../scripts/build-native.mjs --release && node ../scripts/stage-host-native.mjs",
+    "build:debug": "node ../scripts/build-native.mjs && node ../scripts/stage-host-native.mjs --development"
   }
 }

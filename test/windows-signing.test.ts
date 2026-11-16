@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { create } from "tar";
 import { prepareSigning, readSigningManifest, recordBuild, sha256, verifyWindowsPackage, windowsFiles, windowsSigner } from "../scripts/windows-signing.mjs";
+import { certificateOverlay, windowsPe } from "./helpers/windows-pe.js";
 
 const directories: string[] = [];
 function workspace() {
@@ -16,7 +17,7 @@ afterEach(() => { for (const directory of directories.splice(0)) rmSync(director
 
 function buildInputs(directory: string) {
   for (const { file } of windowsFiles) {
-    writeFileSync(join(directory, file), `unsigned ${file}`);
+    writeFileSync(join(directory, file), binary(file));
     recordBuild(join(directory, file));
   }
   const reference = join(directory, "reference.exe");
@@ -25,10 +26,14 @@ function buildInputs(directory: string) {
   return reference;
 }
 
+function binary(file: string) {
+  return windowsPe(file.endsWith(".exe") ? "anycpu" : file.includes("arm64") ? "arm64" : "x64");
+}
+
 function signingProof() {
   return { version: 1, files: Object.fromEntries(windowsFiles.map(({ file }: { file: string }) => [file, {
     status: "Valid", subject: windowsSigner, timestampThumbprint: "1".repeat(40),
-    unsignedSha256: sha256(`unsigned ${file}`), signedSha256: sha256(`signed ${file}`),
+    unsignedSha256: sha256(binary(file)), signedSha256: sha256(certificateOverlay(binary(file))),
   }])) };
 }
 
@@ -37,6 +42,7 @@ describe("Windows release signing", () => {
     const directory = workspace();
     const script = join(directory, "windows-signing.mjs");
     copyFileSync("scripts/windows-signing.mjs", script);
+    for (const name of ["windows-runtime.mjs", "native-targets.mjs"]) copyFileSync(`scripts/${name}`, join(directory, name));
     const reference = buildInputs(directory);
     execFileSync(process.execPath, [script, "record", reference], { cwd: directory });
     execFileSync(process.execPath, [script, "prepare", directory, reference], { cwd: directory });
@@ -62,6 +68,15 @@ describe("Windows release signing", () => {
     expect(() => prepareSigning(directory, reference)).toThrow(/unsigned helper differs/);
   });
 
+  it("rejects a hashed redistributable-dependent binding before signing preparation", () => {
+    const directory = workspace();
+    const reference = buildInputs(directory);
+    const addon = join(directory, windowsFiles[0].file);
+    writeFileSync(addon, windowsPe("x64", ["ucrtbase.dll"], ["VCRUNTIME140.dll"]));
+    recordBuild(addon);
+    expect(() => prepareSigning(directory, reference)).toThrow("VC redistributable");
+  });
+
   it.each(["missing", "unsigned", "wrong signer", "no timestamp", "unchanged", "bad hash"])("rejects invalid signing evidence: %s", kind => {
     const directory = workspace();
     const path = join(directory, "windows-signing.json");
@@ -85,11 +100,11 @@ describe("Windows release signing", () => {
     const proof = readSigningManifest(path);
     const binary = join(directory, "package", packed);
     mkdirSync(dirname(binary), { recursive: true });
-    writeFileSync(binary, `signed ${file}`);
+    writeFileSync(binary, certificateOverlay(windowsPe(file.endsWith(".exe") ? "anycpu" : file.includes("arm64") ? "arm64" : "x64")));
     const tarball = join(directory, "package.tgz");
     await create({ cwd: directory, file: tarball, gzip: true }, [`package/${packed}`]);
     await expect(verifyWindowsPackage(proof, name, tarball)).resolves.toBeUndefined();
-    writeFileSync(binary, `unsigned ${file}`);
+    writeFileSync(binary, windowsPe(file.endsWith(".exe") ? "anycpu" : file.includes("arm64") ? "arm64" : "x64"));
     await create({ cwd: directory, file: tarball, gzip: true }, [`package/${packed}`]);
     await expect(verifyWindowsPackage(proof, name, tarball)).rejects.toThrow(/packed bytes differ/);
     writeFileSync(join(directory, "package.json"), "{}");
