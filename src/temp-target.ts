@@ -179,6 +179,13 @@ function resolveTempFileCleanupSafety(
   throw new TypeError("cleanupSafety must be compatible or require-bounded");
 }
 
+async function makeTempDirectory(prefix: string): Promise<string> {
+  // Only the OS call receives an extended Windows path. Keep the admitted
+  // namespace for alias, ancestry, identity and cleanup checks.
+  const created = await fs.mkdtemp(path.toNamespacedPath(prefix));
+  return path.join(path.dirname(prefix), path.basename(created));
+}
+
 export async function createOwnedTempFile(params: TempFileOptions): Promise<{
   target: TempFile;
   identity: Readonly<Pick<fsSync.BigIntStats, "dev" | "ino">>;
@@ -215,7 +222,7 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
     let unregisterTempDir: () => void;
     try {
       capability.prepareChildCreation();
-      dir = await fs.mkdtemp(childPrefix);
+      dir = await makeTempDirectory(childPrefix);
       assertNoWindowsPathAlias(dir, "filesystem", "temp directory uses a Windows filesystem namespace alias");
       initialPath = path.join(dir, initialFileName);
       assertNoWindowsPathAlias(initialPath, "filesystem", "temp file path uses a Windows filesystem namespace alias");
@@ -270,7 +277,7 @@ export async function createOwnedTempFile(params: TempFileOptions): Promise<{
       identity,
     };
   }
-  const dir = await fs.mkdtemp(path.join(rootDir, prefix));
+  const dir = await makeTempDirectory(path.join(rootDir, prefix));
   assertNoWindowsPathAlias(dir, "filesystem", "temp directory uses a Windows filesystem namespace alias");
   // Windows file indexes can exceed Number.MAX_SAFE_INTEGER. Cleanup receipts
   // must retain the exact identity or adjacent directories can compare equal.

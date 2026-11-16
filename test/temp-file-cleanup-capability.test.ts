@@ -10,7 +10,7 @@ import {
 } from "../src/native.js";
 import * as cleanup from "../src/temp-cleanup.js";
 import { tempFile, withTempFile } from "../src/temp-target.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { itWin32, useRealTempDirs } from "./helpers/vitest.js";
 import { mockCleanupBinding } from "./helpers/cleanup-binding.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -45,6 +45,28 @@ afterEach(() => {
 });
 
 describe("temp file cleanup capability", () => {
+  itWin32("preserves bounded cleanup ownership for a long temp directory path", async () => {
+    const base = await tempRoot("fs-safe-bounded-long-");
+    let rootDir = base;
+    while (rootDir.length < 280) rootDir = path.join(rootDir, "nested-directory");
+    await fs.mkdir(rootDir, { recursive: true });
+    configureFsSafeNative({ mode: "auto" });
+    const binding = cleanupBinding(rootDir);
+    __setNativeLoaderForTest(() => binding as unknown as NativeBinding);
+    const target = await tempFile({ rootDir, prefix: "download", cleanupSafety: "require-bounded" });
+    try {
+      expect(target.dir.length).toBeGreaterThan(260);
+      expect(path.dirname(target.dir)).toBe(rootDir);
+      expect(target.dir.startsWith("\\\\?\\")).toBe(false);
+      await fs.writeFile(target.path, "owned");
+      expect(await fs.readFile(target.path, "utf8")).toBe("owned");
+    } finally {
+      await target.cleanup();
+    }
+    expect(binding.removeOwnedTree).toHaveBeenCalledTimes(1);
+    await expect(fs.lstat(target.dir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.each([undefined, "compatible" as const])(
     "keeps %s cleanup on the legacy path without loading native support",
     async (cleanupSafety) => {
