@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 const windowsRuntimeFlags = ["-Ctarget-feature=+crt-static", "-Clink-arg=/NODEFAULTLIB:libucrt.lib", "-Clink-arg=ucrt.lib"];
 
 export function windowsRuntimeEnv(inherited) {
-  const env = { ...inherited };
+  const env = Object.fromEntries(Object.entries(inherited).map(([key, value]) =>
+    [process.platform === "win32" ? key.toUpperCase() : key, value]));
   // Cargo gives encoded flags precedence, including an explicitly empty value.
   if (env.CARGO_ENCODED_RUSTFLAGS !== undefined) {
     env.CARGO_ENCODED_RUSTFLAGS = [env.CARGO_ENCODED_RUSTFLAGS, ...windowsRuntimeFlags].filter(Boolean).join("\x1f");

@@ -79,3 +79,10 @@ test("preserves inherited flags and Cargo encoded precedence without changing th
     .toMatch(/^-Ctarget-feature=/);
   expect(windowsRuntimeEnv({ RUSTFLAGS: "-Cdebuginfo=1" }).RUSTFLAGS).toMatch(/^-Cdebuginfo=1 -Ctarget-feature=/);
 });
+
+test.runIf(process.platform === "win32")("preserves case-insensitive Windows flags in the copied Cargo environment", () => {
+  const env = windowsRuntimeEnv({ Rustflags: "ignored", Cargo_Encoded_Rustflags: "-C\x1fdebuginfo=1" });
+  expect(env.RUSTFLAGS).toBe("ignored");
+  expect(env.CARGO_ENCODED_RUSTFLAGS).toMatch(/^-C\x1fdebuginfo=1\x1f-Ctarget-feature=/);
+  expect(Object.keys(env).filter(key => key.toUpperCase() === "CARGO_ENCODED_RUSTFLAGS")).toEqual(["CARGO_ENCODED_RUSTFLAGS"]);
+});
