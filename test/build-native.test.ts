@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { expect, test } from "vitest";
-import { nativeBuildOutput } from "../scripts/build-native.mjs";
+import { configuredRustflagsOutput, nativeBuildOutput } from "../scripts/build-native.mjs";
 
 const manifest = resolve("native", "Cargo.toml");
 const artifact = (file: string, source = manifest) => ({
@@ -35,4 +35,17 @@ test("retains rendered compiler diagnostics while selecting the actual native ar
   const output = messages({ reason: "compiler-message", message: { rendered: "warning: native build diagnostic\n" } },
     artifact(resolve("configured-target", "fs_safe_native.dll")));
   expect(nativeBuildOutput(output, manifest).diagnostics).toEqual(["warning: native build diagnostic\n"]);
+});
+
+test("reads Cargo-resolved encoded flags from its build-script receipt without losing argument boundaries", () => {
+  const flags = "-C\x1flink-arg=/LIBPATH:directory with spaces";
+  const receipt = { reason: "build-script-executed", env: [
+    ["FS_SAFE_CONFIGURED_RUSTFLAGS_HEX", Buffer.from(flags).toString("hex")],
+  ] };
+  expect(configuredRustflagsOutput(messages(receipt))).toBe(flags);
+  expect(configuredRustflagsOutput(messages({ ...receipt, env: [["FS_SAFE_CONFIGURED_RUSTFLAGS_HEX", ""]] }))).toBe("");
+  expect(() => configuredRustflagsOutput(messages(receipt, receipt))).toThrow("exactly one valid");
+  expect(() => configuredRustflagsOutput(messages({ ...receipt, env: [] }))).toThrow("exactly one valid");
+  expect(() => configuredRustflagsOutput(messages({ ...receipt, env: [["FS_SAFE_CONFIGURED_RUSTFLAGS_HEX", "xyz"]] })))
+    .toThrow("exactly one valid");
 });

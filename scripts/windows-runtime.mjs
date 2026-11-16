@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 
 const windowsRuntimeFlags = ["-Ctarget-feature=+crt-static", "-Clink-arg=/NODEFAULTLIB:libucrt.lib", "-Clink-arg=ucrt.lib"];
 
-export function windowsRuntimeEnv(inherited) {
+export function windowsRuntimeEnv(inherited, configuredRustflags) {
   const env = Object.fromEntries(Object.entries(inherited).map(([key, value]) =>
     [process.platform === "win32" ? key.toUpperCase() : key, value]));
   // Cargo gives encoded flags precedence, including an explicitly empty value.
   if (env.CARGO_ENCODED_RUSTFLAGS !== undefined) {
     env.CARGO_ENCODED_RUSTFLAGS = [env.CARGO_ENCODED_RUSTFLAGS, ...windowsRuntimeFlags].filter(Boolean).join("\x1f");
-  } else env.RUSTFLAGS = `${env.RUSTFLAGS ?? ""} ${windowsRuntimeFlags.join(" ")}`.trim();
+  } else if (env.RUSTFLAGS !== undefined || env.CARGO_BUILD_RUSTFLAGS?.length) {
+    env.RUSTFLAGS = `${env.RUSTFLAGS ?? env.CARGO_BUILD_RUSTFLAGS} ${windowsRuntimeFlags.join(" ")}`.trim();
+  } else {
+    // Let Cargo resolve target/cfg/build configuration and argument boundaries.
+    env.CARGO_ENCODED_RUSTFLAGS = [configuredRustflags(env), ...windowsRuntimeFlags].filter(Boolean).join("\x1f");
+  }
   return env;
 }
 

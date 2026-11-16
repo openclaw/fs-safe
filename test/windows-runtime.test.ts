@@ -86,3 +86,21 @@ test.runIf(process.platform === "win32")("preserves case-insensitive Windows fla
   expect(env.CARGO_ENCODED_RUSTFLAGS).toMatch(/^-C\x1fdebuginfo=1\x1f-Ctarget-feature=/);
   expect(Object.keys(env).filter(key => key.toUpperCase() === "CARGO_ENCODED_RUSTFLAGS")).toEqual(["CARGO_ENCODED_RUSTFLAGS"]);
 });
+
+test("preserves the napi CARGO_BUILD_RUSTFLAGS fallback and explicit higher-precedence empty values", () => {
+  const unexpected = () => { throw new Error("lower-precedence configuration must not be read"); };
+  expect(windowsRuntimeEnv({ CARGO_BUILD_RUSTFLAGS: "-Cdebuginfo=1" }, unexpected).RUSTFLAGS)
+    .toMatch(/^-Cdebuginfo=1 -Ctarget-feature=/);
+  expect(windowsRuntimeEnv({ RUSTFLAGS: "", CARGO_BUILD_RUSTFLAGS: "-Cdebuginfo=1" }, unexpected).RUSTFLAGS)
+    .toMatch(/^-Ctarget-feature=/);
+  expect(windowsRuntimeEnv({ CARGO_ENCODED_RUSTFLAGS: "", CARGO_BUILD_RUSTFLAGS: "-Cdebuginfo=1" }, unexpected)
+    .CARGO_ENCODED_RUSTFLAGS).toMatch(/^-Ctarget-feature=/);
+});
+
+test("extends Cargo-resolved configuration without reparsing flags containing spaces", () => {
+  const flags = "-C\x1flink-arg=/LIBPATH:directory with spaces";
+  expect(windowsRuntimeEnv({}, () => flags).CARGO_ENCODED_RUSTFLAGS)
+    .toMatch(/^-C\x1flink-arg=\/LIBPATH:directory with spaces\x1f-Ctarget-feature=/);
+  expect(windowsRuntimeEnv({ CARGO_BUILD_RUSTFLAGS: "" }, () => flags).CARGO_ENCODED_RUSTFLAGS)
+    .toMatch(/^-C\x1flink-arg=\/LIBPATH:directory with spaces\x1f-Ctarget-feature=/);
+});
