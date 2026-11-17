@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { cpSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,9 +23,11 @@ test.runIf(process.platform === "win32")("resolves real Cargo member-local flags
       !["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"]
         .includes(key.toUpperCase()) && !/^CARGO_TARGET_.*_RUSTFLAGS$/u.test(key.toUpperCase())));
     env.CARGO_HOME = join(root, "cargo-home");
+    const host = execFileSync("rustc", ["-vV"], { cwd: native, env, encoding: "utf8" })
+      .match(/^host: (\S+)$/mu)?.[1];
+    if (!host) throw new Error("Rust compiler did not report its host target");
     const { windowsNativeBuildEnv } = await import(pathToFileURL(join(scripts, "build-native.mjs")).href);
-    const flags = windowsNativeBuildEnv(process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc",
-      env).CARGO_ENCODED_RUSTFLAGS.split("\x1f");
+    const flags = windowsNativeBuildEnv(host, env).CARGO_ENCODED_RUSTFLAGS.split("\x1f");
     expect(flags).toContain("fs_safe_root_flags");
     expect(flags).toContain("fs_safe_member_flags");
   } finally { rmSync(root, { recursive: true, force: true }); }
