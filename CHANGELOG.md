@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Imports:** add focused `/file-identity`, `/file-io`, `/regular-file`, and `/root-path` entry points so filesystem composition can reuse the existing guarded helpers without loading the full Root implementation.
+
 ## 0.28.1 - 2026-11-13
 
 **Highlights:** Fixes for Root lock contention, stale-lock diagnostics, guest temporary names, and opt-in DrvFS writes.

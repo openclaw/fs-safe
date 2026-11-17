@@ -424,6 +424,86 @@
       ],
       "errorCodes": {}
     },
+    "./file-identity": {
+      "runtime": [
+        "sameFileIdentity"
+      ],
+      "types": [
+        "ExactFileIdentity",
+        "ExactIdentityReceipt",
+        "FileIdentityInput",
+        "FileIdentityStat"
+      ],
+      "errorCodes": {}
+    },
+    "./file-io": {
+      "runtime": [
+        "canUseRootFileOpen",
+        "copyFileDescriptorSync",
+        "copyFileHandle",
+        "copyRootFileSync",
+        "createRootFileCopyBatchSync",
+        "createRootFileOpenBatchSync",
+        "matchRootFileOpenFailure",
+        "openRootFile",
+        "openRootFileSync",
+        "readFileDescriptorBounded",
+        "readFileDescriptorBoundedSync",
+        "readFileHandleBounded",
+        "readFileWindowFully",
+        "readFileWindowFullySync",
+        "writeFileWindowFully"
+      ],
+      "types": [
+        "CopiedRootFileSync",
+        "CopyFileHandleOptions",
+        "CopyRootFileSyncOptions",
+        "OpenRootFileParams",
+        "OpenRootFileSyncParams",
+        "ReadFileWindowOptions",
+        "RootFileCopyBatchSync",
+        "RootFileOpenBatchSync",
+        "RootFileOpenFailure",
+        "RootFileOpenFailureReason",
+        "RootFileOpenResult",
+        "WriteFileWindowOptions"
+      ],
+      "errorCodes": {}
+    },
+    "./regular-file": {
+      "runtime": [
+        "appendRegularFile",
+        "appendRegularFileSync",
+        "readRegularFile",
+        "readRegularFileSync",
+        "resolveRegularFileAppendFlags",
+        "statRegularFile",
+        "statRegularFileSync"
+      ],
+      "types": [
+        "AppendRegularFileOptions",
+        "RegularFileStatResult"
+      ],
+      "errorCodes": {}
+    },
+    "./root-path": {
+      "runtime": [
+        "ROOT_PATH_ALIAS_POLICIES",
+        "probePathSuffixAliasesSync",
+        "resolvePathPrefix",
+        "resolvePathPrefixSync",
+        "resolvePathViaExistingAncestorSync",
+        "resolveRootPath",
+        "resolveRootPathSync"
+      ],
+      "types": [
+        "ProbePathSuffixAliasesOptions",
+        "ResolvedPathPrefix",
+        "ResolvedRootPath",
+        "RootPathAliasPolicy"
+      ],
+      "errorCodes": {}
+    },
     "./json": {
       "runtime": [
         "JsonFileReadError",
