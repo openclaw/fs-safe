@@ -32,7 +32,7 @@ export function nativeBuildOutput(output, manifest) {
     .map(record => record.message?.rendered).filter(message => typeof message === "string") };
 }
 
-export function windowsNativeBuildEnv(target, inherited = process.env, cwd = fileURLToPath(new URL("../", import.meta.url))) {
+export function windowsNativeBuildEnv(target, inherited = process.env, cwd = fileURLToPath(new URL("../native/", import.meta.url))) {
   return windowsRuntimeEnv(inherited, env => {
     // Cargo resolves target/cfg/build flags without a TOML parser or wrapper.
     const output = execFileSync("cargo", ["check", "--release", "--locked", "--offline",
@@ -57,10 +57,10 @@ function main() {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const native = resolve(root, "native");
   if (target.os === "win32" && values.release) {
-    const env = windowsNativeBuildEnv(target.rust, process.env, root);
+    const env = windowsNativeBuildEnv(target.rust, process.env, native);
     const output = execFileSync("cargo", ["build", "--locked", "-p", "fs-safe-native", "--target", target.rust,
       "--release", "--message-format=json-render-diagnostics"], {
-      cwd: root, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+      cwd: native, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
       env,
     });
     const { artifact, diagnostics } = nativeBuildOutput(output, resolve(native, "Cargo.toml"));
