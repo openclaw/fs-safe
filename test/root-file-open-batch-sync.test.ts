@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { configureFsSafeNative, __resetFsSafeNativeConfigForTest } from "../src/native-config.js";
 import { createRootFileOpenBatchSync } from "../src/root-file-open-batch-sync.js";
 import { openRootFileSync, type OpenRootFileSyncParams } from "../src/root-file.js";
 import { __resetNativeLoaderForTest, __setNativeLoaderForTest } from "../src/native.js";
@@ -10,10 +11,10 @@ import { allowWindowsFilesystemStalls, useRealTempDirs } from "./helpers/vitest.
 
 allowWindowsFilesystemStalls();
 const { tempRoot } = useRealTempDirs();
-const native = process.platform === "win32" ? loadTestNative("required-env") : undefined;
-const itNativeWindows = it.runIf(Boolean(native));
+const native = ["win32", "darwin"].includes(process.platform) ? loadTestNative("required-env") : undefined;
+const itNative = it.runIf(Boolean(native));
 beforeEach(() => { if (native) __setNativeLoaderForTest(() => native); });
-afterEach(() => { vi.restoreAllMocks(); __resetNativeLoaderForTest(); });
+afterEach(() => { vi.restoreAllMocks(); __resetNativeLoaderForTest(); __resetFsSafeNativeConfigForTest(); });
 
 async function fixture() {
   const rootPath = path.join(await tempRoot("fs-safe-open-batch-"), "root");
@@ -45,7 +46,7 @@ it("transfers independent descriptors and closes only retained roots", async () 
   expect(batch.openFile(f.options("first"))).toMatchObject({ ok: false, reason: "validation", error: { code: "invalid-path" } });
 });
 
-itNativeWindows("rejects a replaced root between files", async () => {
+itNative("rejects a replaced root between files", async () => {
   const f = await fixture();
   using batch = createRootFileOpenBatchSync();
   readAndClose(batch.openFile(f.options("first")));
@@ -55,7 +56,7 @@ itNativeWindows("rejects a replaced root between files", async () => {
   expect(batch.openFile(f.options("second"))).toMatchObject({ ok: false, reason: "validation", error: { code: "path-mismatch" } });
 });
 
-itNativeWindows("rejects a cached ancestor replaced by a junction to the original tree", async () => {
+itNative("rejects a cached ancestor replaced by a junction to the original tree", async () => {
   const f = await fixture();
   using batch = createRootFileOpenBatchSync();
   readAndClose(batch.openFile(f.options("first")));
@@ -106,7 +107,7 @@ it("retains allowed hardlinks and exact descriptor identities", async () => {
   expect(readAndClose(opened)).toBe("first");
 });
 
-itNativeWindows("rejects a leaf swap after native open and closes its descriptor", async () => {
+itNative("rejects a leaf swap after native open and closes its descriptor", async () => {
   const f = await fixture();
   using batch = createRootFileOpenBatchSync();
   readAndClose(batch.openFile(f.options("first")));
@@ -145,7 +146,7 @@ it("preserves contained symlink opt-in and raw traversal rejection", async conte
   expect(batch.openFile(f.options("missing"))).toMatchObject({ ok: false, reason: "path" });
 });
 
-itNativeWindows("reuses native root admission without skipping file checks", async () => {
+it.runIf(Boolean(native) && process.platform === "win32")("reuses native root admission without skipping file checks", async () => {
   const f = await fixture();
   const lstat = vi.spyOn(fs, "lstatSync");
   const count = (run: () => void) => { lstat.mockClear(); run(); return lstat.mock.calls.length; };
@@ -155,4 +156,86 @@ itNativeWindows("reuses native root admission without skipping file checks", asy
   const repeated = count(() => readAndClose(batch.openFile(f.options("second"))));
   expect(repeated).toBeLessThan(single);
   expect(lstat.mock.calls.some(([name]) => String(name) === f.options("second").absolutePath)).toBe(true);
+});
+
+itNative("preserves capability-absent one-shot fallback", async () => {
+  const f = await fixture();
+  configureFsSafeNative({ mode: "auto" });
+  __setNativeLoaderForTest(() => ({ ...native!, openBeneath: undefined }));
+  using batch = createRootFileOpenBatchSync();
+  const opened = batch.openFile(f.options("first"));
+  expect(opened).not.toHaveProperty("close");
+  expect(readAndClose(opened)).toBe("first");
+});
+
+itNative("classifies native open failure without retrying through a pathname", async () => {
+  const f = await fixture();
+  using batch = createRootFileOpenBatchSync();
+  readAndClose(batch.openFile(f.options("first")));
+  const error = Object.assign(new Error("native read failed"), { code: "EIO" });
+  const openBeneath = vi.fn(() => { throw error; });
+  __setNativeLoaderForTest(() => ({ ...native!, openBeneath }));
+  expect(batch.openFile(f.options("second"))).toEqual({ ok: false, reason: "io", error });
+  expect(openBeneath).toHaveBeenCalledTimes(1);
+});
+
+itNative("closes every retained root when one root close throws", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  const open = vi.spyOn(fs, "openSync");
+  const batch = createRootFileOpenBatchSync();
+  readAndClose(batch.openFile(first.options("first")));
+  readAndClose(batch.openFile(second.options("first")));
+  const roots = open.mock.calls.flatMap(([name], index) =>
+    [first.rootPath, second.rootPath].includes(String(name)) ? [open.mock.results[index]!.value as number] : []);
+  expect(roots).toHaveLength(2);
+  const originalClose = fs.closeSync;
+  const error = new Error("retained root close failed");
+  const close = vi.spyOn(fs, "closeSync").mockImplementation(fd => {
+    originalClose(fd);
+    if (fd === roots[0]) throw error;
+  });
+  expect(() => batch.close()).toThrow(error);
+  for (const fd of roots) {
+    expect(close.mock.calls.filter(([closed]) => closed === fd)).toHaveLength(1);
+    expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  }
+  expect(() => batch.close()).not.toThrow();
+  expect(close).toHaveBeenCalledTimes(2);
+});
+
+it.each(["rootPath", "absolutePath"] as const)("preserves NUL validation for %s", async field => {
+  const f = await fixture();
+  const options = { ...f.options("first"), [field]: f.options("first")[field] + String.fromCharCode(0) };
+  using batch = createRootFileOpenBatchSync();
+  const ordinary = openRootFileSync(options);
+  const batched = batch.openFile(options);
+  expect(ordinary.ok).toBe(false);
+  expect(batched.ok).toBe(false);
+  if (ordinary.ok || batched.ok) throw new Error("NUL input was accepted");
+  expect(batched.reason).toBe(ordinary.reason);
+  expect(batched.error).toMatchObject({ code: "invalid-path" });
+});
+
+itNative("refuses missing native capability in require mode", async () => {
+  const f = await fixture();
+  configureFsSafeNative({ mode: "require" });
+  __setNativeLoaderForTest(() => ({ ...native!, openBeneath: undefined }));
+  using batch = createRootFileOpenBatchSync();
+  expect(batch.openFile(f.options("first"))).toMatchObject({
+    ok: false, reason: "validation", error: { code: "helper-unavailable" },
+  });
+});
+
+itNative("opens its retained root once while checking every leaf", async () => {
+  const f = await fixture();
+  const open = vi.spyOn(fs, "openSync");
+  const lstat = vi.spyOn(fs, "lstatSync");
+  using batch = createRootFileOpenBatchSync();
+  expect(readAndClose(batch.openFile(f.options("first")))).toBe("first");
+  expect(readAndClose(batch.openFile(f.options("second")))).toBe("second");
+  expect(open.mock.calls.filter(([name]) => String(name) === f.rootPath)).toHaveLength(1);
+  for (const name of ["first", "second"]) {
+    expect(lstat.mock.calls.some(([file]) => String(file) === f.options(name).absolutePath)).toBe(true);
+  }
 });

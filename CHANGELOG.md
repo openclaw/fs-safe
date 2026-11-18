@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Improvements
+
+- **Root reads:** retain native Darwin root handles during synchronous file batches while preserving strict path/symlink admission, final identity checks, and one-shot fallback when the native capability is unavailable.
+
 ## 0.28.1 - 2026-11-13
 
 **Highlights:** Fixes for Root lock contention, stale-lock diagnostics, guest temporary names, and opt-in DrvFS writes.
