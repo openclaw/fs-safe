@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Windows native loading:** embed compiler-specific runtime support in x64 and ARM64 bindings while using the OS-serviced UCRT, removing the separate Visual C++ Redistributable prerequisite.
+
 ## 0.28.1 - 2026-11-13
 
 **Highlights:** Fixes for Root lock contention, stale-lock diagnostics, guest temporary names, and opt-in DrvFS writes.
