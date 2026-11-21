@@ -57,10 +57,10 @@ describe.skipIf(!native)("native ZIP Unicode extra fields", () => {
     expect(await readArchiveEntry(fixture.archivePath, "payload", { maxBytes: 7 })).toEqual(Buffer.from("payload"));
   });
 
-  it("retains native Path field order while public admission rejects duplicate critical fields", async () => {
+  it("rejects duplicate critical fields publicly even when the native decoder selects the first Path", async () => {
     const extra = Buffer.concat([unicodePath(Buffer.from("payload"), "first"), unicodePath(Buffer.from("first"), "last")]);
     const bytes = zipRecords([{ name: "payload", extra }]);
-    expect(await manifest(bytes)).toMatchObject([{ path: "last" }]);
+    expect(await manifest(bytes)).toMatchObject([{ path: "first" }]);
     await expect(loadZipArchiveWithPreflight(bytes)).rejects.toMatchObject({ code: "archive-header-invalid" });
   });
 
