@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Windows temp files:** create temporary directories on long paths without exposing extended-length namespace aliases to callers; preserve identity and cleanup checks. Thanks @xuanda0201.
+
 ## 0.28.1 - 2026-11-13
 
 **Highlights:** Fixes for Root lock contention, stale-lock diagnostics, guest temporary names, and opt-in DrvFS writes.
