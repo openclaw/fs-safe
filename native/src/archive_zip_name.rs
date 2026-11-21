@@ -65,8 +65,8 @@ pub(crate) fn validate_metadata(raw: &[u8], flags: u16, extra: &[u8], raw_commen
                 return Err(invalid("ZIP Unicode Path CRC mismatch"));
             }
             decode(&field[5..], true)?;
-            // Advancing after each field both matches decoder order and bounds
-            // total hashing by the original text plus the extra-field payloads.
+            // Validate the entire override chain, bounding total hashing by
+            // the original text plus the extra-field payloads.
             current_name = &field[5..];
         } else if id == 0x6375 {
             if field.len() < 5 { return Err(invalid_comment("field is truncated")); }

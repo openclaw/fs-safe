@@ -1,0 +1,13 @@
+diff --git a/dist/chunks/index.ER9afepi.js b/dist/chunks/index.ER9afepi.js
+index 184bf78f508cad3e06eb92c684ba8eb86add687e..23eb3fe44c6c413f96a8325559d138fff71edcec 100644
+--- a/dist/chunks/index.ER9afepi.js
++++ b/dist/chunks/index.ER9afepi.js
+@@ -5533,7 +5533,7 @@ function startWatchdog(distPath) {
+ 	});
+ 	// must never keep the main process alive
+ 	child.unref();
+-	child.channel?.unref();
++	child.channel?.unref?.();
+ 	// losing the watchdog only loses the cleanup, the test run is not affected
+ 	child.on("error", () => {});
+ 	child.once("exit", () => {
