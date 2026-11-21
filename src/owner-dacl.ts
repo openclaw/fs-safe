@@ -22,6 +22,8 @@ export type WindowsAccessControlEntry = {
   mask: number;
   aceType: "allow" | "deny";
   flags: WindowsAceFlags;
+  /** Opaque read-only allow callback; mask is a possible grant, not effective access. */
+  isCallback?: boolean;
 };
 
 export type OwnerAndDaclResult =
@@ -80,6 +82,7 @@ export function projectOwnerAndDacl(facts: DescriptorFacts): OwnerAndDaclResult 
       mask: entry.mask,
       aceType: entry.aceType as "allow" | "deny",
       flags: { ...entry.flags },
+      ...(entry.isCallback ? { isCallback: true } : {}),
     })),
   };
 }

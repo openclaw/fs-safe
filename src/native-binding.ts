@@ -102,6 +102,7 @@ export interface NativeWindowsAccessControlEntry {
   mask: number;
   aceType: string;
   flags: WindowsAceFlags;
+  isCallback?: boolean | null;
 }
 
 export interface NativeWindowsSecurityFacts {

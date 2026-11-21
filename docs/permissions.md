@@ -182,6 +182,21 @@ unrestricted access; an empty DACL grants nothing. Inherit-only ACEs do not
 apply to the inspected object, and deny ACEs never subtract coarse grants or
 claim effective-access evaluation. Unsupported ACE layouts remain unverified.
 
+Public inspection also recognizes a bounded `ACCESS_ALLOWED_CALLBACK_ACE`
+(type 9) whose mask contains only file read/execute, read-control, synchronize,
+generic-read and generic-execute rights (`mask & ~0xA01200A9 === 0`), with
+ordinary inheritance flags only. Its condition is opaque and **not evaluated**:
+the mask is counted as a possible read grant even when the condition would
+deny it. Inherit-only entries still do not apply to the inspected object.
+This conservative upper bound can establish the absence of mutation rights;
+it cannot establish that a principal can actually read the object.
+
+Callback mutation masks, unknown mask/flag bits, callback denies and
+object-specific callback layouts remain unsupported and unverified.
+No deny condition is subtracted from an allow grant. Descriptor-bound secure
+reads and private-file/directory admission continue to reject every callback,
+including read-only callbacks and callbacks for otherwise trusted principals.
+
 When the native binding is available, `inspectPathPermissions()`
 reads the owner and DACL directly with Windows security APIs and applies the
 same public ACE classifier as the structured .NET fallback. Secure descriptor
@@ -215,6 +230,9 @@ if (!facts.isLocal || !facts.daclPresent || !facts.complete) {
 
 for (const ace of facts.aces) {
   if (ace.flags.inheritOnly) continue;
+  if (ace.isCallback) {
+    throw new Error("opaque callback requires a consumer-owned policy");
+  }
   if (!trustedSids.has(ace.sid)) {
     throw new Error(`unexpected staging principal: ${ace.sid}`);
   }
@@ -224,7 +242,8 @@ for (const ace of facts.aces) {
 
 On Windows the supported result contains `ownerSid`, `currentUserSid`,
 `daclPresent`, `isLocal`, `complete`, `unsupportedAceTypes`, and ordered basic
-allow/deny `aces`. `currentUserSid` is the process token's `TokenUser` SID, so
+allow/deny `aces`, plus the bounded read-only allow callbacks described above.
+`currentUserSid` is the process token's `TokenUser` SID, so
 callers can compare it with the owner or their own allowlist without fs-safe
 applying trust policy. Each ACE has `{ sid, mask, aceType, flags }`; `flags`
 retains the raw byte and decoded
@@ -247,6 +266,14 @@ omit the fact, so consumers must require `isVolumeRoot === true` before using it
 This metadata does not relax reparse-point or ACL admission policy: consumers
 still decide which rights are acceptable, and all ACE masks are returned
 unchanged.
+
+Read-only allow callbacks retain `aceType: "allow"` with the additive
+`isCallback: true` marker. Opaque callback data is not returned, decoded or
+logged. `complete: true` means every entry's reported principal, possible-rights
+mask and flags were understood; it does not mean that callback conditions were
+evaluated or that the reported grants are effective. Consumers requiring
+unconditional ACEs must reject `isCallback === true`; older helpers never set
+this marker and keep callback descriptors incomplete.
 
 Object-specific and other ACE layouts are not guessed: they are omitted,
 `complete` becomes false, and their numeric types appear in

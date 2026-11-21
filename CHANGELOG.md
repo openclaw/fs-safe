@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- **Windows permissions:** inspect read-only allow-callback ACEs conservatively in native and fallback public reporting, instead of rejecting serviced sources solely for that bounded ACE form. Raw observations mark callbacks explicitly; mutation/deny callbacks and private admission remain fail-closed.
+
 ## 0.28.1 - 2026-11-13
 
 **Highlights:** Fixes for Root lock contention, stale-lock diagnostics, guest temporary names, and opt-in DrvFS writes.

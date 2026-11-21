@@ -38,6 +38,9 @@ function validateAce(value: unknown, allowUnknownFlags: boolean): value is Nativ
     ["successfulAccess", 0x40], ["failedAccess", 0x80],
   ] as const;
   const flags = value.flags;
+  if (value.isCallback != null && typeof value.isCallback !== "boolean") return false;
+  if (value.isCallback === true &&
+      (value.aceType !== "allow" || (value.mask & ~0xa012_00a9) !== 0 || (raw & ~0x1f) !== 0)) return false;
   return fields.every(([field, bit]) =>
     typeof flags[field] === "boolean" && flags[field] === ((raw & bit) !== 0));
 }
@@ -117,7 +120,8 @@ export function validateSecureWindowsSecurityFacts(value: unknown): NativeWindow
   if (facts.ownerClass !== summary.ownerClass) {
     unverified("Windows descriptor owner facts were inconsistent");
   }
-  if (facts.fallbackRequired || !facts.isLocal || !facts.aceListComplete || facts.unsupportedAceTypes.length !== 0) {
+  if (facts.fallbackRequired || !facts.isLocal || !facts.aceListComplete || facts.unsupportedAceTypes.length !== 0 ||
+      facts.aces.some(ace => ace.isCallback === true)) {
     unverified("Windows descriptor ACL facts were incomplete or unsupported");
   }
   if (facts.worldReadable !== summary.worldReadable || facts.worldWritable !== summary.worldWritable ||

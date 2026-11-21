@@ -27,6 +27,8 @@ pub struct WindowsAccessControlEntry {
     pub mask: u32,
     pub ace_type: String,
     pub flags: WindowsAceFlags,
+    /// Opaque allow callback conservatively reported as a possible read grant.
+    pub is_callback: Option<bool>,
 }
 
 #[napi(object)]
@@ -200,7 +202,7 @@ mod windows {
         SetEntriesInAclW, SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
     };
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
+        ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_CALLBACK_ACE, ACCESS_DENIED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE,
         CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
         GetSecurityDescriptorControl, GetTokenInformation, InitializeSecurityDescriptor,
         IsValidSid, IsWellKnownSid, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
@@ -237,9 +239,14 @@ mod windows {
     const PRIVATE_PARENT_CREATE_ACCESS: u32 =
         FILE_READ_ATTRIBUTES | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE;
     const PRIVATE_PARENT_METADATA_ACCESS: u32 = FILE_READ_ATTRIBUTES;
-    const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
-    const ACCESS_DENIED_ACE_TYPE: u8 = 1;
-    const INHERIT_ONLY_ACE_FLAG: u8 = 0x08;
+    const ACCESS_ALLOWED_ACE_TYPE: u8 =
+        windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE as u8;
+    const ACCESS_DENIED_ACE_TYPE: u8 =
+        windows_sys::Win32::System::SystemServices::ACCESS_DENIED_ACE_TYPE as u8;
+    const ACCESS_ALLOWED_CALLBACK_ACE_TYPE: u8 =
+        windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_CALLBACK_ACE_TYPE as u8;
+    const CALLBACK_READ_EXECUTE_MASK: u32 = 0xa012_00a9;
+    const INHERIT_ONLY_ACE_FLAG: u8 = windows_sys::Win32::Security::INHERIT_ONLY_ACE as u8;
     const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
     const FINAL_PATH_STACK_WCHARS: usize = 512;
     const MAX_FINAL_PATH_WCHARS: usize = 32 * 1024;
@@ -465,6 +472,19 @@ mod windows {
                     (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
                 )
             }
+            ACCESS_ALLOWED_CALLBACK_ACE_TYPE => {
+                let ace = unsafe { &*(raw.cast::<ACCESS_ALLOWED_CALLBACK_ACE>()) };
+                // Type 9 conditions may only restrict these read/execute grants.
+                // Do not infer the result of a condition or support mutation bits.
+                if ace.Mask & !CALLBACK_READ_EXECUTE_MASK != 0 || header.AceFlags & !0x1f != 0
+                {
+                    return None;
+                }
+                (
+                    ace.Mask,
+                    (&ace.SidStart as *const u32).cast_mut().cast::<c_void>(),
+                )
+            }
             ACCESS_DENIED_ACE_TYPE => {
                 let ace = unsafe { &*(raw.cast::<ACCESS_DENIED_ACE>()) };
                 (
@@ -474,7 +494,10 @@ mod windows {
             }
             _ => return None,
         };
-        if unsafe { IsValidSid(sid) } == 0 {
+        let sid_bytes = unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), 8) };
+        let bounded_sid_length = 8 + 4 * usize::from(sid_bytes[1]);
+        if sid_bytes[1] > 15 || sid_offset + bounded_sid_length > header.AceSize as usize
+            || unsafe { IsValidSid(sid) } == 0 {
             return None;
         }
         let sid_length = unsafe { GetLengthSid(sid) } as usize;
@@ -493,13 +516,14 @@ mod windows {
         Ok(WindowsAccessControlEntry {
             sid: sid_string(entry.sid)?,
             mask: entry.mask,
-            ace_type: if entry.ace_type == ACCESS_ALLOWED_ACE_TYPE {
+            ace_type: if entry.ace_type != ACCESS_DENIED_ACE_TYPE {
                 "allow"
             } else {
                 "deny"
             }
             .to_owned(),
             flags: ace_flags(entry.flags),
+            is_callback: (entry.ace_type == ACCESS_ALLOWED_CALLBACK_ACE_TYPE).then_some(true),
         })
     }
 
@@ -987,6 +1011,11 @@ mod windows {
                         continue;
                     };
                     let mask = entry.mask;
+                    // Private admission still rejects every callback, even when
+                    // public reporting can bound its possible rights.
+                    if entry.ace_type == ACCESS_ALLOWED_CALLBACK_ACE_TYPE {
+                        inspection.ace_list_complete = false;
+                    }
                     if let Some(facts) = report.as_mut() {
                         facts.aces.push(public_ace(entry)?);
                     }
@@ -1572,6 +1601,49 @@ mod windows {
         };
 
         use super::*;
+
+        #[test]
+        fn callback_observations_are_bounded_read_only_allow_aces() {
+            // DWORD-aligned, bounded raw ACE fixture. Opaque bytes need not be
+            // interpreted: they can only narrow the mask's potential grant.
+            let sid = well_known_sid(WinWorldSid).unwrap();
+            let offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+            let length = offset + sid.len() + 4;
+            let mut storage = vec![0_u32; length.div_ceil(4)];
+            let bytes = unsafe { std::slice::from_raw_parts_mut(storage.as_mut_ptr().cast::<u8>(), length) };
+            bytes[0] = ACCESS_ALLOWED_CALLBACK_ACE_TYPE;
+            bytes[1] = 19;
+            bytes[2..4].copy_from_slice(&(length as u16).to_le_bytes());
+            bytes[4..8].copy_from_slice(&0x0012_00a9_u32.to_le_bytes());
+            bytes[offset..offset + sid.len()].copy_from_slice(&sid);
+            let parse = |bytes: &mut [u8]| {
+                let raw = bytes.as_mut_ptr().cast::<c_void>();
+                let header = unsafe { &*raw.cast::<ACE_HEADER>() };
+                parse_basic_ace(raw, header)
+            };
+            let entry = parse(bytes).unwrap();
+            assert_eq!(entry.mask, 0x0012_00a9);
+            assert_eq!(public_ace(entry).unwrap().is_callback, Some(true));
+            for mask in [2_u32, 4, 0x40, 0x100, 0x10000, 0x40000, 0x80000,
+                0x10000000, 0x40000000, 0x02000000, 0x01000000, 0x200] {
+                bytes[4..8].copy_from_slice(&mask.to_le_bytes());
+                assert!(parse(bytes).is_none(), "unsupported mask {mask:#x}");
+            }
+            bytes[4..8].copy_from_slice(&0x0012_00a9_u32.to_le_bytes());
+            for kind in [5, 6, 10, 11, 12, 0xff] {
+                bytes[0] = kind;
+                assert!(parse(bytes).is_none());
+            }
+            bytes[0] = ACCESS_ALLOWED_CALLBACK_ACE_TYPE;
+            bytes[1] = 0x20;
+            assert!(parse(bytes).is_none());
+            bytes[1] = 19;
+            bytes[offset + 1] = 15; // SID length would escape the ACE.
+            assert!(parse(bytes).is_none());
+            bytes[offset + 1] = sid[1];
+            bytes[2..4].copy_from_slice(&((offset + 7) as u16).to_le_bytes());
+            assert!(parse(bytes).is_none());
+        }
 
         fn temp_root(label: &str) -> PathBuf {
             let base = fs::canonicalize(std::env::temp_dir()).unwrap();
@@ -2690,7 +2762,14 @@ pub(crate) fn read_owner_and_dacl_for_handle(
     handle: windows_sys::Win32::Foundation::HANDLE,
 ) -> NativeResult<WindowsSecurityFacts> {
     let local = windows::is_local_handle(handle)?;
-    windows::security_facts(handle, local)
+    let mut facts = windows::security_facts(handle, local)?;
+    if facts.aces.iter().any(|ace| ace.is_callback == Some(true)) {
+        // Preserve the strict wire contract even for JS predating isCallback.
+        facts.fallback_required = true;
+        facts.ace_list_complete = false;
+        facts.unsupported_ace_types.push(9);
+    }
+    Ok(facts)
 }
 
 #[cfg(test)]
