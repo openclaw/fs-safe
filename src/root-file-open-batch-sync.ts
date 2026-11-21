@@ -7,6 +7,8 @@ import { getNativeBinding } from "./native.js";
 import { openExactNativeRootSync } from "./native-parent-admission.js";
 import { isExpectedPathError } from "./pinned-open.js";
 import { realpathSync } from "./realpath.js";
+import { resolveRootPathSyncWithCanonicalRootObservation } from "./root-path.js";
+import { readSymlinkResolution } from "./root-symlink-policy.js";
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { observeCanonicalRoot, type CanonicalRootObservation } from "./root-file-final-admission.js";
 import { openRootFileSync, openRootFileWithRetainedRootSync, type OpenRootFileSyncParams, type RootFileOpenResult } from "./root-file.js";
@@ -25,6 +27,15 @@ type RetainedRoot = {
 const WINDOWS_ERROR_REPARSE_POINT_ENCOUNTERED = 4395;
 
 function canRetainRoot(params: OpenRootFileSyncParams): boolean {
+  if (process.platform === "darwin") {
+    return typeof params.rootPath === "string" && typeof params.absolutePath === "string" &&
+      params.ioFs === undefined && params.rootRealPath === undefined && !params.skipLexicalRootCheck &&
+      (params.symlinks === "reject" || (params.symlinks === undefined && params.rejectSymlinks !== false)) &&
+      !params.rootPath.includes(String.fromCharCode(0)) && !params.absolutePath.includes(String.fromCharCode(0)) &&
+      path.isAbsolute(params.rootPath) && path.isAbsolute(params.absolutePath) &&
+      path.resolve(params.rootPath) === params.rootPath && path.resolve(params.absolutePath) === params.absolutePath &&
+      params.absolutePath.startsWith(params.rootPath.endsWith(path.sep) ? params.rootPath : params.rootPath + path.sep);
+  }
   return process.platform === "win32" && typeof params.rootPath === "string" &&
     typeof params.absolutePath === "string" && params.ioFs === undefined &&
     params.rootRealPath === undefined && !params.skipLexicalRootCheck &&
@@ -42,7 +53,7 @@ function failure(error: unknown): RootFileOpenResult {
   return { ok: false, reason: error instanceof FsSafeError ? "validation" : isExpectedPathError(error) ? "path" : "io", error };
 }
 
-/** Reuses native Windows root handles; other reads keep their one-shot admission. */
+/** Reuses native Windows and Darwin root handles; other reads keep their one-shot admission. */
 export function createRootFileOpenBatchSync(): RootFileOpenBatchSync {
   const roots = new Map<string, RetainedRoot>();
   let closed = false;
@@ -83,6 +94,15 @@ export function createRootFileOpenBatchSync(): RootFileOpenBatchSync {
           roots.set(params.rootPath, retained);
         }
         const { owner, observation } = retained;
+        // POSIX openBeneath confines traversal but permits contained ancestor symlinks.
+        // Preserve the ordinary strict path policy before borrowing the native root.
+        if (process.platform === "darwin") {
+          resolveRootPathSyncWithCanonicalRootObservation({
+            absolutePath: params.absolutePath, rootPath: params.rootPath,
+            rootCanonicalPath: observation.path, rootIdentity: observation.identity,
+            boundaryLabel: params.boundaryLabel, ...readSymlinkResolution("reject"),
+          }, root => inspectDirectoryIdentitySync(root, observation.identity));
+        }
         inspectDirectoryIdentitySync(observation.path, observation.identity);
         const closeFd = captureNativeFdClose(binding);
         let admittedFd: number;
