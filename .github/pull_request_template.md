@@ -2,13 +2,14 @@
 
 <!--
 Describe the concrete problem for consumers of `@openclaw/fs-safe`.
-In 1–3 plain-language sentences, explain the affected person’s task, what fails
-or is missing, and why it matters. Include the trigger when known; do not invent
-a bug for other changes. Write for readers who have not read the implementation.
+In 1–3 plain sentences, say who is affected, what happens today, and why it
+matters to them. For a bug, name the trigger if known. For a feature or internal
+work, describe the need in the actual workflow without inventing harm.
+Could a reader understand the problem without knowing your proposed fix?
 
-Good: "Application developers extracting an uploaded archive can overwrite files
-outside the chosen folder, putting unrelated application data at risk."
-Bad: "Fixes the parent traversal check in the archive parser."
+Good: "Background checks can use up a new user's model allowance before they've
+asked the assistant to monitor anything."
+Bad: "Turn off periodic checks on fresh installs."
 
 Name the affected filesystem surface: root confinement, path validation,
 identity checks, archive extraction, permissions, atomic operations, stores,
