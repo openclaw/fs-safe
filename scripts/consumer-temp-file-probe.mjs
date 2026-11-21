@@ -65,7 +65,8 @@ if (childKind) {
 } else {
   const scratchPrefix = path.join(os.tmpdir(), "fs-safe-temp-consumer-");
   const created = await fs.mkdtemp(path.toNamespacedPath(scratchPrefix));
-  const scratch = path.join(path.dirname(scratchPrefix), path.basename(created));
+  // Expand Windows 8.3 TEMP aliases before choosing exact fixture path lengths.
+  const scratch = realpathSync(path.join(path.dirname(scratchPrefix), path.basename(created)));
   const rows = [];
   async function rootForLength(requestedLength) {
     // An unusually long TEMP must still exercise a long path, never a negative repeat.
