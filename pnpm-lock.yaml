@@ -167,6 +167,9 @@ overrides:
   ip-address@<=10.7.3: ^10.7.4
   minimatch@>=7.0.0 <11.0.1: ^11.0.1
 
+patchedDependencies:
+  vitest@5.1.1: d1f77a8416af1f69e32196ea2e4c8f96a3a74f5649b77399a8d1cd150b9cdddf
+
 importers:
 
   .:
@@ -212,7 +215,7 @@ importers:
         version: 8.3.8(@types/node@26.6.6)
       vitest:
         specifier: ^5.1.0
-        version: 5.1.1(@types/node@26.6.6)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@26.6.6))
+        version: 5.1.1(patch_hash=d1f77a8416af1f69e32196ea2e4c8f96a3a74f5649b77399a8d1cd150b9cdddf)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@26.6.6))
     optionalDependencies:
       '@openclaw/fs-safe-darwin-arm64':
         specifier: 0.28.1
@@ -2503,7 +2506,7 @@ snapshots:
       obug: 3.0.0
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 5.1.1(@types/node@26.6.6)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@26.6.6))
+      vitest: 5.1.1(patch_hash=d1f77a8416af1f69e32196ea2e4c8f96a3a74f5649b77399a8d1cd150b9cdddf)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@26.6.6))
 
   '@vitest/istanbul-lib-coverage@2.1.0': {}
 
@@ -3028,7 +3031,7 @@ snapshots:
       '@types/node': 26.6.6
       fsevents: 2.3.3
 
-  vitest@5.1.1(@types/node@26.6.6)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@26.6.6)):
+  vitest@5.1.1(patch_hash=d1f77a8416af1f69e32196ea2e4c8f96a3a74f5649b77399a8d1cd150b9cdddf)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@26.6.6)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.1.1(vite@8.3.8(@types/node@26.6.6))
