@@ -443,6 +443,11 @@ names are shortened to 255 UTF-8 bytes as written and under NFC/NFD, preserving
 the extension when possible. The separate safe-path-segment identifier helpers
 remain ASCII-only.
 
+On Windows, `tempFile()` and `withTempFile()` support temporary directory paths
+longer than `MAX_PATH` in both cleanup modes. Returned paths retain the caller's
+namespace spelling; extended-length path prefixes are used only for creation.
+Existing path admission, identity checks, and cleanup requirements still apply.
+
 The default `cleanupSafety: "compatible"` retains the historical temp-file
 behavior without loading or probing the native helper. Cleanup captures the
 directory identity at creation time and preserves a replacement observed by
