@@ -2,11 +2,17 @@
 
 ## Unreleased
 
-- **Archive decoding:** preserve bzip2 decoder progress for valid streams with long coding tables split across input chunks, and update native gzip/deflate decoding fixes.
+## 0.28.2 - 2026-11-22
 
-- **Windows native loading:** remove the separate Visual C++ Redistributable prerequisite for x64 and ARM64 bindings while retaining the OS-serviced UCRT. Thanks @paulcam206.
+**Highlights:** Windows bindings no longer need a separate Visual C++ Redistributable, long temporary-file paths work reliably, and archive decoding handles chunked bzip2 input plus gzip/deflate fixes.
 
-- **Windows temp files:** create temporary directories on long paths without exposing extended-length namespace aliases to callers; preserve identity and cleanup checks. Thanks @xuanda0201.
+### Fixes
+
+- **Windows native loading:** remove the separate Visual C++ Redistributable prerequisite for x64 and ARM64 bindings while retaining the OS-serviced UCRT. Thanks @paulcam206. ([#1094](https://github.com/openclaw/fs-safe/pull/1094))
+
+- **Windows temp files:** create temporary directories on long paths without exposing extended-length namespace aliases to callers; preserve identity and cleanup checks. Thanks @xuanda0201. ([#1091](https://github.com/openclaw/fs-safe/pull/1091))
+
+- **Archive decoding:** preserve bzip2 decoder progress for valid streams with long coding tables split across input chunks, and update native gzip/deflate decoding fixes. ([#1103](https://github.com/openclaw/fs-safe/pull/1103))
 
 ## 0.28.1 - 2026-11-13
 
