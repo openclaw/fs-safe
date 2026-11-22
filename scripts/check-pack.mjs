@@ -12,6 +12,7 @@ import { resolveNpmCli } from "./npm-cli.mjs";
 import { normalizePackResult } from "./npm-pack-result.mjs";
 import { validateArchiveWasm } from "./archive-wasm-build-tools.mjs";
 import { WINDOWS_COMMAND_ASSETS } from "./windows-command-assets.mjs";
+import { verifyWindowsHelper } from "./windows-runtime.mjs";
 import { assertPackedRuntimeFiles } from "./packed-runtime-files.mjs";
 import {
   assertPublicApi,
@@ -79,6 +80,9 @@ try {
   if (missing.length > 0) {
     throw new Error(`packed package is missing: ${missing.join(", ")}`);
   }
+  if ([...paths].some(path => /\.(?:node|dll|exe)$/iu.test(path) && path !== "dist/windows-security-helper.exe")) {
+    throw new Error("unrecognized shipped Windows binary requires an explicit runtime policy");
+  }
 
   // Declaration maps target src/, which the published package intentionally excludes.
   const forbidden = [...paths].filter((path) =>
@@ -102,6 +106,7 @@ try {
   validateArchiveWasm(readFileSync(join(workdir, "node_modules", "@openclaw", "fs-safe", "dist", "archive-parser.wasm")));
   for (const name of WINDOWS_COMMAND_ASSETS) {
     const installed = join(workdir, "node_modules", "@openclaw", "fs-safe", "dist", name);
+    verifyWindowsHelper(readFileSync(installed));
     if (!readFileSync(installed).equals(readFileSync(new URL(`../src/${name}`, import.meta.url)))) {
       throw new Error(`packaged Windows command asset differs from its source: ${name}`);
     }

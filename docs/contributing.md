@@ -111,6 +111,27 @@ fails, refresh FreeBSD package metadata and upgrade the selected Node package
 before rerunning. Do not bypass the floor to obtain native artifacts; a missing
 patched supplier package blocks this qualification route.
 
+### Windows runtime contract
+
+Windows x64 and ARM64 addons statically link compiler-specific runtime support
+and dynamically link the inbox, OS-serviced UCRT. Consumers do not need a
+separate Visual C++ Redistributable. `pnpm native:build` and release builds use
+`scripts/build-native.mjs`; it preserves inherited Rust flags and Cargo's
+`CARGO_ENCODED_RUSTFLAGS` precedence while appending the hybrid CRT settings.
+Build, staging, signing preparation and package collection reject ordinary or
+delay imports of VC redistributable DLLs, missing OS UCRT imports, and the wrong
+native architecture or PE kind.
+
+The security helper remains a deterministic .NET Framework 4.6.2 IL-only AnyCPU
+PE32 executable, using the Windows CLR and OS P/Invoke libraries. It has no
+native addon architecture or UCRT-import requirement. Its build and package
+gates check that managed format and reject VC redistributable imports without
+changing the helper's framework, signing, unsigned reproducibility comparison
+or signed-byte manifest verification. Import inspection accepts Authenticode
+certificate overlays and never rewrites signed bytes.
+Test fixtures, harnesses and debug builds do not ship and keep their existing
+runtime configuration; they are not subject to release runtime admission.
+
 ### Windows ARM64 builds
 
 `windows-11-arm` builds and runs the ARM64 MSVC addon using native ARM64 Node

@@ -4,6 +4,8 @@
 
 - **Archive decoding:** preserve bzip2 decoder progress for valid streams with long coding tables split across input chunks, and update native gzip/deflate decoding fixes.
 
+- **Windows native loading:** remove the separate Visual C++ Redistributable prerequisite for x64 and ARM64 bindings while retaining the OS-serviced UCRT. Thanks @paulcam206.
+
 - **Windows temp files:** create temporary directories on long paths without exposing extended-length namespace aliases to callers; preserve identity and cleanup checks. Thanks @xuanda0201.
 
 ## 0.28.1 - 2026-11-13

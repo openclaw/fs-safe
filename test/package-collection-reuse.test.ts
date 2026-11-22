@@ -9,6 +9,7 @@ import { create as createTar } from "tar";
 import { afterEach, expect, it, vi } from "vitest";
 import { verifyPackedInput } from "../scripts/check-release-packages.mjs";
 import { packageProofSource } from "../scripts/consumer-proof-metadata.mjs";
+import { windowsPe } from "./helpers/windows-pe.js";
 
 const directories: string[] = [];
 const source = { commit: "a".repeat(40), tree: "b".repeat(40), dirty: false };
@@ -21,10 +22,10 @@ const rootPkg = {
   name: "@openclaw/fs-safe", version: "1.0.0", type: "module",
   optionalDependencies: { [nativePkg.name]: nativePkg.version },
 };
-const rootFiles: Record<string, string> = {
+const rootFiles: Record<string, string | Buffer> = {
   "dist/index.js": "export const fixture = true;\n",
   "dist/index.d.ts": "export declare const fixture: boolean;\n",
-  "dist/windows-security-helper.exe": "synthetic non-executable metadata fixture",
+  "dist/windows-security-helper.exe": windowsPe("anycpu"),
 };
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -32,7 +33,7 @@ afterEach(async () => {
 });
 
 async function fixture({ files = rootFiles, nativeMetadata = nativePkg,
-  nativeFiles = { "fs-safe-native.node": "synthetic non-executable binding fixture" } as Record<string, string> } = {}) {
+  nativeFiles = { "fs-safe-native.node": windowsPe("x64") } as Record<string, string | Buffer> } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "fs-safe-packed-reuse-"));
   directories.push(directory);
   const manifest = [];
@@ -72,6 +73,25 @@ async function fixture({ files = rootFiles, nativeMetadata = nativePkg,
 it("accepts complete source-bound root and host tarballs without repacking", async () => {
   const input = await fixture();
   await expect(input.verify()).resolves.toEqual(input.manifest);
+});
+
+it.each(["native", "helper", "delay", "missing-ucrt", "architecture"])("rejects resealed packed %s runtime violations", async kind => {
+  const input = await fixture({
+    nativeFiles: { "fs-safe-native.node": kind === "native" ? windowsPe("x64", ["ucrtbase.dll", "VCRUNTIME140.dll"])
+      : kind === "delay" ? windowsPe("x64", ["ucrtbase.dll"], ["MSVCP140.dll"])
+      : kind === "missing-ucrt" ? windowsPe("x64", ["kernel32.dll"])
+      : windowsPe(kind === "architecture" ? "arm64" : "x64") },
+    files: { ...rootFiles, "dist/windows-security-helper.exe": kind === "helper"
+      ? windowsPe("anycpu", ["mscoree.dll", "VCRUNTIME140.dll"]) : windowsPe("anycpu") },
+  });
+
+  await expect(input.verify()).rejects.toThrow(kind === "architecture" ? "wrong machine"
+    : kind === "missing-ucrt" ? "OS-provided UCRT" : "VC redistributable");
+});
+
+it("rejects an unrecognized shipped PE rather than skipping its runtime policy", async () => {
+  const input = await fixture({ files: { ...rootFiles, "dist/extra.dll": windowsPe("x64") } });
+  await expect(input.verify()).rejects.toThrow("unrecognized shipped Windows binary");
 });
 
 it("keeps actual Git source identity clean when producing and restoring the workflow bundle", async () => {

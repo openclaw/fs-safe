@@ -194,7 +194,7 @@ jobs:
 
       - name: Build native binding
         if: matrix.cross == 'none'
-        run: pnpm --filter @openclaw/fs-safe-native-build exec napi build --release --platform --target ${{ matrix.target }} --output-dir ../artifacts
+        run: node scripts/build-native.mjs --release --target ${{ matrix.target }} --output-dir ../artifacts
 
       - name: Build GNU binding and verify glibc floor
         if: matrix.cross == 'zig-gnu'
