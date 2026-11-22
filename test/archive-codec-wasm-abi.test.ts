@@ -5,6 +5,21 @@ import { archiveCodecFixtures, codecLargeTar, codecSmallTar } from "./helpers/ar
 
 const module = new WebAssembly.Module(readFileSync(new URL("../dist/archive-parser.wasm", import.meta.url)));
 
+it("preserves bzip2 coding-table progress across partial input", () => {
+  // libbzip2-rs issue 154: a valid stream with many cancelling code-length changes.
+  const encoded = Buffer.concat([
+    Buffer.from("425a68313141592653594486f0380000020c00000420002000215d", "hex"),
+    Buffer.alloc(5999, 0xdd),
+    Buffer.from("80820b1772453850904486f038", "hex"),
+  ]);
+  for (const chunkSize of [100, 65536]) {
+    const abi = codecAbi(module);
+    expect(abi.codec_init(1)).toBe(0);
+    expect(codecDecode(abi, encoded, chunkSize).bytes).toEqual(Buffer.alloc(64, 0x41));
+    lowMemoryIntact(abi);
+  }
+});
+
 it("keeps production imports and allocator mutation hooks absent and validates the codec ABI", () => {
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   expect(WebAssembly.Module.exports(module).filter(entry => entry.name.startsWith("test_"))).toEqual([]);
