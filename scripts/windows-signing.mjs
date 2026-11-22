@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyWindowsHelper, verifyWindowsRuntime } from "./windows-runtime.mjs";
+import { nativeTargets } from "./native-targets.mjs";
 
 export const windowsSigner = "CN=OpenClaw Foundation, O=OpenClaw Foundation, L=Mill Valley, S=California, C=US";
 export const windowsFiles = [
@@ -29,6 +31,11 @@ export function prepareSigning(directory, referenceHelper) {
   const reference = sha256(readFileSync(referenceHelper));
   assert.equal(reference, readFileSync(`${referenceHelper}.sha256`, "utf8").trim(), "reference helper: build SHA-256 mismatch");
   assert.equal(hashes["windows-security-helper.exe"], reference, "Ubuntu/Windows unsigned helper differs");
+  for (const { file } of windowsFiles) {
+    const bytes = readFileSync(join(directory, file));
+    if (file === "windows-security-helper.exe") verifyWindowsHelper(bytes);
+    else verifyWindowsRuntime(bytes, nativeTargets.find(target => target.artifact === file).cpu);
+  }
   writeFileSync(join(directory, "unsigned-windows-sha256.json"), `${JSON.stringify(hashes, null, 2)}\n`);
 }
 

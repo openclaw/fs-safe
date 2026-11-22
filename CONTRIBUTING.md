@@ -38,6 +38,12 @@ pnpm pack:check
 The complete development and documentation guide lives at
 [`docs/contributing.md`](docs/contributing.md).
 
+Windows release builds preserve napi's `CARGO_BUILD_RUSTFLAGS` fallback. When
+environment flags do not override Cargo configuration, a dependency-free Cargo
+check reads Cargo's resolved target/cfg/build flags through its documented
+build-script environment before adding hybrid CRT flags. This build-only probe
+does not ship, parse configuration itself, or change compiler wrappers.
+
 ## Pull Requests
 
 - Keep one logical change per pull request.
