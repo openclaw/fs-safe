@@ -223,6 +223,17 @@ pnpm build
 pnpm test --config scripts/slow-package-copy.config.ts
 ```
 
+### Windows long-path temporary-file consumers
+
+`pnpm package:smoke` includes `consumer-temp-file-probe.mjs` on Windows in
+each normal root-only npm and pnpm installation. The existing bundled-package
+CI jobs run it on Node 22, 24 and 26 using the collected root and native binding.
+It imports `@openclaw/fs-safe/advanced` from the installed package, checks
+compatible and real-native bounded cleanup, and verifies file round-trips,
+path spelling, scoped rejection, and natural/explicit process-exit cleanup.
+Native-off consumers also verify bounded cleanup refuses before creation.
+Receipts, module hashes and source identity are recorded in `consumer-proof.json`.
+
 ### Windows public-permission/browser boundary proof
 
 After `pnpm native:build` and `pnpm build`, Windows x64 contributors with Node

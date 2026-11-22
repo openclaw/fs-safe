@@ -2,7 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itPosix, useTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, itPosix, useTempDirs } from "./helpers/vitest.js";
 import {
   ackJsonDurableQueueEntry,
   ensureJsonDurableQueueDirs,
@@ -15,6 +15,8 @@ import {
   unlinkBestEffort,
 } from "../src/json-durable-queue.js";
 import { configureFsSafeNative } from "../src/native-config.js";
+
+allowWindowsFilesystemStalls();
 
 const { tempRoot } = useTempDirs();
 
