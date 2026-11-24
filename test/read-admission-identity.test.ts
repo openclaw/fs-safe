@@ -44,7 +44,9 @@ for (const route of ["regular async", "regular sync", "root sync", "root async"]
     it.each(["before-open", "after-open"] as const)("refuses a rounded-equal replacement %s", async (swap) => {
       const subject = await fixture({ swap });
       expect(Number(readIdentity.ino)).toBe(Number(readIdentity.ino + 1n));
-      await expect(subject.run()).rejects.toMatchObject({ code: "path-mismatch" });
+      const failure = await subject.run().catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: "path-mismatch" });
+      expect((failure as Error).cause).toBeUndefined();
       expect(subject.read).not.toHaveBeenCalled();
       expect(subject.close).toHaveBeenCalledTimes(1);
       expect(await fs.readFile(subject.displaced, "utf8")).toBe("original");

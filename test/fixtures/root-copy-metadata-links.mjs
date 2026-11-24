@@ -166,18 +166,27 @@ async function prove(base, filesystem) {
       }), /revoked/);
       assert.equal(fs.existsSync(path.join(targetDir, "revoked")), false);
       cases++;
+      const originalLink = fs.lstatSync(resolved, { bigint: true });
+      const displaced = path.join(directory, "displaced-link");
       let swapped = false;
       await assert.rejects(target.copyIn("swapped-source", resolved, {
         sourceSymlinks: "copy-link",
         assertBeforeMutation() {
           if (!swapped) {
-            swapped = true;
-            fs.unlinkSync(resolved);
+            // Keep the original inode alive so replacement identity cannot be reused.
+            fs.renameSync(resolved, displaced);
             fs.symlinkSync("another-target", resolved, "file");
+            const retained = fs.lstatSync(displaced, { bigint: true });
+            const replacement = fs.lstatSync(resolved, { bigint: true });
+            assert.equal(retained.dev, originalLink.dev);
+            assert.equal(retained.ino, originalLink.ino);
+            assert.ok(replacement.dev !== originalLink.dev || replacement.ino !== originalLink.ino);
+            swapped = true;
           }
         },
       }), { code: "path-mismatch" });
-      assert.equal(fs.existsSync(path.join(targetDir, "swapped-source")), false);
+      assert.equal(swapped, true, "source replacement completed");
+      assert.equal(fs.lstatSync(path.join(targetDir, "swapped-source"), { throwIfNoEntry: false }), undefined);
       cases++;
     }
     assert.equal(fs.readdirSync(targetDir).some(name => name.startsWith(".fs-safe-")), false);

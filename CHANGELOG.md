@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve the original filesystem error as the cause when a regular-file read rejects a path that disappears during admission.
+
 ## 0.28.2 - 2026-11-22
 
 **Highlights:** Windows bindings no longer need a separate Visual C++ Redistributable, long temporary-file paths work reliably, and archive decoding handles chunked bzip2 input plus gzip/deflate fixes.

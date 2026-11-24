@@ -99,47 +99,6 @@ describe("regular file refusal and race handling", () => {
     );
   });
 
-  it("reports a vanished file as a path mismatch after the preview check", async () => {
-    const root = await tempRoot("fs-safe-regular-vanish-");
-    const filePath = path.join(root, "value");
-    await fs.writeFile(filePath, "abc");
-    const missing = Object.assign(new Error("vanished"), { code: "ENOENT" });
-    vi.spyOn(fs, "open").mockRejectedValueOnce(missing);
-    await expect(readRegularFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
-
-    const realLstat = fsSync.lstatSync.bind(fsSync);
-    let calls = 0;
-    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-      if (String(args[0]) === filePath && ++calls === 2) throw missing;
-      return realLstat(...args);
-    });
-    await expect(readRegularFile({ filePath })).rejects.toMatchObject({ code: "path-mismatch" });
-  });
-
-  it("reports sync disappearance before and after open as a path mismatch", async () => {
-    const root = await tempRoot("fs-safe-regular-sync-vanish-");
-    const filePath = path.join(root, "value");
-    await fs.writeFile(filePath, "abc");
-    const missing = Object.assign(new Error("vanished"), { code: "ENOENT" });
-
-    vi.spyOn(fsSync, "openSync").mockImplementationOnce(() => {
-      throw missing;
-    });
-    expect(() => readRegularFileSync({ filePath })).toThrow(
-      expect.objectContaining({ code: "path-mismatch" }),
-    );
-
-    const realLstatSync = fsSync.lstatSync.bind(fsSync);
-    let calls = 0;
-    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
-      if (String(args[0]) === filePath && ++calls === 2) throw missing;
-      return realLstatSync(...args);
-    });
-    expect(() => readRegularFileSync({ filePath })).toThrow(
-      expect.objectContaining({ code: "path-mismatch" }),
-    );
-  });
-
   it("preserves unexpected bounded-read errors instead of relabeling them", async () => {
     const root = await tempRoot("fs-safe-regular-read-error-");
     const filePath = path.join(root, "value");

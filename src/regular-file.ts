@@ -95,7 +95,7 @@ export async function readRegularFile(params: {
     handle = await fs.open(filePath, resolveReadOpenFlags());
   } catch (err) {
     if (isNotFoundPathError(err)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
+      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`, { cause: err });
     }
     throw err;
   }
@@ -173,7 +173,7 @@ function inspectOpenedRegularRead(
     }, identity);
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
+      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`, { cause: error });
     }
     throw error;
   }
@@ -195,7 +195,7 @@ export function readRegularFileSync(params: { filePath: string; maxBytes?: numbe
     fd = fsSync.openSync(filePath, resolveReadOpenFlags());
   } catch (error) {
     if (isNotFoundPathError(error)) {
-      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`);
+      throw new FsSafeError("path-mismatch", `File changed during read: ${filePath}`, { cause: error });
     }
     throw error;
   }
