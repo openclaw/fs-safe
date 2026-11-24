@@ -75,6 +75,12 @@ describe("regular read disappearance causes", () => {
     if (!hasImmediateUnlink(root)) context.skip("This filesystem retains an unlinked name until the last descriptor closes");
     const filePath = path.join(root, "value");
     await fs.writeFile(filePath, "abc");
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    let missing: unknown;
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      try { return lstat(...args); }
+      catch (error) { missing = error; throw error; }
+    });
     const open = fs.open.bind(fs);
     let handle: fs.FileHandle | undefined;
     let openedFd = -1;
@@ -94,7 +100,8 @@ describe("regular read disappearance causes", () => {
     try {
       const error = await captureReadFailure(() => readRegularFile({ filePath }));
       expect(error.code).toBe("path-mismatch");
-      expect(error.cause).toMatchObject({ code: "ENOENT", syscall: "lstat", path: filePath });
+      expect(error.cause).toBe(missing);
+      expect(error.cause).toMatchObject({ code: "ENOENT", syscall: "lstat" });
       expect(read?.mock.calls).toEqual([]);
       expect(openedFd).toBeGreaterThanOrEqual(0);
       expect(() => fsSync.fstatSync(openedFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
@@ -108,6 +115,12 @@ describe("regular read disappearance causes", () => {
     if (!hasImmediateUnlink(root)) context.skip("This filesystem retains an unlinked name until the last descriptor closes");
     const filePath = path.join(root, "value");
     await fs.writeFile(filePath, "abc");
+    const lstat = fsSync.lstatSync.bind(fsSync);
+    let missing: unknown;
+    vi.spyOn(fsSync, "lstatSync").mockImplementation((...args) => {
+      try { return lstat(...args); }
+      catch (error) { missing = error; throw error; }
+    });
     const open = fsSync.openSync.bind(fsSync);
     let openedFd = -1;
     vi.spyOn(fsSync, "openSync").mockImplementationOnce((...args) => {
@@ -124,7 +137,8 @@ describe("regular read disappearance causes", () => {
     try {
       const error = await captureReadFailure(() => readRegularFileSync({ filePath }));
       expect(error.code).toBe("path-mismatch");
-      expect(error.cause).toMatchObject({ code: "ENOENT", syscall: "lstat", path: filePath });
+      expect(error.cause).toBe(missing);
+      expect(error.cause).toMatchObject({ code: "ENOENT", syscall: "lstat" });
       expect(read).not.toHaveBeenCalled();
       expect(openedFd).toBeGreaterThanOrEqual(0);
       expect(() => fsSync.fstatSync(openedFd)).toThrow(expect.objectContaining({ code: "EBADF" }));
