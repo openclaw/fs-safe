@@ -19,6 +19,27 @@ async function captureReadFailure(read: () => unknown): Promise<FsSafeError> {
   throw new Error("Expected regular read to fail");
 }
 
+function hasImmediateUnlink(root: string): boolean {
+  const probe = path.join(root, "unlink-capability");
+  const fd = fsSync.openSync(probe, "wx");
+  let immediate = false;
+  try {
+    const original = fsSync.fstatSync(fd, { bigint: true });
+    fsSync.unlinkSync(probe);
+    const remaining = fsSync.lstatSync(probe, { bigint: true, throwIfNoEntry: false });
+    immediate = remaining === undefined;
+    if (remaining) {
+      expect({ dev: remaining.dev, ino: remaining.ino }).toEqual({ dev: original.dev, ino: original.ino });
+    }
+  } finally {
+    fsSync.closeSync(fd);
+  }
+  // Only a name retained until the last close is an unsupported capability.
+  // Unexpected probe errors or a surviving entry fail instead of skipping.
+  expect(fsSync.lstatSync(probe, { throwIfNoEntry: false })).toBeUndefined();
+  return immediate;
+}
+
 describe("regular read disappearance causes", () => {
   for (const kind of ["async", "sync"] as const) {
     it.each(["ENOENT", "ENOTDIR"].flatMap((code) =>
@@ -49,8 +70,10 @@ describe("regular read disappearance causes", () => {
     });
   }
 
-  it("retains real unlink failure and closes the unread async descriptor", async () => {
-    const filePath = path.join(await tempRoot("fs-safe-regular-unlink-"), "value");
+  it("retains real unlink failure and closes the unread async descriptor", async (context) => {
+    const root = await tempRoot("fs-safe-regular-unlink-");
+    if (!hasImmediateUnlink(root)) context.skip("This filesystem retains an unlinked name until the last descriptor closes");
+    const filePath = path.join(root, "value");
     await fs.writeFile(filePath, "abc");
     const open = fs.open.bind(fs);
     let handle: fs.FileHandle | undefined;
@@ -80,8 +103,10 @@ describe("regular read disappearance causes", () => {
     }
   });
 
-  it("retains real unlink failure and closes the unread sync descriptor", async () => {
-    const filePath = path.join(await tempRoot("fs-safe-regular-sync-unlink-"), "value");
+  it("retains real unlink failure and closes the unread sync descriptor", async (context) => {
+    const root = await tempRoot("fs-safe-regular-sync-unlink-");
+    if (!hasImmediateUnlink(root)) context.skip("This filesystem retains an unlinked name until the last descriptor closes");
+    const filePath = path.join(root, "value");
     await fs.writeFile(filePath, "abc");
     const open = fsSync.openSync.bind(fsSync);
     let openedFd = -1;
