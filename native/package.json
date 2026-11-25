@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/fs-safe-native-build",
-  "version": "0.28.1",
+  "version": "0.28.2",
   "description": "Private build workspace for the native bindings bundled by @openclaw/fs-safe.",
   "private": true,
   "license": "MIT",
@@ -27,7 +27,7 @@
     ]
   },
   "scripts": {
-    "build": "napi build --platform --release && node ../scripts/stage-host-native.mjs",
-    "build:debug": "napi build --platform && node ../scripts/stage-host-native.mjs"
+    "build": "node ../scripts/build-native.mjs --release && node ../scripts/stage-host-native.mjs",
+    "build:debug": "node ../scripts/build-native.mjs && node ../scripts/stage-host-native.mjs --development"
   }
 }

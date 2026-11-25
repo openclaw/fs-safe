@@ -2,9 +2,14 @@
 
 <!--
 Describe the concrete problem for consumers of `@openclaw/fs-safe`.
-Use one short, plain-language sentence. For fixes, prefer:
-"Fixes: <what goes wrong> when <trigger or condition>."
-For other changes, describe the need without inventing a bug.
+In 1–3 plain sentences, say who is affected, what happens today, and why it
+matters to them. For a bug, name the trigger if known. For a feature or internal
+work, describe the need in the actual workflow without inventing harm.
+Could a reader understand the problem without knowing your proposed fix?
+
+Good: "Background checks can use up a new user's model allowance before they've
+asked the assistant to monitor anything."
+Bad: "Turn off periodic checks on fresh installs."
 
 Name the affected filesystem surface: root confinement, path validation,
 identity checks, archive extraction, permissions, atomic operations, stores,
@@ -44,8 +49,9 @@ Show the most useful proof that this change works:
 - platform or filesystem-specific reproduction
 - CI links or redacted logs
 
-Summarize what was checked and the result; note meaningful gaps. Link long output
-or put it in optional <details>, keeping the useful evidence summary visible.
+Start with the behavior checked and the observed result in plain language; note
+meaningful gaps. Put exact commands, commit hashes, and long logs in links or
+optional <details>. Do not make readers decode commands to learn what was verified.
 -->
 
 - [ ] Tests added or updated when behavior changed
@@ -58,7 +64,14 @@ Optional linked context:
 Add a visible `Closes #<issue-number>` or `Related: #<issue-number>` line.
 
 Required PR title:
-type(scope): user-facing description
+type(scope): <what changes for the person affected>
+Name the affected task and the symptom or outcome, not just the implementation.
+Good: fix(archive): keep uploaded archives inside the chosen folder
+Bad: fix(archive): add a parent segment guard
+Good: docs(root): help developers choose a folder for untrusted files
+Bad: docs(root): update the root factory examples
+For internal-only work, name the real developer or operator workflow affected;
+do not invent an end-user benefit.
 
 Types: feat, fix, improve, refactor, docs, chore.
 Suggested scopes: root, path, archive, atomic, store, secrets, permissions,

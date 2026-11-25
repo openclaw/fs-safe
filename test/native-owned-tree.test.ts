@@ -3,8 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadTestNative } from "./helpers/native-probe.js";
-import { useTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, useTempDirs } from "./helpers/vitest.js";
 
+allowWindowsFilesystemStalls();
 const native = loadTestNative("optional");
 const { tempRoot } = useTempDirs();
 

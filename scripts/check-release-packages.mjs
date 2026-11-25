@@ -25,6 +25,7 @@ import { resolveNpmCli } from "./npm-cli.mjs";
 import { consumerInstallSmoke, isolatedConsumerEnv, resolveConsumerCommands } from "./consumer-install-smoke.mjs";
 import { packageProofSource } from "./consumer-proof-metadata.mjs";
 import { readSigningManifest, verifyWindowsPackage } from "./windows-signing.mjs";
+import { verifyWindowsHelper, verifyWindowsRuntime } from "./windows-runtime.mjs";
 
 function readPackage(directory = ".") {
   return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
@@ -48,12 +49,17 @@ async function verifyArchive(file, pkg, rootName) {
   const paths = new Set();
   const metadata = [];
   const entries = [];
+  const windowsTarget = nativeTargets.find(target => target.package === pkg.name && target.os === "win32");
+  const windowsPath = windowsTarget ? "package/fs-safe-native.node"
+    : pkg.name === rootName ? "package/dist/windows-security-helper.exe" : undefined;
+  const windowsBytes = [];
   // Tar otherwise tolerates truncated entry bodies with a warning, even when
   // its advertised size still agrees with a resealed input manifest.
   await list({ file, strict: true, onReadEntry(entry) {
     if (entry.type === "Directory") return;
     entries.push({ path: entry.path, type: entry.type, size: entry.size });
     if (entry.path === "package/package.json") entry.on("data", chunk => metadata.push(chunk));
+    if (entry.path === windowsPath) entry.on("data", chunk => windowsBytes.push(chunk));
   } });
   for (const entry of entries) {
     assert.equal(entry.type, "File", "packed entries must be regular files");
@@ -71,8 +77,12 @@ async function verifyArchive(file, pkg, rootName) {
       assert.ok(paths.has(expected), `packed root package is missing ${expected}`);
     }
     assert.ok(![...paths].some(path => path.endsWith(".node")), "packed root package must not contain native binaries");
+    assert.ok(![...paths].some(path => /\.(?:dll|exe)$/iu.test(path) && path !== "dist/windows-security-helper.exe"),
+      "unrecognized shipped Windows binary requires an explicit runtime policy");
     await assertPackedRuntimeFiles(file);
   }
+  if (windowsTarget) verifyWindowsRuntime(Buffer.concat(windowsBytes), windowsTarget.cpu);
+  else if (windowsPath) verifyWindowsHelper(Buffer.concat(windowsBytes));
   return entries.reduce((total, entry) => total + entry.size, 0);
 }
 
@@ -200,6 +210,7 @@ async function main() {
         hostPkg = pkg;
         continue;
       }
+      if (target.os === "win32") verifyWindowsRuntime(readFileSync(binary), target.cpu);
       const artifact = packPackage(directory, pkg.name, outputDir, npmCli, npmEnv);
       await verifyArchive(join(outputDir, artifact.filename), pkg, rootPkg.name);
       if (signingManifest) await verifyWindowsPackage(signingManifest, pkg.name, join(outputDir, artifact.filename));
@@ -212,6 +223,7 @@ async function main() {
         copyFileSync(join(packedInput, "package-build-proof.json"), join(outputDir, "package-build-proof.json"));
       }
     } else {
+      verifyWindowsHelper(readFileSync("dist/windows-security-helper.exe"));
       const rootArtifact = packPackage(process.cwd(), rootPkg.name, outputDir, npmCli, npmEnv);
       await verifyArchive(join(outputDir, rootArtifact.filename), rootPkg, rootPkg.name);
       if (signingManifest) await verifyWindowsPackage(signingManifest, rootPkg.name, join(outputDir, rootArtifact.filename));

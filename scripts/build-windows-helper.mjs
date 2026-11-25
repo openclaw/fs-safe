@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { verifyWindowsHelper } from "./windows-runtime.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const project = "native/windows-security-helper/WindowsSecurityHelper.csproj";
@@ -9,6 +10,7 @@ if ((probe.error?.code === "ENOENT" || (!probe.error && probe.status !== 0)) &&
   process.argv.includes("--if-available") && process.platform !== "win32") {
   const staged = new URL("../src/windows-security-helper.exe", import.meta.url);
   if (existsSync(staged)) {
+    verifyWindowsHelper(readFileSync(staged));
     mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });
     copyFileSync(staged, new URL("../dist/windows-security-helper.exe", import.meta.url));
   } else console.warn("Windows helper not built: install the .NET SDK pinned in global.json and run pnpm build:windows-helper before packing.");
@@ -18,5 +20,6 @@ if ((probe.error?.code === "ENOENT" || (!probe.error && probe.status !== 0)) &&
   if (build.status !== 0) throw new Error("Windows helper build failed");
   mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });
   const exe = new URL("../native/windows-security-helper/bin/Release/net462/windows-security-helper.exe", import.meta.url);
+  verifyWindowsHelper(readFileSync(exe));
   for (const directory of ["src", "dist"]) copyFileSync(exe, new URL(`../${directory}/windows-security-helper.exe`, import.meta.url));
 }
