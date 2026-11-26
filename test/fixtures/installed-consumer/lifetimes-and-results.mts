@@ -4,9 +4,23 @@ import type { Root } from "@openclaw/fs-safe/root";
 import { tempWorkspace, tempWorkspaceSync } from "@openclaw/fs-safe/temp";
 import type { RetainedFileAdmission, RootFileOpenResult } from "@openclaw/fs-safe/advanced";
 import type { ExactFileIdentity } from "@openclaw/fs-safe/types";
+import type { FileIdentityInput } from "@openclaw/fs-safe/file-identity";
+import type { RootFileOpenResult as FocusedRootFileOpenResult } from "@openclaw/fs-safe/file-io";
+import type { AppendRegularFileOptions } from "@openclaw/fs-safe/regular-file";
+import type { ResolvedRootPath } from "@openclaw/fs-safe/root-path";
+import type {
+  FileIdentityInput as AdvancedFileIdentityInput,
+  AppendRegularFileOptions as AdvancedAppendRegularFileOptions,
+  ResolvedRootPath as AdvancedResolvedRootPath,
+} from "@openclaw/fs-safe/advanced";
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Expect<T extends true> = T;
+
+type FocusedIdentity = Expect<Equal<FileIdentityInput, AdvancedFileIdentityInput>>;
+type FocusedOpen = Expect<Equal<FocusedRootFileOpenResult, RootFileOpenResult>>;
+type FocusedAppend = Expect<Equal<AppendRegularFileOptions, AdvancedAppendRegularFileOptions>>;
+type FocusedPath = Expect<Equal<ResolvedRootPath, AdvancedResolvedRootPath>>;
 
 export async function resources(scoped: Root, rootDir: string) {
   await using temporary = await tempWorkspace({ rootDir, prefix: "consumer-" });

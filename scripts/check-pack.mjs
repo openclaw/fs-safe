@@ -138,6 +138,9 @@ try {
   const consumerArgs = [join(import.meta.dirname, "installed-consumer-check.mjs"), workdir];
   if (values["candidate-compiler"]) consumerArgs.push(resolve(values["candidate-compiler"]));
   execFileSync(process.execPath, consumerArgs, { cwd: workdir, stdio: "inherit" });
+  execFileSync(process.execPath, [join(import.meta.dirname, "focused-imports-package-smoke.mjs"), workdir], {
+    cwd: workdir, stdio: "inherit",
+  });
   const publicApi = inspectPublicApi({
     packageName: pkg.name,
     packageSubpaths: Object.keys(pkg.exports),

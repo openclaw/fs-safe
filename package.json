@@ -70,6 +70,22 @@
       "types": "./dist/advanced.d.ts",
       "default": "./dist/advanced.js"
     },
+    "./file-identity": {
+      "types": "./dist/file-identity-public.d.ts",
+      "default": "./dist/file-identity-public.js"
+    },
+    "./file-io": {
+      "types": "./dist/file-io.d.ts",
+      "default": "./dist/file-io.js"
+    },
+    "./regular-file": {
+      "types": "./dist/regular-file.d.ts",
+      "default": "./dist/regular-file.js"
+    },
+    "./root-path": {
+      "types": "./dist/root-path-public.d.ts",
+      "default": "./dist/root-path-public.js"
+    },
     "./json": {
       "types": "./dist/json.d.ts",
       "default": "./dist/json.js"
