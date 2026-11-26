@@ -340,6 +340,7 @@
         "AppendRegularFileOptions",
         "AssertNoSymlinkParentsOptions",
         "CopiedRootFileSync",
+        "CopyFileDescriptorSyncOptions",
         "CopyFileHandleOptions",
         "CopyRootFileSyncOptions",
         "CreateDirectoryOptions",
@@ -420,7 +421,8 @@
         "WindowsAclSummary",
         "WriteFileWindowOptions",
         "WriteSiblingTempFileOptions",
-        "WriteSiblingTempFileResult"
+        "WriteSiblingTempFileResult",
+        "ZeroRange"
       ],
       "errorCodes": {}
     },
@@ -779,7 +781,8 @@
         "Sha256FileInput",
         "Sha256FileOptions",
         "Sha256FileResult",
-        "Sha256FileSyncInput"
+        "Sha256FileSyncInput",
+        "ZeroRange"
       ],
       "errorCodes": {}
     },
