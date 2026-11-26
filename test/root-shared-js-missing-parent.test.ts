@@ -11,8 +11,9 @@ import * as context from "../src/root-context.js";
 import { root } from "../src/root.js";
 import { __setFsSafeTestHooksForTest } from "../src/test-hooks.js";
 import { observeMutationAuthorizations } from "./helpers/root-shared-js-admission.js";
-import { useRealTempDirs } from "./helpers/vitest.js";
+import { allowWindowsFilesystemStalls, useRealTempDirs } from "./helpers/vitest.js";
 
+allowWindowsFilesystemStalls();
 const { tempRoot } = useRealTempDirs();
 const describeNode = describe.skipIf(Boolean(process.versions.bun));
 

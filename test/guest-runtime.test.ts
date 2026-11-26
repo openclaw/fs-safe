@@ -31,7 +31,11 @@ describe.skipIf(process.platform === "win32")("guest runtime dependencies", () =
       const args = operation === "write" || operation === "create"
         ? [operation, root, "", "target", "0"]
         : [directory ? "rename" : "copy", root, "", "source", root, "", "target", "0"];
-      const result = runGuest(args, "payload", setup);
+      const result = runGuest(
+        args,
+        operation === "write" || operation === "create" ? "payload" : undefined,
+        setup,
+      );
 
       expect(result.error).toBeUndefined();
       expect(result.status, result.stderr.toString()).toBe(0);
