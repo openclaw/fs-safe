@@ -314,6 +314,20 @@ The optional `Sha256FileOptions` argument supports `maxBytes` and `signal`.
 even if the file grows after its initial size check. Hashing never silently
 truncates to the limit.
 
+### Zero ranges
+
+`zeroRanges` lists `{ offset, length }` byte ranges that are hashed as zeros
+without being read. It is for regions that hold no content but that another
+process may lock, such as SQLite's 512 lock bytes at offset 1 GiB: Windows
+byte-range locks are mandatory, so reading them while a connection holds an
+exclusive lock fails with `EBUSY`. Offsets and lengths must be safe integers,
+with lengths above zero; invalid ranges throw `RangeError` before file I/O.
+Zeros stop at the observed file size and never extend it. A nonempty list
+disables native hashing, which reads every byte. Use the same ranges for every
+digest you compare; a range only changes the digest when its bytes are nonzero.
+`sameFileContentsSync()`, `copyFileDescriptorSync()`, and `copyRootFileSync()`
+accept the same option.
+
 Pass `signal` to cancel. A pre-aborted signal rejects before file I/O or native
 loading. In-flight cancellation is cooperative between reads and rejects with
 the signal's original reason only after the pending read or native task stops.

@@ -25,7 +25,7 @@ try {
 ## Signature
 
 ```ts
-type SameFileContentsOptions = { maxBytes?: number };
+type SameFileContentsOptions = { maxBytes?: number; zeroRanges?: readonly ZeroRange[] };
 
 function sameFileContentsSync(
   leftFd: number,
@@ -33,6 +33,9 @@ function sameFileContentsSync(
   options?: SameFileContentsOptions,
 ): boolean;
 ```
+
+[`zeroRanges`](durability.md#zero-ranges) are compared as zeros in both files
+without being read; both files must still extend equally through each range.
 
 Both descriptors must be open regular files. Nonregular inputs throw
 `FsSafeError("not-file")`; underlying filesystem errors propagate unchanged.

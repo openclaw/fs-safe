@@ -7,8 +7,9 @@ export {
   createDirectory, createDirectorySync, createFileSync,
   type CreateDirectoryOptions, type CreateFileOptions, type OwnedFileDescriptorSync,
 } from "./create.js";
-export { copyFileHandle, copyFileDescriptorSync, type CopyFileHandleOptions } from "./file-handle-transfer.js";
+export { copyFileHandle, copyFileDescriptorSync, type CopyFileHandleOptions, type CopyFileDescriptorSyncOptions } from "./file-handle-transfer.js";
 export { sameFileContentsSync, type SameFileContentsOptions } from "./file-contents.js";
+export type { ZeroRange } from "./zero-ranges.js";
 export { overwriteFileHandle, overwriteFileHandleWithAuthority, type OverwriteFileHandleOptions } from "./overwrite-file-handle.js";
 export { probePathCaseInsensitiveSync, type ProbePathCaseOptions } from "./path-case.js";
 export { resolvePathPrefix, resolvePathPrefixSync, type ResolvedPathPrefix } from "./path-prefix.js";

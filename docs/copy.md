@@ -158,8 +158,10 @@ transfer when building snapshot operations.
 ### Synchronous descriptor transfers
 
 `copyFileDescriptorSync(sourceFd, targetFd, options?)` provides the same
-zero-origin byte transfer for borrowed numeric descriptors. It shares
-`CopyFileHandleOptions` and returns the copied byte count synchronously:
+zero-origin byte transfer for borrowed numeric descriptors. It accepts
+`CopyFileDescriptorSyncOptions` (`CopyFileHandleOptions` plus
+[`zeroRanges`](durability.md#zero-ranges), source ranges written as zeros
+without being read) and returns the copied byte count synchronously:
 
 ```ts
 import { copyFileDescriptorSync } from "@openclaw/fs-safe/advanced";
@@ -176,7 +178,7 @@ be opened without append mode, and both descriptors must remain open and free
 of concurrent I/O, including inside callbacks. Neither helper makes a mutable
 source into a consistent snapshot or truncates an existing destination suffix.
 
-The synchronous helper snapshots the four options once and invokes both
+The synchronous helper snapshots its options once and invokes both
 callbacks with no receiver (`this` is `undefined` in strict callbacks).
 `onChunk` receives a borrowed view that must be consumed immediately without
 retaining or mutating it. Both callbacks must finish synchronously; thenables
@@ -241,7 +243,10 @@ console.log(copied.bytes, copied.method, copied.identity, copied.sourceIdentity)
 ```
 
 `CopyRootFileSyncOptions` selects the source and destination, `clone`, `maxBytes`,
-`mode`, `preserveSourceMode`, `sourceHardlinks`, and optional `expectedSourceIdentity`.
+`mode`, `preserveSourceMode`, `sourceHardlinks`, optional `expectedSourceIdentity`, and
+[`zeroRanges`](durability.md#zero-ranges). Zero ranges are written as zeros without
+reading them, so they always use the byte copy (`method: "copy"`); `clone: "always"`
+is unsupported with them.
 `CopiedRootFileSync` owns a
 readable/writable `fd`, with idempotent `close()` and `Symbol.dispose`, and returns
 `path`, `bytes`, `method` (`"clone"`, `"copy-file-range"`, or `"copy"`), and exact

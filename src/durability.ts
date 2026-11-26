@@ -33,4 +33,5 @@ export {
   type Sha256FileOptions,
   type Sha256FileResult,
 } from "./file-hash.js";
+export type { ZeroRange } from "./zero-ranges.js";
 export type { ExactFileIdentity, ExactIdentityReceipt } from "./exact-identity.js";

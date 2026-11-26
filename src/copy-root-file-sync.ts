@@ -17,6 +17,7 @@ import { openRootFileSync } from "./root-file.js";
 import { inspectOpenedPathIdentitySync } from "./root-read-admission.js";
 import { openStagedDirectory } from "./staged-directory.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
+import { normalizeZeroRanges, type ZeroRange } from "./zero-ranges.js";
 
 export type CopyRootFileSyncOptions = {
   source: CopyPath;
@@ -27,6 +28,8 @@ export type CopyRootFileSyncOptions = {
   mode?: number;
   preserveSourceMode?: boolean;
   sourceHardlinks?: "reject" | "allow";
+  /** Source byte ranges written as zeros without being read. Requires a byte copy. */
+  zeroRanges?: readonly ZeroRange[];
 };
 
 export type CopiedRootFileSync = OwnedFileDescriptorSync & Readonly<{
@@ -92,6 +95,7 @@ function copyRootFileWithAdmissionSync(
   const mode = options.mode;
   const preserveSourceMode = options.preserveSourceMode;
   const sourceHardlinks = options.sourceHardlinks ?? "reject";
+  const zeroRanges = normalizeZeroRanges(options.zeroRanges);
   if (mode !== undefined && (!Number.isInteger(mode) || mode < 0 || mode > 0o777)) {
     throw new FsSafeError("invalid-path", "copy mode must be an integer from 0 to 0o777");
   }
@@ -105,8 +109,9 @@ function copyRootFileWithAdmissionSync(
   let target: ReturnType<typeof cache.admit> | undefined;
   let identity: BigIntStats | undefined;
   const native = process.platform !== "win32" ? getNativeBinding("copyFileExclusiveSync", "removeStagedFile") : getNativeBinding();
-  const nativeCopy = process.platform !== "win32" && native?.copyFileExclusiveSync && native.removeStagedFile
-    ? native.copyFileExclusiveSync.bind(native) : undefined;
+  // Native copies read every byte; zero ranges stay on the descriptor copy.
+  const nativeCopy = zeroRanges.length === 0 && process.platform !== "win32" && native?.copyFileExclusiveSync &&
+    native.removeStagedFile ? native.copyFileExclusiveSync.bind(native) : undefined;
   try {
     const source = cache.admit(sourcePath);
     target = cache.admit(targetPath, true);
@@ -178,7 +183,7 @@ function copyRootFileWithAdmissionSync(
       throw new FsSafeError("helper-failed", "native copy returned an unknown method");
     }
     if (!copied) {
-      copyFileDescriptorSync(opened.fd, targetOwner.fd, { maxBytes });
+      copyFileDescriptorSync(opened.fd, targetOwner.fd, { maxBytes, zeroRanges });
     }
     verifySource();
     const completed = verifyTarget();
