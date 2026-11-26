@@ -1,24 +1,25 @@
 import assert from "node:assert/strict";
-import { createRequire, registerHooks } from "node:module";
+import { Session } from "node:inspector/promises";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(join(process.argv[2], "package.json"));
 const loaded = new Set();
-const hooks = registerHooks({
-  load(url, context, nextLoad) {
-    loaded.add(url);
-    return nextLoad(url, context);
-  },
-});
 const surfaces = [];
+const session = new Session();
+session.connect();
 try {
+  // The inspector reports parsed ESM scripts on every supported Node 22 release.
+  session.on("Debugger.scriptParsed", ({ params }) => loaded.add(params.url));
+  await session.post("Debugger.enable");
   for (const subpath of ["file-identity", "file-io", "regular-file", "root-path"]) {
-    const entry = require.resolve(`@openclaw/fs-safe/${subpath}`);
-    surfaces.push(await import(pathToFileURL(entry).href));
+    const entry = pathToFileURL(require.resolve(`@openclaw/fs-safe/${subpath}`)).href;
+    surfaces.push(await import(entry));
+    assert.ok(loaded.has(entry), `did not observe the ${subpath} entry`);
   }
 } finally {
-  hooks.deregister();
+  session.disconnect();
 }
 
 const rootImplementation = pathToFileURL(require.resolve("@openclaw/fs-safe/root"));
