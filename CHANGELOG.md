@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Imports:** add focused `/file-identity`, `/file-io`, `/regular-file`, and `/root-path` entry points so filesystem composition can reuse the existing guarded helpers without loading the full Root implementation.
+
 ## 0.28.2 - 2026-11-22
 
 **Highlights:** Windows bindings no longer need a separate Visual C++ Redistributable, long temporary-file paths work reliably, and archive decoding handles chunked bzip2 input plus gzip/deflate fixes.
