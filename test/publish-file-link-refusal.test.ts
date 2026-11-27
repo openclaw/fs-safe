@@ -33,7 +33,8 @@ it.each(["link-or-copy", "link-required"] as const)("handles EACCES with %s", as
   } else {
     await expect(result).resolves.toMatchObject({ method: "exclusive-copy" });
     expect(await fs.readFile(targetPath, "utf8")).toBe("complete bytes");
-    expect((await fs.stat(targetPath)).ino).not.toBe((await fs.stat(sourcePath)).ino);
+    expect((await fs.stat(targetPath, { bigint: true })).ino)
+      .not.toBe((await fs.stat(sourcePath, { bigint: true })).ino);
   }
   expect(await fs.readFile(sourcePath, "utf8")).toBe("complete bytes");
 });
