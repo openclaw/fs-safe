@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { readFileDescriptorBoundedSync, readFileHandleBounded } from "./bounded-read.js";
+import { readFileDescriptorBoundedSync, readFileHandleBoundedWithSize } from "./bounded-read.js";
 import { normalizeMaxBytes } from "./byte-budget.js";
 import { assertNoUnsafeDeviceReadPath } from "./device-path.js";
 import { FsSafeError } from "./errors.js";
@@ -104,7 +104,7 @@ export async function readRegularFile(params: {
     // readFile() can stop at a short nonblocking read before EOF (for example, 9p).
     let buffer: Buffer;
     try {
-      buffer = await readFileHandleBounded(handle, maxBytes ?? Infinity);
+      buffer = await readFileHandleBoundedWithSize(handle, maxBytes ?? Infinity, stat.size);
     } catch (error) {
       if (maxBytes !== undefined) {
         translateBoundedReadOverflow(error, filePath, maxBytes);
