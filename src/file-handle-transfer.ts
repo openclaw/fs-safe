@@ -9,12 +9,18 @@ import {
 } from "./mutation-authority.js";
 import { writeAllToFile } from "./write-file-handle.js";
 import { inspectFileIdentity, inspectFileIdentitySync } from "./strict-file-identity.js";
+import { normalizeZeroRanges, zeroRangeStep, type ZeroRange } from "./zero-ranges.js";
 
 export type CopyFileHandleOptions = {
   maxBytes?: number;
   signal?: AbortSignal;
   onChunk?: (chunk: Uint8Array) => void;
   assertBeforeMutation?: () => void;
+};
+
+export type CopyFileDescriptorSyncOptions = CopyFileHandleOptions & {
+  /** Source byte ranges written as zeros without being read. */
+  zeroRanges?: readonly ZeroRange[];
 };
 
 const NO_CALLBACK_ARGUMENTS = Object.freeze([]);
@@ -27,11 +33,12 @@ function createTransferBuffer(sizeHint: number, limit: number): Buffer {
 export function copyFileDescriptorSync(
   sourceFd: number,
   targetFd: number,
-  options: CopyFileHandleOptions = {},
+  options: CopyFileDescriptorSyncOptions = {},
 ): number {
   const signal = options.signal;
   signal?.throwIfAborted();
   const maxBytes = normalizeMaxBytes(options.maxBytes);
+  const ranges = normalizeZeroRanges(options.zeroRanges);
   const onChunk = options.onChunk;
   const assertBeforeMutation = options.assertBeforeMutation;
   const sourceStat = inspectFileIdentitySync(() => {
@@ -55,7 +62,9 @@ export function copyFileDescriptorSync(
   let position = 0;
   while (true) {
     signal?.throwIfAborted();
-    const bytesRead = fs.readSync(sourceFd, buffer, 0, Math.min(buffer.length, limit - position + 1), position);
+    const step = zeroRangeStep(ranges, position, Math.min(buffer.length, limit - position + 1), Number(sourceStat.size));
+    if ("zeros" in step) buffer.fill(0, 0, step.zeros);
+    const bytesRead = "zeros" in step ? step.zeros : fs.readSync(sourceFd, buffer, 0, step.read, position);
     if (bytesRead > limit - position) {
       throw new FsSafeError("too-large", `file exceeds limit of ${limit} bytes`);
     }

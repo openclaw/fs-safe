@@ -8,6 +8,7 @@ import { getNativeBinding, selectNativeBinding, type NativeBinding } from "./nat
 import { resolveReadOpenFlags } from "./read-open-flags.js";
 import { inspectFileIdentitySync } from "./strict-file-identity.js";
 import { assertNoWindowsPathAlias } from "./windows-path-alias.js";
+import { normalizeZeroRanges, zeroRangeStep, type ZeroRange } from "./zero-ranges.js";
 
 export type Sha256FileInput = string | FileHandle;
 export type Sha256FileSyncInput = string | number;
@@ -15,6 +16,8 @@ export type Sha256FileSyncInput = string | number;
 export type Sha256FileOptions = {
   maxBytes?: number;
   signal?: AbortSignal;
+  /** Byte ranges hashed as zeros without being read. Disables native hashing. */
+  zeroRanges?: readonly ZeroRange[];
 };
 
 export type Sha256FileResult = {
@@ -60,10 +63,11 @@ class HashScratch {
 export async function hashFileHandle(
   handle: FileHandle,
   native: NativeBinding | undefined = getNativeBinding(),
-  { maxBytes = Infinity, signal }: Sha256FileOptions = {},
+  { maxBytes = Infinity, signal, zeroRanges = [] }: Sha256FileOptions = {},
   ownsPosition = false,
 ): Promise<Sha256FileResult> {
   signal?.throwIfAborted();
+  const ranges = normalizeZeroRanges(zeroRanges);
   const stat = fsSync.fstatSync(handle.fd);
   if (!stat.isFile()) {
     throw new FsSafeError("not-file", "SHA-256 input is not a regular file");
@@ -71,7 +75,7 @@ export async function hashFileHandle(
   if (stat.size > maxBytes) {
     throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
   }
-  const hasher = selectNativeBinding(native, "sha256File");
+  const hasher = ranges.length === 0 ? selectNativeBinding(native, "sha256File") : undefined;
   if (hasher) {
     // A completed N-API task can mask later aborts on the same signal.
     const nativeSignal = signal ? AbortSignal.any([signal]) : undefined;
@@ -105,8 +109,13 @@ export async function hashFileHandle(
   let position = 0;
   while (true) {
     signal?.throwIfAborted();
-    const length = Math.min(buffer.length, maxBytes - position + 1);
-    const { bytesRead } = await handle.read(buffer, 0, length, position);
+    const step = zeroRangeStep(ranges, position, Math.min(buffer.length, maxBytes - position + 1), stat.size);
+    if ("zeros" in step) {
+      hash.update(Buffer.alloc(step.zeros));
+      position += step.zeros;
+      continue;
+    }
+    const { bytesRead } = await handle.read(buffer, 0, step.read, position);
     signal?.throwIfAborted();
     if (bytesRead > maxBytes - position) {
       throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
@@ -189,7 +198,11 @@ export async function sha256File(
   options: Sha256FileOptions = {},
 ): Promise<Sha256FileResult> {
   options.signal?.throwIfAborted();
-  const normalized = { maxBytes: normalizeMaxBytes(options.maxBytes), signal: options.signal };
+  const normalized = {
+    maxBytes: normalizeMaxBytes(options.maxBytes),
+    signal: options.signal,
+    zeroRanges: normalizeZeroRanges(options.zeroRanges),
+  };
   return typeof input === "string"
     ? await hashPath(input, normalized)
     : await hashFileHandle(input, getNativeBinding(), normalized);
@@ -197,9 +210,10 @@ export async function sha256File(
 
 function hashDescriptorSync(
   fd: number,
-  { maxBytes = Infinity, signal }: Sha256FileOptions,
+  { maxBytes = Infinity, signal, zeroRanges = [] }: Sha256FileOptions,
 ): Sha256FileResult {
   signal?.throwIfAborted();
+  const ranges = normalizeZeroRanges(zeroRanges);
   const stat = fsSync.fstatSync(fd);
   if (!stat.isFile()) {
     throw new FsSafeError("not-file", "SHA-256 input is not a regular file");
@@ -213,8 +227,13 @@ function hashDescriptorSync(
   let position = 0;
   while (true) {
     signal?.throwIfAborted();
-    const length = Math.min(buffer.length, maxBytes - position + 1);
-    const bytesRead = fsSync.readSync(fd, buffer, 0, length, position);
+    const step = zeroRangeStep(ranges, position, Math.min(buffer.length, maxBytes - position + 1), stat.size);
+    if ("zeros" in step) {
+      hash.update(Buffer.alloc(step.zeros));
+      position += step.zeros;
+      continue;
+    }
+    const bytesRead = fsSync.readSync(fd, buffer, 0, step.read, position);
     signal?.throwIfAborted();
     if (bytesRead > maxBytes - position) {
       throw new FsSafeError("too-large", `SHA-256 input exceeds ${maxBytes} bytes`);
@@ -259,7 +278,11 @@ export function sha256FileSync(
   options: Sha256FileOptions = {},
 ): Sha256FileResult {
   options.signal?.throwIfAborted();
-  const normalized = { maxBytes: normalizeMaxBytes(options.maxBytes), signal: options.signal };
+  const normalized = {
+    maxBytes: normalizeMaxBytes(options.maxBytes),
+    signal: options.signal,
+    zeroRanges: normalizeZeroRanges(options.zeroRanges),
+  };
   return typeof input === "string"
     ? hashPathSync(input, normalized)
     : hashDescriptorSync(input, normalized);
