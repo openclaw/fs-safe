@@ -42,17 +42,18 @@ async function fixture(mode: "off" | "require" = "off") {
   } };
 }
 
-it("exercises all lock ownership benchmark fixtures through the real public methods", async () => {
+it.each(LOCK_OWNERSHIP_PARSING_CASES)("exercises lock ownership benchmark $name through the real public methods", async ({ name }) => {
   const f = await fixture();
   try {
     expect(f.rows).toHaveLength(96);
-    for (const row of f.rows) {
-      const input = await row.before();
-      const failures: unknown[] = [];
-      let result: unknown;
-      try { result = await row.run(input); } catch (error) { failures.push(error); }
-      await finishBenchmarkInvocation(failures, () => row.after(result), row.name);
-    }
+    const rows = f.rows.filter(row => row.name === name);
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    const input = await row.before();
+    const failures: unknown[] = [];
+    let result: unknown;
+    try { result = await row.run(input); } catch (error) { failures.push(error); }
+    await finishBenchmarkInvocation(failures, () => row.after(result), row.name);
   } finally { await f.cleanup(); }
   expect(fs.readdirSync(f.workspace)).toEqual([]);
 }, 30_000);
