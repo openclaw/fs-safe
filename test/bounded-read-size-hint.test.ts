@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileHandleBoundedWithSize } from "../src/bounded-read.js";
+import { readRegularFile } from "../src/regular-file.js";
 import { useRealTempDirs } from "./helpers/vitest.js";
 
 const { tempRoot } = useRealTempDirs();
@@ -34,6 +35,18 @@ describe("admitted bounded-read size hint", () => {
     } finally {
       await handle.close();
     }
+  });
+
+  it("reuses the opened regular file size for the initial read", async () => {
+    const dir = await tempRoot("fs-safe-regular-read-size-");
+    const filePath = path.join(dir, "input");
+    await fs.writeFile(filePath, "abcd");
+    const stat = vi.spyOn(fsSync, "fstat");
+
+    const { buffer } = await readRegularFile({ filePath, maxBytes: 4 });
+
+    expect(buffer).toEqual(Buffer.from("abcd"));
+    expect(stat).toHaveBeenCalledTimes(1);
   });
 
   it("retains the fresh size observation after the read", async () => {

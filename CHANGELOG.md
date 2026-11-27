@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Regular file reads:** reuse the opened file size when reading asynchronously. In a Linux benchmark, reading 1,024 warm-cache notes with four readers took about 9% less time.
+
 - **Imports:** add focused `/file-identity`, `/file-io`, `/regular-file`, and `/root-path` entry points so filesystem composition can reuse the existing guarded helpers without loading the full Root implementation.
 
 ## 0.28.2 - 2026-11-22
