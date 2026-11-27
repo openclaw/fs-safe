@@ -1,7 +1,7 @@
 ## What Problem This Solves
 
 <!--
-Describe the concrete problem for consumers of `@openclaw/fs-safe`.
+Describe the concrete user, product, or operational problem.
 In 1–3 plain sentences, say who is affected, what happens today, and why it
 matters to them. For a bug, name the trigger if known. For a feature or internal
 work, describe the need in the actual workflow without inventing harm.
@@ -10,11 +10,6 @@ Could a reader understand the problem without knowing your proposed fix?
 Good: "Background checks can use up a new user's model allowance before they've
 asked the assistant to monitor anything."
 Bad: "Turn off periodic checks on fresh installs."
-
-Name the affected filesystem surface: root confinement, path validation,
-identity checks, archive extraction, permissions, atomic operations, stores,
-secrets, exports, packaging, or supported platforms. Do not describe only the
-code-level cause.
 -->
 
 ## User Impact
@@ -54,10 +49,6 @@ meaningful gaps. Put exact commands, commit hashes, and long logs in links or
 optional <details>. Do not make readers decode commands to learn what was verified.
 -->
 
-- [ ] Tests added or updated when behavior changed
-- [ ] Security and compatibility impact considered
-- [ ] `CHANGELOG.md` updated when release-relevant
-- [ ] No credentials, private paths, private hosts, or sensitive contents included
 
 <!--
 Optional linked context:
